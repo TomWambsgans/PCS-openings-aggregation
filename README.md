@@ -4,14 +4,14 @@
 
 - We agree on:
   - one base field K, one extension field E (example: K = F_2^64, E = F_2^192)
-  - one PCS (example: WHIR in the LDR at rate 1/4 without OOD)
+  - one PCS (example: WHIR in the LDR at rate 1/4)
 - We add a new instruction to perform extension field multiplication in E: MUL_FIELD.
 - Users can attach to each transaction a list of PCS claims.
 - Each PCS claim contains:
   - header:
-    - commitment (32 bytes)
     - `num_variables` (1 byte)
-    - opening point (`num_variables` K field elements)
+    - commitment (32 bytes + 1 E field element) -> Merkle hash + OOD_answer (the OOD point being Fiat-Shamir derived derived from the Merkle hash)
+    - opening point (`num_variables` E field elements)
     - value (1 E field element)
   - opening_proof (the PCS opening transcript, where Fiat-Shamir is seeded by the header)
 - In the mempool, all the opening_proof 'disapear', and instead some STARK attests of their existence.
@@ -26,7 +26,7 @@
 - It seeds some Fiat-Shamir state (not necessarily the same hash function as the one used in WHIR! (this requires future security proofs))
 - Runs Spartan's sumchecks (1 zerocheck, 3 linchecks)
 - In the end, you get 4 opening claims: pointZ, valueZ, pointA, valueA, ...
-- Call PCS_OPEN(comZ, n, pointZ, valueZ), PCS_OPEN(comA, n, pointA, valueA), ...
+- Call PCS_OPEN(n, comZ, pointZ, valueZ), PCS_OPEN(n, comA, pointA, valueA), ...
 
 ## Forward compatibility
 
