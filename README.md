@@ -33,7 +33,7 @@
 - The good: If we change the PCS opening protocol (number of WHIR queries, etc) without changing the PCS commitment protocol, all good. Users simply update their offchain prover, the smart contract still works nicely, no migration needed.
 - The bad: If we change the PCS commitment protocol, the hardcoded commitments (comA, comB, comC in our example) no longer work.
 
-TLDR: this would enshrine MUL_FIELD (tied to a specific field), and the commitment in PCS_OPEN (tied to a specific field + a specific PCS, like WHIR)
+TLDR: this would irreversibly enshrines MUL_FIELD (tied to a specific field), and the commitment in PCS_OPEN (tied to a specific field + a specific PCS, like WHIR)
 
 ## Details
 
