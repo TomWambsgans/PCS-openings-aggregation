@@ -16,7 +16,7 @@
   - opening_proof (the PCS opening transcript, where Fiat-Shamir is seeded by the header)
 - In the mempool, all the opening_proof 'disapear', and instead some STARK attests of their existence.
 - Each Ethereum block contains a list of "headers", one STARK proves them all.
-- We add a new magic precompile to the EVM: PCS_OPEN that takes as input some header and attests that it is contained in the block's list of headers.
+- We add a new magic precompile to the EVM: PCS_OPEN that takes as input header and attests that it is contained in the block's list of headers.
 
 ## Simplified example for R1CS: A.z ⊙ B.z = C.z in K
 
@@ -30,10 +30,17 @@
 
 ## Forward compatibility
 
-- The good: If we change the PCS opening protocol (number of WHIR queries, etc) without changing the PCS commitment protocol, all good. Users simply update their offchain prover, the smart contract still works nicely, no migration needed.
-- The bad: If we change the PCS commitment protocol, the hardcoded commitments (comA, comB, comC in our example) no longer work.
+- The witnesss polynomial of the STARK is easy to change (commitment / opening algorithms are offchain).
+- The difficult part is the polynomial representing the circuit whose commitment is hardcoded in a smart contract.
 
-TLDR: this would irreversibly enshrines MUL_FIELD (tied to a specific field), and the commitment in PCS_OPEN (tied to a specific field + a specific PCS, like WHIR)
+In 2031, when WHIR 2.0 is released, how to upgrade the PCS_OPEN precompile? -> An idea from Justin D:
+- add a 'version' parameter to the arguments of the PCS_OPEN precompile. Initially it has version 1, and returns "invalid version" when called with version != 1.
+- Hardfork -> version 2 is introduced. Version 1 remains available for a period of time (1 year), and is afterward deleted.
+Every smart contract should:
+- put the commitment of the circuit in storage (not bytecode)
+- have a (trustless) function that lets any users calling it update the commitment (from v1 to v2). To prove that the new commitment is valid, we sample a random point (Fiat-Shamir) and require both PCS openings at version 1 and version 2 to agree on that point (Schwartz–Zippel).
+
+TLDR: The PCS is relatively easy to upgrade, the only thing that cannot be upgraded is the (binary) field.
 
 ## Details
 
