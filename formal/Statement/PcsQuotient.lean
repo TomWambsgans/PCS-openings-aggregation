@@ -4,3 +4,6 @@ module
 public import PcsQuotient.Verifier
 public import PcsQuotient.Circuit
 public import PcsQuotient.Prover
+public import PcsQuotient.Extractor
+public import PcsQuotient.Simulator
+public import PcsQuotient.Security

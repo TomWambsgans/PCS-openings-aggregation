@@ -22,6 +22,10 @@ option. Every file says where it comes from in its first lines.
   - `formal/`: the Lean proofs of `formal/quotient` (sorry-free for the original circuit), being ported to
     this circuit; each file names its source. Dependency revisions are those of
     [leanerVM](https://github.com/Verified-zkEVM/leanerVM)'s `mumbai` branch (MIT OR Apache-2.0).
+- **`formal/Statement/`** (new here): the statement of `crates/quotient` in Lean, in the style of leanerVM's
+  `Statement/` package (branch `mumbai`, commit `6175f1a0`, MIT OR Apache-2.0), on which it depends (a Lake
+  dependency, not vendored) for the fields, Keccak-256, the random-permutation model, the WHIR verifier and
+  prover pieces and the extractor's decoder; each file names what it takes from it.
 - **Third-party credits carried by the vendored files** (each file names its own):
   [succinctlabs/flock](https://github.com/succinctlabs/flock) (MIT OR Apache-2.0),
   [Plonky3](https://github.com/Plonky3/Plonky3) (MIT OR Apache-2.0),

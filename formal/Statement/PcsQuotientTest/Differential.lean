@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import PcsQuotient
+import VCVio.OracleComp.RunIO
 
 /-!
 # The differential test
@@ -197,8 +198,71 @@ def checkLine (line : String) : Except String (String × Bool) := do
 
 end PcsQuotientTest
 
+namespace PcsQuotientTest
+
+/-! ### Self-tests of the extractor and the simulator (`--self-test`) -/
+
+/-- The small circuit of the vectors. -/
+def smallCircuit : Circuit :=
+  let ((y, r), b) := smallBuilder.run Builder.new
+  finish 13 (publicWords y r) b
+
+/-- Keccak-f[1600], each call recorded as a forward query of the permutation with its answer. -/
+abbrev LogM := StateM (Array (Common.PermutationQuery LeanVM.Semantics.KeccakState ×
+  LeanVM.Semantics.KeccakState))
+
+def loggedKeccak (s : LeanVM.Semantics.KeccakState) : LogM LeanVM.Semantics.KeccakState := do
+  let y := LeanVM.Semantics.keccakF1600 s
+  modify (·.push (.forward s, y))
+  return y
+
+/-- **The extractor's path on an honest commitment**: an adversary commits the honest witness table
+of the small circuit (its transcript, the tree's Keccak-f calls); through the transcript's Keccak-256
+evaluations, the Merkle inversion and the fast path, the extractor reads back the input bits. -/
+def extractionTest (bits : List Bool) (masks : Masks) : Bool :=
+  let c := smallCircuit
+  let mv := cellVars c.logRows
+  let stack := witnessStack c.logRows (Domain.coefficients mv 0 (c.cells bits)) (maskEntries masks)
+  let (tree, log) := (commitWith (m := LogM) loggedKeccak (mv + 1) stack).run #[]
+  let paths := LeanVM.keccakEvaluationsOfTranscript log.toList
+  let proof : PcsQuotient.Proof := ⟨⟨LeanVM.Protocol.KeccakHash.digestScalars tree.root, (0, 0), #v[0, 0, 0, 0], 0⟩, ⟨[], []⟩, ⟨[], []⟩, ⟨[], []⟩⟩
+  match witnessWord c.logRows (LeanVM.lookupEvaluation paths) (paths.map (·.1)) proof with
+  | none => false
+  | some word =>
+    match LeanVM.Extraction.fastStacks (mv + 1) logInvRate word with
+    | stack :: _ => inputBitsOfStack c stack == bits
+    | [] => false
+
+/-- **The simulator on the small circuit**: its proof of a statement it has no witness for (none
+exists: random bytes) is accepted by the verifier querying the simulator's permutation, as a
+distinguisher running the verifier would. -/
+def simulationTest (stmt : Statement) : IO Bool := do
+  let c := smallCircuit
+  let run : Simulator.SimM Bool := do
+    match ← Simulator.simulateFor c (2 ^ 25) stmt with
+    | none => return false
+    | some proof =>
+      let root ← c.indexRootWith Simulator.simPermutation
+      verifyWith Simulator.simPermutation c.logRows root stmt proof
+  OracleComp.runIO (run.run' {})
+
+/-- Pseudorandom bits for the self-tests. -/
+def bitsFrom (seed count : ℕ) : List Bool :=
+  (List.range count).map fun i ↦ ((seed * 6364136223846793005 + 1442695040888963407 * (i + 1)) >>> 33) % 2 = 1
+
+end PcsQuotientTest
+
 open PcsQuotientTest in
 def main (args : List String) : IO UInt32 := do
+  if args.contains "--self-test" then
+    let bits := bitsFrom 7 256
+    let masks : Masks := fun j i ↦ K.ofLane (UInt64.ofNat (1000003 * (3 * j.val + i.val) + 17))
+    let extracted := extractionTest bits masks
+    IO.println s!"extractor (fast path on an honest commitment): {extracted}"
+    let bytes : Vector UInt8 32 := Vector.ofFn fun j ↦ UInt8.ofNat (37 * j.val + 11)
+    let simulated ← simulationTest ⟨bytes, Vector.ofFn fun j ↦ bytes[j] ^^^ 0x5a⟩
+    IO.println s!"simulator (accepted proof of a false statement): {simulated}"
+    return if extracted && simulated then 0 else 1
   let path := args.headD "vectors.txt"
   let lines := ((← IO.FS.readFile path).splitOn "\n").filter (· ≠ "")
   let mut agreed : Std.HashMap String ℕ := {}

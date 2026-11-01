@@ -228,7 +228,14 @@ impl Whole {
 
     fn line(&self) -> String {
         let mut out = String::new();
-        head(&mut out, "P", self.log_rows, &self.index_root, &self.statement, &self.stream);
+        head(
+            &mut out,
+            "P",
+            self.log_rows,
+            &self.index_root,
+            &self.statement,
+            &self.stream,
+        );
         for opening in &self.openings {
             opening.tokens(&mut out);
         }
@@ -252,7 +259,9 @@ fn tampered(honest: &Whole) -> Vec<(&'static str, Whole)> {
     add("statement", &|w| w.statement.root[3] ^= 0x10);
     add("index root", &|w| w.index_root[0] ^= 1);
     add("whir scalar", &|w| w.openings[0].stream[5].c1 ^= 1 << 7);
-    add("whir trailing scalar", &|w| w.openings[2].stream.push(verifier::E::new(0, 0, 0)));
+    add("whir trailing scalar", &|w| {
+        w.openings[2].stream.push(verifier::E::new(0, 0, 0))
+    });
     add("whir truncated", &|w| {
         w.openings[1].stream.pop();
     });
@@ -278,7 +287,11 @@ fn small() -> Circuit {
     let x: Vec<Src> = (0..256).map(|_| b.input()).collect();
     let mut acc = x[0];
     for (i, &bit) in x.iter().enumerate().skip(1) {
-        acc = if i % 3 == 0 { b.chi(acc, bit, x[(i * 7) % 256]) } else { b.xor(acc, bit) };
+        acc = if i % 3 == 0 {
+            b.chi(acc, bit, x[(i * 7) % 256])
+        } else {
+            b.xor(acc, bit)
+        };
     }
     let _ = b.not(acc);
     b.finish(13, &public_words(&x, &x))
@@ -313,7 +326,10 @@ fn masks(rng: &mut Rng) -> [[F64; 3]; 4] {
 fn prover_line(name: &str, inputs: &[bool], masks: &[[F64; 3]; 4], stream: &[F192]) -> String {
     let mut out = format!("Q {name} {}", inputs.len());
     for byte in inputs.chunks(8) {
-        let value = byte.iter().enumerate().fold(0u8, |acc, (i, &bit)| acc | (bit as u8) << i);
+        let value = byte
+            .iter()
+            .enumerate()
+            .fold(0u8, |acc, (i, &bit)| acc | (bit as u8) << i);
         write!(out, " {value:02x}").unwrap();
     }
     for coeffs in masks {
@@ -328,13 +344,7 @@ fn prover_line(name: &str, inputs: &[bool], masks: &[[F64; 3]; 4], stream: &[F19
     out
 }
 
-fn proofs(
-    lines: &mut Vec<String>,
-    rng: &mut Rng,
-    name: &str,
-    circuit: &Circuit,
-    cases: &[(Statement, Vec<bool>)],
-) {
+fn proofs(lines: &mut Vec<String>, rng: &mut Rng, name: &str, circuit: &Circuit, cases: &[(Statement, Vec<bool>)]) {
     let index = Index::new(circuit);
     let index_committed = commit(&index.table);
     for (statement, inputs) in cases {
