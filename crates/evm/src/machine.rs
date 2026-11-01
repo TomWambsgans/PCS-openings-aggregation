@@ -1,5 +1,6 @@
 // Adapted from leanVM (https://github.com/leanEthereum/leanVM), branch PCS-openings-aggregation, commit 651453c6,
-// file crates/evm/src/machine.rs; the mock `PCS_OPEN` is new here. MIT OR Apache-2.0; see NOTICE.md.
+// file crates/evm/src/machine.rs; new here: the mock `PCS_OPEN`, and the `Chain` that deploys contracts and keeps
+// their storage across transactions. MIT OR Apache-2.0; see NOTICE.md.
 //! revm with `FIELD_MUL`, and with a mock of the precompile `PCS_OPEN`.
 //!
 //! # `PCS_OPEN`
@@ -21,8 +22,10 @@
 //!    bits of its word, limb 0 lowest, and its top 64 bits are zero.
 //!
 //! **Output**: the word 1 if one of the block's openings is of exactly these claims, in this order, on the table
-//! committed as this root under this layout, and nothing otherwise. A call fails only for lack of gas. A contract
-//! tests `RETURNDATASIZE`, which a failed call and an address without the precompile also leave zero.
+//! committed as this root under this layout, and nothing otherwise, an input of another length included. A call
+//! fails only for lack of gas. A contract takes a call to attest only if it succeeded and returned exactly 32 bytes,
+//! the word 1: a failed call and an address without the precompile return nothing, and anything else (the word 0,
+//! a revert with data, more words) is not an attestation either.
 //!
 //! **Why this encoding.** Every word is one the contract already holds as an EVM word, so marshalling a call is
 //! an `MSTORE` a word: a field element as `XOR` and `FIELD_MUL` work on it, a root as the calldata carries it and
@@ -35,7 +38,9 @@
 //! **Gas**: [`PcsOpen::call_gas`] a call plus [`PcsOpen::claim_gas`] a claim (`k` as the input's third word says,
 //! read before anything is checked; none if the input is shorter), both zero by default, so that what the calls
 //! cost the contract is measured apart. No gas a byte of input: the caller paid for writing it to memory, and a
-//! claim's price stands for its share of the block's aggregated proof.
+//! claim's price stands for its share of the block's aggregated proof. A real precompile's price should depend on
+//! the table the layout names, not on `k` alone: the tables are of `2^15` to `2^28` words, and what a claim adds to
+//! the block's aggregated proof (and to its builder's work) grows with the table's size.
 
 use std::collections::HashSet;
 
@@ -47,12 +52,12 @@ use quotient::transcript::root_scalars;
 use revm::context::result::{ExecutionResult, Output};
 use revm::context::{Cfg, Context, ContextTr, LocalContextTr, TxEnv};
 use revm::database::{CacheDB, EmptyDB};
-use revm::handler::{EthPrecompiles, ExecuteEvm, MainBuilder, MainContext, PrecompileProvider};
+use revm::handler::{EthPrecompiles, ExecuteCommitEvm, MainBuilder, MainContext, PrecompileProvider};
 use revm::interpreter::interpreter_types::{InterpreterTypes, StackTr};
 use revm::interpreter::{CallInput, Gas, InputsImpl, InstructionContext, InstructionResult, InterpreterResult, gas};
 use revm::primitives::hardfork::SpecId;
 use revm::primitives::{Address, Bytes, TxKind, U256};
-use revm::state::{AccountInfo, Bytecode};
+use revm::state::AccountInfo;
 
 /// The opcode of `FIELD_MUL`, unassigned on mainnet.
 pub const FIELD_MUL: u8 = 0x0c;
@@ -136,7 +141,8 @@ pub fn pcs_open_input(root: &Hash, id: u64, claims: &[Claim]) -> Vec<u8> {
 }
 
 /// A mock of `PCS_OPEN`: the openings standing for a block's, each as the one input that names it, and its
-/// prices. It checks nothing else: an input it holds is well formed, being made by [`pcs_open_input`].
+/// prices. It parses an input only as far as its length, `3 + k (v + 1)` words for the layout it names: an input it
+/// holds is well formed, being made by [`pcs_open_input`].
 #[derive(Clone, Debug, Default)]
 pub struct PcsOpen {
     attested: HashSet<Vec<u8>>,
@@ -159,7 +165,23 @@ impl PcsOpen {
             .get(64..96)
             .map_or(0, |k| U256::from_be_slice(k).saturating_to::<u64>());
         let gas = self.claim_gas.saturating_mul(claims).saturating_add(self.call_gas);
-        (gas, self.attested.contains(input))
+        (gas, Self::well_sized(input) && self.attested.contains(input))
+    }
+
+    /// Whether `input` is `3 + k (v + 1)` words, `k ≥ 1` its third word and `v` the variables of the layout its
+    /// second names.
+    fn well_sized(input: &[u8]) -> bool {
+        let word = |i: usize| input.get(32 * i..32 * i + 32).map(U256::from_be_slice);
+        let (Some(id), Some(k)) = (word(1), word(2)) else {
+            return false;
+        };
+        let (Some(layout), Ok(k)) = (layout(id), u64::try_from(k)) else {
+            return false;
+        };
+        let words = (layout.vars as u64 + 1)
+            .checked_mul(k)
+            .and_then(|claims| claims.checked_add(3));
+        k >= 1 && words.and_then(|words| words.checked_mul(32)) == Some(input.len() as u64)
     }
 }
 
@@ -220,13 +242,13 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for Precompiles<'_> {
     }
 }
 
-/// What a call did.
+/// What a transaction did.
 #[derive(Debug)]
 pub struct Outcome {
-    /// What it returned, or `None` if it reverted or halted.
+    /// What it returned (a creation: the code it deployed), or `None` if it reverted or halted.
     pub output: Option<Vec<u8>>,
-    /// The gas of the contract's execution, its calls of `PCS_OPEN` included: the transaction's without its base
-    /// cost and its calldata.
+    /// The gas of its execution, its calls of `PCS_OPEN` included: the transaction's without its base cost and its
+    /// calldata. A creation's includes its 32,000, its init code's 2 a word and its code's deposit, 200 a byte.
     pub execution: u64,
 }
 
@@ -240,42 +262,114 @@ pub fn transaction_gas(calldata: &[u8], execution: u64, floor: u64) -> u64 {
     21_000 + (16 * nonzeros + 4 * zeros + execution).max(floor_gas)
 }
 
-/// Call a contract holding `code` with `calldata`, in one transaction of a block whose openings are `pcs_open`'s.
-pub fn call(code: &[u8], calldata: &[u8], pcs_open: &PcsOpen) -> Outcome {
-    let (contract, caller) = (Address::with_last_byte(0xc0), Address::with_last_byte(0xca));
-    let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(
-        contract,
-        AccountInfo::from_bytecode(Bytecode::new_legacy(Bytes::copy_from_slice(code))),
-    );
-    // Cancun has no calldata floor, so the gas it reports separates into calldata and execution.
-    let mut evm = Context::mainnet()
-        .with_db(db)
-        .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
-        .build_mainnet()
-        .with_precompiles(Precompiles {
-            eth: EthPrecompiles::default(),
-            pcs_open,
-            warm: false,
-        });
-    evm.instruction.insert_instruction(FIELD_MUL, field_mul);
-    let tx = TxEnv::builder()
-        .caller(caller)
-        .kind(TxKind::Call(contract))
-        .data(Bytes::copy_from_slice(calldata))
-        .gas_limit(10_000_000)
-        .build()
-        .expect("a transaction");
-    let result = evm.transact_one(tx).expect("a valid transaction");
-    let execution = result.gas_used() - transaction_gas(calldata, 0, 0);
-    let output = match result {
-        ExecutionResult::Success {
-            output: Output::Call(output),
-            ..
-        } => Some(output.to_vec()),
-        _ => None,
-    };
-    Outcome { output, execution }
+/// Who deploys contracts.
+pub const DEPLOYER: Address = Address::with_last_byte(0xde);
+/// Who calls them, unless said otherwise.
+pub const CALLER: Address = Address::with_last_byte(0xca);
+
+/// The accounts transactions run on: the senders' and the contracts deployed.
+#[derive(Clone, Default)]
+pub struct Chain {
+    db: CacheDB<EmptyDB>,
+}
+
+impl Chain {
+    /// Run a transaction from `from`, sending `value` wei, in a block whose openings are `pcs_open`'s, and keep
+    /// what it changes; and the address of the contract it created, if any. Each transaction starts cold
+    /// (EIP-2929): its first `SLOAD` of a slot costs 2,100.
+    pub(crate) fn run(
+        &mut self,
+        from: Address,
+        to: TxKind,
+        data: &[u8],
+        value: U256,
+        pcs_open: &PcsOpen,
+    ) -> (Outcome, Option<Address>) {
+        // Senders have funds for the value; gas is free.
+        let nonce = self
+            .db
+            .cache
+            .accounts
+            .get(&from)
+            .map_or(0, |account| account.info.nonce);
+        let balance = U256::from(10u64.pow(18));
+        self.db
+            .insert_account_info(from, AccountInfo::from_balance(balance).with_nonce(nonce));
+        // Cancun has no calldata floor, so the gas it reports separates into calldata and execution.
+        let mut evm = Context::mainnet()
+            .with_db(&mut self.db)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
+            .build_mainnet()
+            .with_precompiles(Precompiles {
+                eth: EthPrecompiles::default(),
+                pcs_open,
+                warm: false,
+            });
+        evm.instruction.insert_instruction(FIELD_MUL, field_mul);
+        let tx = TxEnv::builder()
+            .caller(from)
+            .nonce(nonce)
+            .kind(to)
+            .value(value)
+            .data(Bytes::copy_from_slice(data))
+            .gas_limit(10_000_000)
+            .build()
+            .expect("a transaction");
+        let result = evm.transact_commit(tx).expect("a valid transaction");
+        let execution = result.gas_used() - transaction_gas(data, 0, 0);
+        let (output, created) = match result {
+            ExecutionResult::Success {
+                output: Output::Call(output),
+                ..
+            } => (Some(output.to_vec()), None),
+            ExecutionResult::Success {
+                output: Output::Create(output, created),
+                ..
+            } => (Some(output.to_vec()), created),
+            _ => (None, None),
+        };
+        (Outcome { output, execution }, created)
+    }
+
+    /// Deploy a contract by a transaction of `init_code` from [`DEPLOYER`]: its address, unless the creation
+    /// failed, and the transaction's outcome.
+    pub fn deploy(&mut self, init_code: &[u8]) -> (Option<Address>, Outcome) {
+        let (outcome, created) = self.run(DEPLOYER, TxKind::Create, init_code, U256::ZERO, &PcsOpen::default());
+        (created, outcome)
+    }
+
+    /// Send `calldata` and `value` wei from `from` to `to`, in a transaction of a block whose openings are
+    /// `pcs_open`'s, and keep what it changes.
+    pub fn transact(
+        &mut self,
+        from: Address,
+        to: Address,
+        calldata: &[u8],
+        value: U256,
+        pcs_open: &PcsOpen,
+    ) -> Outcome {
+        self.run(from, TxKind::Call(to), calldata, value, pcs_open).0
+    }
+
+    /// The same from [`CALLER`] with no value, leaving the chain as it was.
+    pub fn call(&self, to: Address, calldata: &[u8], pcs_open: &PcsOpen) -> Outcome {
+        self.clone().transact(CALLER, to, calldata, U256::ZERO, pcs_open)
+    }
+
+    /// The code of the account at `address`.
+    pub fn code(&self, address: Address) -> Vec<u8> {
+        let account = self.db.cache.accounts.get(&address);
+        let code = account.and_then(|account| account.info.code.as_ref());
+        code.map_or_else(Vec::new, |code| code.original_byte_slice().to_vec())
+    }
+
+    /// The word in storage slot `slot` of the account at `address`.
+    pub fn storage(&self, address: Address, slot: U256) -> U256 {
+        let account = self.db.cache.accounts.get(&address);
+        account
+            .and_then(|account| account.storage.get(&slot).copied())
+            .unwrap_or_default()
+    }
 }
 
 #[cfg(test)]
@@ -295,6 +389,42 @@ mod tests {
             assert_eq!(layout(U256::from(id)), None, "{id}");
         }
         assert_eq!(layout(U256::MAX), None);
+    }
+
+    /// An input attests only at its length, `3 + k (v + 1)` words: one word or byte more or fewer, `k` of 0 or
+    /// one more claim than the words hold, an unknown layout, do not.
+    #[test]
+    fn inputs_of_another_length_do_not_attest() {
+        let (root, id) = ([3; 32], layout_id(TableId::Wiring, 20));
+        let vars = layout(U256::from(id)).expect("a layout").vars;
+        let claims = [Claim {
+            point: vec![F192::ONE; vars],
+            value: F192::ZERO,
+        }];
+        let input = pcs_open_input(&root, id, &claims);
+        let mut block = PcsOpen::default();
+        block.register(&root, id, &claims);
+        assert!(block.run(&input).1);
+        for len in [
+            0,
+            31,
+            64,
+            96,
+            input.len() - 32,
+            input.len() - 1,
+            input.len() + 1,
+            input.len() + 32,
+        ] {
+            let mut other = input.clone();
+            other.resize(len, 0);
+            assert!(!PcsOpen::well_sized(&other), "{len}");
+            assert!(!block.run(&other).1, "{len}");
+        }
+        for (at, byte) in [(95, 0), (95, 2), (62, 9), (40, 1)] {
+            let mut other = input.clone();
+            other[at] = byte;
+            assert!(!PcsOpen::well_sized(&other), "{at} {byte}");
+        }
     }
 
     /// The root's word is its two scalars, the high one first.

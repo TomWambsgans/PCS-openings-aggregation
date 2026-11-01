@@ -58,7 +58,10 @@ from where.
   hidden layouts make the roots and the openings hide the witness ([`HIDING.md`](crates/quotient/HIDING.md)).
 - `crates/evm`: the same verifier compiled to EVM bytecode, run on revm with `FIELD_MUL` (10 gas) and a mock
   `PCS_OPEN` precompile (ABI in `machine.rs`), which the contract calls once per commitment: three calls for the
-  four claims.
+  four claims. The contract's ABI (`verify` with a selector and packed arguments, 252 bytes of calldata) and its
+  deployment are in `quotient.rs`: the circuit's commitment is a constructor argument kept in storage (read by one
+  cold `SLOAD`), which a fixed owner may change (`setIndexRoot`). About 14,300 gas of execution at a claim price
+  of 0, and 1.43 M gas to deploy.
 - Vendored from leanVM `c445e3d5`: `primitives`, `fiat_shamir`, `pcs`, `parallel`, `verifier`, `bench`.
 
 ```sh
