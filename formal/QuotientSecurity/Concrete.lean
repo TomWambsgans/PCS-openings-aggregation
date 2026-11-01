@@ -516,10 +516,12 @@ variable {N : ℕ} (B : CantorBasis F N) (hm : 22 + 2 ≤ N)
 `2^22` rows (`N = 2^24` cells): with the witness's polynomials of degree `2^23`, the quotients'
 `2^26`, the wiring and the cells' vanishing polynomial `2^24`, the rows' `2^22` and the public
 weight's `2^24 + 9 * 2^10`, a cell's polynomial has degree `4 * 2^23 + 3` and a denominator
-`3 * 2^24 + 4`, and `2 * (3 * 2^24 + 4) + 2^24 + 2^22 + 2^26 + (2^24 + 9 * 2^10)
-+ 2 * (2^25 + 3) = 2^28 + 2^22 + 9230`, that is `16.25 N` and a little more. -/
+`3 * 2^24 + 4`. The largest term is the copy identity's `D D' h`, with `h = h_0 + v_cells h_high`:
+`2 * (3 * 2^24 + 4) + 2^24 + 2^26 = 11 * 2^24 + 8`, that is `11 N` and a little more (the gate
+identity's `v_rows D D' q_gate` is `10 * 2^24 + 2^22 + 8`, its `D D' gate` `10 * 2^24 + 14`, the
+copy identity's `pub w D D'` `9 * 2^24 + 9227`). -/
 theorem Params.ofCantor_identity_eq :
-    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity = 2 ^ 28 + 2 ^ 22 + 9230 := by
+    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity = 11 * 2 ^ 24 + 8 := by
   norm_num [Params.Bounds.identity, Params.Bounds.denominator, Params.Bounds.cell,
     Params.ofCantorBounds]
 
@@ -527,6 +529,32 @@ theorem Params.ofCantor_identity :
     (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity ≤ 2 ^ 29 := by
   rw [Params.ofCantor_identity_eq]
   norm_num
+
+/-- Below `2^28`, as the margin for the lists asks (`rbrError_list_margin`). -/
+theorem Params.ofCantor_identity_le_margin :
+    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity ≤ 2 ^ 28 := by
+  rw [Params.ofCantor_identity_eq]
+  norm_num
+
+/-- **The margin for the lists, on the instance.** For any `L ≤ 2^18`, the first and the third
+challenges' errors times `L`, and the second's times `L^2`, are at most `2^-128`: the
+union bound over level-0 Johnson lists of at most `2^18` words that WHIR without an out-of-domain
+sample at that level adds keeps every challenge at 128 bits. -/
+theorem rbrError_list_margin_ofCantor (hq : Fintype.card F = 2 ^ 192) (L : ℕ)
+    (hL : L ≤ 2 ^ 18) :
+    (L : NNReal) * rbrError (Params.ofCantor B hm σ 8 wordSum pub hPub)
+        (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd) ⟨⟨1, by norm_num⟩, rfl⟩
+        ≤ 1 / 2 ^ 128 ∧
+      (L : NNReal) ^ 2 * rbrError (Params.ofCantor B hm σ 8 wordSum pub hPub)
+        (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd) ⟨⟨3, by norm_num⟩, rfl⟩
+        ≤ 1 / 2 ^ 128 ∧
+      (L : NNReal) * rbrError (Params.ofCantor B hm σ 8 wordSum pub hPub)
+        (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd) ⟨⟨5, by norm_num⟩, rfl⟩
+        ≤ 1 / 2 ^ 128 :=
+  rbrError_list_margin (Params.ofCantor B hm σ 8 wordSum pub hPub)
+    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd) hq
+    (Params.ofCantor_nCells B hm σ 8 wordSum pub hPub) rfl
+    (Params.ofCantor_identity_le_margin B hm σ wordSum pub hPub hd) L hL
 
 open OracleComp OracleSpec in
 /-- **128 bits on the instance.** With `2^22` rows and eight public words over a field of `2^192`
