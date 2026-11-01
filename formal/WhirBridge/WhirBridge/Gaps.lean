@@ -41,8 +41,12 @@ root, the claims and the proof. What it would take:
    inequality (`Compile.Rom.final_ineq`, `Final.lean`) and the potential's step
    (`step_ineqH`, `Potential.lean`) re-proved with commitments at the root. The certificate is
    unchanged: `openingSpec` (proved here) is a specification from the root's doom.
+   The seed itself is outside mumbai's `Seeds` too: its second hash answer,
+   `keccak256(root ‖ claims)`, sits in the public-digest lanes, where `Seeds.refs` admits no hash
+   answer (every answer must be the IV, lanes `0..3`, or inside a later hash input).
    *Or*, change the Rust: absorb the root as the opening's first two stream scalars and seed with
-   `keccak256(LABEL ‖ claims)` alone; that is `variantProg`, and `variant_sound` (a fixed
+   `keccak256(pre ‖ claims)` alone (`pre`: `LABEL`, a version, the layout's id, `log_n`, the rate),
+   a zero public digest; that is `variantProg`, and `variant_sound` (a fixed
    statement) and `family_sound` (claims chosen by the adversary, `Family.lean`) cover it, proved.
 2. **An adversarially chosen statement** is covered for that shape: `family_sound` builds, as
    mumbai does for leanVM (`EndToEnd/Sound/Statements.lean`), the seedings naming the claims

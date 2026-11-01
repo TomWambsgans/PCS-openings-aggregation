@@ -14,9 +14,10 @@ import LeanVM.Protocol.EndToEnd.Sound.Statements
 # Claims chosen by the adversary
 
 A statement is a list of claims on a fixed layout (`Stmt L`: every point of `vars` coordinates,
-at most `2^46 + 1` claims). Its seeding hashes `LABEL ‖ claims` (the claims' bytes as `seed`
-writes them, `statementBytes` without the root) into the IV, the public digest being zero
-(`famSeeds`); the root is read from the proof (`variantProg`). One program serves every
+at most `2^46 + 1` claims). Its seeding hashes `pre ‖ claims` (a fixed prefix of the verifier,
+`LABEL` and whatever else it binds, then the claims' bytes as `seed` writes them,
+`statementBytes` without the root) into the IV, the public digest being zero (`famSeeds`); the
+root is read from the proof (`variantProg`). One program serves every
 statement (`famProgram`): it reads the claims' count and scalars, never absorbed, then runs
 `variantProg` on them; a statement's root history is those reads (`famHistory`), as mumbai's
 `anyProgram` does for leanVM.
@@ -212,19 +213,21 @@ theorem stmt_eq_of_bytes {x x' : Stmt L} (h : claimsBytes x.claims = claimsBytes
   rw [← chunkClaims_flat L.vars x.claims x.wide, ← chunkClaims_flat L.vars x'.claims x'.wide, hf,
     hJ]
 
-/-- A statement's seeding: the IV `H(LABEL ‖ claims)`, then the permutation of the IV and zero. -/
-def famSeed (x : Stmt L) : Seed where
-  hs := [fun _ ↦ label ++ claimsBytes x.claims]
+/-- A statement's seeding: the IV `H(pre ‖ claims)`, then the permutation of the IV and zero.
+`pre` is any fixed prefix of the verifier: `LABEL`, and whatever else it binds (a version, the
+layout's id, `log_n`, the rate) in a form fixed for the verifier. -/
+def famSeed (pre : Bytes) (x : Stmt L) : Seed where
+  hs := [fun _ ↦ pre ++ claimsBytes x.claims]
   fin ds := seedInput (ds.getD 0 default) default
 
 variable (L) in
 /-- **The seedings of the statements.** -/
-def famSeeds : Seeds (Stmt L) where
-  seed := famSeed
+def famSeeds (pre : Bytes) : Seeds (Stmt L) where
+  seed := famSeed pre
   root := famHistory
   offs := []
   refs x ds hds i hi := by
-    have hl : (famSeed x).hs.length = 1 := rfl
+    have hl : (famSeed pre x).hs.length = 1 := rfl
     rw [hl] at hds
     have hd0 : ds.getD 0 default = ds[0] := by simp [List.getD_eq_getElem?_getD, hds]
     rw [hds] at hi
@@ -358,22 +361,22 @@ end Cert
 
 /-! ## The theorem -/
 
-theorem verifierFam_fam (z : Stmt L × Proof) :
-    verifierFam (famSeeds L) (famProgram L R) z =
-      verifierComp (famSeed z.1) (variantProg L R z.1.claims) z.2 := by
+theorem verifierFam_fam (pre : Bytes) (z : Stmt L × Proof) :
+    verifierFam (famSeeds L pre) (famProgram L R) z =
+      verifierComp (famSeed pre z.1) (variantProg L R z.1.claims) z.2 := by
   simp only [verifierFam, famSeeds, nodeAt_famHistory]
 
-theorem isTotalQueryBound_fam (z : Stmt L × Proof) :
-    IsTotalQueryBound (verifierFam (famSeeds L) (famProgram L R) z) variantQueries := by
-  rw [verifierFam_fam]
-  exact isTotalQueryBound_verifierComp (costLE_variant L R z.1.claims) (famSeed z.1) z.2
+theorem isTotalQueryBound_fam (pre : Bytes) (z : Stmt L × Proof) :
+    IsTotalQueryBound (verifierFam (famSeeds L pre) (famProgram L R) z) variantQueries := by
+  rw [verifierFam_fam pre]
+  exact isTotalQueryBound_verifierComp (costLE_variant L R z.1.claims) (famSeed pre z.1) z.2
 
 /-- The event: every candidate table of the extracted root word violates one of the statement's
 claims. -/
-def FamTableDoomed (z : Stmt L × Proof) (c : KeccakCalls.QueryCache) : Prop :=
+def FamTableDoomed (pre : Bytes) (z : Stmt L × Proof) (c : KeccakCalls.QueryCache) : Prop :=
   ∀ q ∈ Candidates L.logN R (code₀ L.logN R).thr
       (LeanVM.Protocol.Whir.Sound.wordOf (commits (rootEvents (extractedHistory
-        (fun x ↦ c (.inl x)) (fun s ↦ c (.inr s)) (famSeed z.1) (variantProg L R z.1.claims)
+        (fun x ↦ c (.inl x)) (fun s ↦ c (.inr s)) (famSeed pre z.1) (variantProg L R z.1.claims)
           z.2))) 0),
     ∃ cl ∈ z.1.claims, L.tableEval q cl.point ≠ cl.value
 
@@ -381,17 +384,17 @@ def FamTableDoomed (z : Stmt L × Proof) (c : KeccakCalls.QueryCache) : Prop :=
 adversary chooses**: an adversary of at most `QA` queries outputs claims on the layout `L` and a
 proof; the verifier accepts while every candidate table of the extracted root word violates one
 of its claims with probability at most `(QA + QV) · (2^-128 + 5 (QA + QV) / 2^256)`. -/
-theorem family_sound (hw : Whir.Admissible L.logN R) (hL : L.Valid)
+theorem family_sound (hw : Whir.Admissible L.logN R) (hL : L.Valid) (pre : Bytes)
     (A : OracleComp KeccakCalls (Stmt L × Proof)) (QA : ℕ)
     (hA : IsTotalQueryBound A QA) :
-    Pr{let z ← romExperiment A (verifierFam (famSeeds L) (famProgram L R))}[
-        z.1.2 = true ∧ FamTableDoomed (R := R) z.1.1 z.2] ≤
-      (QA + variantQueries : ℕ) * (εWhir + failBound (famSeeds L) (QA + variantQueries)) := by
-  refine romSound_of_imp (famProgram L R) (famCert L R hw) (famSeeds L)
+    Pr{let z ← romExperiment A (verifierFam (famSeeds L pre) (famProgram L R))}[
+        z.1.2 = true ∧ FamTableDoomed (R := R) pre z.1.1 z.2] ≤
+      (QA + variantQueries : ℕ) * (εWhir + failBound (famSeeds L pre) (QA + variantQueries)) := by
+  refine romSound_of_imp (famProgram L R) (famCert L R hw) (famSeeds L pre)
     (fun x ↦ rootOk_famHistory x) εWhir (famCert_bound L R hw) A QA hA variantQueries
-    isTotalQueryBound_fam FamTableDoomed fun z c hv hbad ↦ ?_
-  have hseed : (famSeeds L).seed z.1 = famSeed z.1 := rfl
-  have hroot : (famSeeds L).root z.1 = famHistory z.1 := rfl
+    (isTotalQueryBound_fam pre) (FamTableDoomed pre) fun z c hv hbad ↦ ?_
+  have hseed : (famSeeds L pre).seed z.1 = famSeed pre z.1 := rfl
+  have hroot : (famSeeds L pre).root z.1 = famHistory z.1 := rfl
   rw [hseed, hroot, nodeAt_famHistory] at hv
   obtain ⟨e, rest, hhist, hce⟩ := extracted_root (L := L) (R := R) (claims := z.1.claims) hv
   have hws := (Sound.after_extractedHistory _ _ hv).2
@@ -413,8 +416,8 @@ theorem family_sound (hw : Whir.Admissible L.logN R) (hL : L.Valid)
     simpa using h
 
 /-- **The numbers**: against `2^64` queries, the bound of `family_sound` is at most `2^-63`. -/
-theorem family_bound_le (L : Layout) {QA : ℕ} (hQ : QA ≤ 2 ^ 64) :
-    ((QA + variantQueries : ℕ) : ℝ≥0∞) * (εWhir + failBound (famSeeds L) (QA + variantQueries)) ≤
+theorem family_bound_le (L : Layout) (pre : Bytes) {QA : ℕ} (hQ : QA ≤ 2 ^ 64) :
+    ((QA + variantQueries : ℕ) : ℝ≥0∞) * (εWhir + failBound (famSeeds L pre) (QA + variantQueries)) ≤
       (2 : ℝ≥0∞)⁻¹ ^ 63 :=
   bound_le _ rfl hQ
 

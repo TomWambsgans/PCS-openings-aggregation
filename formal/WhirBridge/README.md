@@ -111,17 +111,53 @@ they are met:
 | WHIR levels, queries | 5: 224, 56, 32, 23, 17 | 5: 224, 56, 32, 23, 17 | 6: 225, 56, 32, 23, 18, 14 |
 | per-group escape `εmax` (every group after `λ`, discounted by its proof of work) | `2^-128` | `2^-128` | `2^-128` |
 | batching challenge `λ` (the lead, `(J−1)·L₀/2^192`) | `0` (one claim) | `0` (one claim) | `≤ 2^-174` (two claims; `≤ 3564/2^192 ≈ 2^-180.2` with the shape's own list bound) |
-| level-0 Johnson list `L₀` (candidates per root) | `≤ 7908` | `≤ 9952` | `≤ 3564` |
+| level-0 Johnson list `L₀` (candidates per root, `candidates_ours`) | `≤ 7908` | `≤ 9952` | `≤ 3564` |
+| weakest group, bits (leanerVM's certificate, evaluated in `Float`) | 128.96 (level 0, queries) | 128.97 (level 0, queries) | 128.98 (level 1, queries) |
 
 The `2^-128` is mumbai's certificate (`whirEps (deployedCodes μ R) config ≤ 2^-128`): at our three shapes
 it certifies at `2^-128` and not at `2^-129` (`shapeOK 129 μ 1 = false`, evaluated), the query counts
-being tuned to it. In the random-oracle model (`variant_sound`, the transcript with leanVM's shape, one
+being tuned to it. **These are leanerVM's certified codes, not `whir_config.rs`'s**: the level-0 slack is
+`η = e/2^22` with `e = 298, 375, 832` at `log_n = 24, 25, 28` (`Params/Deployed.lean`, `certTable`), which
+gives the lists `9952, 7908, 3564`. `whir_config.rs`'s own slack search (lists 323 and 216) omits the fold
+group's row-union factor `2^(ℓ−1)` (32 at level 0) that leanerVM's proved fold bound carries
+(`(2·L + 2^(ℓ−1)·E)/|E|`, `eFold`); under the proved bound only leanerVM's slacks make the deployed query
+counts reach `2^-128`. Every group of our three shapes, with those slacks, in bits (the certificate's
+`Nat` bounds, `listHi`, `excHi`, `thrHi`, read as floats: an evaluation, the theorem being `≥ 128`):
+
+| `log_n` | level: fold / out-of-domain / queries (after 17 bits of grinding) |
+|---|---|
+| 24 | 0: 128.97 / 155.0 / 128.97; 1: 129.02 / 150.6 / 129.00; 2: 129.06 / 148.5 / 129.02; 3: 132.27 / 143.3 / 132.26; 4 (final): 131.21 / — / 131.07 |
+| 25 | 0: 128.97 / 155.6 / 128.96; 1: 129.02 / 151.1 / 128.99; 2: 129.03 / 148.9 / 129.00; 3: 132.17 / 142.8 / 132.11; 4 (final): 129.34 / — / 129.15 |
+| 28 | 0: 129.41 / 157.4 / 129.41; 1: 128.98 / 152.9 / 128.98; 2: 129.00 / 150.5 / 128.99; 3: 131.98 / 147.7 / 131.98; 4: 134.14 / 141.8 / 134.13; 5 (final): 131.95 / — / 131.86 |
+
+The tail rounds escape at `2/2^192` each. In the random-oracle model (`variant_sound`, the transcript with leanVM's shape, one
 fixed statement): an adversary of `Q_A` queries makes the verifier accept while every candidate of the
 extracted root word violates a claim with probability at most
 
 `(Q_A + 10122) · (2^-128 + 5 (Q_A + 10122) / 2^256)`, about `Q_A · 2^-128`, at most `2^-63` for `Q_A ≤ 2^64` (`variant_bound_le`; the same bound for claims the adversary chooses, `family_sound`, `family_bound_le`),
 
 `10122` bounding the verifier's queries over every admissible shape (mumbai's `whirBound`).
+
+## What the bridge exports to the composition
+
+* **The list bound**: `candidates_ours`: for every word, the candidates the doom quantifies over (the stacks
+  agreeing with the root's word on level 0's Johnson threshold of the **certified** code,
+  `Candidates μ 1 (code₀ μ 1).thr W`) number at most **9952** (`log_n = 24`, wiring), **7908** (`25`,
+  witness), **3564** (`28`, quotient); `candidates_count` gives `≤ listMax` at any admissible shape, and
+  mumbai's global bound is `2^18`. A reduction drawing challenges before any claim pins a list member
+  union-bounds over these.
+* **One opening per root**: the guarantee is joint only within one opening. An opening that is not doomed
+  has **one** candidate whose table satisfies **all** its claims (`joint_of_not_doom`); claims on one root
+  split over two openings would get one list member each, possibly different (a split opening of the
+  quotient table's two claims is forgeable, about `2^111` by the review's count). So every statement here
+  is about one opening holding all the claims on its root, as `protocol::verify_openings` does.
+* **The seed it needs** (`family_sound`, mumbai's `Seeds`): **one** hash step, the IV
+  `keccak256(pre ‖ claims)`, with `pre` any prefix fixed for the verifier (`LABEL`, then the version, the
+  layout's id, `log_n`, the rate, in fixed-width fields), the claims as `seed` writes them (fixed width per
+  layout); a public digest that is **not** a hash answer (zero here); and the root read as the opening's
+  first two stream scalars (a `commit` node), the verifier checking it is the expected root. mumbai's
+  `Seeds.refs` rejects a second hash answer in the public-digest lanes, so `(keccak256(LABEL),
+  keccak256(root ‖ claims))` is not of this form (gap 1).
 
 ## Assumptions
 
@@ -145,8 +181,11 @@ What mumbai's proofs do not cover of our opening (stated in `Gaps.lean`):
    `Fail` extended to the root inside the seeding hash input, `final_ineq` and `step_ineqH` re-proved).
    The certificate side is done (`openingSpec`). **Alternatively change the Rust**: absorb the root as the
    opening's first two stream scalars (the verifier also checking they are the root it expects, which
-   only rejects more), and seed with `keccak256(LABEL ‖ claims)` as the IV and a zero public digest; then
-   `family_sound` (claims chosen by the adversary) applies as proved.
+   only rejects more), and seed with `keccak256(pre ‖ claims)` as the IV (`pre`: `LABEL`, version, layout
+   id, `log_n`, rate) and a zero public digest; then `family_sound` (claims chosen by the adversary)
+   applies as proved. Binding the layout, `log_n`, the rate and a version in `pre` costs nothing in the
+   proof (`pre` is arbitrary); the present seed's second hash, `keccak256(root ‖ claims)` in the
+   public-digest lanes, is what mumbai's `Seeds.refs` does not admit.
 2. **Adversarial statements** are covered for that shape (`family_sound`, statements `Stmt L`: claims on one
    layout, every point of `vars` coordinates, at most `2^46 + 1` of them). `seed`'s encoding of the claims is
    injective only for a fixed layout (no lengths; `LABEL` is shared by the three openings, and the layout
@@ -156,8 +195,8 @@ What mumbai's proofs do not cover of our opening (stated in `Gaps.lean`):
    the up to `L₀` tables of the root's Johnson list satisfying **all** its claims jointly (the quotient
    table's two claims bind one table), not a unique table. The reduction's soundness must hold for each
    of the `L₀` candidates fixed by each root before its challenges: a union bound multiplying its
-   per-table error by `L₀ ≤ 2^13.3` (`listMax_ours`; mumbai's global bound `2^18`), as mumbai does for
-   leanVM's phases.
+   per-table error by `L₀ ≤ 2^13.3` (`candidates_ours`; mumbai's global bound `2^18`), as mumbai does for
+   leanVM's phases, and claims on one root must not be split over openings (`joint_of_not_doom`).
 4. **Composition of the three transcripts with the reduction's**: the reduction must read the words
    extracted when each root entered its transcript (mumbai's `extract_take_eq`).
 5. **The random-permutation model** (mumbai's `LeanVMRpm.lean`), **pruned paths and `placed`**, and **the

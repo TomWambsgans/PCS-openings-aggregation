@@ -271,5 +271,61 @@ theorem layouts_valid : ∀ r, 13 ≤ r → r ≤ 22 →
   obtain ⟨⟨a1, a2, a3, a4⟩, ⟨b1, b2, b3, b4⟩, ⟨c1, c2, c3, c4⟩⟩ := key r h1 h2
   exact ⟨⟨a1, a2, a3, a4⟩, ⟨b1, b2, b3, b4⟩, ⟨c1, c2, c3, c4⟩⟩
 
+/-! ## What the composition imports
+
+**The list bound exported.** The candidates every statement here quantifies over are
+`Candidates μ R (code₀ μ R).thr W`: the stacks whose encoding agrees with the root's word `W` on
+at least level 0's Johnson threshold of columns, the threshold of leanerVM's **certified** level-0
+code (`deployedCodes`, slack `η = e/2^22` from `Params/Deployed.lean`, the one under which the
+deployed query counts certify `2^-128` with the fold group's row-union factor `2^(ℓ−1)`; not the
+slack `whir_config.rs` searches). For every word there are at most `listMax` of them
+(`candidates_count`), and at our shapes at most `9952` (`log_n = 24`, the wiring table), `7908`
+(`25`, the witness table) and `3564` (`28`, the quotient table) (`candidates_ours`); mumbai's
+global bound is `2^18`. A reduction whose challenges come before any claim pins a list member
+union-bounds over these lists.
+
+**One opening per root.** The guarantee is joint only within one opening: an opening that is not
+doomed has **one** candidate whose table satisfies **all** its claims (`joint_of_not_doom`).
+Claims on one root split over two openings would get one candidate each, possibly different list
+members; so the composition must open all the claims on a root in one opening, as
+`protocol::verify_openings` does (one opening per commitment, the quotient table's two claims
+together). -/
+
+/-- The candidates of a level-0 word at the deployed threshold are finite and at most `listMax`
+(mumbai's `candidates_finite`, `candidates_ncard_le`). -/
+theorem candidates_count {μ R : ℕ} (hw : Whir.Admissible μ R) (W : Word) :
+    (Candidates μ R (code₀ μ R).thr W).Finite ∧
+      (Candidates μ R (code₀ μ R).thr W).ncard ≤ (code₀ μ R).listMax := by
+  obtain ⟨q₀, rest, hc, -⟩ := LeanVM.Protocol.Whir.Complete.exists_ladder hw
+  obtain ⟨-, hμ, hκ, hR, -⟩ := LeanVM.Protocol.Whir.Params.deployed_spec_hyps hw hc
+  exact ⟨LeanVM.Protocol.EndToEnd.Sound.candidates_finite _ hκ hR hμ W,
+    LeanVM.Protocol.EndToEnd.Sound.candidates_ncard_le _ hκ hR hμ W⟩
+
+/-- **The list bound exported for the composition**: at our three shapes (rate `1/2`), every
+root's word has at most `9952`, `7908`, `3564` candidates. -/
+theorem candidates_ours (W : Word) :
+    (Candidates 24 1 (code₀ 24 1).thr W).ncard ≤ 9952 ∧
+      (Candidates 25 1 (code₀ 25 1).thr W).ncard ≤ 7908 ∧
+      (Candidates 28 1 (code₀ 28 1).thr W).ncard ≤ 3564 :=
+  ⟨(candidates_count (by decide) W).2.trans listMax_ours.1,
+    (candidates_count (by decide) W).2.trans listMax_ours.2.1,
+    (candidates_count (by decide) W).2.trans listMax_ours.2.2⟩
+
+/-- **Joint extraction**: a root's commitment of the stack's shape that is not doomed for an
+opening has one candidate whose table satisfies all of that opening's claims. -/
+theorem joint_of_not_doom (L : Layout) (hL : L.Valid) (R : ℕ) (claims : List Claim)
+    (hc : ∀ c ∈ claims, c.point.length = L.vars) (cs : List (ℕ × ℕ × Word))
+    (hshape : LeanVM.Protocol.Whir.Sound.ShapeOK 0 (code₀ L.logN R) laneBits cs)
+    (hnot : ¬ OpeningDoom L R claims cs) :
+    ∃ q ∈ Candidates L.logN R (code₀ L.logN R).thr (LeanVM.Protocol.Whir.Sound.wordOf cs 0),
+      ∀ c ∈ claims, L.tableEval q c.point = c.value := by
+  rw [openingDoom_iff L hL R claims hc cs] at hnot
+  by_contra hno
+  refine hnot ⟨hshape, fun q hq ↦ ?_⟩
+  by_contra hall
+  exact hno ⟨q, hq, fun c hcm ↦ by
+    by_contra hne
+    exact hall ⟨c, hcm, hne⟩⟩
+
 end WhirBridge
 
