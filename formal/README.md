@@ -18,7 +18,7 @@ circuit, with ideal commitments.
 | | What | Source | Status |
 |---|---|---|---|
 | F0 | The circuit: a Lean definition of the deployed wiring (`quotient::circuit::membership`), proof that a satisfying assignment is its computation (connecting `cells_determined` to the end theorems: the zero and one pinned by words 5 and 4, the statement embedding with words 4–7 = `(1, 0, 0, 0)`) and that this computation is Keccak-256 membership; the constants (Cantor basis, `τ`, `b`, the bit weights) as computable definitions whose hypotheses are checked | new (found missing by the Lean review: today the end theorems hold for every wiring, so for a degenerate one they say nothing) | in progress |
-| F1 | The reduction (five field elements → four claims): round-by-round knowledge soundness, completeness, honest-verifier ZK, Fiat–Shamir in the ROM, **ideal commitments** | ported from leanVM `formal/quotient` and adapted (below): `2^22` rows, the χ gate on bits (degree 2), degree bounds, the circuit argument (bits, no carries) | done for the reduction: `lake build` green, sorry-free, end theorems on `propext`, `Classical.choice`, `Quot.sound` (752 declarations swept, `formal/Review/Axioms.lean`). Its zero knowledge is for ideal *hiding* commitments only: the deployed roots and openings are F3's (and the masks of the five values have no slack, so nothing else may reveal an evaluation of a witness polynomial). Its theorems hold for every wiring: tying them to the deployed circuit is F0 |
+| F1 | The reduction (five field elements → four claims): round-by-round knowledge soundness, completeness, honest-verifier ZK, Fiat–Shamir in the ROM, **ideal commitments** | ported from leanVM `formal/quotient` and adapted (below): `2^22` rows, the χ gate on bits (degree 2), degree bounds, the circuit argument (bits, no carries) | done for the reduction: `lake build` green, sorry-free, end theorems on `propext`, `Classical.choice`, `Quot.sound` (761 declarations swept, `formal/Review/Axioms.lean`). Its zero knowledge is for ideal *hiding* commitments only: the deployed roots and openings are F3's (and the masks of the five values have no slack, so nothing else may reveal an evaluation of a witness polynomial). Its theorems hold for every wiring: tying them to the deployed circuit is F0 |
 | F2 | WHIR openings list-sound for our claims (some member of the root's level-0 list satisfies all claims of one opening; our opening seed differs from leanVM's, so the spec's precondition must be re-established) (a λ-combination of `eq` weights on a stack of lanes) | leanerVM `mumbai`, `lean_vm` `Whir/Sound`: `whirSpec` holds for any multiaffine weight; our weight is one | to import |
 | F3 | Hiding openings: the padded tables (base field `K = GF(2^64)`, challenges in `E = GF(2^192)`, first fold 6) and the Merkle siblings in the random-permutation model | new (the ZK-WHIR note, adapted to `K ⊂ E`; `membership-zk.md` of leanVM's branch for the sibling argument) | to do; padding not built in Rust yet |
 | F4 | Composition: commitments as Merkle trees over Keccak-256 in the random-permutation model, the reduction's Keccak-256 chain, the openings' duplex; extraction from the adversary's transcript (`mumbai`'s `Statement/Extractor.lean` decodes WHIR words by Guruswami–Sudan) | `mumbai` `common` (sponge indifferentiability, ROM→RPM), `lean_vm` extraction | to do |
@@ -43,17 +43,43 @@ describe this one.
   `claims_iff_accepts_ofCantor` states them (the WHIR stacks of `opening::Layout` are not modelled: a table
   of the layout is a table whose other chunks are zero).
 
-**The bounds, re-derived** (`Degrees.lean`, `Concrete.lean`, `Bits.lean`). `Bounds.identity` sums a bound on
-every term of the two identities; with the gate of degree 2 it is
-`2 * denominator + cells + rows + quotient + pub + 2 * cell` (was `4 * cell`). At the instance's table sizes
+**The bounds, re-derived** (`Degrees.lean`, `Concrete.lean`, `Bits.lean`). `Bounds.identity` is the largest
+of the bounds on the terms of the two identities (upstream summed them): with the gate of degree 2 it is
+`max (max (2 * denominator) cells + max cells rows + quotient) (2 * denominator + max (pub + cell) (2 * cell))`
+(the terms `D D' h`, `v_cells q`, `v_rows (D D' q_gate + v_cells j)`, `pub w D D'`, `D D' gate`; it bounds the
+product the verifier inverts too). At the instance's table sizes
 (witness polynomials `2^23`, quotients `2^26`, wiring and cells `2^24`, rows `2^22`, public weight
 `2^24 + 9 * 2^10`): a cell's polynomial `4 * 2^23 + 3`, a denominator `3 * 2^24 + 4`, and
-`Params.ofCantor_identity_eq`: a term-by-term upper bound on the identities' degree, `2^28 + 2^22 + 9230` (`16.25 N` and a little), so
-`Params.ofCantor_identity`: at most `2^29`. The public weight's degree (`natDegree_membershipPub_le`) is
+`Params.ofCantor_identity_eq`: the identities' degree is at most `11 * 2^24 + 8` (`11 N` and a little, the copy
+identity's `D D' h`; the sum was `2^28 + 2^22 + 9230`), so `Params.ofCantor_identity_le_margin`: at most `2^28`
+(and `Params.ofCantor_identity`: at most `2^29`). The public weight's degree (`natDegree_membershipPub_le`) is
 `Σ_{11 ≤ j < 24} 2^j + 11 * 2^10 = 2^24 + 9 * 2^10`. The three round errors over `q = 2^192`
-(`rbrError_le`): the copy argument `(2 N^2 + 4 N + 8) / q = (2^49 + 2^26 + 8) / 2^192 < 2^-142`, the
-identities `≤ 2^29 / 2^192 = 2^-163`, the last `3 / 2^192`; each `≤ 2^-128`, so `knowledgeSoundness_bits`,
-`knowledgeSoundness_ofCantor`, `knowledgeSoundness_membership`, `Instance.soundness` give `(Q + 3) / 2^128`.
+(`rbrError_le`): the copy argument `(4 N + 8) / q = (2^26 + 8) / 2^192`, about `2^-166` (was
+`(2 N^2 + 4 N + 8) / q`, about `2^-143`; below), the identities `(11 * 2^24 + 8) / 2^192 < 2^-164`, the last
+`3 / 2^192`; each `≤ 2^-128`, so `knowledgeSoundness_bits`, `knowledgeSoundness_ofCantor`,
+`knowledgeSoundness_membership`, `Instance.soundness` give `(Q + 3) / 2^128`.
+
+*The first challenge, tight* (`card_consistent_le`, `card_copy_le`, `LogDerivative.lean`). Upstream excluded
+`2 N^2` values of `β` (any two poles meeting) and `2 N q^2` triples with a vanishing denominator. Now, if the
+copy from `x₁` to `σ x₁` fails: a consistent triple has, at every cell, both denominators zero or neither
+(`consistent_denominators`: the copy identity at a cell is `D D' h = D + D' + pub w D D'`), and where none
+vanishes the sum of logarithmic derivatives meets the target. The pole `w(σ x₁) + β σ x₁` of the first term of
+`σ x₁` is cancelled only by the first term of another cell (`N - 1` values of `β`) or the second term of a
+cell other than `x₁` (`N - 1` values; the second term of `x₁` has the same label and another value): outside
+these `2 N - 2` values (`poleBetas`) the cleared polynomial in `α` is not zero and of degree at most `2 N`, and
+every consistent `α` is a root of it (one at which a cell's two denominators vanish together too). So at most
+`(2 N - 2) q + 2 N q` pairs `(α, β)` per `γ`, and with the other cases (a gate fails: `2 N q^2`; a word fails:
+`(2 N + words) q^2`) at most `(4 N + words) q^2` triples. This also beats the `(6 N + 8) / q` of the review,
+which still counted the triples with a vanishing denominator apart.
+
+*The margin for WHIR's lists* (`rbrError_mul_sq_le`, `rbrError_list_margin`, `rbrError_list_margin_ofCantor`,
+`roundError_mul_sq_le`). With WHIR without an out-of-domain sample at level 0, each challenge is
+union-bounded over the level-0 Johnson lists involved: `L` for `(α, β, γ)` and for `ρ`, `L^2` for `t`. For any
+`L ≤ 2^18` (leanerVM's generic list hypothesis; its certified parameters give `L ≤ 7908`) and identities of
+degree at most `2^28`, every round error times `L^2` stays at most `2^-128`: on the instance
+`2^36 (2^26 + 8) / 2^192`, about `2^-130`, `2^36 (11 * 2^24 + 8) / 2^192`, about `2^-128.5`, and
+`3 * 2^36 / 2^192`. Both tightenings are needed: upstream's first round times `2^18` is `2^-125`, and the
+summed degree `2^28 + 2^22 + 9230` times `2^36` exceeds `2^-128`.
 Zero knowledge: `zkError = (2 N + 4 * 2^22) / q = 3 * 2^24 / 2^192` (`zkError_le`, the mask's vanishing
 polynomial `w_22` in the row variable). The honest messages (`honest_legal`, for a first message of degree
 `2^22 + 2`): copy quotient at most `3 * 2^24 + 9249`, gate quotient at most `7 * 2^22 + 22`, both within the

@@ -128,6 +128,29 @@ theorem consistent_on_cells (stmt : Fin P.words → F) (g : Witness F) (R : Quot
       ← P.hPub γ (cells P g)]
     rfl
 
+/-- A consistent second message: at every cell, the two denominators vanish together or not at
+all. The copy identity at the cell is `D D' h = D + D' + pub w D D'`, so `D = 0` forces `D' = 0`
+and back. -/
+theorem consistent_denominators (stmt : Fin P.words → F) (g : Witness F) (R : Quotients F)
+    (α β γ : F) (h : P.Consistent stmt g R α β γ) (i : P.T × Fin 4) :
+    α + cells P g i + β * P.pt i = 0 ↔ α + cells P g i + β * P.pt (P.σ i) = 0 := by
+  have h0 := congrArg (fun p : F[X] => p.eval (P.pt i)) h.1
+  have hv : P.vCells.eval (P.pt i) = 0 := P.hCells i.1.1 i.1.2 i.2
+  simp only [copyDefect, copyPoly, Quotients.h, eval_add, eval_mul, eval_zero, hv, zero_mul,
+    add_zero, dPoly_eval_pt, dNextPoly_eval_pt, cellPoly_zero_eval_pt] at h0
+  set d := α + cells P g i + β * P.pt i
+  set d' := α + cells P g i + β * P.pt (P.σ i)
+  have h1 : d * d' * R.h₀.eval (P.pt i)
+      = d + d' + (P.pub γ).eval (P.pt i) * cells P g i * (d * d') :=
+    CharTwo.add_eq_zero.mp h0
+  constructor
+  · intro hd
+    rw [hd] at h1
+    simpa using h1.symm
+  · intro hd'
+    rw [hd'] at h1
+    simpa using h1.symm
+
 end Params
 
 end QuotientSecurity
