@@ -2,10 +2,11 @@
 // can be nonzero) is from leanVM (https://github.com/leanEthereum/leanVM), branch PCS-openings-aggregation,
 // crates/flock/src/quotient/opening.rs; `wire_proof` is leanVM's `keccak_gkr::batch_bench::scalar_proof`
 // (commit c445e3d5). MIT OR Apache-2.0; see NOTICE.md.
-//! The commitments the claims are opened against, with leanVM's WHIR **unchanged**: its committer
-//! ([`pcs::whir::commit`]), its prover ([`pcs::whir::recursive_prover_with_basis`]) and its verifier
-//! ([`verifier::whir::verify_whir`], the one leanerVM proves sound), at a size and rate it supports (a stack of
-//! `2^15` to `2^28` words, `64` lanes at its first fold).
+//! The commitments the claims are opened against, with leanVM's WHIR **unchanged**: its commitments and proofs
+//! are those of its committer ([`pcs::whir::commit`]) and its prover ([`pcs::whir::recursive_prover_with_basis`]),
+//! made in less memory ([`pcs::whir::commit_tree`], [`pcs::whir::recursive_prover_with_lane_tensors`]), and its
+//! verifier ([`verifier::whir::verify_whir`], the one leanerVM proves sound) checks them, at a size and rate it
+//! supports (a stack of `2^15` to `2^28` words, `64` lanes at its first fold).
 //!
 //! A protocol's claims are on a *table*: a multilinear in `vars` variables. A table is known to vanish
 //! outside some blocks, so it is committed as the **stack** of those blocks, one WHIR lane each, in the order
@@ -16,7 +17,7 @@
 use fiat_shamir::digest_words;
 use fiat_shamir::merkle::Hash;
 use fiat_shamir::transcript::{Proof, ProverState};
-use pcs::whir::{ProverData, commit as whir_commit, config_for_rate, recursive_prover_with_basis};
+use pcs::whir::{LaneTensor, commit_tree_in, config_for_rate, recursive_prover_with_lane_tensors};
 use primitives::field::{F64, F192, powers};
 use primitives::hash::hash as keccak256;
 use primitives::multilinear::{eq_table, mle_eval_par};
@@ -112,10 +113,16 @@ pub struct Table {
 impl Table {
     /// The table whose lane `l`, holding block `b`, `fill(l, b, lane)` writes whole.
     pub fn new(layout: Layout, fill: impl Fn(usize, usize, &mut [F64]) + Sync) -> Self {
+        Self::new_in(layout, Vec::new(), fill)
+    }
+
+    /// [`Self::new`], its stack in `buffer`'s allocation when that holds it: a buffer the caller is done with,
+    /// whose words `fill` overwrites.
+    pub fn new_in(layout: Layout, mut buffer: Vec<F64>, fill: impl Fn(usize, usize, &mut [F64]) + Sync) -> Self {
         let lane = 1 << layout.log_lane();
-        let mut stack = vec![F64::ZERO; layout.placed()];
-        parallel::chunks_mut(&mut stack, lane, |l, out| fill(l, layout.block(l), out));
-        Self { layout, stack }
+        buffer.resize(layout.placed(), F64::ZERO);
+        parallel::chunks_mut(&mut buffer, lane, |l, out| fill(l, layout.block(l), out));
+        Self { layout, stack: buffer }
     }
 
     /// Its multilinear extension at `point`.
@@ -130,20 +137,28 @@ impl Table {
     }
 }
 
-/// What a commitment keeps for its openings.
+/// What a commitment keeps for its openings: its Merkle tree alone. The codeword is twice the stack, and an
+/// opening reads a few hundred of its rows, so it encodes them again from the stack rather than keep it.
 pub struct Committed {
     pub root: Hash,
-    data: ProverData,
+    tree: Vec<Hash>,
 }
 
 /// WHIR's rate, `2^-LOG_INV_RATE`.
 pub const LOG_INV_RATE: usize = 1;
 
+/// leanVM's commitment ([`pcs::whir::commit`]'s root and tree), encoded one half of the codeword at a time.
 pub fn commit(table: &Table) -> Committed {
-    let (commitment, data) = whir_commit(&table.stack, table.layout.log_n, LANE_FOLD, LOG_INV_RATE);
+    commit_in(table, Vec::new())
+}
+
+/// [`commit`], encoding in `scratch`'s allocation when that holds a half of the codeword (as many words as the
+/// stack): a buffer the caller is done with.
+pub fn commit_in(table: &Table, scratch: Vec<F64>) -> Committed {
+    let (commitment, tree) = commit_tree_in(&table.stack, table.layout.log_n, LANE_FOLD, LOG_INV_RATE, scratch);
     Committed {
         root: commitment.root,
-        data,
+        tree,
     }
 }
 
@@ -162,39 +177,49 @@ fn seed(root: &Hash, claims: &[Claim]) -> ([u8; 32], [u8; 32]) {
 
 /// Prove every one of `claims` on one committed table, in one opening.
 pub fn open(table: &Table, committed: &Committed, claims: &[Claim]) -> Proof {
-    let layout = &table.layout;
+    open_stack(
+        &table.layout,
+        &table.stack[..],
+        &committed.root,
+        &committed.tree[..],
+        claims,
+    )
+}
+
+/// [`open`], consuming the table and its commitment: the stack and the Merkle tree, read last for the rows the
+/// first queries open, are freed then, before WHIR commits its deeper levels.
+pub fn open_owned(table: Table, committed: Committed, claims: &[Claim]) -> Proof {
+    open_stack(&table.layout, table.stack, &committed.root, committed.tree, claims)
+}
+
+fn open_stack(
+    layout: &Layout,
+    stack: impl AsRef<[F64]>,
+    root: &Hash,
+    tree: impl AsRef<[Hash]>,
+    claims: &[Claim],
+) -> Proof {
     let log_lane = layout.log_lane();
     let config = config_for_rate(layout.log_n, LOG_INV_RATE).expect("a WHIR shape leanVM supports");
-    let (iv, statement) = seed(&committed.root, claims);
+    let (iv, statement) = seed(root, claims);
     let mut ps = ProverState::new(digest_words(&iv), digest_words(&statement));
     let lambdas = powers(ps.sample(), claims.len());
     let target = claims
         .iter()
         .zip(&lambdas)
         .fold(F192::ZERO, |acc, (c, &l)| acc + l * c.value);
-    // The combined weight on the stack, lane by lane: each claim's `eq` on the lane's coordinates, scaled by
-    // its power of the challenge and by `eq` of its high coordinates at the lane's block.
-    let mut weight = vec![F192::ZERO; layout.placed()];
-    for (claim, &lambda) in claims.iter().zip(&lambdas) {
-        let low = eq_table(&claim.point[..log_lane]);
-        let scales: Vec<F192> = layout.lane_weights(&claim.point).iter().map(|&w| lambda * w).collect();
-        parallel::chunks_mut(&mut weight, 1 << log_lane, |l, out| {
-            let scale = scales[l];
-            if !scale.is_zero() {
-                out.iter_mut().zip(&low).for_each(|(o, &e)| *o += scale * e);
-            }
-        });
-    }
-    recursive_prover_with_basis(
-        &config,
-        layout.log_n,
-        &table.stack,
-        weight,
-        target,
-        &committed.data.codeword,
-        &committed.data.merkle_tree,
-        &mut ps,
-    );
+    // The combined weight on the stack, as one lane tensor a claim: its `eq` on the lane's coordinates, the same
+    // for every lane, and each lane's scale, its power of the challenge times `eq` of its high coordinates at
+    // the lane's block. The prover never writes the weight out.
+    let weight: Vec<LaneTensor> = claims
+        .iter()
+        .zip(&lambdas)
+        .map(|(claim, &lambda)| LaneTensor {
+            scales: layout.lane_weights(&claim.point).iter().map(|&w| lambda * w).collect(),
+            low: eq_table(&claim.point[..log_lane]),
+        })
+        .collect();
+    recursive_prover_with_lane_tensors(&config, layout.log_n, stack, &weight, target, None, tree, &mut ps);
     ps.into_proof()
 }
 

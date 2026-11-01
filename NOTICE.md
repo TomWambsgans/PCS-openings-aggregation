@@ -11,8 +11,9 @@ option. Every file says where it comes from in its first lines.
   [leanerVM](https://github.com/Verified-zkEVM/leanerVM)'s `mumbai` branch formalizes):
   `crates/primitives`, `crates/fiat_shamir`, `crates/pcs`, `crates/parallel`, `crates/verifier`,
   `crates/bench`, copied unchanged but for a header line, except `crates/verifier/src/lib.rs`, which makes
-  the WHIR verifier public (its header says so). The workspace `Cargo.toml` and `rustfmt.toml` follow
-  leanVM's.
+  the WHIR verifier public, and three prover files of `crates/pcs` (`src/whir.rs`, `src/whir_ntt_ext.rs`,
+  `src/ntt/additive_ntt_f64.rs`), which add ways to make the same commitments and proofs in less memory (their
+  headers say so). The workspace `Cargo.toml` and `rustfmt.toml` follow leanVM's.
 - **Adapted from leanVM's branch `PCS-openings-aggregation`, commit `651453c6`**:
   - `crates/quotient`: the protocol of `flock::quotient` (`doc/quotient/main.tex` there), its Cantor-basis
     domain (copied), its circuit's wiring and public rows, the Keccak-256 transcript chain, and the idea of
