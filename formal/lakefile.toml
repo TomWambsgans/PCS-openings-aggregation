@@ -1,0 +1,39 @@
+# The formal verification of `crates/quotient`. Toolchain and dependency revisions are those of leanerVM's
+# `mumbai` branch (https://github.com/Verified-zkEVM/leanerVM, `lean_vm/lake-manifest.json` at 6175f1a0),
+# so that its WHIR and random-permutation results can be imported. The proofs start from leanVM's
+# `formal/quotient` (branch PCS-openings-aggregation, commit 651453c6). MIT OR Apache-2.0; see NOTICE.md.
+name = "pcs-quotient-formal"
+version = "0.1.0"
+defaultTargets = ["QuotientSecurity"]
+
+[leanOptions]
+autoImplicit = false
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "d13f23b723b8a846827a245b89c10fc7d3f11612"
+
+[[require]]
+name = "PolyFun"
+git = "https://github.com/Verified-zkEVM/PolyFun"
+rev = "41d3b21dcc99817fe4f9f24ca7b2b58f0578083d"
+
+[[require]]
+name = "VCVio"
+git = "https://github.com/Verified-zkEVM/VCVio"
+rev = "afa6593f15e1e79ecb3cf22fc56191cecb452bb0"
+
+[[require]]
+name = "CompPoly"
+git = "https://github.com/Verified-zkEVM/CompPoly"
+rev = "572f997390aa4fc131ef30b1186fa1dcf292ca10"
+
+[[require]]
+name = "Arklib"
+git = "https://github.com/Verified-zkEVM/ArkLib"
+rev = "4dae3acff846125521b7b3998010885071746f16"
+
+[[lean_lib]]
+name = "QuotientSecurity"

@@ -19,6 +19,9 @@ option. Every file says where it comes from in its first lines.
     opening a claim on a table whose stack holds only the lanes that can be nonzero. New here: the gate
     (one χ on bits), the Keccak-256 statement, and the tables' layouts for leanVM's WHIR as it is.
   - `crates/evm`: the bytecode generator, the recording scalar and the revm machine with `FIELD_MUL`.
+  - `formal/`: the Lean proofs of `formal/quotient` (sorry-free for the original circuit), being ported to
+    this circuit; each file names its source. Dependency revisions are those of
+    [leanerVM](https://github.com/Verified-zkEVM/leanerVM)'s `mumbai` branch (MIT OR Apache-2.0).
 - **Third-party credits carried by the vendored files** (each file names its own):
   [succinctlabs/flock](https://github.com/succinctlabs/flock) (MIT OR Apache-2.0),
   [Plonky3](https://github.com/Plonky3/Plonky3) (MIT OR Apache-2.0),
