@@ -33,9 +33,10 @@ namespace QuotientRpm
 
 open QuotientSecurity
 
-/-- The transcript's tag, the label's first sixteen bytes (`b"pcs-quotient-kc1"`,
-`quotient::protocol::label`). -/
-def tag : List UInt8 := "pcs-quotient-kc1".toUTF8.toList
+/-- The transcript's tag, the label's first sixteen bytes: `b"pcs-quotient-kc1"` in ASCII
+(`quotient::protocol::label`). -/
+def tag : List UInt8 :=
+  [0x70, 0x63, 0x73, 0x2d, 0x71, 0x75, 0x6f, 0x74, 0x69, 0x65, 0x6e, 0x74, 0x2d, 0x6b, 0x63, 0x31]
 
 variable {F : Type} [Field F] [DecidableEq F] [CharP F 2] [Fintype F] [SampleableType F]
 
@@ -114,7 +115,7 @@ def hashQuery (m : List UInt8) : OracleComp HashSpec Bytes32 := liftM (HashSpec.
 verifier on them, both asking the same random oracle. -/
 noncomputable def chainExperiment (A : OracleComp HashSpec (ChainProof P B)) :
     OracleComp HashSpec (ChainProof P B × Bool) :=
-  A >>= fun π => (π, ·) <$> W.verifyWith hashQuery π
+  A >>= fun π => W.verifyWith hashQuery π >>= fun b => pure (π, b)
 
 /-- What a proof wins: the verifier accepts, and the cells read off its first message do not
 satisfy the relation for the statement its bytes stand for. -/

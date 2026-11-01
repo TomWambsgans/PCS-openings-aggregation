@@ -54,6 +54,84 @@ theorem freshBad_map {D' τ' : Type} [DecidableEq D'] (e : D' ↪ D) (bad : Fins
     simp only [List.map_cons, FreshBad, Finset.mem_map' e, ← Finset.map_insert,
       freshBad_map e bad F T' (insert x H) xs]
 
+/-- The inputs of `L` before the first occurrence of `z`. -/
+def before : List D → D → Finset D
+  | [], _ => ∅
+  | x :: xs, z => if x = z then ∅ else insert x (before xs z)
+
+/-- **No bad fresh input**: each input of `L` (not in `H`) is not bad given the inputs before its
+first occurrence. -/
+theorem not_bad_before (bad : Finset D → D → τ → Prop) (T : τ) :
+    ∀ (H : Finset D) (L : List D), ¬ FreshBad bad T H L → ∀ y ∈ L, y ∉ H →
+      ¬ bad (H ∪ before L y) y T
+  | H, [], _, y, hy, _ => by simp at hy
+  | H, x :: xs, h, y, hy, hH => by
+    simp only [FreshBad, not_or, not_and] at h
+    by_cases hxy : x = y
+    · subst hxy
+      simpa [before] using h.1 hH
+    · have hy' : y ∈ xs := (List.mem_cons.mp hy).resolve_left (Ne.symm hxy)
+      have := not_bad_before bad T (insert x H) xs h.2 y hy' (by simp [Ne.symm hxy, hH])
+      simpa [before, hxy, Finset.insert_union, Finset.union_insert] using this
+
+theorem not_mem_before_self : ∀ (L : List D) (y : D), y ∉ before L y
+  | [], _ => by simp [before]
+  | x :: xs, y => by
+    by_cases hxy : x = y
+    · simp [before, hxy]
+    · simp only [before, hxy, ite_false, Finset.mem_insert, not_or]
+      exact ⟨Ne.symm hxy, not_mem_before_self xs y⟩
+
+theorem mem_of_mem_before : ∀ (L : List D) (y z : D), y ∈ before L z → y ∈ L
+  | [], _, _, h => by simp [before] at h
+  | x :: xs, y, z, h => by
+    by_cases hxz : x = z
+    · simp [before, hxz] at h
+    · simp only [before, hxz, ite_false, Finset.mem_insert] at h
+      rcases h with rfl | h
+      · exact List.mem_cons_self
+      · exact List.mem_cons_of_mem _ (mem_of_mem_before xs y z h)
+
+/-- Of two distinct inputs of `L`, one comes first. -/
+theorem before_trichotomy : ∀ (L : List D) (y z : D), y ∈ L → z ∈ L → y ≠ z →
+    y ∈ before L z ∨ z ∈ before L y
+  | [], _, _, hy, _, _ => by simp at hy
+  | x :: xs, y, z, hy, hz, hyz => by
+    by_cases hxz : x = z
+    · subst hxz
+      right
+      simp [before, Ne.symm hyz]
+    · by_cases hxy : x = y
+      · subst hxy
+        left
+        simp [before, hxz]
+      · have hy' : y ∈ xs := (List.mem_cons.mp hy).resolve_left (Ne.symm hxy)
+        have hz' : z ∈ xs := (List.mem_cons.mp hz).resolve_left (Ne.symm hxz)
+        rcases before_trichotomy xs y z hy' hz' hyz with h | h
+        · left
+          simp [before, hxz, h]
+        · right
+          simp [before, hxy, h]
+
+/-- What comes before an input that comes before `z` comes before `z`. -/
+theorem before_subset_of_mem : ∀ (L : List D) (y z : D), y ∈ before L z → before L y ⊆ before L z
+  | [], _, _, h => by simp [before] at h
+  | x :: xs, y, z, h => by
+    by_cases hxz : x = z
+    · simp [before, hxz] at h
+    · simp only [before, hxz, ite_false, Finset.mem_insert] at h ⊢
+      by_cases hxy : x = y
+      · simp [hxy]
+      · simp only [hxy, ite_false]
+        rcases h with h | h
+        · exact absurd h.symm hxy
+        · exact Finset.insert_subset_insert _ (before_subset_of_mem xs y z h)
+
+/-- Coming before is not symmetric. -/
+theorem not_mem_before_of_mem_before {L : List D} {y z : D} (h : y ∈ before L z) :
+    z ∉ before L y := fun h' =>
+  not_mem_before_self L y (before_subset_of_mem L z y h' h)
+
 end Lists
 
 section Finite
@@ -204,9 +282,9 @@ table that completes the cache uniformly on `S` (and is fixed elsewhere) makes t
 probability at most `ε`: then the event has probability at most `n ε` for a computation of at
 most `n` queries. -/
 theorem prEvent_randomOracle_le_of_freshBad (oa : OracleComp (D →ₒ Rg) α) (n : ℕ)
-    (hn : IsTotalQueryBound oa n) (S₀ : Finset D) (event : α → Prop)
+    (hn : IsTotalQueryBound oa n) (S₀ : Set D) (hS₀ : S₀.Finite) (event : α → Prop)
     (bad : Finset D → D → (D → Rg) → Prop) (ε : ℝ≥0∞)
-    (hbad : ∀ S : Finset D, S₀ ⊆ S →
+    (hbad : ∀ S : Finset D, (∀ d ∈ S₀, d ∈ S) →
       ∀ (c : (OracleSpec.ofFn fun d : ↥S => (fun _ : D => Rg) d.1).QueryCache) (t : ↥S),
         c t = none → (cacheDom c).card < n →
         Pr{let g ← $ᵗ (↥S → Rg)}[bad ((cacheDom c).map (Function.Embedding.subtype (· ∈ S))) t.1
@@ -215,7 +293,7 @@ theorem prEvent_randomOracle_le_of_freshBad (oa : OracleComp (D →ₒ Rg) α) (
       FreshBad bad T ∅ ((tableQueryLog oa T).map Sigma.fst)) :
     Pr{let r ← (simulateQ randomOracle oa).run' ∅}[event r] ≤ n * ε := by
   classical
-  let S := possibleQueryKeys oa ∪ S₀
+  let S := possibleQueryKeys oa ∪ hS₀.toFinset
   have hS : AllQueriesSatisfy oa (· ∈ S) :=
     (allQueriesSatisfy_possibleQueryKeys oa).mono fun d hd => Finset.mem_union_left _ hd
   let small := restrictQueries S oa hS
@@ -250,7 +328,8 @@ theorem prEvent_randomOracle_le_of_freshBad (oa : OracleComp (D →ₒ Rg) α) (
     exact h'
   refine (prEvent_mono _ _ _ htrace').trans ?_
   exact prEvent_freshBad_le (D := ↥S) (R := fun _ => Rg) bad' ε n
-    (fun c t hct hcard => hbad S Finset.subset_union_right c t hct hcard) small n
+    (fun c t hct hcard => hbad S (fun d hd => Finset.mem_union_right _ (hS₀.mem_toFinset.mpr hd))
+      c t hct hcard) small n
     (isTotalQueryBound_restrictQueries S oa hS n hn) ∅ (by simp)
 
 end Infinite
