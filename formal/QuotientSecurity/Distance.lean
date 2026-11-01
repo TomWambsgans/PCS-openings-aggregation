@@ -38,7 +38,8 @@ theorem probEvent_le_add_of_eq_on {α : Type} (X Y : ProbComp α) (good : α →
     split_ifs with h
     · exact heq o h.2
     · rfl
-  have h3 : Pr{let o ← Y}[S o ∧ good o] ≤ Pr{let x ← Y}[S x] := prEvent_mono _ _ _ fun o h => h.1
+  have h3 : Pr{let o ← Y}[S o ∧ good o] ≤ Pr{let x ← Y}[S x] :=
+    prEvent_mono _ _ _ fun o h => h.1
   calc Pr{let x ← X}[S x] ≤ Pr{let o ← X}[S o ∧ good o] + Pr{let o ← X}[¬ good o] := h1
     _ ≤ Pr{let x ← Y}[S x] + ε := add_le_add (h2 ▸ h3) hbad
 
@@ -56,7 +57,8 @@ theorem prob_not_good_challenges (gK : Fin 4 → K[X]) (van : K[X]) (hvan0 : van
     Pr{let c ← challenges (E := E) (H := H)}[¬ Good (P := P) gK van c.2.2.1 c.2.2.2.1]
       ≤ (zkError P van : ENNReal) := by
   unfold challenges
-  refine prEvent_bind_le_of_forall_le _ _ _ fun c₁ => prEvent_bind_le_of_forall_le _ _ _ fun c₂ => ?_
+  refine prEvent_bind_le_of_forall_le _ _ _ fun c₁ =>
+    prEvent_bind_le_of_forall_le _ _ _ fun c₂ => ?_
   -- What remains is a uniform `(ch, t, ρ)`, whose event looks at `(ch, t)` only.
   have hmap : (($ᵗ (E × E × E)) >>= fun ch => ($ᵗ E) >>= fun t => ($ᵗ E) >>= fun ρ =>
         (pure (c₁, c₂, ch, t, ρ) : ProbComp (H × H × (E × E × E) × E × E)))
