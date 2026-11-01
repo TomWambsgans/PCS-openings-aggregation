@@ -4,6 +4,7 @@
 // Copyright (c) 2026 Bain Capital Crypto, LP and Ron Rothblum
 // Modifications copyright 2026 Succinct Labs, Benedikt Bunz, William Wang
 // SPDX-License-Identifier: Apache-2.0 OR MIT
+// Modified here: `encode_interleaved_ext_rows`, the encode of a few rows alone.
 
 //! Reed-Solomon encoding over `E = GF(2^192)` with base-field twiddles.
 //!
@@ -61,6 +62,27 @@ pub(crate) fn encode_interleaved_ext(
         )
     };
     ntt.encode_interleaved_with(mat, msg, 3 * num_ntts, log_inv_rate, on_rows);
+}
+
+/// [`encode_interleaved_ext`] for the rows `rows` (sorted, distinct) alone, every other row left part-transformed
+/// ([`AdditiveNttF64::encode_interleaved_rows_with`]).
+pub(crate) fn encode_interleaved_ext_rows(
+    ntt: &AdditiveNttF64,
+    mat: &mut [F192],
+    msg: &[F192],
+    num_ntts: usize,
+    log_inv_rate: usize,
+    rows: &[usize],
+) {
+    assert!(num_ntts.is_power_of_two());
+    // SAFETY: as in `encode_interleaved_ext`, an `F192` is three `F64`s of the same alignment.
+    let (mat, msg) = unsafe {
+        (
+            std::slice::from_raw_parts_mut(mat.as_mut_ptr().cast::<F64>(), 3 * mat.len()),
+            std::slice::from_raw_parts(msg.as_ptr().cast::<F64>(), 3 * msg.len()),
+        )
+    };
+    ntt.encode_interleaved_rows_with(mat, msg, 3 * num_ntts, log_inv_rate, rows);
 }
 
 #[cfg(test)]

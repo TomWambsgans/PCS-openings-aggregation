@@ -120,13 +120,10 @@ pub fn quotient_layout(log_rows: usize) -> Layout {
 pub struct Index {
     pub log_rows: usize,
     pub table: Table,
-    /// Its values on the prover's coset.
-    sigma_values: Vec<F64>,
 }
 
 impl Index {
     pub fn new(circuit: &Circuit) -> Self {
-        let m = cell_vars(circuit.log_rows);
         let mut sigma = parallel::map_collect(circuit.sigma.len(), |i| point(circuit.sigma[i] as usize));
         domain::coefficients(&mut sigma, F64::ZERO);
         let lane = 1 << wiring_layout(circuit.log_rows).log_lane();
@@ -135,7 +132,6 @@ impl Index {
         });
         Self {
             log_rows: circuit.log_rows,
-            sigma_values: coset_values(1 << m, &[&sigma]),
             table,
         }
     }
@@ -145,15 +141,25 @@ impl Index {
     }
 }
 
-/// The polynomial of coefficients `parts`, the `k`-th from `k * n` on, on the quotients' coset four times the `n`
-/// cells.
-fn coset_values(n: usize, parts: &[&[F64]]) -> Vec<F64> {
-    let mut data = vec![F64::ZERO; 4 * n];
+/// Into `data`, zero and four times the `n` cells long: the polynomial of coefficients `parts`, the `k`-th from
+/// `k * n` on, on the quotients' coset.
+fn coset_values(data: &mut [F64], parts: &[&[F64]]) {
+    let n = data.len() / 4;
     for (k, part) in parts.iter().enumerate() {
         data[k * n..k * n + part.len()].copy_from_slice(part);
     }
-    domain::values(&mut data, coset(n.trailing_zeros() as usize));
-    data
+    domain::values(data, coset(n.trailing_zeros() as usize));
+}
+
+/// The words of extension elements, in their allocation: an `F192` is three `F64`s.
+fn into_words(values: Vec<F192>) -> Vec<F64> {
+    const _: () = assert!(size_of::<F192>() == 3 * size_of::<F64>() && align_of::<F192>() == align_of::<F64>());
+    let mut values = std::mem::ManuallyDrop::new(values);
+    let (ptr, len, capacity) = (values.as_mut_ptr(), values.len(), values.capacity());
+    // SAFETY: `F192` is `repr(C)` of three `u64`s and `F64` a `repr(transparent)` `u64`: the allocation is
+    // `3 * capacity` words of the same alignment, the first `3 * len` of them initialized, and it is no longer
+    // owned by `values`.
+    unsafe { Vec::from_raw_parts(ptr.cast::<F64>(), 3 * len, 3 * capacity) }
 }
 
 /// The offset of the quotients' coset, for `2^m` cells.
@@ -271,6 +277,11 @@ pub struct Proved {
     pub fits: bool,
     pub claims: Claims,
     pub roots: [Hash; 2],
+    pub tables: Tables,
+}
+
+/// The two tables a proof commits, which [`open`] consumes.
+pub struct Tables {
     pub witness: Table,
     pub witness_committed: Committed,
     pub quotient: Table,
@@ -349,9 +360,19 @@ pub fn prove(
     let big = 4 * n;
     let offset = coset(m);
     let offsets = chain(offset, m + 1);
-    let w_values = coset_values(n, &[w_hat, &mask]);
-    let sigma_values = &index.sigma_values;
-    let mut q = vec![F192::ZERO; big];
+    // Two of this loop's buffers serve the quotient table once it is done: `values`, the witness's and the
+    // wiring polynomial's values (the latter not kept with the index: only this loop reads them), becomes the
+    // table's stack, and `q` the half codeword its commitment encodes in. Reused whole, they spare the allocator
+    // mapping fresh memory its freed pieces could not serve.
+    let layout = quotient_layout(circuit.log_rows);
+    let placed = layout.placed();
+    let mut values = Vec::with_capacity(placed.max(2 * big));
+    values.resize(2 * big, F64::ZERO);
+    let (w_values, sigma_values) = values.split_at_mut(big);
+    coset_values(w_values, &[w_hat, &mask]);
+    coset_values(sigma_values, &[index.sigma()]);
+    let mut q = Vec::with_capacity(big.max(placed.div_ceil(3)));
+    q.resize(big, F192::ZERO);
     q[..n].copy_from_slice(&h_hat);
     domain::values(&mut q, offset);
     let mut q_gate = vec![F64::ZERO; big];
@@ -397,7 +418,6 @@ pub fn prove(
             *q_gate = gate(row) * row_vanishing[low & 3];
         }
     });
-    drop(w_values);
     domain::coefficients(&mut q, offset);
     domain::coefficients(&mut q_gate, offset);
 
@@ -405,12 +425,11 @@ pub fn prove(
     // quotient, and the extension's two.
     // For a witness, both quotients are polynomials of the degrees the layout holds. For anything else they may
     // not be, and what the layout leaves out is dropped: the claims are then false.
-    let layout = quotient_layout(circuit.log_rows);
     let fits = q[3 * n + layout.covered(m, 7)..].iter().all(|v| v.is_zero())
         && q_gate[n + layout.covered(m, 9)..].iter().all(|v| v.is_zero());
     let lane = 1 << layout.log_lane();
     let per_chunk = n / lane;
-    let quotient = Table::new(layout, |_, block, out| {
+    let quotient = Table::new_in(layout, values, |_, block, out| {
         let (c, piece) = (block / per_chunk, block % per_chunk);
         let (digit, limb) = (c & 3, c >> 4);
         let from = digit * n + piece * lane;
@@ -425,8 +444,9 @@ pub fn prove(
             _ => out.copy_from_slice(&q_gate[from..from + lane]),
         }
     });
-    drop((h_hat, q, q_gate));
-    let quotient_committed = tracing::info_span!("Commit").in_scope(|| opening::commit(&quotient));
+    drop((h_hat, q_gate));
+    let scratch = into_words(q);
+    let quotient_committed = tracing::info_span!("Commit").in_scope(|| opening::commit_in(&quotient, scratch));
     ps.send_root(&quotient_committed.root);
     drop(span);
 
@@ -447,10 +467,12 @@ pub fn prove(
         fits,
         claims,
         roots,
-        witness,
-        witness_committed,
-        quotient,
-        quotient_committed,
+        tables: Tables {
+            witness,
+            witness_committed,
+            quotient,
+            quotient_committed,
+        },
     }
 }
 
@@ -634,27 +656,64 @@ pub struct Openings {
     pub quotient: fiat_shamir::transcript::Proof,
 }
 
-/// Open the claims of `proved`. The wiring's opening is about public data: anyone can make it.
-pub fn open(proved: &Proved, index: &Index, index_committed: &Committed) -> Openings {
-    let claims = &proved.claims;
+/// Open a proof's `claims` on the tables it committed, each table freed as its opening is done with it. The
+/// wiring's opening is about public data: anyone can make it.
+pub fn open(tables: Tables, claims: &Claims, index: &Index, index_committed: &Committed) -> Openings {
+    let Tables {
+        witness,
+        witness_committed,
+        quotient,
+        quotient_committed,
+    } = tables;
+    let witness = tracing::info_span!("Open witness")
+        .in_scope(|| opening::open_owned(witness, witness_committed, std::slice::from_ref(&claims.witness)));
+    let wiring = tracing::info_span!("Open wiring")
+        .in_scope(|| opening::open(&index.table, index_committed, std::slice::from_ref(&claims.wiring)));
+    let quotient = tracing::info_span!("Open quotient").in_scope(|| {
+        opening::open_owned(
+            quotient,
+            quotient_committed,
+            &[claims.quotient.clone(), claims.sum.clone()],
+        )
+    });
     Openings {
-        witness: tracing::info_span!("Open witness").in_scope(|| {
-            opening::open(
-                &proved.witness,
-                &proved.witness_committed,
-                std::slice::from_ref(&claims.witness),
-            )
-        }),
-        wiring: tracing::info_span!("Open wiring")
-            .in_scope(|| opening::open(&index.table, index_committed, std::slice::from_ref(&claims.wiring))),
-        quotient: tracing::info_span!("Open quotient").in_scope(|| {
-            opening::open(
-                &proved.quotient,
-                &proved.quotient_committed,
-                &[claims.quotient.clone(), claims.sum.clone()],
-            )
-        }),
+        witness,
+        wiring,
+        quotient,
     }
+}
+
+/// A fingerprint of a proof and its openings: the Keccak-256 of every scalar, row word and digest they carry,
+/// each list after its length. Two provers that agree on it made the same proof.
+pub fn digest(proof: &Proof, openings: &Openings) -> Hash {
+    let mut bytes = vec![];
+    let scalars = |bytes: &mut Vec<u8>, xs: &[F192]| {
+        bytes.extend_from_slice(&(xs.len() as u64).to_le_bytes());
+        for x in xs {
+            for limb in [x.c0, x.c1, x.c2] {
+                bytes.extend_from_slice(&limb.to_le_bytes());
+            }
+        }
+    };
+    scalars(&mut bytes, &proof.stream);
+    for opening in [&openings.witness, &openings.wiring, &openings.quotient] {
+        scalars(&mut bytes, &opening.stream);
+        bytes.extend_from_slice(&(opening.merkle.len() as u64).to_le_bytes());
+        for paths in &opening.merkle {
+            bytes.extend_from_slice(&(paths.leaf_data.len() as u64).to_le_bytes());
+            for row in &paths.leaf_data {
+                bytes.extend_from_slice(&(row.len() as u64).to_le_bytes());
+                row.iter()
+                    .for_each(|word| bytes.extend_from_slice(&word.0.to_le_bytes()));
+            }
+            bytes.extend_from_slice(&(paths.sibling_hashes.len() as u64).to_le_bytes());
+            paths
+                .sibling_hashes
+                .iter()
+                .for_each(|hash| bytes.extend_from_slice(hash));
+        }
+    }
+    primitives::hash::hash(&bytes)
 }
 
 /// Check the openings of four claims against the commitments they name.
@@ -715,11 +774,40 @@ mod tests {
         let holds = |table: &Table, claim: &Claim| table.eval(&claim.point) == claim.value;
         let claims = &proved.claims;
         [
-            holds(&proved.witness, &claims.witness),
+            holds(&proved.tables.witness, &claims.witness),
             holds(&index.table, &claims.wiring),
-            holds(&proved.quotient, &claims.quotient),
-            holds(&proved.quotient, &claims.sum),
+            holds(&proved.tables.quotient, &claims.quotient),
+            holds(&proved.tables.quotient, &claims.sum),
         ]
+    }
+
+    /// The prover's output, pinned: the proof and its three openings on the toy circuit hash to what the prover
+    /// of commit d940553 (before its memory was cut) made, so a change to how the prover computes cannot change
+    /// a byte of what it proves.
+    #[test]
+    fn proofs_are_pinned() {
+        let mut rng = Rng::new(0x1D);
+        let circuit = toy();
+        let index = Index::new(&circuit);
+        let index_committed = opening::commit(&index.table);
+        let x: [u8; 32] = std::array::from_fn(|_| rng.next_u64() as u8);
+        let statement = toy_statement(&x);
+        let inputs: Vec<bool> = (0..256).map(|i| (x[i / 8] >> (i % 8)) & 1 == 1).collect();
+        let cells = circuit.cells(&inputs);
+        let proved = prove(
+            &circuit,
+            &index,
+            &index_committed.root,
+            &statement,
+            &cells,
+            &masks(&mut rng),
+        );
+        let openings = open(proved.tables, &proved.claims, &index, &index_committed);
+        let hex: String = digest(&proved.proof, &openings)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(hex, "7d2d343092b7f9541a8b027fce333863cc41696bd6848a73109b9e285bf687c6");
     }
 
     /// On a small circuit: an honest proof leaves four true claims that open, and a witness that breaks one gate,
@@ -752,7 +840,7 @@ mod tests {
         assert!(proved.fits);
         assert_eq!(truth(&index, &proved), [true; 4]);
         assert_eq!(proved.proof.stream.len(), 9);
-        let openings = open(&proved, &index, &index_committed);
+        let openings = open(proved.tables, &proved.claims, &index, &index_committed);
         assert_eq!(
             verify_openings(
                 circuit.log_rows,

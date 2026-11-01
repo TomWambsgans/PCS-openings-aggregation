@@ -11,7 +11,7 @@ use primitives::field::F64;
 use primitives::test_rng::Rng;
 use quotient::circuit::{membership, membership_inputs};
 use quotient::opening::commit;
-use quotient::protocol::{Index, open, prove, verify, verify_openings};
+use quotient::protocol::{Index, digest, open, prove, verify, verify_openings};
 use quotient::statement::{DEPTH, Secret};
 
 #[global_allocator]
@@ -45,10 +45,13 @@ fn main() {
         1usize << circuit.log_rows,
         100.0 * circuit.used_rows as f64 / (1usize << circuit.log_rows) as f64
     );
+    // The peak resident set so far: it only grows, so read after each stage it says which one reached it.
+    let peak = || bench::peak_rss_bytes() as f64 / f64::powi(1024.0, 3);
     let start = Instant::now();
     let index = Index::new(&circuit);
     let index_committed = commit(&index.table);
     time("index (wiring table, committed)", start);
+    let peak_index = peak();
 
     let secret = Secret {
         x: std::array::from_fn(|_| rng.next_u64() as u8),
@@ -64,10 +67,12 @@ fn main() {
     let start = Instant::now();
     let proved = prove(&circuit, &index, &index_committed.root, &statement, &cells, &masks);
     let reduction_secs = time("reduction (commit both tables)", start);
+    let peak_reduction = peak();
     assert!(proved.fits);
     let start = Instant::now();
-    let openings = open(&proved, &index, &index_committed);
+    let openings = open(proved.tables, &proved.claims, &index, &index_committed);
     let opening_secs = time("openings (three WHIR)", start);
+    let peak_openings = peak();
     println!(
         "{:<34}: {:>8.3} s",
         "prover total (witness .. openings)",
@@ -95,9 +100,14 @@ fn main() {
     ] {
         println!("{name:<34}: {:.1} KiB", opening_bytes(proof) as f64 / 1024.0);
     }
+    let hex: String = digest(&proved.proof, &openings)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    println!("{:<34}: {hex}", "proof digest");
     println!(
-        "{:<34}: {:.2} GiB",
-        "peak memory",
-        bench::peak_rss_bytes() as f64 / f64::powi(1024.0, 3)
+        "{:<34}: {peak_index:.2} / {peak_reduction:.2} / {peak_openings:.2} GiB",
+        "peak after index / reduction / open"
     );
+    println!("{:<34}: {:.2} GiB", "peak memory", peak());
 }

@@ -4,6 +4,11 @@
 // Copyright (c) 2026 Bain Capital Crypto, LP and Ron Rothblum
 // Modifications copyright 2026 Succinct Labs, Benedikt Bunz, William Wang
 // SPDX-License-Identifier: Apache-2.0 OR MIT
+// Modified here, in the prover alone and with every proof unchanged, to cut its memory: `commit_tree` (and
+// `commit_tree_in`), a commitment encoded one replica at a time that keeps its Merkle tree alone, and
+// `encoded_rows`, the rows an opening reads from it, encoded again; deeper levels whose codeword reaches 1 GiB
+// kept the same way (`LigeroRows`); and `recursive_prover_with_lane_tensors`, the lane rounds on a weight given
+// as lane tensors rather than written out, its committed message freed once the first queries are answered.
 
 //! WHIR with `K = GF(2)[x]/(x^64+x^4+x^3+x+1)` and
 //! `E = K[y]/(y^3+y+1)`.
@@ -167,27 +172,227 @@ pub fn commit(message: &[F64], log_n: usize, log_batch_size: usize, log_inv_rate
     (Commitment { root }, ProverData { codeword, merkle_tree })
 }
 
+/// [`commit`], keeping the Merkle tree alone: the codeword is encoded one replica (`2^-log_inv_rate` of it) at
+/// a time into one replica's buffer, each hashed as it is finished, so the commitment holds the message, one
+/// replica and the tree at once rather than the whole codeword. The root and tree are [`commit`]'s; an opening
+/// reads its rows with [`encoded_rows`].
+pub fn commit_tree(
+    message: &[F64],
+    log_n: usize,
+    log_batch_size: usize,
+    log_inv_rate: usize,
+) -> (Commitment, Vec<Hash>) {
+    commit_tree_in(message, log_n, log_batch_size, log_inv_rate, Vec::new())
+}
+
+/// [`commit_tree`], encoding in `scratch`'s allocation when that holds one replica (as many words as the
+/// message): a buffer the caller is done with, so that the encode need not map fresh memory.
+pub fn commit_tree_in(
+    message: &[F64],
+    log_n: usize,
+    log_batch_size: usize,
+    log_inv_rate: usize,
+    scratch: Vec<F64>,
+) -> (Commitment, Vec<Hash>) {
+    let (n_lanes, log_rows) = lane_shape(message, log_n, log_batch_size, log_inv_rate);
+    let k_code = log_rows + log_inv_rate;
+    let tree = merkle::MerkleBuilder::new(1usize << k_code, n_lanes, 1usize << log_batch_size);
+    tracing::info_span!(
+        "NTT",
+        kind = "base encode by replica",
+        log_domain = k_code,
+        lanes = n_lanes
+    )
+    .in_scope(|| {
+        each_replica(
+            message,
+            n_lanes,
+            log_rows,
+            log_inv_rate,
+            scratch,
+            |replica, ntt, buffer| {
+                let first = replica << log_rows;
+                ntt.encode_interleaved_in_place_with(buffer, n_lanes, 0, &|row, rows| tree.absorb(first + row, rows));
+            },
+        )
+    });
+    let merkle_tree = tracing::info_span!("Merkle").in_scope(|| tree.finish());
+    let root = *merkle_tree.last().expect("merkle tree non-empty");
+    (Commitment { root }, merkle_tree)
+}
+
+/// Words of codeword [`encoded_rows`] encodes at a time: 1 GiB. The transform's kernels are built for rows of
+/// many lanes, and below some sixteen they slow down sharply (59 lanes of `2^23` positions, encoded whole: 16 at
+/// a time 0.33 s, 8 at a time 0.46 s, 4 at a time 0.69 s, all at once 0.32 s).
+const REENCODE_WORDS: usize = 1 << 27;
+
+/// The rows of [`commit`]'s codeword at `positions` (in that order, repeats allowed), encoded again from the
+/// message. Every lane is a codeword of its own, so they are encoded a few lanes at a time, in a buffer of at
+/// most [`REENCODE_WORDS`] (or one lane's codeword).
+pub fn encoded_rows(
+    message: &[F64],
+    log_n: usize,
+    log_batch_size: usize,
+    log_inv_rate: usize,
+    positions: &[usize],
+) -> Vec<Vec<F64>> {
+    encoded_rows_within(message, log_n, log_batch_size, log_inv_rate, positions, REENCODE_WORDS)
+}
+
+/// [`encoded_rows`] in a buffer of at most `budget` words (or one lane's codeword).
+fn encoded_rows_within(
+    message: &[F64],
+    log_n: usize,
+    log_batch_size: usize,
+    log_inv_rate: usize,
+    positions: &[usize],
+    budget: usize,
+) -> Vec<Vec<F64>> {
+    let (n_lanes, log_rows) = lane_shape(message, log_n, log_batch_size, log_inv_rate);
+    let k_code = log_rows + log_inv_rate;
+    let group = (budget >> k_code).clamp(1, n_lanes);
+    let mut rows = vec![vec![F64::ZERO; n_lanes]; positions.len()];
+    let _span = tracing::info_span!("NTT", kind = "base re-encode", log_domain = k_code, lanes = n_lanes).entered();
+    let ntt = AdditiveNttF64::standard(k_code);
+    let mut wanted = positions.to_vec();
+    wanted.sort_unstable();
+    wanted.dedup();
+    // SAFETY: every group starts with a transpose that writes its message region, from which the encode writes
+    // the rest of its codeword before reading it.
+    let mut buffer = unsafe { primitives::uninit_vec::<F64>(group << k_code) };
+    for first in (0..n_lanes).step_by(group) {
+        let g = group.min(n_lanes - first);
+        let codeword = &mut buffer[..g << k_code];
+        let lanes = &message[first << log_rows..(first + g) << log_rows];
+        crate::ntt::transpose_lane_major(&mut codeword[..g << log_rows], lanes, g, log_rows);
+        ntt.encode_interleaved_rows_in_place(codeword, g, log_inv_rate, &wanted);
+        // The group's lane `t` is message block `first + g - 1 - t`, which the whole codeword puts at lane
+        // `n_lanes - first - g + t`.
+        for (row, &q) in rows.iter_mut().zip(positions) {
+            row[n_lanes - first - g..n_lanes - first].copy_from_slice(&codeword[q * g..(q + 1) * g]);
+        }
+    }
+    rows
+}
+
+/// The committed lanes and their log length, checked as [`commit`] checks them.
+fn lane_shape(message: &[F64], log_n: usize, log_batch_size: usize, log_inv_rate: usize) -> (usize, usize) {
+    assert!(log_inv_rate >= 1, "log_inv_rate must be >= 1 for a non-trivial RS code");
+    assert!(log_n > log_batch_size, "witness must be wider than the interleaving");
+    let log_rows = log_n - log_batch_size;
+    let n_lanes = message.len() >> log_rows;
+    assert_eq!(message.len(), n_lanes << log_rows, "message is whole lane blocks");
+    assert!(
+        n_lanes >= 1 && n_lanes <= 1usize << log_batch_size,
+        "at most 2^log_batch_size lanes carry data"
+    );
+    (n_lanes, log_rows)
+}
+
+/// Hand `encode(replica, transform, buffer)` each replica of the codeword in turn, the buffer (in `scratch`'s
+/// allocation when that holds it) holding the transposed message and the transform being that replica's
+/// ([`AdditiveNttF64::replica`]).
+fn each_replica(
+    message: &[F64],
+    n_lanes: usize,
+    log_rows: usize,
+    log_inv_rate: usize,
+    scratch: Vec<F64>,
+    mut encode: impl FnMut(usize, &AdditiveNttF64, &mut [F64]),
+) {
+    let ntt = AdditiveNttF64::standard(log_rows + log_inv_rate);
+    let mut buffer = scratch;
+    buffer.clear();
+    buffer.reserve_exact(message.len());
+    // SAFETY: the capacity holds the message's length of plain words, and every replica starts with a transpose
+    // that writes each of them before the encode reads any.
+    unsafe { buffer.set_len(message.len()) };
+    for replica in 0..1usize << log_inv_rate {
+        crate::ntt::transpose_lane_major(&mut buffer, message, n_lanes, log_rows);
+        encode(replica, &ntt.replica(log_inv_rate, replica), &mut buffer);
+    }
+}
+
 /// Codeword + Merkle tree for one deeper WHIR commitment level.
 /// `mat[pos * num_interleaved + lane]`; each row (one `pos` across all lanes)
 /// is one Merkle leaf of `num_interleaved * 16` bytes.
 pub(crate) struct LigeroWitness {
-    pub mat: Vec<F192>,
+    rows: LigeroRows,
     pub tree: Vec<Hash>,
     pub block_len: usize,
     pub num_interleaved: usize,
 }
 
+/// Codewords of at least this many bytes are not kept: [`LigeroRows::Message`].
+const LEAN_LIGERO_BYTES: usize = 1 << 30;
+
+/// Where a level's opened rows come from.
+enum LigeroRows {
+    /// The codeword, `mat[pos * num_interleaved + lane]`.
+    Codeword(Vec<F192>),
+    /// The row-major message, which the rows a query opens are encoded again from, one replica (`2^-log_inv_rate`
+    /// of the codeword) at a time: what a large codeword is kept as, between its commitment and its queries.
+    Message { msg: Vec<F192>, log_inv_rate: usize },
+}
+
 impl LigeroWitness {
-    #[inline]
-    pub fn row(&self, pos: usize) -> &[F192] {
-        let start = pos * self.num_interleaved;
-        &self.mat[start..start + self.num_interleaved]
+    /// The rows at `positions`, in that order, repeats allowed.
+    pub fn rows(&self, positions: &[usize]) -> Vec<Vec<F192>> {
+        let lanes = self.num_interleaved;
+        match &self.rows {
+            LigeroRows::Codeword(mat) => positions
+                .iter()
+                .map(|&q| mat[q * lanes..(q + 1) * lanes].to_vec())
+                .collect(),
+            LigeroRows::Message { msg, log_inv_rate } => {
+                let _span = tracing::info_span!(
+                    "NTT",
+                    kind = "extension re-encode",
+                    log_domain = self.block_len.ilog2(),
+                    lanes
+                )
+                .entered();
+                let replica_rows = self.block_len >> log_inv_rate;
+                let ntt = AdditiveNttF64::standard(self.block_len.ilog2() as usize);
+                let mut wanted = positions.to_vec();
+                wanted.sort_unstable();
+                wanted.dedup();
+                let mut rows = vec![Vec::new(); positions.len()];
+                // SAFETY: every encode below writes the whole replica before anything reads it.
+                let mut replica = unsafe { primitives::uninit_vec::<F192>(msg.len()) };
+                for b in 0..1usize << log_inv_rate {
+                    let local: Vec<usize> = wanted
+                        .iter()
+                        .filter(|&&q| q / replica_rows == b)
+                        .map(|&q| q - b * replica_rows)
+                        .collect();
+                    if local.is_empty() {
+                        continue;
+                    }
+                    let ntt = ntt.replica(*log_inv_rate, b);
+                    encode_interleaved_ext_rows(&ntt, &mut replica, msg, lanes, 0, &local);
+                    for (row, &q) in rows.iter_mut().zip(positions) {
+                        if q / replica_rows == b {
+                            let at = (q - b * replica_rows) * lanes;
+                            *row = replica[at..at + lanes].to_vec();
+                        }
+                    }
+                }
+                rows
+            }
+        }
     }
 
     #[inline]
     pub fn root(&self) -> Hash {
         self.tree[self.tree.len() - 1]
     }
+}
+
+/// The rows of `rows` (opened at `positions`, in order) by position, for a Merkle opening.
+fn row_at<'r, T>(positions: &[usize], rows: &'r [Vec<T>]) -> impl Fn(usize) -> &'r [T] {
+    let positions = positions.to_vec();
+    move |q| &rows[positions.iter().position(|&p| p == q).expect("a queried position")]
 }
 
 /// Commit an extension-field polynomial at one recursive WHIR level.
@@ -201,6 +406,25 @@ pub(crate) fn ligero_commit_ext(
     log_inv_rate: usize,
     ntt: &AdditiveNttF64,
 ) -> LigeroWitness {
+    ligero_commit_ext_within(
+        poly,
+        log_msg_cols,
+        log_num_interleaved,
+        log_inv_rate,
+        ntt,
+        LEAN_LIGERO_BYTES,
+    )
+}
+
+/// [`ligero_commit_ext`], keeping the message rather than a codeword of at least `lean_bytes`.
+fn ligero_commit_ext_within(
+    poly: &[F192],
+    log_msg_cols: usize,
+    log_num_interleaved: usize,
+    log_inv_rate: usize,
+    ntt: &AdditiveNttF64,
+    lean_bytes: usize,
+) -> LigeroWitness {
     let msg_cols = 1usize << log_msg_cols;
     let num_interleaved = 1usize << log_num_interleaved;
     let block_len = msg_cols << log_inv_rate;
@@ -209,29 +433,49 @@ pub(crate) fn ligero_commit_ext(
     assert!(log_block_len <= ntt.log_domain_size());
 
     let codeword_len = block_len * num_interleaved;
-    // The encode builds the replicas itself, so the codeword starts uninitialized.
-    //
-    // SAFETY: the encode writes every matrix element before reading it.
-    let mut mat = unsafe { primitives::uninit_vec::<F192>(codeword_len) };
-
     // One leaf per row, its F192s as K words: hashed as the encode finishes each block.
     let row_words = 3 * num_interleaved;
     let builder = merkle::MerkleBuilder::new(block_len, row_words, row_words);
-    tracing::info_span!(
+    let span = tracing::info_span!(
         "NTT",
         kind = "extension encode",
         log_domain = log_block_len,
         lanes = num_interleaved
-    )
-    .in_scope(|| {
-        encode_interleaved_ext(ntt, &mut mat, poly, num_interleaved, log_inv_rate, &|row, rows| {
-            builder.absorb(row, rows)
-        })
-    });
+    );
+    let rows = if codeword_len * size_of::<F192>() < lean_bytes {
+        // The encode builds the replicas itself, so the codeword starts uninitialized.
+        //
+        // SAFETY: the encode writes every matrix element before reading it.
+        let mut mat = unsafe { primitives::uninit_vec::<F192>(codeword_len) };
+        span.in_scope(|| {
+            encode_interleaved_ext(ntt, &mut mat, poly, num_interleaved, log_inv_rate, &|row, rows| {
+                builder.absorb(row, rows)
+            })
+        });
+        LigeroRows::Codeword(mat)
+    } else {
+        // One replica at a time, each hashed as it is encoded, and the message kept for the queries.
+        assert_eq!(ntt.log_domain_size(), log_block_len, "the codeword's own transform");
+        // SAFETY: every encode below writes the whole replica before anything reads it.
+        let mut replica = unsafe { primitives::uninit_vec::<F192>(poly.len()) };
+        span.in_scope(|| {
+            for b in 0..1usize << log_inv_rate {
+                let first = b * msg_cols;
+                let ntt = ntt.replica(log_inv_rate, b);
+                encode_interleaved_ext(&ntt, &mut replica, poly, num_interleaved, 0, &|row, rows| {
+                    builder.absorb(first + row, rows)
+                });
+            }
+        });
+        LigeroRows::Message {
+            msg: poly.to_vec(),
+            log_inv_rate,
+        }
+    };
     let tree = tracing::info_span!("Merkle").in_scope(|| builder.finish());
 
     LigeroWitness {
-        mat,
+        rows,
         tree,
         block_len,
         num_interleaved,
@@ -880,6 +1124,206 @@ fn fold_and_msg_blocks(
     )
 }
 
+// ===================================================================
+// Lane rounds on a weight that is a sum of lane tensors
+// ===================================================================
+//
+// When the weight is `b(l, x) = Σ_c s_c[l] · e_c(x)`, with one scale per lane and
+// one low weight `e_c` shared by every lane, a lane round folds the scales alone:
+// it never touches `x`. Its message is bilinear in the witness and the weight, so
+// it is a sum over the claims of products of the folded scales with the folded
+// inner products `p_c[l] = Σ_x f(l, x) · e_c(x)`, which fold exactly as the
+// witness does. One pass over the witness gives every `p_c[l]`, every lane round
+// is then a few products per lane, and a second pass builds the folded witness
+// and weight once the lanes have collapsed. The field is exact, so every message
+// and every folded value is the one the dense rounds compute from `b` written
+// out, without the dense `b` or its folds ever existing.
+
+/// One claim's weight on the committed lanes, as a tensor: word `x` of lane `l` weighs `scales[l] · low[x]`.
+#[derive(Clone, Debug)]
+pub struct LaneTensor {
+    /// One per committed lane.
+    pub scales: Vec<F192>,
+    /// One per word of a lane, `2^(log_n - initial_k)` of them.
+    pub low: Vec<F192>,
+}
+
+/// Fold adjacent pairs at `r`, as a lane round folds lanes `2i` and `2i+1`.
+fn fold_pairs(v: &mut Vec<F192>, r: F192) {
+    let half = v.len() / 2;
+    for i in 0..half {
+        v[i] = F192::fold_pair(v[2 * i], v[2 * i + 1], r);
+    }
+    v.truncate(half);
+}
+
+/// A lane round's message from the folded scales and inner products, claim by claim.
+fn tensor_msg(scales: &[Vec<F192>], inner: &[Vec<F192>]) -> SumcheckMessage {
+    let (mut u_0, mut u_2) = (F192::ZERO, F192::ZERO);
+    for (s, p) in scales.iter().zip(inner) {
+        for ([s0, s1], [p0, p1]) in s.as_chunks::<2>().0.iter().zip(p.as_chunks::<2>().0) {
+            u_0 += *s0 * *p0;
+            u_2 += (*s0 + *s1) * (*p0 + *p1);
+        }
+    }
+    SumcheckMessage { u_0, u_2 }
+}
+
+/// `p_c[l] = Σ_x f(l, x) · low_c[x]` for every claim `c` and lane `l`, claim-major, in one pass over `f`.
+fn lane_inner_products(f: &[F64], block: usize, weight: &[LaneTensor]) -> Vec<Vec<F192>> {
+    let n_lanes = f.len() / block;
+    let chunk = ROUND_CHUNK.min(block);
+    let sums = parallel::fold_reduce(
+        block / chunk,
+        || vec![F192Unreduced::ZERO; weight.len() * n_lanes],
+        |acc, t| {
+            let x0 = t * chunk;
+            for l in 0..n_lanes {
+                let lane = &f[l * block + x0..l * block + x0 + chunk];
+                for (c, tensor) in weight.iter().enumerate() {
+                    let mut sum = F192Unreduced::ZERO;
+                    for (&w, &e) in lane.iter().zip(&tensor.low[x0..x0 + chunk]) {
+                        sum ^= e.mul_base_unreduced(w);
+                    }
+                    acc[c * n_lanes + l] ^= sum;
+                }
+            }
+        },
+        |mut a, b| {
+            a.iter_mut().zip(b).for_each(|(a, b)| *a ^= b);
+            a
+        },
+    );
+    sums.chunks_exact(n_lanes)
+        .map(|claim| claim.iter().map(|s| s.reduce()).collect())
+        .collect()
+}
+
+/// The lanes collapsed at the lane rounds' challenges `rs`: the folded witness `Σ_l eq(rs, l) · f(l, ·)`, the
+/// folded weight `Σ_c scales[c] · low_c`, and the message of the adjacent-pair round that follows.
+fn collapse_lanes(
+    f: &[F64],
+    block: usize,
+    rs: &[F192],
+    weight: &[LaneTensor],
+    scales: &[F192],
+) -> (Vec<F192>, Vec<F192>, SumcheckMessage) {
+    let n_lanes = f.len() / block;
+    let coeffs = &build_eq_table_ext(rs)[..n_lanes];
+    // SAFETY (x2): every task writes its whole window of both buffers before anything reads them.
+    let mut nf = unsafe { fold_out_buf(block) };
+    let mut nb = unsafe { fold_out_buf(block) };
+    let nf_base = parallel::SendPtr(nf.as_mut_ptr());
+    let nb_base = parallel::SendPtr(nb.as_mut_ptr());
+    let chunk = ROUND_CHUNK.min(block);
+    let (u_0, u_2) = accumulate_msg(block / chunk, block / 2, F192Unreduced::ZERO, |t| {
+        let x0 = t * chunk;
+        let stream = Stream::new();
+        let mut acc = (F192Unreduced::ZERO, F192Unreduced::ZERO);
+        for s in (x0..x0 + chunk).step_by(STAGE) {
+            let n = STAGE.min(x0 + chunk - s);
+            let mut sums = [F192Unreduced::ZERO; STAGE];
+            for (l, &coeff) in coeffs.iter().enumerate() {
+                for (sum, &w) in sums.iter_mut().zip(&f[l * block + s..l * block + s + n]) {
+                    *sum ^= coeff.mul_base_unreduced(w);
+                }
+            }
+            let mut stage = [[F192::ZERO; STAGE]; 2];
+            let [lo_f, lo_b] = &mut stage;
+            for (d, sum) in lo_f[..n].iter_mut().zip(&sums) {
+                *d = sum.reduce();
+            }
+            for (k, d) in lo_b[..n].iter_mut().enumerate() {
+                *d = scales
+                    .iter()
+                    .zip(weight)
+                    .fold(F192::ZERO, |acc, (&scale, tensor)| acc + scale * tensor.low[s + k]);
+            }
+            // SAFETY: distinct stages name disjoint in-bounds windows of `nf` and `nb`, which stay borrowed for
+            // the whole dispatch.
+            unsafe {
+                stream.copy(nf_base.slice(s, n), &lo_f[..n]);
+                stream.copy(nb_base.slice(s, n), &lo_b[..n]);
+            }
+            // `STAGE`, `ROUND_CHUNK` and `block` are powers of two, so no message pair straddles a stage.
+            let (u_0, u_2) = fold_msg_terms(&lo_f[..n], &lo_b[..n]);
+            acc.0 ^= u_0;
+            acc.1 ^= u_2;
+        }
+        acc
+    });
+    (
+        nf,
+        nb,
+        SumcheckMessage {
+            u_0: u_0.reduce(),
+            u_2: u_2.reduce(),
+        },
+    )
+}
+
+/// The `initial_k` lane rounds on a lane-tensor weight, transcript operation for transcript operation those of
+/// [`SumcheckProver::fold_lane`] on the dense weight, leaving the prover where they leave it, and their
+/// challenges.
+fn tensor_lane_rounds<'a>(
+    f: &'a [F64],
+    block: usize,
+    initial_k: usize,
+    weight: &[LaneTensor],
+    target: F192,
+    ps: &mut ProverState,
+) -> (SumcheckProver<'a>, Vec<F192>) {
+    let n_lanes = f.len() / block;
+    let width = 1usize << initial_k;
+    assert!(!weight.is_empty() && n_lanes <= width);
+    for tensor in weight {
+        assert_eq!(tensor.scales.len(), n_lanes, "one scale per committed lane");
+        assert_eq!(tensor.low.len(), block, "one low weight per word of a lane");
+    }
+    // Past the committed lanes the witness and the weight are zero, which is what the dense rounds pair the
+    // last lanes with.
+    let padded = |mut v: Vec<F192>| {
+        v.resize(width, F192::ZERO);
+        v
+    };
+    let span = tracing::info_span!("Sumcheck round", round = 0, log_size = f.len().ilog2()).entered();
+    let mut scales: Vec<Vec<F192>> = weight.iter().map(|t| padded(t.scales.clone())).collect();
+    let mut inner: Vec<Vec<F192>> = lane_inner_products(f, block, weight).into_iter().map(padded).collect();
+    drop(span);
+    let msg = tensor_msg(&scales, &inner);
+    send_msg(ps, msg, target);
+    let (mut t_r, mut quad) = (target, RoundQuad::from_msg(msg, target));
+    let mut rs = Vec::with_capacity(initial_k);
+    let mut collapsed = None;
+    for j in 0..initial_k {
+        let r = ps.sample();
+        rs.push(r);
+        t_r = quad.eval(r);
+        scales.iter_mut().chain(&mut inner).for_each(|v| fold_pairs(v, r));
+        let msg = if j + 1 < initial_k {
+            tensor_msg(&scales, &inner)
+        } else {
+            let _span = tracing::info_span!("Sumcheck round", round = j + 1, log_size = block.ilog2()).entered();
+            let last: Vec<F192> = scales.iter().map(|s| s[0]).collect();
+            let (nf, nb, msg) = collapse_lanes(f, block, &rs, weight, &last);
+            collapsed = Some((nf, nb));
+            msg
+        };
+        quad = RoundQuad::from_msg(msg, t_r);
+        send_msg(ps, msg, t_r);
+    }
+    let (nf, nb) = collapsed.expect("at least one lane round");
+    let prover = SumcheckProver {
+        f: Witness::Ext(nf),
+        combined_basis: nb,
+        t_r,
+        quad,
+        round: initial_k,
+        pending: Vec::new(),
+    };
+    (prover, rs)
+}
+
 /// The witness: the committed K-message (borrowed from the caller, it is only
 /// read during the lane rounds) before the first fold, the same message once the
 /// first lane round has folded it at the challenge it carries (that fold left
@@ -929,6 +1373,22 @@ impl<'a> SumcheckProver<'a> {
             pending: Vec::new(),
         };
         (inst, msg)
+    }
+
+    /// The prover once the lane rounds have lifted the witness into an owned E-vector, no longer borrowing the
+    /// committed message.
+    fn into_ext(self) -> SumcheckProver<'static> {
+        let Witness::Ext(f) = self.f else {
+            panic!("witness still in base phase (lane rounds not done)")
+        };
+        SumcheckProver {
+            f: Witness::Ext(f),
+            combined_basis: self.combined_basis,
+            t_r: self.t_r,
+            quad: self.quad,
+            round: self.round,
+            pending: self.pending,
+        }
     }
 
     /// The claim that fixes the next message's linear coefficient.
@@ -1163,6 +1623,64 @@ pub(crate) fn recursive_prover_with_prepared_basis(
     initial_message: Option<SumcheckMessage>,
     ps: &mut ProverState,
 ) {
+    assert_eq!(b_initial.len(), witness.len());
+    recursive_prover(
+        config,
+        log_n,
+        witness,
+        Initial::Dense(b_initial, initial_message),
+        target,
+        Some(l0_codeword),
+        l0_tree,
+        ps,
+    );
+}
+
+/// [`recursive_prover_with_basis`] on a weight that is a sum of lane tensors, `b(l, x) = Σ_c
+/// weight[c].scales[l] · weight[c].low[x]`, never written out (see "Lane rounds on a weight that is a sum of
+/// lane tensors"): the proof is the one the dense weight gives, byte for byte. Without `l0_codeword` (a
+/// [`commit_tree`] commitment), the rows the L0 queries open are encoded again from `witness`. The witness and
+/// the L0 tree are read last for those rows and their paths: owned ones (`Vec`s) are freed then, before the
+/// deeper levels commit.
+pub fn recursive_prover_with_lane_tensors(
+    config: &ProverConfig,
+    log_n: usize,
+    witness: impl AsRef<[F64]>,
+    weight: &[LaneTensor],
+    target: F192,
+    l0_codeword: Option<&[F64]>,
+    l0_tree: impl AsRef<[Hash]>,
+    ps: &mut ProverState,
+) {
+    recursive_prover(
+        config,
+        log_n,
+        witness,
+        Initial::Tensors(weight),
+        target,
+        l0_codeword,
+        l0_tree,
+        ps,
+    );
+}
+
+/// The weight the lane rounds start from.
+enum Initial<'w> {
+    /// Written out over the committed lanes, with round 0's message if it is already known.
+    Dense(Vec<F192>, Option<SumcheckMessage>),
+    Tensors(&'w [LaneTensor]),
+}
+
+fn recursive_prover(
+    config: &ProverConfig,
+    log_n: usize,
+    witness: impl AsRef<[F64]>,
+    initial: Initial<'_>,
+    target: F192,
+    l0_codeword: Option<&[F64]>,
+    l0_tree: impl AsRef<[Hash]>,
+    ps: &mut ProverState,
+) {
     let r = config.level_steps;
     let initial_k = config.initial_k;
 
@@ -1183,15 +1701,17 @@ pub(crate) fn recursive_prover_with_prepared_basis(
     // The committed lanes: only the ones that carry data, so the witness is a
     // whole number of lane blocks but generally NOT `2^log_n` words.
     let lane_block = 1usize << log_msg_cols_0;
-    let n_lanes = witness.len() / lane_block;
-    assert_eq!(witness.len(), n_lanes * lane_block, "witness is whole lane blocks");
+    let message = witness.as_ref();
+    let n_lanes = message.len() / lane_block;
+    assert_eq!(message.len(), n_lanes * lane_block, "witness is whole lane blocks");
     assert!(
         n_lanes >= 1 && n_lanes <= num_interleaved_0,
         "at most 2^initial_k lanes"
     );
-    assert_eq!(b_initial.len(), witness.len());
-    assert_eq!(l0_codeword.len(), block_len_0 * n_lanes);
-    assert_eq!(l0_tree.len(), 2 * block_len_0 - 1);
+    if let Some(l0_codeword) = l0_codeword {
+        assert_eq!(l0_codeword.len(), block_len_0 * n_lanes);
+    }
+    assert_eq!(l0_tree.as_ref().len(), 2 * block_len_0 - 1);
 
     // Nothing is absorbed on entry. The commitment was bound by the `add_root` that
     // transmitted it, and the target is `sum_i lambda^i * claim_i` over claim values bound by their
@@ -1204,14 +1724,13 @@ pub(crate) fn recursive_prover_with_prepared_basis(
     // The codeword interleaves only the committed lanes, and its lane `t` is stack
     // block `n_lanes-1-t`, so a row IS the tail of the leaf image: the absent lanes
     // are the image's leading zeros (`MerkleBuilder` shares their hash prefix, and only
-    // this tail rides the proof).
-    let l0_row = |q: usize| -> Vec<F64> { l0_codeword[q * n_lanes..(q + 1) * n_lanes].to_vec() };
+    // this tail rides the proof). Without the codeword, the queried rows are encoded again.
     // The same row for the induce, which folds a lane-ASCENDING row against the
     // lane eq table: reversing the image puts block `b` at index `b` and the absent
     // lanes' zeros at the end, where they contribute nothing.
-    let l0_fold_row = |q: usize| -> Vec<F64> {
+    let l0_fold_row = |image: &[F64]| -> Vec<F64> {
         let mut row = vec![F64::ZERO; num_interleaved_0];
-        for (t, &word) in l0_codeword[q * n_lanes..(q + 1) * n_lanes].iter().enumerate() {
+        for (t, &word) in image.iter().enumerate() {
             row[n_lanes - 1 - t] = word;
         }
         row
@@ -1220,17 +1739,27 @@ pub(crate) fn recursive_prover_with_prepared_basis(
     let ood_count = |lvl: usize| -> usize { config.ood_samples.get(lvl).copied().unwrap_or(0) };
 
     let sumcheck_span = tracing::info_span!("Sumcheck");
-    let (mut sc_prover, start_msg) =
-        sumcheck_span.in_scope(|| SumcheckProver::new(witness, b_initial, target, lane_block, initial_message));
-    send_msg(ps, start_msg, target);
+    let (mut sc_prover, r_lane_fold) = match initial {
+        Initial::Dense(b_initial, initial_message) => {
+            let (mut sc_prover, start_msg) =
+                sumcheck_span.in_scope(|| SumcheckProver::new(message, b_initial, target, lane_block, initial_message));
+            send_msg(ps, start_msg, target);
 
-    let mut r_lane_fold = Vec::with_capacity(initial_k);
-    for j in 0..initial_k {
-        let r_j = ps.sample();
-        let msg = sumcheck_span.in_scope(|| sc_prover.fold_lane(r_j, lane_block, j + 1 == initial_k));
-        send_msg(ps, msg, sc_prover.claim());
-        r_lane_fold.push(r_j);
-    }
+            let mut r_lane_fold = Vec::with_capacity(initial_k);
+            for j in 0..initial_k {
+                let r_j = ps.sample();
+                let msg = sumcheck_span.in_scope(|| sc_prover.fold_lane(r_j, lane_block, j + 1 == initial_k));
+                send_msg(ps, msg, sc_prover.claim());
+                r_lane_fold.push(r_j);
+            }
+            (sc_prover.into_ext(), r_lane_fold)
+        }
+        Initial::Tensors(weight) => {
+            let _entered = sumcheck_span.enter();
+            let (sc_prover, r_lane_fold) = tensor_lane_rounds(message, lane_block, initial_k, weight, target, ps);
+            (sc_prover.into_ext(), r_lane_fold)
+        }
+    };
     drop(sumcheck_span);
 
     // Commit f^1 = folded (now E-valued) witness as wtns_1.
@@ -1267,11 +1796,27 @@ pub(crate) fn recursive_prover_with_prepared_basis(
     let lambda_0 = ps.sample();
     let weights_0 = powers(lambda_0, num_queries_0);
     let span = tracing::info_span!("Open", level = 0).entered();
+    let images_0: Vec<Vec<F64>> = match l0_codeword {
+        Some(codeword) => queries_0
+            .iter()
+            .map(|&q| codeword[q * n_lanes..(q + 1) * n_lanes].to_vec())
+            .collect(),
+        None => encoded_rows(witness.as_ref(), log_n, initial_k, log_inv_rate_0, &queries_0),
+    };
+    // The committed message is not read again.
+    drop(witness);
     // Ordered (dup-possible) rows for the local induce math ...
-    let opened_rows_0: Vec<Vec<F64>> = queries_0.iter().map(|&q| l0_fold_row(q)).collect();
+    let opened_rows_0: Vec<Vec<F64>> = images_0.iter().map(|image| l0_fold_row(image)).collect();
     // ... but the stored proof carries the sorted-unique rows + one octopus over
     // the sorted-unique positions (the verifier re-fans them to ordered).
-    ps.hint_merkle(PrunedMerklePaths::prune(l0_tree, block_len_0, &queries_0, l0_row));
+    let l0_row = row_at(&queries_0, &images_0);
+    ps.hint_merkle(PrunedMerklePaths::prune(
+        l0_tree.as_ref(),
+        block_len_0,
+        &queries_0,
+        move |q| l0_row(q).to_vec(),
+    ));
+    drop((images_0, l0_tree));
     drop(span);
 
     // Induce basis_0 from the L0 opens. The dispatcher picks the sparse-prefix
@@ -1324,17 +1869,18 @@ pub(crate) fn recursive_prover_with_prepared_basis(
             let span = tracing::info_span!("Final level").entered();
             // Final level: stored (sorted-unique) only, no local induce; the
             // verifier fans these to ordered for its last-level induce.
+            let rows_last: Vec<Vec<F192>> = wtns_prev.rows(&queries_last);
+            let row = row_at(&queries_last, &rows_last);
             ps.hint_merkle(PrunedMerklePaths::prune(
                 &wtns_prev.tree,
                 wtns_prev.block_len,
                 &queries_last,
-                |q| ext_row_words(wtns_prev.row(q)),
+                |q| ext_row_words(row(q)),
             ));
             // Tie the last commitment into the running claim through the same
             // intro/glue step as every other level, then finish the remaining
             // sumcheck rounds. This closes on one weight evaluation instead of
             // a sweep over the residual cube.
-            let rows_last: Vec<Vec<F192>> = queries_last.iter().map(|&q| wtns_prev.row(q).to_vec()).collect();
             let enforced_sum_last = induce_sumcheck_enforced_sum(&rows_last, &level_rs, &queries_last, &weights_last);
             let n_res = sc_prover.f_ext().len().trailing_zeros() as usize;
             let basis_last = induce_sumcheck_evaluate_at_residual(
@@ -1388,12 +1934,13 @@ pub(crate) fn recursive_prover_with_prepared_basis(
         let weights_i = powers(lambda_i, num_queries_i);
         let span = tracing::info_span!("Open", level = i + 1).entered();
         // Ordered rows for the local induce; sorted-unique rows + octopus stored.
-        let opened_rows_i: Vec<Vec<F192>> = queries_i.iter().map(|&q| wtns_prev.row(q).to_vec()).collect();
+        let opened_rows_i: Vec<Vec<F192>> = wtns_prev.rows(&queries_i);
+        let row = row_at(&queries_i, &opened_rows_i);
         ps.hint_merkle(PrunedMerklePaths::prune(
             &wtns_prev.tree,
             wtns_prev.block_len,
             &queries_i,
-            |q| ext_row_words(wtns_prev.row(q)),
+            |q| ext_row_words(row(q)),
         ));
         drop(span);
 
@@ -1545,6 +2092,131 @@ mod tests {
                         "the words the proof drops are the padding at n_lanes = {n_lanes}"
                     );
                 }
+            }
+        }
+    }
+
+    /// Encoding one replica at a time commits to the same tree as encoding the whole codeword, and encodes the
+    /// same rows again.
+    #[test]
+    fn replicas_encode_the_codeword() {
+        let mut rng = Rng::new(0x2E91);
+        let shapes = [
+            (13usize, 1usize, &[1usize, 5, 64][..]),
+            (14, 2, &[3][..]),
+            (18, 1, &[37][..]),
+            (21, 1, &[9][..]),
+        ];
+        for (log_n, log_inv_rate, lanes) in shapes {
+            for &n_lanes in lanes {
+                let message: Vec<F64> = (0..n_lanes << (log_n - 6)).map(|_| F64(rng.next_u64())).collect();
+                let (commitment, data) = commit(&message, log_n, 6, log_inv_rate);
+                let (lean, tree) = commit_tree(&message, log_n, 6, log_inv_rate);
+                assert_eq!(lean.root, commitment.root, "log_n={log_n}, lanes={n_lanes}");
+                assert_eq!(tree, data.merkle_tree, "log_n={log_n}, lanes={n_lanes}");
+                let positions: Vec<usize> = (0..40)
+                    .map(|_| rng.next_u64() as usize % (data.codeword.len() / n_lanes))
+                    .chain([0, 0])
+                    .collect();
+                // One lane at a time, two (the last group short when the count is odd), and all at once.
+                let lane_words = data.codeword.len() / n_lanes;
+                for budget in [1, 2 * lane_words, REENCODE_WORDS] {
+                    let rows = encoded_rows_within(&message, log_n, 6, log_inv_rate, &positions, budget);
+                    for (row, &q) in rows.iter().zip(&positions) {
+                        assert_eq!(row[..], data.codeword[q * n_lanes..(q + 1) * n_lanes], "row {q}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// A deeper level committed one replica at a time, its message kept, has the tree and opens the rows of the
+    /// level committed whole.
+    #[test]
+    fn lean_levels_open_the_codeword() {
+        let mut rng = Rng::new(0x1E4);
+        for (log_msg_cols, log_lanes, log_inv_rate) in [(6usize, 2usize, 1usize), (9, 4, 4), (12, 4, 3)] {
+            let poly = rng.ext_vec(1 << (log_msg_cols + log_lanes));
+            let ntt = AdditiveNttF64::standard(log_msg_cols + log_inv_rate);
+            let whole = ligero_commit_ext_within(&poly, log_msg_cols, log_lanes, log_inv_rate, &ntt, usize::MAX);
+            let lean = ligero_commit_ext_within(&poly, log_msg_cols, log_lanes, log_inv_rate, &ntt, 0);
+            assert!(matches!(whole.rows, LigeroRows::Codeword(_)) && matches!(lean.rows, LigeroRows::Message { .. }));
+            assert_eq!(lean.tree, whole.tree, "log_msg_cols={log_msg_cols}");
+            let positions: Vec<usize> = (0..30).map(|_| rng.next_u64() as usize % whole.block_len).collect();
+            assert_eq!(
+                lean.rows(&positions),
+                whole.rows(&positions),
+                "log_msg_cols={log_msg_cols}"
+            );
+        }
+    }
+
+    /// The lane rounds on lane tensors, with the codeword or with the rows encoded again, prove what the dense
+    /// weight proves, byte for byte, at every count of absent lanes.
+    #[test]
+    fn lane_tensors_prove_what_the_dense_weight_proves() {
+        for (log_n, lanes) in [(13usize, &[1usize, 2, 5, 64][..]), (18, &[37][..])] {
+            let pc = test_config_for(log_n);
+            let lane_block = 1usize << (log_n - pc.initial_k);
+            for &n_lanes in lanes {
+                let mut rng = Rng::new(0x7E5 + n_lanes as u64);
+                let witness: Vec<F64> = (0..n_lanes * lane_block).map(|_| F64(rng.next_u64())).collect();
+                let weight: Vec<LaneTensor> = (0..2)
+                    .map(|c| LaneTensor {
+                        // A lane of zero scale, as a claim whose high coordinates miss it leaves.
+                        scales: (0..n_lanes)
+                            .map(|l| if l == c { F192::ZERO } else { rng.ext() })
+                            .collect(),
+                        low: rng.ext_vec(lane_block),
+                    })
+                    .collect();
+                let dense: Vec<F192> = (0..witness.len())
+                    .map(|i| {
+                        weight.iter().fold(F192::ZERO, |acc, t| {
+                            acc + t.scales[i / lane_block] * t.low[i % lane_block]
+                        })
+                    })
+                    .collect();
+                let target = inner_product_base_ext(&witness, &dense);
+                let (cm, pd) = commit(&witness, log_n, pc.initial_k, pc.log_inv_rates[0]);
+                let prove = |run: &dyn Fn(&mut ProverState)| {
+                    let mut ps = ProverState::from_label(b"whir-test");
+                    run(&mut ps);
+                    ps.into_proof()
+                };
+                let expected = prove(&|ps| {
+                    recursive_prover_with_basis(
+                        &pc,
+                        log_n,
+                        &witness,
+                        dense.clone(),
+                        target,
+                        &pd.codeword,
+                        &pd.merkle_tree,
+                        ps,
+                    )
+                });
+                for codeword in [Some(&pd.codeword[..]), None] {
+                    let actual = prove(&|ps| {
+                        recursive_prover_with_lane_tensors(
+                            &pc,
+                            log_n,
+                            &witness,
+                            &weight,
+                            target,
+                            codeword,
+                            &pd.merkle_tree,
+                            ps,
+                        )
+                    });
+                    assert_eq!(
+                        actual,
+                        expected,
+                        "log_n={log_n}, lanes={n_lanes}, codeword={}",
+                        codeword.is_some()
+                    );
+                }
+                let _ = cm;
             }
         }
     }
