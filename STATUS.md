@@ -46,10 +46,19 @@ Part of this repository. Updated as work lands.
 - **Implementation (#1)**: no soundness break. ZK was broken as built (calldata-only distinguisher; unpadded
   openings) → fixed by the hiding layouts (both attacks are regression tests that now fail). `log_rows` range:
   fixed. Gas formulas correct.
+- **Prover memory / `pcs` (adversarial, on 411866f)**: the lean paths make the dense prover's bytes. Differential
+  tests cover commitments, re-encoded rows, lean levels, the lane-tensor prover and openings. The whole-protocol
+  digests are pinned. Fixed:
+  - aliasing UB in the in-place NTT encodes, leanVM's included (Miri, both borrow models; reported in
+    `UPSTREAM.md`);
+  - an opening of no claims panicked.
+
+  `Table::new_in` / `hidden_in` now check, in debug builds, that the fill writes every word. Noted, not changed:
+  `prove` recomputes σ's coset values for every proof.
 
 ## In progress
 
-Reviews: prover-memory/`pcs` changes; end-to-end cryptography; the hiding design. FV: F0a (end theorem for a χ
+Reviews: end-to-end cryptography; the hiding design. FV: F0a (end theorem for a χ
 circuit), F0b (the deployed circuit in Lean, Keccak gadget proofs), F2 (WHIR soundness bridge to leanerVM `mumbai`),
 F3 (hiding layouts in Lean), F4a (the Keccak-256 chain in the random-permutation model), the `Statement` package
 (explicit computable extractor/simulator, executable verifier differential-tested against Rust).

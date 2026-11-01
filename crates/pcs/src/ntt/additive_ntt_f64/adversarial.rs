@@ -21,12 +21,21 @@ fn whole(k: usize, msg: &[F64], lanes: usize, r: usize) -> Vec<F64> {
 /// 3x for the F192 lanes of a deeper level).
 const LANES: &[usize] = &[1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 16, 17, 24, 37, 48, 59, 63, 64, 96, 192];
 
+/// Under Miri, the sweeps below shrink to domains up to `2^MIRI_MAX_K` and these lane counts.
+const MIRI_MAX_K: usize = 5;
+const MIRI_LANES: &[usize] = &[1, 3, 8];
+
+/// Whether a sweep skips `lanes` lanes on a `2^k` domain under Miri.
+fn miri_skips(k: usize, lanes: usize) -> bool {
+    cfg!(miri) && (k > MIRI_MAX_K || !MIRI_LANES.contains(&lanes))
+}
+
 /// A replica's transform is F_2-affine in the block index, as the whole one's is: its twiddles are the
 /// whole transform's at the replica's blocks, for every layer, every block and every rate, and nested replicas
 /// compose. `twiddles_radix8` (the fused kernel's) agrees with `twiddle` on replicas, offsets included.
 #[test]
 fn replica_twiddles_are_the_whole_transforms() {
-    for k in 1..=14usize {
+    for k in 1..=if cfg!(miri) { MIRI_MAX_K + 1 } else { 14 } {
         let full = AdditiveNttF64::standard(k);
         for r in 0..=k.min(5) {
             for b in 0..1usize << r {
@@ -83,7 +92,7 @@ fn replica_encode_is_the_whole_encode() {
         for r in 1..=k.min(4) {
             for &lanes in LANES {
                 // Keep the sweep a few seconds: big domains with few lane counts.
-                if (lanes << k) > (1 << 22) || (k > 14 && !matches!(lanes, 1 | 3 | 37 | 64)) {
+                if (lanes << k) > (1 << 22) || (k > 14 && !matches!(lanes, 1 | 3 | 37 | 64)) || miri_skips(k, lanes) {
                     continue;
                 }
                 let msg = rand_words(&mut rng, lanes << (k - r));
@@ -145,7 +154,10 @@ fn rows_only_encode_gives_the_wanted_rows() {
     for k in 1..=20usize {
         for r in 1..=k.min(4) {
             for &lanes in LANES {
-                if (lanes << k) > (1 << 22) || (k > 14 && !matches!(lanes, 1 | 5 | 59 | 64 | 192)) {
+                if (lanes << k) > (1 << 22)
+                    || (k > 14 && !matches!(lanes, 1 | 5 | 59 | 64 | 192))
+                    || miri_skips(k, lanes)
+                {
                     continue;
                 }
                 let msg = rand_words(&mut rng, lanes << (k - r));
@@ -204,19 +216,23 @@ fn rows_only_encode_refuses_repeats() {
 }
 
 /// Tiny shapes for Miri (`cargo +nightly miri test --target x86_64-unknown-linux-gnu -p pcs miri_`, with the
-/// `bench` dev-dependency removed, as jemalloc does not cross-build): the replica and rows-only encodes, in place
-/// and from a separate message into an uninitialised codeword.
+/// `bench` dev-dependency removed, as jemalloc does not cross-build, and plain copies in place of streaming
+/// stores, as Miri runs no inline assembly): the replica and rows-only encodes, in place and from a separate
+/// message into an uninitialised codeword. At the cache budgets of x86 they take `replicate` and the deep pass;
+/// with `L2_WORDS = 16` and `L3_WORDS = 32` (a local edit), one or two gathered passes from the message first.
 ///
-/// FINDING: under Stacked Borrows and Tree Borrows alike Miri reports UB in the in-place encodes:
-/// `encode_interleaved_in_place{,_with}` (pre-existing) and `encode_interleaved_rows_in_place` (new) take
-/// `msg = SendPtr(data.as_mut_ptr())` and then pass `data` to `transform`, whose `&mut` argument is protected
-/// (LLVM `noalias`); the first pass / `replicate` then read the message through `msg`, a pointer not derived
-/// from that argument, while the function writes through it. With `-Zmiri-disable-stacked-borrows` this test
-/// passes (no uninitialised read, no out-of-bounds access, no data race).
+/// FINDING (fixed): under Stacked Borrows and Tree Borrows alike Miri reported UB in the in-place encodes:
+/// `encode_interleaved_in_place{,_with}` (pre-existing, leanVM's) and `encode_interleaved_rows_in_place` (new)
+/// took `msg = SendPtr(data.as_mut_ptr())` and then passed `data` to `transform`, whose `&mut` argument is
+/// protected (LLVM `noalias`); the first pass / `replicate` then read the message through `msg`, a pointer not
+/// derived from that argument, while the function wrote through it. With `-Zmiri-disable-stacked-borrows` this
+/// test passed (no uninitialised read, no out-of-bounds access, no data race). The message is now
+/// `Message::InPlace`, its pointer derived from the buffer by each pass that reads it; this test passes under
+/// both models.
 #[test]
 fn miri_replica_and_rows_only_encodes() {
     let mut rng = Rng::new(0xADE3);
-    for (k, r, lanes) in [(5usize, 1usize, 3usize), (6, 2, 1), (4, 1, 6)] {
+    for (k, r, lanes) in [(5usize, 1usize, 3usize), (6, 2, 1), (4, 1, 6), (8, 1, 3)] {
         let msg = rand_words(&mut rng, lanes << (k - r));
         let want = whole(k, &msg, lanes, r);
         let full = AdditiveNttF64::standard(k);

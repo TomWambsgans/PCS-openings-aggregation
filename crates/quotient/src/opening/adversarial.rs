@@ -171,8 +171,8 @@ fn word(x: u64) -> u64 {
 }
 
 /// `Table::new_in` on a buffer full of garbage, longer or shorter than the stack, is `Table::new`, as long as
-/// `fill` writes whole lanes; a fill that writes part of a lane (as the witness table's mask lane does) leaves
-/// the buffer's old words in the rest.
+/// `fill` writes whole lanes; a fill that writes part of a lane (as the witness table's mask lane did before the
+/// hidden layouts) leaves the buffer's old words in the rest, which debug builds refuse.
 #[test]
 fn table_new_in_is_new_for_whole_lane_fills() {
     let layout = Layout::new(18, 14, 16, &[(3, 1 << 14), (0, 3000), (9, 1 << 13)]);
@@ -186,21 +186,25 @@ fn table_new_in_is_new_for_whole_lane_fills() {
         let reused = Table::new_in(layout.clone(), vec![F64(u64::MAX); len], whole);
         assert_eq!(reused.stack, fresh.stack, "buffer of {len}");
     }
-    // A partial fill: what the old `Table::new` zeroed, a reused buffer keeps.
+    // A partial fill: what the old `Table::new` zeroed, a reused buffer keeps; debug builds refuse it.
     let partial = |_: usize, _: usize, lane: &mut [F64]| lane[..16].fill(F64(7));
     let fresh = Table::new(layout.clone(), partial);
-    let reused = Table::new_in(layout.clone(), vec![F64(u64::MAX); layout.placed()], partial);
-    assert_ne!(
-        reused.stack, fresh.stack,
-        "documents the precondition: fill must write whole lanes"
-    );
+    let reused =
+        std::panic::catch_unwind(|| Table::new_in(layout.clone(), vec![F64(u64::MAX); layout.placed()], partial));
+    match (reused, cfg!(debug_assertions)) {
+        (Ok(reused), false) => assert_ne!(
+            reused.stack, fresh.stack,
+            "documents the precondition: fill must write whole lanes"
+        ),
+        (Err(_), true) => {}
+        (Ok(_), true) => panic!("debug builds check that fill writes whole lanes"),
+        (Err(_), false) => panic!("only debug builds check that fill writes whole lanes"),
+    }
 }
 
-/// FINDING: an opening of no claims. The old opening proved it (a zero weight), and the verifier accepts that
-/// proof; the new one panics in `pcs::whir::tensor_lane_rounds`. Ignored so the suite stays green:
-/// `cargo test --release -p quotient -- --ignored open_no_claims`.
+/// FINDING (fixed): an opening of no claims. The old opening proved it (a zero weight), and the verifier accepts
+/// that proof; the lean one panicked in `pcs::whir::tensor_lane_rounds`, and now makes the old proof.
 #[test]
-#[ignore = "demonstrates a regression of 411866f: open(.., &[]) panics"]
 fn open_no_claims() {
     let layout = Layout::new(16, 16, 16, &[(0, 1 << 16)]);
     let table = Table::new(layout, |l, _, lane| {

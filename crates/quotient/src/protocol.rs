@@ -425,6 +425,8 @@ pub fn prove(
     let (w_values, sigma_values) = values.split_at_mut(big);
     witness.read(0, &mut w_values[..n]);
     coset_values(w_values, &[&[], &mask]);
+    // Note: these depend on the circuit alone, yet every proof computes them again (a `4n`-point transform);
+    // the index could keep them, for `4n` more words held between proofs.
     coset_values(sigma_values, &[index.sigma()]);
     let mut q = Vec::with_capacity(big.max(placed.div_ceil(3)));
     q.resize(big, F192::ZERO);
@@ -480,6 +482,8 @@ pub fn prove(
     // quotient, and the extension's two.
     // For a witness, both quotients are polynomials of the degrees the layout holds. For anything else they may
     // not be, and what the layout leaves out is dropped: the claims are then false.
+    // The stack is built in `values`, whose old words stay wherever the fill does not write: it writes every word
+    // of each run it is handed (debug builds check it).
     let fits = q[3 * n + layout.covered(m, 7)..].iter().all(|v| v.is_zero())
         && q_gate[n + layout.covered(m, 9)..].iter().all(|v| v.is_zero());
     let quotient = Table::hidden_in(layout, values, &table_seed(seed, b"quotient"), |start, out| {

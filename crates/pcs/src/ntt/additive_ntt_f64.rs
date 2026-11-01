@@ -3,6 +3,12 @@
 // Modified here: per-layer twiddle offsets and `AdditiveNttF64::replica`, so that a codeword can be encoded one
 // replica at a time (the same words, in half the memory at rate 1/2); and `encode_interleaved_rows_in_place` /
 // `encode_interleaved_rows_with`, whose deep pass runs only on the blocks holding a wanted row.
+// Also modified here (an aliasing fix, to report upstream: UPSTREAM.md): the in-place encodes
+// (`encode_interleaved_in_place`, `encode_interleaved_in_place_with`, `encode_interleaved_rows_in_place`) took the
+// message pointer from `data` and then lent `data` out as a `&mut` (LLVM `noalias`) while the first pass and
+// `replicate` read through that pointer, which Miri reports as undefined behavior under Stacked Borrows and Tree
+// Borrows. The message is now [`Message::InPlace`], and each pass that reads it derives its pointer from the
+// buffer it was handed. The codewords are the same, word for word.
 //! Additive NTT over GF(2^64) in the Lin-Chung-Han novel polynomial basis.
 //!
 //! It is the Reed-Solomon encoder of every WHIR commitment over K = F_{2^64}.
@@ -57,6 +63,19 @@ fn span_get(basis: &[F64], idx: usize) -> F64 {
 
 /// Receives a finished block of codeword rows, as `(first_row, rows)`.
 pub type RowSink<'a> = dyn Fn(usize, &[F64]) + Sync + 'a;
+
+/// Where an encode's message is, which its first pass reads.
+#[derive(Clone, Copy)]
+enum Message<'a> {
+    /// The buffer's own first replica.
+    ///
+    /// No pointer to it is taken before the buffer is lent to a pass: each pass that reads the message derives
+    /// its pointer from the `&mut` it was handed, so that the pointer stays valid while the pass writes the
+    /// buffer. A pointer taken before the buffer was lent would be invalidated by that `&mut` (`noalias`).
+    InPlace,
+    /// A message of its own, one replica long, disjoint from the codeword.
+    Separate(&'a [F64]),
+}
 
 /// Additive NTT over F_{2^64} with the standard polynomial-basis subspace
 /// `{1, x, x², …}`: the F_2-subspace is `{0, 1, …, 2^ℓ−1}` under the natural
@@ -171,8 +190,7 @@ impl AdditiveNttF64 {
     /// - The first pass wants hundreds of scattered rows at once.
     pub fn encode_interleaved_in_place(&self, data: &mut [F64], num_ntts: usize, log_inv_rate: usize) {
         // The message is the buffer's own first replica.
-        let msg = parallel::SendPtr(data.as_mut_ptr());
-        self.transform(data, num_ntts, log_inv_rate, Some(msg), None, None);
+        self.transform(data, num_ntts, log_inv_rate, Some(Message::InPlace), None, None);
     }
 
     /// [`Self::encode_interleaved_in_place`] for the rows `rows` (sorted, distinct) alone: those rows are the
@@ -189,8 +207,7 @@ impl AdditiveNttF64 {
         rows: &[usize],
     ) {
         assert!(rows.is_sorted_by(|a, b| a < b), "sorted, distinct rows");
-        let msg = parallel::SendPtr(data.as_mut_ptr());
-        self.transform(data, num_ntts, log_inv_rate, Some(msg), None, Some(rows));
+        self.transform(data, num_ntts, log_inv_rate, Some(Message::InPlace), None, Some(rows));
     }
 
     /// Encode in place, handing `on_rows` every finished block of rows.
@@ -206,8 +223,8 @@ impl AdditiveNttF64 {
         log_inv_rate: usize,
         on_rows: &RowSink<'_>,
     ) {
-        let msg = parallel::SendPtr(data.as_mut_ptr());
-        self.transform(data, num_ntts, log_inv_rate, Some(msg), Some(on_rows), None);
+        let msg = Some(Message::InPlace);
+        self.transform(data, num_ntts, log_inv_rate, msg, Some(on_rows), None);
     }
 
     /// RS-encode a message held in a buffer of its own, handing `on_rows` every finished block of rows.
@@ -232,9 +249,8 @@ impl AdditiveNttF64 {
             data.len(),
             "the codeword is 2^log_inv_rate messages"
         );
-        // Read-only from here on: the pointer only feeds the first pass's reads.
-        let msg = parallel::SendPtr(msg.as_ptr().cast_mut());
-        self.transform(data, num_ntts, log_inv_rate, Some(msg), Some(on_rows), None);
+        let msg = Some(Message::Separate(msg));
+        self.transform(data, num_ntts, log_inv_rate, msg, Some(on_rows), None);
     }
 
     /// [`Self::encode_interleaved_with`] for the rows `rows` (sorted, distinct) alone, as
@@ -253,9 +269,8 @@ impl AdditiveNttF64 {
             "the codeword is 2^log_inv_rate messages"
         );
         assert!(rows.is_sorted_by(|a, b| a < b), "sorted, distinct rows");
-        // Read-only from here on: the pointer only feeds the first pass's reads.
-        let msg = parallel::SendPtr(msg.as_ptr().cast_mut());
-        self.transform(data, num_ntts, log_inv_rate, Some(msg), None, Some(rows));
+        let msg = Some(Message::Separate(msg));
+        self.transform(data, num_ntts, log_inv_rate, msg, None, Some(rows));
     }
 
     /// Run layers `start..d` of a `2^d`-row transform in as few sweeps of the buffer as possible.
@@ -298,7 +313,7 @@ impl AdditiveNttF64 {
         data: &mut [F64],
         num_ntts: usize,
         start: usize,
-        msg: Option<parallel::SendPtr<F64>>,
+        msg: Option<Message<'_>>,
         on_rows: Option<&RowSink<'_>>,
         wanted: Option<&[usize]>,
     ) {
@@ -359,9 +374,14 @@ impl AdditiveNttF64 {
         //
         //     message is block 0 of the buffer  ->  a task could overwrite it while others still copy it
         //     no layer left to run              ->  no deep task would write the buffer at all
-        if let Some(m) = msg.take_if(|m| std::ptr::eq(m.0, data.as_mut_ptr()) || deep_start == log_d) {
+        if let Some(m) = msg.take_if(|m| matches!(m, Message::InPlace) || deep_start == log_d) {
             replicate(data, m, data.len() >> start);
         }
+        // What is left for the deep pass is a separate message: one in place was replicated above.
+        let msg = msg.map(|m| match m {
+            Message::Separate(m) => m,
+            Message::InPlace => unreachable!("an in-place message is replicated before the deep pass"),
+        });
 
         // A lone sub-block runs on this thread, so its rows go over in parallel afterwards.
         let fuse = 0 < deep_start && deep_start < log_d;
@@ -391,11 +411,8 @@ impl AdditiveNttF64 {
                     //
                     //     sub-block at offset off of its replica  <-  message words [off, off + sub_len)
                     let off = (sub_idx * sub_len) % block_len;
-                    // SAFETY:
-                    // - The external message is valid for one whole replica of words.
-                    // - It is disjoint from the codeword.
-                    // - This sub-block ends inside its replica, so the read stays in bounds.
-                    scratch.copy_from_slice(unsafe { std::slice::from_raw_parts(m.add(off), sub_len) });
+                    // The message is one whole replica, and this sub-block ends inside its replica.
+                    scratch.copy_from_slice(&m[off..off + sub_len]);
                     deep_layers(scratch, sub_idx);
                     if let Some(f) = deep_rows {
                         f(sub_idx << log_sub, scratch);
@@ -458,7 +475,7 @@ impl AdditiveNttF64 {
         num_ntts: usize,
         layer: usize,
         g: usize,
-        msg: Option<parallel::SendPtr<F64>>,
+        msg: Option<Message<'_>>,
         stream: bool,
     ) {
         // A group is 2^g rows, `step` rows apart.
@@ -468,6 +485,13 @@ impl AdditiveNttF64 {
         // Without one, a task is one (block, residue) pair.
         let n_tasks = if msg.is_some() { step } else { step << layer };
         let base = parallel::SendPtr(data.as_mut_ptr());
+        // Where the message's rows are read: the buffer's own block 0 through `base`, which the tasks also write
+        // through (a pointer from before `data` was lent here would not be valid while they do), or a separate
+        // message, only read.
+        let msg = msg.map(|m| match m {
+            Message::InPlace => base,
+            Message::Separate(m) => parallel::SendPtr(m.as_ptr().cast_mut()),
+        });
         // With a message, every block of a residue starts from the same rows: they are gathered
         // once, and each block but the last transforms a copy.
         let n_blocks = if msg.is_some() { 1usize << layer } else { 1 };
@@ -897,13 +921,21 @@ fn with_scratch<R>(len: usize, f: impl FnOnce(&mut [F64]) -> R) -> R {
 ///
 /// - This is the unfused form of a gathered first pass.
 /// - The message may be the buffer's own first replica, which is then left as it is.
-fn replicate(data: &mut [F64], msg: parallel::SendPtr<F64>, msg_len: usize) {
+fn replicate(data: &mut [F64], msg: Message<'_>, msg_len: usize) {
     // Copy granularity: small enough to spread a short message over every worker.
     const CHUNK: usize = 1 << 14;
     let replicas = data.len() / msg_len;
-    let in_place = std::ptr::eq(msg.0, data.as_mut_ptr());
     let chunks = msg_len.div_ceil(CHUNK);
     let dst = parallel::SendPtr(data.as_mut_ptr());
+    // The message: the buffer's replica 0, read through `dst`, which the tasks also write through, or a separate
+    // message, only read.
+    let (msg, in_place) = match msg {
+        Message::InPlace => (dst, true),
+        Message::Separate(m) => {
+            assert_eq!(m.len(), msg_len);
+            (parallel::SendPtr(m.as_ptr().cast_mut()), false)
+        }
+    };
     // Replica index innermost, so one worker copies a chunk into several replicas while it is cached.
     parallel::for_each(chunks * replicas, |t| {
         let (c, replica) = (t / replicas, t % replicas);
@@ -914,6 +946,7 @@ fn replicate(data: &mut [F64], msg: parallel::SendPtr<F64>, msg_len: usize) {
         let start = c * CHUNK;
         let len = CHUNK.min(msg_len - start);
         // SAFETY:
+        // - The message holds `msg_len` words, and the buffer `replicas` times as many.
         // - Only this task writes this range.
         // - The range skips replica 0, so it never overlaps a message stored there.
         unsafe {

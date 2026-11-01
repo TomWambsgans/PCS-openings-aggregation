@@ -27,11 +27,11 @@ pub mod whir;
 
 pub use bytecode::Bytecode;
 pub use field::{E, K};
+pub use hash::Digest;
 pub use layout::{TAG, gpow};
 pub use merkle::{MerkleOpenings, MerklePath, PrunedMerklePaths};
 pub use transcript::Proof;
 pub use transcript::Transcript;
-pub use hash::Digest;
 
 use bus::{ColumnClaim, table_sumcheck, verify_bus_balance};
 use field::{ZERO, powers};

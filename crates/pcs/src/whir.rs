@@ -1291,7 +1291,8 @@ fn tensor_lane_rounds<'a>(
 ) -> (SumcheckProver<'a>, Vec<F192>) {
     let n_lanes = f.len() / block;
     let width = 1usize << initial_k;
-    assert!(!weight.is_empty() && n_lanes <= width);
+    // No tensor at all (an opening of no claims) is the zero weight, which the dense prover proves too.
+    assert!(n_lanes <= width);
     for tensor in weight {
         assert_eq!(tensor.scales.len(), n_lanes, "one scale per committed lane");
         assert_eq!(tensor.low.len(), block, "one low weight per word of a lane");

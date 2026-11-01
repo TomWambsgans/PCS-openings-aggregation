@@ -359,12 +359,10 @@ fn print_lean_levels() {
     }
 }
 
-/// FINDING: the lane-tensor prover with no claim at all panics (`assert!(!weight.is_empty() && ..)` in
-/// `tensor_lane_rounds`), where the dense prover proves the zero weight. Dropping `!weight.is_empty() &&` from
-/// that assert makes this pass (checked). Ignored so the suite stays green: `cargo test --release -p pcs --
-/// --ignored no_claims`.
+/// FINDING (fixed): the lane-tensor prover with no claim at all panicked (`assert!(!weight.is_empty() && ..)` in
+/// `tensor_lane_rounds`), where the dense prover proves the zero weight. With `!weight.is_empty() &&` dropped
+/// from that assert, it proves what the dense prover proves.
 #[test]
-#[ignore = "demonstrates a regression of 411866f: an empty claim list panics"]
 fn no_claims() {
     let log_n = 15;
     let pc = config_for_rate(log_n, 1).unwrap();
