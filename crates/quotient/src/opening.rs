@@ -13,7 +13,9 @@
 //! outside some blocks, so it is committed as the **stack** of those blocks, one WHIR lane each, in the order
 //! the [`Layout`] lists them. A claim stays a plain multilinear claim on the whole table: its weight on the
 //! stack is the claim's `eq`, read wherever the stack holds the table's entries. All the claims on one
-//! commitment are opened together, as one random combination, which is what binds them to one table.
+//! commitment are opened together, as one random combination, which binds them to one table of the root's
+//! level-0 Johnson list (leanVM's WHIR takes no out-of-domain sample at level 0): claims on one commitment must never
+//! be opened separately.
 //!
 //! A **hidden** layout ([`Layout::hidden`]) makes the commitment and its opening independent of the table given
 //! the claims (`HIDING.md`): every lane's first piece of `2^LOG_PIECE` entries is random, the pieces the table's

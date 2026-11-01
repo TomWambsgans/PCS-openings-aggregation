@@ -675,7 +675,8 @@ impl Channel<F192> for Stream<'_> {
 }
 
 /// Verify a proof of `statement` against the circuit committed as `index_root`, down to the two commitments it
-/// names (the witness table's, then the quotient table's) and four claims: it holds if all four are true.
+/// names (the witness table's, then the quotient table's) and four claims: it holds if, for each commitment, one
+/// table of its level-0 Johnson list satisfies all the claims on it (one opening per commitment, [`verify_openings`]).
 pub fn verify(
     index_root: &Hash,
     statement: &Statement,
