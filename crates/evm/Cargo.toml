@@ -1,0 +1,19 @@
+# Adapted from leanVM (https://github.com/leanEthereum/leanVM), branch PCS-openings-aggregation, crates/evm.
+# MIT OR Apache-2.0; see NOTICE.md.
+[package]
+name = "evm"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+fiat_shamir.workspace = true
+quotient.workspace = true
+primitives.workspace = true
+revm.workspace = true
+
+[dev-dependencies]
+primitives = { workspace = true, features = ["test-util"] }

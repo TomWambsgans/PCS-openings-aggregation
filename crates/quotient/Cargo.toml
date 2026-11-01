@@ -1,0 +1,28 @@
+# Part of this repository. The protocol is adapted from leanVM's `flock::quotient`
+# (https://github.com/leanEthereum/leanVM, branch PCS-openings-aggregation), MIT OR Apache-2.0. See NOTICE.md.
+[package]
+name = "quotient"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Zero-knowledge Merkle membership (Keccak-256) reduced to four evaluation claims by five field elements"
+
+[lints]
+workspace = true
+
+[dependencies]
+parallel.workspace = true
+primitives.workspace = true
+fiat_shamir.workspace = true
+pcs.workspace = true
+verifier.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+primitives = { workspace = true, features = ["test-util"] }
+bench.workspace = true
+sha3.workspace = true
+
+[[bench]]
+name = "membership"
+harness = false

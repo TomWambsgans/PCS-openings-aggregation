@@ -1,0 +1,38 @@
+# The workspace layout, lints, dependency versions and release profile follow leanVM's
+# (https://github.com/leanEthereum/leanVM, commit c445e3d51a5a85031df47240595698f3b24897bf),
+# MIT OR Apache-2.0. See NOTICE.md.
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+# Numeric kernels legitimately index by loop variable and take many arguments.
+[workspace.lints.clippy]
+needless_range_loop = "allow"
+too_many_arguments = "allow"
+
+[workspace.dependencies]
+bench = { path = "crates/bench" }
+primitives = { path = "crates/primitives" }
+fiat_shamir = { path = "crates/fiat_shamir" }
+pcs = { path = "crates/pcs" }
+parallel = { path = "crates/parallel" }
+verifier = { path = "crates/verifier" }
+quotient = { path = "crates/quotient" }
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+rand = "0.9"
+sha3 = "0.11"
+tikv-jemallocator = "0.7"
+tracing = "0.1.26"
+tracing-forest = { version = "0.3.0", features = ["ansi", "smallvec"] }
+tracing-subscriber = { version = "0.3.23", features = ["std", "env-filter"] }
+revm = { version = "27.1.0", default-features = false, features = ["std"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

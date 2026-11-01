@@ -46,3 +46,20 @@ TLDR: The PCS is relatively easy to upgrade, the only thing that cannot be upgra
 
 - We want a "ZKZK-friendly" PCS -> at a prover overhead of typically 2x or 4x, we can make it ZKZK without changing the verifier *at all* (WHIR is an example)
 - I don't think we need to put the Fiat-Shamir states (before + after) in the header (but this requires security analysis)
+
+## Implementation (`crates/`)
+
+Zero-knowledge Merkle membership with Keccak-256 (depth 32: `y = H(x | 0x11..)`, path from `H(x | 0x22..)` to
+`root`), reduced to four PCS claims by five field elements, as in leanVM's `flock::quotient` but on a circuit of
+one χ gate on bits, its claims opened by leanVM's WHIR unchanged. See [`NOTICE.md`](NOTICE.md) for what comes
+from where.
+
+- `crates/quotient`: circuit, prover, Rust verifier (`protocol::reduce`), and the openings (`opening`).
+- `crates/evm`: the same verifier compiled to EVM bytecode, run on revm with `FIELD_MUL` (10 gas).
+- Vendored from leanVM `c445e3d5`: `primitives`, `fiat_shamir`, `pcs`, `parallel`, `verifier`, `bench`.
+
+```sh
+cargo test --release -p quotient -p evm                               # tests, incl. contract == Rust verifier
+cargo bench -p quotient --bench membership                            # prover / verifier timings and sizes
+cargo test --release -p evm -- --ignored --nocapture gas_report       # gas of the contract
+```
