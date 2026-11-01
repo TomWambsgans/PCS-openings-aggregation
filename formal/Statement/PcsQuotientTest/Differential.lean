@@ -1,0 +1,155 @@
+-- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+import PcsQuotient
+
+/-!
+# The differential test
+
+`lake exe differential VECTORS`: the Lean verifier (`PcsQuotient.reduce`, `PcsQuotient.verify`) on
+the vectors `crates/quotient/examples/statement_vectors.rs` writes, each with the Rust verifier's
+outcome, and a count of the agreements. Exit code `1` on any disagreement or unreadable line.
+
+* `R` lines: the reduction alone; the Rust's two roots and four claims must be the Lean's, or both
+  reject.
+* `P` lines: a whole proof, its openings in their raw form; both verifiers accept, or both reject.
+-/
+
+open LeanVM.Parameters LeanVM.Protocol LeanVM.Protocol.Compile PcsQuotient
+
+namespace PcsQuotientTest
+
+/-- A parser of a line's tokens. -/
+abbrev Parse := StateT (List String) (Except String)
+
+def token : Parse String := do
+  match ← get with
+  | [] => throw "the line ended early"
+  | t :: ts => set ts; pure t
+
+def hexDigit (c : Char) : Option ℕ :=
+  if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - '0'.toNat)
+  else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
+  else none
+
+def hexNat (s : String) : Except String ℕ :=
+  s.toList.foldlM (fun acc c ↦ match hexDigit c with
+    | some d => pure (16 * acc + d)
+    | none => throw s!"not hex: {s}") 0
+
+def nat : Parse ℕ := do
+  let t ← token
+  match t.toNat? with
+  | some n => pure n
+  | none => throw s!"not a number: {t}"
+
+def kWord : Parse K := do
+  pure (K.ofLane (UInt64.ofNat (← hexNat (← token))))
+
+def eElem : Parse E := do
+  match (← token).splitOn ":" with
+  | [a, b, c] =>
+    let limb (s : String) : Except String K := (fun n ↦ K.ofLane (UInt64.ofNat n)) <$> hexNat s
+    pure (E.ofLimbs (← limb a) (← limb b) (← limb c))
+  | _ => throw "not an element of E"
+
+def bytes32 : Parse (Vector UInt8 32) := do
+  let t ← token
+  if t.length ≠ 64 then throw s!"not 32 bytes: {t}"
+  let bytes ← (List.range 32).mapM fun i ↦ hexNat ((t.drop (2 * i)).take 2).toString
+  pure (Vector.ofFn fun i : Fin 32 ↦ UInt8.ofNat (bytes.getD i.val 0))
+
+/-- A hash's bytes as a digest: four little-endian words. -/
+def digest : Parse Digest := do
+  let b ← bytes32
+  pure (Vector.ofFn fun i : Fin 4 ↦ (List.range 8).foldl
+    (fun acc k ↦ acc ||| ((b.toList.getD (8 * i.val + k) 0).toUInt64 <<< (8 * k).toUInt64)) 0)
+
+def many {α : Type} (p : Parse α) : Parse (List α) := do
+  let n ← nat
+  (List.range n).mapM fun _ ↦ p
+
+def claim : Parse Claim := do
+  let point ← many eElem
+  let value ← eElem
+  pure ⟨point, value⟩
+
+def openingProof : Parse Compile.Proof := do
+  let stream ← many eElem
+  let openings ← many do
+    let leaf ← many kWord
+    let path ← many digest
+    pure (⟨leaf, path⟩ : Compile.Opening)
+  pure ⟨stream, openings⟩
+
+/-- The common head of a line: the size, the circuit's commitment, the statement, the stream. -/
+def lineHead : Parse (ℕ × Digest × Statement × List E) := do
+  let logRows ← nat
+  let indexRoot ← digest
+  let y ← bytes32
+  let root ← bytes32
+  let stream ← many eElem
+  pure (logRows, indexRoot, ⟨y, root⟩, stream)
+
+/-- Check one line: `none` if Lean and Rust agree, the reason otherwise. -/
+def checkLine (line : String) : Except String (String × Bool) := do
+  let tokens := (line.splitOn " ").filter (· ≠ "")
+  let (kind, rest) := match tokens with
+    | k :: r => (k, r)
+    | [] => ("", [])
+  match kind with
+  | "R" =>
+    let ((logRows, indexRoot, stmt, stream), rest) ← lineHead.run rest
+    let lean := (ReductionProof.ofStream stream).bind (reduce logRows indexRoot stmt)
+    let (rust, _) ← (do
+        match ← token with
+        | "REJECT" => pure none
+        | "ACCEPT" =>
+          let w ← digest
+          let q ← digest
+          let c1 ← claim
+          let c2 ← claim
+          let c3 ← claim
+          let c4 ← claim
+          pure (some (w, q, (⟨c1, c2, c3, c4⟩ : Claims)))
+        | t => throw s!"unknown verdict {t}" : Parse _).run rest
+    let agree := match lean, rust with
+      | none, none => true
+      | some r, some (w, q, c) =>
+        decide (r.witnessRoot.toList = w.toList) && decide (r.quotientRoot.toList = q.toList) &&
+          decide (r.claims = c)
+      | _, _ => false
+    pure ("R", agree)
+  | "P" =>
+    let ((logRows, indexRoot, stmt, stream), rest) ← lineHead.run rest
+    let ((w, i, q, verdict), _) ← (do
+        let w ← openingProof
+        let i ← openingProof
+        let q ← openingProof
+        let v ← token
+        pure (w, i, q, v) : Parse _).run rest
+    let lean := match ReductionProof.ofStream stream with
+      | none => false
+      | some p => verify logRows indexRoot stmt ⟨p, w, i, q⟩
+    pure ("P", lean == (verdict == "ACCEPT"))
+  | k => throw s!"unknown line kind {k}"
+
+end PcsQuotientTest
+
+open PcsQuotientTest in
+def main (args : List String) : IO UInt32 := do
+  let path := args.headD "vectors.txt"
+  let lines := ((← IO.FS.readFile path).splitOn "\n").filter (· ≠ "")
+  let mut agreed : Std.HashMap String ℕ := {}
+  let mut failures : ℕ := 0
+  for (line, n) in lines.zipIdx do
+    match checkLine line with
+    | .ok (kind, true) => agreed := agreed.insert kind (agreed.getD kind 0 + 1)
+    | .ok (kind, false) =>
+      failures := failures + 1
+      IO.println s!"line {n + 1} ({kind}): Lean and Rust disagree"
+    | .error e =>
+      failures := failures + 1
+      IO.println s!"line {n + 1}: unreadable: {e}"
+  for (kind, count) in agreed.toList do
+    IO.println s!"{kind}: {count} vectors, Lean and Rust agree"
+  IO.println s!"{lines.length} vectors, {failures} disagreements"
+  return if failures = 0 then 0 else 1

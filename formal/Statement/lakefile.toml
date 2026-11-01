@@ -1,0 +1,59 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+# The reviewer-facing statement of `crates/quotient` (README.md here), in the style of leanerVM's
+# `Statement/` package (https://github.com/Verified-zkEVM/leanerVM, branch `mumbai`, commit 6175f1a0,
+# MIT OR Apache-2.0), on which it depends for `K`, `E`, Keccak-256 over a permutation, the
+# random-permutation model, the WHIR verifier, its prover's pieces and the extractor's decoder.
+# Toolchain and dependency revisions are mumbai's (`Statement/lake-manifest.json` there), the ones
+# `formal/lakefile.toml` uses.
+name = "pcs-quotient-statement"
+version = "0.1.0"
+defaultTargets = ["PcsQuotient"]
+
+[leanOptions]
+warningAsError = true
+autoImplicit = false
+relaxedAutoImplicit = false
+pp.unicode.fun = true
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "d13f23b723b8a846827a245b89c10fc7d3f11612"
+
+[[require]]
+name = "PolyFun"
+git = "https://github.com/Verified-zkEVM/PolyFun"
+rev = "41d3b21dcc99817fe4f9f24ca7b2b58f0578083d"
+
+[[require]]
+name = "VCVio"
+git = "https://github.com/Verified-zkEVM/VCVio"
+rev = "afa6593f15e1e79ecb3cf22fc56191cecb452bb0"
+
+[[require]]
+name = "CompPoly"
+git = "https://github.com/Verified-zkEVM/CompPoly"
+rev = "572f997390aa4fc131ef30b1186fa1dcf292ca10"
+
+# leanerVM's `Statement/` package (`statement`), at the commit the formal/ port pins.
+[[require]]
+name = "statement"
+git = "https://github.com/Verified-zkEVM/leanerVM"
+rev = "6175f1a07f0dc33bd3d640de0063d1006143ee91"
+subDir = "Statement"
+
+# The statement: definitions and end statements only (`README.md` gives the reading order).
+[[lean_lib]]
+name = "PcsQuotient"
+globs = ["PcsQuotient", "PcsQuotient.+"]
+
+# The differential test against the Rust verifier (`PcsQuotientTest/Differential.lean`): not part
+# of the statement.
+[[lean_lib]]
+name = "PcsQuotientTest"
+globs = ["PcsQuotientTest.+"]
+
+[[lean_exe]]
+name = "differential"
+root = "PcsQuotientTest.Differential"

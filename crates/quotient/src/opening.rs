@@ -225,6 +225,17 @@ pub fn verify(
     claims: &[Claim],
     proof: &verifier::Proof,
 ) -> Result<(), verifier::VerifierError> {
+    verify_paths(layout, root, claims, proof).map(|_| ())
+}
+
+/// [`verify`], returning every query's Merkle path in the order the verifier opened them: the proof's openings in
+/// their raw form, one full path per query, which is the form `formal/Statement`'s verifier reads.
+pub fn verify_paths(
+    layout: &Layout,
+    root: &Hash,
+    claims: &[Claim],
+    proof: &verifier::Proof,
+) -> Result<Vec<verifier::MerklePath>, verifier::VerifierError> {
     use verifier::{Digest, E, Transcript};
     let one = E::new(1, 0, 0);
     if claims.iter().any(|claim| claim.point.len() != layout.vars) {
@@ -284,7 +295,7 @@ pub fn verify(
         Digest(*root),
         &weight,
     )?;
-    transcript.finish().map(|_| ())
+    transcript.finish()
 }
 
 #[cfg(test)]
