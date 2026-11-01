@@ -63,6 +63,9 @@ from where.
   cold `SLOAD`), which a fixed owner may change (`setIndexRoot`). About 14,300 gas of execution at a claim price
   of 0, and 1.43 M gas to deploy.
 - Vendored from leanVM `c445e3d5`: `primitives`, `fiat_shamir`, `pcs`, `parallel`, `verifier`, `bench`.
+- `formal/`: the Lean 4 proofs (knowledge soundness, completeness and zero knowledge of the reduction, sorry-free;
+  the layers still to do towards an end-to-end theorem are in [`formal/README.md`](formal/README.md)).
+- [`STATUS.md`](STATUS.md): where things stand, the numbers, the reviews and what they changed.
 
 ```sh
 cargo test --release -p quotient -p evm                               # tests, incl. contract == Rust verifier
