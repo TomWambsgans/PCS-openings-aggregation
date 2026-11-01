@@ -8,7 +8,7 @@
 //! `cargo test -p quotient --test whir_bridge_vector -- --ignored` writes `target/whir_bridge_vector.txt`
 //! (or `$WHIR_BRIDGE_VECTOR`).
 
-use primitives::field::{F192, F64};
+use primitives::field::{F64, F192};
 use primitives::test_rng::Rng;
 use quotient::opening::{self, Claim, Layout, Table};
 use verifier::{Digest, E, Transcript};
@@ -39,7 +39,9 @@ fn whir_bridge_vector() {
     let layout = Layout::new(vars, log_chunk, log_n, &[(3, 1 << 14), (0, 3000), (9, 1 << 13)]);
     let table = Table::new(layout, |l, _, lane| {
         for (i, w) in lane.iter_mut().enumerate() {
-            *w = F64(((l << 32 | i) as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17));
+            *w = F64(((l << 32 | i) as u64 + 1)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .rotate_left(17));
         }
     });
     let committed = opening::commit(&table);
@@ -89,10 +91,7 @@ fn whir_bridge_vector() {
     );
     out += &line("root", words(&committed.root));
     for claim in &claims {
-        out += &line(
-            "claim",
-            claim.point.iter().chain([&claim.value]).flat_map(limbs),
-        );
+        out += &line("claim", claim.point.iter().chain([&claim.value]).flat_map(limbs));
     }
     out += &line("stream", proof.stream.iter().flat_map(limbs));
     for path in &paths {
@@ -104,9 +103,8 @@ fn whir_bridge_vector() {
                 .chain(path.siblings.iter().flat_map(words)),
         );
     }
-    let file = std::env::var("WHIR_BRIDGE_VECTOR").unwrap_or_else(|_| {
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/whir_bridge_vector.txt").to_string()
-    });
+    let file = std::env::var("WHIR_BRIDGE_VECTOR")
+        .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/whir_bridge_vector.txt").to_string());
     std::fs::write(&file, out).expect("the vector is written");
     eprintln!("{} paths, {} stream scalars: {file}", paths.len(), proof.stream.len());
 }
