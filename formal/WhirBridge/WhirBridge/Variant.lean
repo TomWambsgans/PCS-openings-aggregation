@@ -250,9 +250,33 @@ theorem variant_sound (label : Bytes) (D : Digest)
     rw [hhist] at h
     simpa using h
 
-/-- The bound with its failure term: `failBound = 5 N / 2^256` for the fixed seeding. -/
-theorem failBound_fixed (label : Bytes) (D : Digest) (N : ℕ) :
-    failBound (fixedSeeds label D) N = ((5 * N : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
-  simp [failBound, fixedSeeds]
+/-- `2^-k` as `2^(n - k) / 2^n` (mumbai's `inv_pow_eq_div`, `EndToEnd/Sound/Statements.lean`). -/
+theorem inv_pow_eq_div (k n : ℕ) (h : k ≤ n) :
+    (2 : ℝ≥0∞)⁻¹ ^ k = ((2 ^ (n - k) : ℕ) : ℝ≥0∞) / ((2 ^ n : ℕ) : ℝ≥0∞) := by
+  obtain ⟨m, rfl⟩ := Nat.exists_eq_add_of_le h
+  rw [Nat.add_sub_cancel_left, ENNReal.div_eq_inv_mul, Nat.cast_pow, Nat.cast_pow,
+    Nat.cast_ofNat, pow_add, ENNReal.mul_inv (by simp) (by simp), mul_assoc,
+    ENNReal.inv_mul_cancel (by simp) (by simp), mul_one, ENNReal.inv_pow]
+
+/-- **The numbers** (as mumbai's `leanVm_bound_le`): against `2^64` queries, the bound of
+`variant_sound` is at most `2^-63`. -/
+theorem variant_bound_le (label : Bytes) (D : Digest) {QA : ℕ} (hQ : QA ≤ 2 ^ 64) :
+    ((QA + variantQueries : ℕ) : ℝ≥0∞) *
+        (εWhir + failBound (fixedSeeds label D) (QA + variantQueries)) ≤ (2 : ℝ≥0∞)⁻¹ ^ 63 := by
+  rw [variantQueries_eq]
+  set N := QA + 10122 with hN
+  have hfail : failBound (fixedSeeds label D) N =
+      ((5 * N : ℕ) : ℝ≥0∞) / ((2 ^ 256 : ℕ) : ℝ≥0∞) := by
+    rw [failBound, Nat.cast_pow, Nat.cast_ofNat]
+    rfl
+  rw [hfail, εWhir, inv_pow_eq_div 128 256 (by norm_num),
+    ENNReal.div_add_div_same, ← mul_div_assoc, ← Nat.cast_add, ← Nat.cast_mul,
+    inv_pow_eq_div 63 256 (by norm_num)]
+  refine ENNReal.div_le_div_right (Nat.cast_le.2 ?_) _
+  have hN' : N ≤ 2 ^ 64 + 10122 := by omega
+  rw [show 256 - 128 = 128 from rfl, show 256 - 63 = 193 from rfl]
+  calc N * (2 ^ 128 + 5 * N) ≤ (2 ^ 64 + 10122) * (2 ^ 128 + 5 * (2 ^ 64 + 10122)) :=
+        Nat.mul_le_mul hN' (Nat.add_le_add_left (Nat.mul_le_mul_left 5 hN') _)
+    _ ≤ 2 ^ 193 := by norm_num
 
 end WhirBridge

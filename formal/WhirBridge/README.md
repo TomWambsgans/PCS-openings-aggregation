@@ -109,7 +109,7 @@ being tuned to it. In the random-oracle model (`variant_sound`, the transcript w
 fixed statement): an adversary of `Q_A` queries makes the verifier accept while every candidate of the
 extracted root word violates a claim with probability at most
 
-`(Q_A + 10122) · (2^-128 + 5 (Q_A + 10122) / 2^256)`, about `Q_A · 2^-128` (at most `2^-63` for `Q_A ≤ 2^64`, by arithmetic, not a Lean theorem),
+`(Q_A + 10122) · (2^-128 + 5 (Q_A + 10122) / 2^256)`, about `Q_A · 2^-128`, at most `2^-63` for `Q_A ≤ 2^64` (`variant_bound_le`),
 
 `10122` bounding the verifier's queries over every admissible shape (mumbai's `whirBound`).
 
