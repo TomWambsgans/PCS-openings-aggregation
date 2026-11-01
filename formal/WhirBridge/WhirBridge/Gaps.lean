@@ -74,6 +74,11 @@ root, the claims and the proof. What it would take:
    does the same for leanVM's phases: `L₀ · …` in `EndToEnd/Sound/Assemble.lean`). The three
    openings are separate transcripts; the reduction's analysis must read the words extracted
    when each root entered the reduction's transcript (`extract_take_eq`).
+7. **Extraction from the adversary's queries only**: `variant_sound` (as mumbai's `romSound`)
+   reads the extracted word off the final cache, the verifier's answers included; mumbai's step
+   to an extractor reading only the adversary's transcript (`Sound.extractor_of_extracted`,
+   `Sound.prEvent_logged2_root_le`, `lean_vm/LeanVM/Protocol/LeanVMSound.lean`, at `QV / 2^256`)
+   is not taken here.
 -/
 
 namespace WhirBridge

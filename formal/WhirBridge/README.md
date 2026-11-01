@@ -14,7 +14,7 @@ what follows from mumbai's theorems. Everything here is sorry-free and depends o
 | `WhirBridge/Opening.lean` | `openingCheck`: `opening::verify` as a program of mumbai's verifier language, line by line (`Layout`, `Layout.new`, `eqBits`, `lambdas`, `target`, `parts`, `weight`). **`openingCheck_eq`**: it *is* mumbai's `verifyStackedOpening log_n R (stackClaims L claims)` after the length check. **`isMultiaffine_claimWeight`**: each claim's weight is multiaffine on the stack's `log_n` coordinates. |
 | `WhirBridge/Sound.lean` | **`openingSpec`**: round-by-round soundness of `openingCheck` for every admissible layout and every list of claims, from mumbai's `stackedSpec` with the deployed codes. The numbers (`whirEps_le`, `eBatch_le`, `eBatch_one`, `eBatch_two`, `listMax_ours`), our three layouts (`witnessLayout`, `wiringLayout`, `quotientLayout`, transcribed from `protocol.rs`) and `layouts_ok`. |
 | `WhirBridge/Table.lean` | **`holds_iff`**: a stack satisfies a claim's stack weight exactly when the **table** it stands for has the claimed multilinear value; **`openingDoom_iff`**: mumbai's doom is "every candidate's table violates a claim". `layouts_valid`. |
-| `WhirBridge/Variant.lean` | **`variant_sound`**: Fiat–Shamir soundness in the two-oracle random-oracle model, from mumbai's `romSound`, of the opening **with leanVM's transcript shape** (root absorbed as commitment 0), for a fixed statement. |
+| `WhirBridge/Variant.lean` | **`variant_sound`**, **`variant_sound_table`**: Fiat–Shamir soundness in the two-oracle random-oracle model, from mumbai's `romSound`, of the opening **with leanVM's transcript shape** (root absorbed as commitment 0), for a fixed statement, the second in table terms; `variant_bound_le`: at most `2^-63` against `2^64` queries. |
 | `WhirBridge/Gaps.lean` | `openingVerifyWithHash`: **our actual transcript** compiled (root hashed into the seed); `OpeningRomSound`: the theorem it needs, stated and not proved; the list of missing pieces. `layouts_nodup`. |
 
 ## Building
@@ -152,6 +152,11 @@ What mumbai's proofs do not cover of our opening (stated in `Gaps.lean`):
    extracted when each root entered its transcript (mumbai's `extract_take_eq`).
 5. **The random-permutation model** (mumbai's `LeanVMRpm.lean`), **pruned paths and `placed`**, and **the
    Rust being the model**: as above, not formalised here, as in mumbai for leanVM.
+6. **Extraction from the adversary's queries only**: `variant_sound` reads the extracted word off the
+   final cache (the verifier's answers included), as mumbai's `romSound` does; mumbai's further step to an
+   extractor reading the adversary's transcript alone (`Sound.extractor_of_extracted`,
+   `Sound.prEvent_logged2_root_le`, `LeanVMSound.lean`, at `Q_V/2^256`) is not taken here.
+7. **Hiding** (zero knowledge of the openings) is out of scope (layer F3 of `formal/README.md`).
 
 ## Build on h1
 

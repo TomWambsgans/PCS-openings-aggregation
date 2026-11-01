@@ -35,7 +35,13 @@ proves the theorem for the opening **with mumbai's shape**:
 (independent random oracles), the verifier accepts while **every candidate of the root's word
 extracted from the oracle's answers** (the straight-line extraction of mumbai's
 `Compile.Rom.extractedHistory`) has a table violating one of the claims, with probability at most
-`(QA + QV) · (2^-128 + 5 (QA + QV) / 2^256)`, `QV = variantQueries = 10122`.
+`(QA + QV) · (2^-128 + 5 (QA + QV) / 2^256)`, `QV = variantQueries = 10122`, which is at most
+`2^-63` for `QA ≤ 2^64` (`variant_bound_le`). `variant_sound_table` says the same in table terms:
+every candidate's **table** (`Layout.tableEval`) violates one of the claims. The extracted word is
+read off the final random-oracle cache (the adversary's and the verifier's answers), as in mumbai's
+`romSound`; a straight-line extractor reading the adversary's queries only is mumbai's further step
+for leanVM (`Sound.extractor_of_extracted`, `Sound.prEvent_logged2_root_le`, `LeanVMSound.lean`),
+not taken here.
 -/
 
 namespace WhirBridge
@@ -247,6 +253,75 @@ theorem variant_sound (label : Bytes) (D : Digest)
   · refine variantCert_D_root L R hw claims hJ hce ?_
     have h := hbad
     unfold RootDoomed rootEvents at h
+    rw [hhist] at h
+    simpa using h
+
+/-! ## In table terms -/
+
+include hw in
+/-- The root's commitment has level 0's shape. -/
+theorem shapeOK_root {e : Ev} (hce : (commitStack L.logN R).after [e] = some (.ret ()))
+    (hws : ∀ ht w W, Ev.commit ht w W = e → WellShaped w W) :
+    LeanVM.Protocol.Whir.Sound.ShapeOK 0 (code₀ L.logN R) laneBits (commits [e]) := by
+  obtain ⟨level, rest, W, hc, he⟩ := commitStack_after_ret hce
+  obtain rfl := List.singleton_inj.1 he
+  obtain ⟨q₀, rest', hc', -⟩ := LeanVM.Protocol.Whir.Complete.exists_ladder hw
+  have hd := LeanVM.Protocol.Whir.Params.deployed_spec_hyps hw hc
+  rw [hc'] at hc
+  obtain ⟨rfl, -⟩ := List.cons.inj (Option.some.inj hc)
+  refine ⟨rfl, W, ?_, ?_⟩
+  · simp only [commits, List.getElem?_cons_zero, Option.some.injEq, Prod.mk.injEq, and_true]
+    refine ⟨?_, rfl⟩
+    rw [hd.2.2.1, hd.2.2.2.1]
+    simp [levelShape, laneBits]
+  · exact hws _ _ _ rfl
+
+/-- The event in table terms: every candidate of the extracted root word has a table violating
+one of the claims. -/
+def TableDoomed (label : Bytes) (D : Digest) (z : Unit × Proof) (c : KeccakCalls.QueryCache) :
+    Prop :=
+  ∀ q ∈ Candidates L.logN R (code₀ L.logN R).thr
+      (LeanVM.Protocol.Whir.Sound.wordOf (commits (rootEvents (extractedHistory
+        (fun x ↦ c (.inl x)) (fun s ↦ c (.inr s)) (fixedSeed label D) (variantProg L R claims)
+          z.2))) 0),
+    ∃ cl ∈ claims, L.tableEval q cl.point ≠ cl.value
+
+include hw hJ in
+/-- **Fiat-Shamir soundness of the opening with leanVM's transcript shape, in table terms**: the
+verifier accepts while every candidate table of the extracted root word violates one of the
+claims with probability at most `(QA + QV) · (2^-128 + 5 (QA + QV) / 2^256)`. -/
+theorem variant_sound_table (hL : L.Valid) (hc : ∀ c ∈ claims, c.point.length = L.vars)
+    (label : Bytes) (D : Digest)
+    (A : OracleComp KeccakCalls (Unit × Proof)) (QA : ℕ) (hA : IsTotalQueryBound A QA) :
+    Pr{let z ← romExperiment A (verifierFam (fixedSeeds label D) (variantProg L R claims))}[
+        z.1.2 = true ∧ TableDoomed L R claims label D z.1.1 z.2] ≤
+      (QA + variantQueries : ℕ) *
+        (εWhir + failBound (fixedSeeds label D) (QA + variantQueries)) := by
+  refine romSound_of_imp (variantProg L R claims) (variantCert L R hw claims hJ)
+    (fixedSeeds label D) (fun _ ↦ rootOk_nil L R claims) εWhir (variantCert_bound L R hw claims hJ)
+    A QA hA variantQueries (isTotalQueryBound_variant L R claims label D)
+    (TableDoomed L R claims label D) fun z c hv hbad ↦ ?_
+  have key : (fixedSeeds label D).root z.1 = [] := rfl
+  have hseed : (fixedSeeds label D).seed z.1 = fixedSeed label D := rfl
+  have hroot : nodeAt (variantProg L R claims) [] = variantProg L R claims := by
+    rw [nodeAt, after_nil']; rfl
+  rw [key, hroot, hseed] at hv
+  obtain ⟨e, rest, hhist, hce⟩ := extracted_root (L := L) (R := R) (claims := claims) hv
+  have hws := (Sound.after_extractedHistory _ _ hv).2
+  rw [hhist] at hws
+  unfold Doomed
+  rw [key, hroot, hseed]
+  refine ⟨[e], ?_, Nat.zero_le _, ?_, ?_⟩
+  · show [e] <+: extractedHistory _ _ (fixedSeed label D) (variantProg L R claims) z.2
+    rw [hhist]
+    exact ⟨rest, rfl⟩
+  · obtain ⟨level, rest', W, -, he⟩ := commitStack_after_ret hce
+    rw [List.singleton_inj.1 he]
+    trivial
+  · refine variantCert_D_root L R hw claims hJ hce ((openingDoom_iff L hL R claims hc _).2
+      ⟨shapeOK_root L R hw hce fun ht w W he ↦ hws ht w W (he ▸ List.mem_cons_self ..), ?_⟩)
+    have h := hbad
+    unfold TableDoomed rootEvents at h
     rw [hhist] at h
     simpa using h
 
