@@ -326,6 +326,22 @@ pub(crate) struct LigeroWitness {
 /// Codewords of at least this many bytes are not kept: [`LigeroRows::Message`].
 const LEAN_LIGERO_BYTES: usize = 1 << 30;
 
+#[cfg(test)]
+thread_local! {
+    /// Test knob: the lean threshold [`ligero_commit_ext`] uses on this thread, in place of
+    /// [`LEAN_LIGERO_BYTES`], so that a whole proof can take the lean deeper levels at a small size.
+    pub(crate) static LEAN_LIGERO_BYTES_OVERRIDE: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// [`LEAN_LIGERO_BYTES`], or (in tests) the knob's value on this thread.
+fn lean_ligero_bytes() -> usize {
+    #[cfg(test)]
+    if let Some(bytes) = LEAN_LIGERO_BYTES_OVERRIDE.get() {
+        return bytes;
+    }
+    LEAN_LIGERO_BYTES
+}
+
 /// Where a level's opened rows come from.
 enum LigeroRows {
     /// The codeword, `mat[pos * num_interleaved + lane]`.
@@ -412,7 +428,7 @@ pub(crate) fn ligero_commit_ext(
         log_num_interleaved,
         log_inv_rate,
         ntt,
-        LEAN_LIGERO_BYTES,
+        lean_ligero_bytes(),
     )
 }
 
@@ -1968,6 +1984,9 @@ fn recursive_prover(
 
     unreachable!()
 }
+
+#[cfg(test)]
+mod adversarial;
 
 #[cfg(test)]
 mod tests {

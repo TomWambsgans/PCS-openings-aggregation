@@ -698,6 +698,9 @@ fn layout_overflow(lanes: &[Lane]) -> usize {
 }
 
 #[cfg(test)]
+mod adversarial;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use primitives::test_rng::Rng;

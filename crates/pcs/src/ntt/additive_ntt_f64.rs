@@ -1372,6 +1372,9 @@ unsafe fn butterfly_lane_pair_neon(top: *mut F64, bot: *mut F64, twiddle: u64) {
 }
 
 #[cfg(test)]
+mod adversarial;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use primitives::test_rng::Rng;
