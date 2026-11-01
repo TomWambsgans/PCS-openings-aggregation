@@ -16,7 +16,7 @@ what follows from mumbai's theorems. Everything here is sorry-free and depends o
 | `WhirBridge/Table.lean` | **`holds_iff`**: a stack satisfies a claim's stack weight exactly when the **table** it stands for has the claimed multilinear value; **`openingDoom_iff`**: mumbai's doom is "every candidate's table violates a claim". `layouts_valid`. |
 | `WhirBridge/Variant.lean` | **`variant_sound`**, **`variant_sound_table`**: Fiat–Shamir soundness in the two-oracle random-oracle model, from mumbai's `romSound`, of the opening **with leanVM's transcript shape** (root absorbed as commitment 0), for a fixed statement, the second in table terms; `variant_bound_le`: at most `2^-63` against `2^64` queries. |
 | `WhirBridge/Family.lean` | **`family_sound`**: the same for an adversary that **chooses the claims** (a family of statements, the claims hashed into the IV, one program for all statements reading them unabsorbed, as mumbai's `anyProgram` for leanVM); `family_bound_le`: at most `2^-63` against `2^64` queries. |
-| `Test/Check.lean` | Runs `openingVerifyWithHash` (the Lean `opening::verify`, mumbai's Keccak) on an opening proof made by the Rust prover (`crates/quotient/tests/whir_bridge_vector.rs`: two claims, 27 lanes out of order with a gap, `placed` short of the stack, the pruned paths expanded): **the honest proof is accepted**, a wrong value, a changed stream scalar and a changed leaf word are rejected (14 s, interpreted). |
+| `Test/Check.lean` | Runs `openingVerifyWithHash` (the Lean `opening::verify`, mumbai's Keccak) on an opening proof made by the Rust prover (`crates/quotient/tests/whir_bridge_vector.rs`: two claims, 27 lanes out of order with a gap, `placed` short of the stack, the pruned paths expanded): **the honest proof is accepted**, a wrong value, a changed stream scalar and a changed leaf word are rejected (10 s, interpreted). |
 | `WhirBridge/Gaps.lean` | `openingVerifyWithHash`: **our actual transcript** compiled (root hashed into the seed); `OpeningRomSound`: the theorem it needs, stated and not proved; the list of missing pieces. `layouts_nodup`. |
 
 ## Building
@@ -28,7 +28,7 @@ here, gitignored), sharing `lean_vm`'s packages (`packagesDir`), so nothing is f
 git clone https://github.com/Verified-zkEVM/leanerVM ../leanervm
 cd ../leanervm && git checkout 6175f1a07f0dc33bd3d640de0063d1006143ee91 && cd lean_vm
 lake exe cache get && python3 -I ../lake-build.py . LeanVM     # several CPU-hours
-cd ../../WhirBridge && lake build                                # a minute or two
+cd ../../WhirBridge && lake build                                # about 25 seconds
 cargo test -p quotient --release --test whir_bridge_vector -- --ignored   # from the repository root
 lake env lean --run Test/Check.lean ../../target/whir_bridge_vector.txt
 ```
@@ -209,7 +209,9 @@ What mumbai's proofs do not cover of our opening (stated in `Gaps.lean`):
 
 ## Build on h1
 
-leanerVM `6175f1a0` cloned at `/root/pcs-quotient-fv/leanervm`; `lake exe cache get` then
-`lake-build.py` (10 jobs, 36 GB) of the WHIR and soundness modules: 931 modules in 6 min 30 s
-(0.97 CPU-hours), then the whole `LeanVM` target (see the report for its time). The bridge builds in about
-two minutes against it.
+leanerVM `6175f1a0` cloned at `/root/pcs-quotient-fv/leanervm`, built with `run-build.sh` there (10 jobs within
+36 GB, the machine shared): `lake exe cache get` (1 min 26 s), then `lake-build.py` of the WHIR and soundness
+modules, **931 modules in 6 min 30 s** (0.97 CPU-hours), then the whole `LeanVM` target, **3920 modules in
+1 h 52 min** (14.66 CPU-hours): `Build completed successfully`, 2 h 00 min in all. The bridge
+(`/root/pcs-quotient-fv/whir-bridge`) builds from a clean `.lake` in 23 s, and `Test/Check.lean` runs in
+10 s.
