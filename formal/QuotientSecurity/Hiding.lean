@@ -6,6 +6,7 @@ import QuotientSecurity.Hiding.Span
 import QuotientSecurity.Hiding.SpanStrong
 import QuotientSecurity.Hiding.Layout
 import QuotientSecurity.Hiding.Merkle
+import QuotientSecurity.Hiding.Interp
 
 /-!
 # Hiding WHIR openings of `K`-valued tables (`crates/quotient/HIDING.md`)
@@ -21,6 +22,8 @@ import QuotientSecurity.Hiding.Merkle
 * `Hiding.Layout`: the hidden layouts of `opening::Layout::hidden` (first pieces, random lanes, the
   overflow lane and its share), the claims' weights there, and the theorem with its bound.
 * `Hiding.Merkle`: an unopened row keeps `|K|^(L-3)` of min-entropy given the view.
+* `Hiding.Interp`: condition (Q) for a code whose basis polynomial `y` has degree `y` (WHIR's novel
+  basis), by Lagrange interpolation, and the vector an unopened row's entropy uses.
 -/
 
 /-- info: 'QuotientSecurity.Hiding.hiding_of_mem_range' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -82,3 +85,11 @@ import QuotientSecurity.Hiding.Merkle
 /-- info: 'QuotientSecurity.Hiding.HiddenLayout.unopened_row_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms QuotientSecurity.Hiding.HiddenLayout.unopened_row_le
+
+/-- info: 'QuotientSecurity.Hiding.firstEval_surjective_of_degrees' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.firstEval_surjective_of_degrees
+
+/-- info: 'QuotientSecurity.Hiding.exists_unopened_vector' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.exists_unopened_vector
