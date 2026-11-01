@@ -68,64 +68,64 @@ theorem zeroKnowledge_ofCantor (h3 : finrank K E = 3)
 
 end Instance
 
-/-- At `2^20` rows over a field of `2^192` elements, the challenges' part of the bound is below
+/-- At `2^22` rows over a field of `2^192` elements, the challenges' part of the bound is below
 `2^-128`. -/
 theorem zkError_ofCantor {K E : Type} [Field K] [Field E] [Algebra K E] [DecidableEq E]
     [CharP E 2] [Fintype E] [CharP K 2] [SampleableType E] [Fintype K] [DecidableEq K]
-    [FiniteDimensional K E] [SampleableType K] {N : ℕ} (BK : CantorBasis K N) (hm : 20 + 2 ≤ N)
-    (σ : Equiv.Perm (Fin (20 + 2) → Bool)) (words : ℕ)
-    (wordSum : Fin words → ((Fin (20 + 2) → Bool) → E) →ₗ[E] E) (pub : E → E[X])
-    (hPub : ∀ (γ : E) (w : (Fin (20 + 2) → Bool) → E),
+    [FiniteDimensional K E] [SampleableType K] {N : ℕ} (BK : CantorBasis K N) (hm : 22 + 2 ≤ N)
+    (σ : Equiv.Perm (Fin (22 + 2) → Bool)) (words : ℕ)
+    (wordSum : Fin words → ((Fin (22 + 2) → Bool) → E) →ₗ[E] E) (pub : E → E[X])
+    (hPub : ∀ (γ : E) (w : (Fin (22 + 2) → Bool) → E),
       ∑ x, (pub γ).eval ((BK.map (algebraMap K E)).point x) * w x
         = ∑ J : Fin words, γ ^ (J : ℕ) * wordSum J w)
     (hq : Fintype.card E = 2 ^ 192) :
     zkError (Params.ofCantor (BK.map (algebraMap K E)) hm σ words wordSum pub hPub)
-      (digitPoly 20 : K[X]) ≤ 1 / 2 ^ 128 :=
+      (digitPoly 22 : K[X]) ≤ 1 / 2 ^ 128 :=
   zkError_le hq (Params.ofCantor_nCells _ hm σ words wordSum pub hPub) _
-    (digitPoly_monic_natDegree 20).2.le
+    (digitPoly_monic_natDegree 22).2.le
 
-/-- **Completeness on the instance, in bits.** At `2^20` rows over a field of `2^192` elements,
-with row polynomials of degree at most `2^21` and the public weight's at most `2^22 + 9 * 2^10`,
+/-- **Completeness on the instance, in bits.** At `2^22` rows over a field of `2^192` elements,
+with row polynomials of degree at most `2^23` and the public weight's at most `2^24 + 9 * 2^10`,
 the honest prover's proof gets a false verdict with probability at most `2 / 2^128` plus the
 fraction of handles the oracle was asked about. -/
 theorem completeness_ofCantor {K E : Type} [Field K] [Field E] [Algebra K E] [DecidableEq E]
     [CharP E 2] [Fintype E] [CharP K 2] [SampleableType E] [Fintype K] [DecidableEq K]
     [FiniteDimensional K E] [SampleableType K] {H : Type} [SampleableType H] [Fintype H]
-    [DecidableEq H] {N : ℕ} (BK : CantorBasis K N) (hm : 20 + 2 ≤ N)
-    (σ : Equiv.Perm (Fin (20 + 2) → Bool))
-    (wordSum : Fin 8 → ((Fin (20 + 2) → Bool) → E) →ₗ[E] E) (pub : E → E[X])
-    (hPub : ∀ (γ : E) (w : (Fin (20 + 2) → Bool) → E),
+    [DecidableEq H] {N : ℕ} (BK : CantorBasis K N) (hm : 22 + 2 ≤ N)
+    (σ : Equiv.Perm (Fin (22 + 2) → Bool))
+    (wordSum : Fin 8 → ((Fin (22 + 2) → Bool) → E) →ₗ[E] E) (pub : E → E[X])
+    (hPub : ∀ (γ : E) (w : (Fin (22 + 2) → Bool) → E),
       ∑ x, (pub γ).eval ((BK.map (algebraMap K E)).point x) * w x
         = ∑ J : Fin 8, γ ^ (J : ℕ) * wordSum J w)
-    (hd : ∀ γ, (pub γ).natDegree ≤ 2 ^ 22 + 9 * 2 ^ 10)
+    (hd : ∀ γ, (pub γ).natDegree ≤ 2 ^ 24 + 9 * 2 ^ 10)
     (hq : Fintype.card E = 2 ^ 192)
     (c₀ : (ofFn (ZAnswer (Params.ofCantor (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub)
       H)).QueryCache) (stmt : Fin 8 → E)
     (U : Finset H) (hU : ∀ c₁, c₁ ∉ U → Fresh c₀ stmt c₁) (gK : Fin 4 → K[X])
-    (hgK : ∀ j, (gK j).natDegree ≤ 2 ^ 21)
+    (hgK : ∀ j, (gK j).natDegree ≤ 2 ^ 23)
     (hsat : (Params.ofCantor (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub).Sat stmt
       ((Params.ofCantor (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub).cells
-        (committed gK (digitPoly 20) 0))) :
-    Pr{let o ← realNI c₀ stmt gK (digitPoly 20)}[o.1.verdict = false]
+        (committed gK (digitPoly 22) 0))) :
+    Pr{let o ← realNI c₀ stmt gK (digitPoly 22)}[o.1.verdict = false]
       ≤ (U.card : ENNReal) / (Fintype.card H : ENNReal)
         + 2 * (((1 / 2 ^ 128 : ℝ≥0) : ℝ≥0) : ENNReal) := by
-  have hdeg : (digitPoly 20 : K[X]).natDegree = 2 ^ 20 := (digitPoly_monic_natDegree 20).2
-  have hg : ∀ m j, (committed (E := E) gK (digitPoly 20) m j).natDegree ≤ (Params.ofCantorBounds (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub _ hd).witness := by
+  have hdeg : (digitPoly 22 : K[X]).natDegree = 2 ^ 22 := (digitPoly_monic_natDegree 22).2
+  have hg : ∀ m j, (committed (E := E) gK (digitPoly 22) m j).natDegree ≤ (Params.ofCantorBounds (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub _ hd).witness := by
     intro m j
     refine (natDegree_committed_le gK _ m j).trans (max_le (hgK j) ?_)
     rw [hdeg]
-    show 2 ^ 20 + 2 ≤ 2 ^ (20 + 1)
+    show 2 ^ 22 + 2 ≤ 2 ^ (22 + 1)
     norm_num
   have h := completeness_prob (Params.ofCantor_exact _ hm σ 8 wordSum pub hPub) c₀ stmt U hU gK
-    (digitPoly 20) (digitPoly_monic_natDegree 20).1.ne_zero
+    (digitPoly 22) (digitPoly_monic_natDegree 22).1.ne_zero
     (ofCantor_van BK hm σ 8 wordSum pub hPub) hsat
     (cantorCells (BK.map (algebraMap K E)) hm fun _ => false) (Params.ofCantorBounds (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub _ hd) hg
-  have e1 : (zkError (Params.ofCantor (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub) (digitPoly 20 : K[X]) : ENNReal) ≤ ((1 / 2 ^ 128 : ℝ≥0) : ENNReal) :=
+  have e1 : (zkError (Params.ofCantor (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub) (digitPoly 22 : K[X]) : ENNReal) ≤ ((1 / 2 ^ 128 : ℝ≥0) : ENNReal) :=
     ENNReal.coe_le_coe.mpr (zkError_ofCantor BK hm σ 8 wordSum pub hPub hq)
   have hpos : 0 < Fintype.card E := Fintype.card_pos
   have e2 : ((Params.ofCantorBounds (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub _ hd).identity : ENNReal) / (Fintype.card E : ENNReal)
       ≤ ((1 / 2 ^ 128 : ℝ≥0) : ENNReal) := by
-    have hid : (Params.ofCantorBounds (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub _ hd).identity ≤ 2 ^ 27 :=
+    have hid : (Params.ofCantorBounds (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub _ hd).identity ≤ 2 ^ 29 :=
       Params.ofCantor_identity (BK.map (algebraMap K E)) hm σ wordSum pub hPub hd
     have hle := div_le_two_pow hpos (a := (Params.ofCantorBounds (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub _ hd).identity) (by
       rw [hq]; exact (Nat.mul_le_mul_right (2 ^ 128) hid).trans (by norm_num))
@@ -137,7 +137,7 @@ theorem completeness_ofCantor {K E : Type} [Field K] [Field E] [Algebra K E] [De
     exact ENNReal.coe_le_coe.mpr hle
   refine h.trans ?_
   unfold zkBound
-  calc (zkError (Params.ofCantor (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub) (digitPoly 20 : K[X]) : ENNReal)
+  calc (zkError (Params.ofCantor (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub) (digitPoly 22 : K[X]) : ENNReal)
           + (U.card : ENNReal) / (Fintype.card H : ENNReal)
           + ((Params.ofCantorBounds (BK.map (algebraMap K E)) hm σ 8 wordSum pub hPub _ hd).identity : ENNReal) / (Fintype.card E : ENNReal)
         ≤ ((1 / 2 ^ 128 : ℝ≥0) : ENNReal) + (U.card : ENNReal) / (Fintype.card H : ENNReal)

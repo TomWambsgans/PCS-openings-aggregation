@@ -6,7 +6,7 @@ import QuotientSecurity.CantorExists
 import QuotientSecurity.RandomOracle
 
 /-!
-# The parameters of `flock::quotient` on a Cantor basis
+# The parameters of `quotient::protocol` on a Cantor basis
 
 The cells are the span of the first `n + 2` vectors of a Cantor basis, a row's four cells the
 shifts by `0, 1, θ, θ + 1` with `θ` the second vector. This file builds `Params` on them, with
@@ -452,21 +452,32 @@ end Cells
 section Sizes
 
 variable {F : Type} [Field F] [DecidableEq F] [CharP F 2] [Fintype F] [SampleableType F]
-variable {N : ℕ} (B : CantorBasis F N) (hm : 20 + 2 ≤ N)
-  (σ : Equiv.Perm (Fin (20 + 2) → Bool))
-  (wordSum : Fin 8 → ((Fin (20 + 2) → Bool) → F) →ₗ[F] F) (pub : F → F[X])
-  (hPub : ∀ (γ : F) (w : (Fin (20 + 2) → Bool) → F),
+variable {N : ℕ} (B : CantorBasis F N) (hm : 22 + 2 ≤ N)
+  (σ : Equiv.Perm (Fin (22 + 2) → Bool))
+  (wordSum : Fin 8 → ((Fin (22 + 2) → Bool) → F) →ₗ[F] F) (pub : F → F[X])
+  (hPub : ∀ (γ : F) (w : (Fin (22 + 2) → Bool) → F),
     ∑ x, (pub γ).eval (B.point x) * w x = ∑ J : Fin 8, γ ^ (J : ℕ) * wordSum J w)
-  (hd : ∀ γ, (pub γ).natDegree ≤ 2 ^ 22 + 9 * 2 ^ 10)
+  (hd : ∀ γ, (pub γ).natDegree ≤ 2 ^ 24 + 9 * 2 ^ 10)
 
-theorem Params.ofCantor_identity :
-    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity ≤ 2 ^ 27 := by
+/-- **The identities' degree on the instance**, exactly as `Bounds.identity` counts it at
+`2^22` rows (`N = 2^24` cells): with the witness's polynomials of degree `2^23`, the quotients'
+`2^26`, the wiring and the cells' vanishing polynomial `2^24`, the rows' `2^22` and the public
+weight's `2^24 + 9 * 2^10`, a cell's polynomial has degree `4 * 2^23 + 3` and a denominator
+`3 * 2^24 + 4`, and `2 * (3 * 2^24 + 4) + 2^24 + 2^22 + 2^26 + (2^24 + 9 * 2^10)
++ 2 * (2^25 + 3) = 2^28 + 2^22 + 9230`, that is `16.25 N` and a little more. -/
+theorem Params.ofCantor_identity_eq :
+    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity = 2 ^ 28 + 2 ^ 22 + 9230 := by
   norm_num [Params.Bounds.identity, Params.Bounds.denominator, Params.Bounds.cell,
     Params.ofCantorBounds]
 
+theorem Params.ofCantor_identity :
+    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity ≤ 2 ^ 29 := by
+  rw [Params.ofCantor_identity_eq]
+  norm_num
+
 open OracleComp OracleSpec in
-/-- **128 bits on the instance.** With `2^20` rows and eight public words over a field of `2^192`
-elements, and a public weight of degree at most `2^22 + 9 * 2^10`, an adversary making `Q`
+/-- **128 bits on the instance.** With `2^22` rows and eight public words over a field of `2^192`
+elements, and a public weight of degree at most `2^24 + 9 * 2^10`, an adversary making `Q`
 queries wins with probability at most `(Q + 3) / 2^128`. -/
 theorem knowledgeSoundness_ofCantor (hq : Fintype.card F = 2 ^ 192)
     (adv : OracleComp (ofFn (Answer (Params.ofCantor B hm σ 8 wordSum pub hPub)
@@ -487,11 +498,11 @@ omit [SampleableType F] in
 /-- **The instance exists** in every field of `2^192` elements: a Cantor basis and, for any
 wiring and public words, a public weight within the degree the theorem above asks. -/
 theorem exists_instance (hq : Fintype.card F = 2 ^ 192) :
-    ∃ B : CantorBasis F (20 + 2), ∀ wordSum : Fin 8 → ((Fin (20 + 2) → Bool) → F) →ₗ[F] F,
-      ∃ pub : F → F[X], (∀ (γ : F) (w : (Fin (20 + 2) → Bool) → F),
+    ∃ B : CantorBasis F (22 + 2), ∀ wordSum : Fin 8 → ((Fin (22 + 2) → Bool) → F) →ₗ[F] F,
+      ∃ pub : F → F[X], (∀ (γ : F) (w : (Fin (22 + 2) → Bool) → F),
           ∑ x, (pub γ).eval (B.point x) * w x = ∑ J : Fin 8, γ ^ (J : ℕ) * wordSum J w) ∧
-        ∀ γ, (pub γ).natDegree ≤ 2 ^ 22 + 9 * 2 ^ 10 := by
-  obtain ⟨B⟩ := exists_cantorBasis_big hq (20 + 2) (by norm_num) (by norm_num)
+        ∀ γ, (pub γ).natDegree ≤ 2 ^ 24 + 9 * 2 ^ 10 := by
+  obtain ⟨B⟩ := exists_cantorBasis_big hq (22 + 2) (by norm_num) (by norm_num)
   refine ⟨B, fun wordSum => ?_⟩
   obtain ⟨pub, h1, h2⟩ := exists_pub B le_rfl 8 wordSum
   exact ⟨pub, h1, fun γ => (h2 γ).trans (by norm_num)⟩

@@ -202,7 +202,7 @@ theorem hPub_of_weights {words : ℕ} (pub : F → F[X]) (wt : Fin words → (Fi
   rw [Finset.sum_comm]
   exact Finset.sum_congr rfl fun J _ => Finset.sum_congr rfl fun x _ => by ring
 
-/-! ## The layout of `flock::quotient`
+/-! ## The layout of `quotient::protocol`
 
 A region of `2^11` cells: coordinates 0 to 7 choose a bit of a word and carry constant weights
 (coordinate 1 the weight zero, so only the `X` and `Y` cells count), coordinates 8 to 10 choose
@@ -216,21 +216,21 @@ variable (c : ℕ → F)
 def regionMu (k : ℕ) (γ : F) : F := if k < 8 then c k else γ ^ (2 ^ (k - 8))
 
 /-- The word a cell of the region belongs to. -/
-def wordOf (x : Fin (20 + 2) → Bool) : Fin 8 :=
+def wordOf (x : Fin (22 + 2) → Bool) : Fin 8 :=
   ⟨(x 8).toNat + 2 * (x 9).toNat + 4 * (x 10).toNat, by
     cases x 8 <;> cases x 9 <;> cases x 10 <;> decide⟩
 
 /-- The weight of a cell in word `J`: the product of the weights of its set bits below 8, on the
 cells of the region that belong to the word. -/
-def regionWeight (J : Fin 8) (x : Fin (20 + 2) → Bool) : F :=
-  if (∀ j : Fin (20 + 2), 11 ≤ (j : ℕ) → x j = false) ∧ wordOf x = J
+def regionWeight (J : Fin 8) (x : Fin (22 + 2) → Bool) : F :=
+  if (∀ j : Fin (22 + 2), 11 ≤ (j : ℕ) → x j = false) ∧ wordOf x = J
   then ∏ k ∈ Finset.range 8, (if bitAt x k then c k else 1) else 0
 
-theorem region_weights (γ : F) (x : Fin (20 + 2) → Bool) :
-    (if ∀ j : Fin (20 + 2), 11 ≤ (j : ℕ) → x j = false
+theorem region_weights (γ : F) (x : Fin (22 + 2) → Bool) :
+    (if ∀ j : Fin (22 + 2), 11 ≤ (j : ℕ) → x j = false
       then ∏ k ∈ Finset.range 11, (if bitAt x k then regionMu c k γ else 1) else 0)
       = ∑ J : Fin 8, γ ^ (J : ℕ) * regionWeight c J x := by
-  by_cases h : ∀ j : Fin (20 + 2), 11 ≤ (j : ℕ) → x j = false
+  by_cases h : ∀ j : Fin (22 + 2), 11 ≤ (j : ℕ) → x j = false
   · rw [if_pos h]
     have hw : ∀ J, regionWeight c J x = if wordOf x = J
         then ∏ k ∈ Finset.range 8, (if bitAt x k then c k else 1) else 0 := fun J => by
@@ -254,17 +254,17 @@ theorem region_weights (γ : F) (x : Fin (20 + 2) → Bool) :
   · simp [h, regionWeight]
 
 /-- **The verifier's product is a public weight** for the eight words of the region. -/
-theorem membershipPub_hPub (hm : 20 + 2 ≤ N) (hb0 : b 0 = 1)
+theorem membershipPub_hPub (hm : 22 + 2 ≤ N) (hb0 : b 0 = 1)
     (hb : ∀ d, 1 ≤ d → d < 11 → ∑ e ∈ Finset.range (d + 1), b e * B.β (d - e) = 0) :
-    ∀ (γ : F) (w : (Fin (20 + 2) → Bool) → F),
-      ∑ x, (pubProd b (regionMu c) 11 (20 + 2) γ).eval (B.point x) * w x
+    ∀ (γ : F) (w : (Fin (22 + 2) → Bool) → F),
+      ∑ x, (pubProd b (regionMu c) 11 (22 + 2) γ).eval (B.point x) * w x
         = ∑ J : Fin 8, γ ^ (J : ℕ) * weightedSum (regionWeight c J) w :=
   hPub_of_weights B _ _ fun γ x => by
     rw [pubProd_point B b _ hm (by norm_num) hb0 hb, region_weights]
 
 /-- Its degree is the one `knowledgeSoundness_ofCantor` asks. -/
 theorem natDegree_membershipPub_le (γ : F) :
-    (pubProd b (regionMu c) 11 (20 + 2) γ).natDegree ≤ 2 ^ 22 + 9 * 2 ^ 10 :=
+    (pubProd b (regionMu c) 11 (22 + 2) γ).natDegree ≤ 2 ^ 24 + 9 * 2 ^ 10 :=
   (natDegree_pubProd_le b _ γ).trans (by decide)
 
 end Membership
@@ -274,29 +274,29 @@ end Membership
 section Sizes
 
 variable {F : Type} [Field F] [DecidableEq F] [CharP F 2] [Fintype F] [SampleableType F]
-variable {N : ℕ} (B : CantorBasis F N) (hm : 20 + 2 ≤ N)
-  (σ : Equiv.Perm (Fin (20 + 2) → Bool)) (b c : ℕ → F) (hb0 : b 0 = 1)
+variable {N : ℕ} (B : CantorBasis F N) (hm : 22 + 2 ≤ N)
+  (σ : Equiv.Perm (Fin (22 + 2) → Bool)) (b c : ℕ → F) (hb0 : b 0 = 1)
   (hb : ∀ d, 1 ≤ d → d < 11 → ∑ e ∈ Finset.range (d + 1), b e * B.β (d - e) = 0)
 
-/-- The parameters of `flock::quotient`: the cells of a Cantor basis, a wiring, the eight public
+/-- The parameters of `quotient::protocol`: the cells of a Cantor basis, a wiring, the eight public
 words of the region, and the public weight the verifier evaluates. -/
 noncomputable def membershipParams : Params F :=
   Params.ofCantor B hm σ 8 (fun J => weightedSum (regionWeight c J))
-    (pubProd b (regionMu c) 11 (20 + 2)) (membershipPub_hPub B b c hm hb0 hb)
+    (pubProd b (regionMu c) 11 (22 + 2)) (membershipPub_hPub B b c hm hb0 hb)
 
 omit [Fintype F] [SampleableType F] in
 theorem membershipParams_wordSum (J : Fin 8)
     (w : (membershipParams B hm σ b c hb0 hb).T × Fin 4 → F) :
     (membershipParams B hm σ b c hb0 hb).wordSum J w
-      = ∑ x, regionWeight c J x * w (cantorCells (n := 20) B hm x) := by
-  exact weightedSum_apply (regionWeight c J) (LinearMap.funLeft F F (cantorCells (n := 20) B hm) w)
+      = ∑ x, regionWeight c J x * w (cantorCells (n := 22) B hm x) := by
+  exact weightedSum_apply (regionWeight c J) (LinearMap.funLeft F F (cantorCells (n := 22) B hm) w)
 
 noncomputable def membershipBounds : (membershipParams B hm σ b c hb0 hb).Bounds :=
   Params.ofCantorBounds B hm σ 8 _ _ (membershipPub_hPub B b c hm hb0 hb) _
     (natDegree_membershipPub_le b c)
 
 open OracleComp OracleSpec in
-/-- **128 bits for `flock::quotient`.** Over a field of `2^192` elements, with the cells, the
+/-- **128 bits for `quotient::protocol`.** Over a field of `2^192` elements, with the cells, the
 public weight and the public words of the verifier, an adversary making `Q` queries wins with
 probability at most `(Q + 3) / 2^128`. What is left of the circuit is its wiring, any permutation
 of the cells. -/
@@ -342,7 +342,8 @@ theorem invSeq_sum {F : Type} [Field F] [CharP F 2] (β : ℕ → F) (h0 : β 0 
   rw [Fin.sum_univ_eq_sum_range (fun e => invSeq β e * β (k + 1 - e)) (k + 1)]
   exact CharTwo.add_self_eq_zero _
 
-/-- The size of the instance, as an opaque proof: the unifier need not look inside it. -/
-theorem le22 : 20 + 2 ≤ 20 + 2 := Nat.le_refl _
+/-- The size of the instance (`2^22` rows, cells named by 24 bits), as an opaque proof: the
+unifier need not look inside it. -/
+theorem le24 : 22 + 2 ≤ 22 + 2 := Nat.le_refl _
 
 end QuotientSecurity

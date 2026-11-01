@@ -68,10 +68,6 @@ theorem cellPoly_zero_eval_pt (g : Witness F) (i : P.T × Fin 4) :
 theorem cellPoly_eval_row (g : Witness F) (x : P.T) (c : Fin 4) :
     (cellPoly P g c).eval (x : F) = cells P g (x, c) := rfl
 
-theorem gate_eval (a b c d : F[X]) (t : F) :
-    (gate (C P.θ) a b c d).eval t = gate P.θ (a.eval t) (b.eval t) (c.eval t) (d.eval t) := by
-  simp [gate]
-
 theorem pt_row (x : P.T) : P.pt (x, 0) = x := by simp [pt, shift]
 
 theorem dPoly_eval_pt (g : Witness F) (α β : F) (i : P.T × Fin 4) :
@@ -89,7 +85,7 @@ theorem consistent_on_cells (stmt : Fin P.words → F) (g : Witness F) (R : Quot
     (α β γ : F) (h : P.Consistent stmt g R α β γ)
     (hd : ∀ i, α + cells P g i + β * P.pt i ≠ 0)
     (hd' : ∀ i, α + cells P g i + β * P.pt (P.σ i) ≠ 0) :
-    (∀ x : P.T, gate P.θ (cells P g (x, 0)) (cells P g (x, 1)) (cells P g (x, 2))
+    (∀ x : P.T, gate (cells P g (x, 0)) (cells P g (x, 1)) (cells P g (x, 2))
         (cells P g (x, 3)) = 0) ∧
       logSum P.pt P.σ (cells P g) α β + ∑ J : Fin P.words, γ ^ (J : ℕ) * P.wordSum J (cells P g)
         = P.target stmt γ := by

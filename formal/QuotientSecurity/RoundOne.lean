@@ -37,7 +37,7 @@ theorem card_consistent_le (stmt : Fin P.words → F) (g : Witness F)
   have hZcard : Z.card ≤ 2 * P.nCells * Fintype.card F ^ 2 := card_zero_le P.pt P.σ w
   -- Outside `Z`, a consistent message forces the gates and the sum.
   have hout : ∀ p ∈ A, p ∉ Z →
-      (∀ x : P.T, gate P.θ (w (x, 0)) (w (x, 1)) (w (x, 2)) (w (x, 3)) = 0) ∧
+      (∀ x : P.T, gate (w (x, 0)) (w (x, 1)) (w (x, 2)) (w (x, 3)) = 0) ∧
         logSum P.pt P.σ w p.1 p.2.1 + ∑ J : Fin P.words, p.2.2 ^ (J : ℕ) * P.wordSum J w
           = P.target stmt p.2.2 := by
     intro p hp hpZ

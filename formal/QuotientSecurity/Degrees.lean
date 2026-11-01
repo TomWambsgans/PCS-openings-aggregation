@@ -47,13 +47,14 @@ def Bounds.Msg₂ (B : P.Bounds) : Type _ :=
       R.q.natDegree ≤ B.quotient ∧ R.qGate.natDegree ≤ B.quotient ∧
       R.junk.natDegree ≤ B.quotient }
 
-/-- The degree of a cell's polynomial, of a denominator, and of the two identities. -/
+/-- The degree of a cell's polynomial, of a denominator, and of the two identities: a bound on
+each term of either identity, summed (the gate is of degree 2, so its term is `2 * cell`). -/
 def Bounds.cell (B : P.Bounds) : ℕ := 3 + B.witness * 4
 
 def Bounds.denominator (B : P.Bounds) : ℕ := B.cell + B.sigma + 1
 
 def Bounds.identity (B : P.Bounds) : ℕ :=
-  2 * B.denominator + B.cells + B.rows + B.quotient + B.pub + 4 * B.cell
+  2 * B.denominator + B.cells + B.rows + B.quotient + B.pub + 2 * B.cell
 
 theorem natDegree_digit_le (j : Fin 4) : (digit j : F[X]).natDegree ≤ 3 := by
   fin_cases j
@@ -101,30 +102,15 @@ theorem natDegree_dNextPoly_le (g : B.Msg₁) (α β : F) :
   · omega
   · exact (natDegree_C_mul_le _ _).trans (by omega)
 
-theorem natDegree_gatePoly_le (g : B.Msg₁) : (gatePoly P g.1).natDegree ≤ 4 * B.cell := by
+theorem natDegree_gatePoly_le (g : B.Msg₁) : (gatePoly P g.1).natDegree ≤ 2 * B.cell := by
   have h := fun c => natDegree_cellPoly_le B g c
-  have hbit : ∀ c, (cellPoly P g.1 c * (C P.θ * cellPoly P g.1 c + C P.θ * C P.θ)).natDegree
-      ≤ 2 * B.cell := by
-    intro c
-    refine (natDegree_mul_le_of_le (h c) (natDegree_add_le_of_degree_le
-      ((natDegree_C_mul_le _ _).trans (h c)) ?_)).trans (by omega)
-    rw [← C_mul, natDegree_C]; omega
-  have hcarry : (cellPoly P g.1 2 * cellPoly P g.1 2 + cellPoly P g.1 2).natDegree
-      ≤ 2 * B.cell :=
-    natDegree_add_le_of_degree_le
-      ((natDegree_mul_le_of_le (h 2) (h 2)).trans (by omega)) ((h 2).trans (by omega))
   unfold gatePoly gate
-  simp only
   refine natDegree_add_le_of_degree_le (natDegree_add_le_of_degree_le
-    (natDegree_add_le_of_degree_le (natDegree_add_le_of_degree_le ?_ ?_) ?_) ?_) ?_
+    (natDegree_add_le_of_degree_le ?_ ?_) ?_) ?_
   · exact (h 3).trans (by omega)
-  · exact (hbit 0).trans (by omega)
-  · exact (hbit 1).trans (by omega)
-  · exact hcarry.trans (by omega)
-  · refine (natDegree_C_mul_le _ _).trans (natDegree_add_le_of_degree_le ?_ ?_)
-    · exact (natDegree_mul_le_of_le (hbit 0) (hbit 1)).trans (by omega)
-    · exact (natDegree_mul_le_of_le hcarry
-        (natDegree_add_le_of_degree_le (hbit 0) (hbit 1))).trans (by omega)
+  · exact (h 0).trans (by omega)
+  · exact (h 2).trans (by omega)
+  · exact (natDegree_mul_le_of_le (h 1) (h 2)).trans (by omega)
 
 theorem natDegree_copyDefect_le (g : B.Msg₁) (R : B.Msg₂) (α β γ : F) :
     (copyDefect P g.1 R.1 α β γ).natDegree ≤ B.identity := by

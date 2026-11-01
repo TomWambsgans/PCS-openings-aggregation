@@ -276,12 +276,12 @@ theorem exists_handles (c₀ : (ofFn (ZAnswer P H)).QueryCache) (stmt : Fin P.wo
   exact ⟨hnone _ rfl, fun c₂ => hnone _ rfl, fun c₂ a s => hnone _ rfl⟩
 
 /-- **128 bits.** At the protocol's sizes the challenges' part of the bound is below `2^-128`. -/
-theorem zkError_le (hq : Fintype.card E = 2 ^ 192) (hN : P.nCells = 2 ^ 22) (van : K[X])
-    (hdeg : van.natDegree ≤ 2 ^ 20) : zkError P van ≤ 1 / 2 ^ 128 := by
+theorem zkError_le (hq : Fintype.card E = 2 ^ 192) (hN : P.nCells = 2 ^ 24) (van : K[X])
+    (hdeg : van.natDegree ≤ 2 ^ 22) : zkError P van ≤ 1 / 2 ^ 128 := by
   unfold zkError
   refine div_le_two_pow Fintype.card_pos ?_
   rw [hq, hN]
-  calc (2 * 2 ^ 22 + 4 * van.natDegree) * 2 ^ 128 ≤ (2 * 2 ^ 22 + 4 * 2 ^ 20) * 2 ^ 128 := by
+  calc (2 * 2 ^ 24 + 4 * van.natDegree) * 2 ^ 128 ≤ (2 * 2 ^ 24 + 4 * 2 ^ 22) * 2 ^ 128 := by
         gcongr
     _ ≤ 2 ^ 192 := by norm_num
 

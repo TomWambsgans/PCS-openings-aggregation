@@ -105,7 +105,7 @@ theorem prob_third (stmt : Fin P.words → F) (g : B.Msg₁) (c : F × F × F) (
 
 set_option maxHeartbeats 4000000 in
 /-- **Round-by-round knowledge soundness.** With ideal commitments, the verifier of
-`flock::quotient` is round-by-round knowledge sound for the relation "the cells satisfy every gate,
+`quotient::protocol` is round-by-round knowledge sound for the relation "the cells satisfy every gate,
 every copy and the public words", the extractor reading the cells off the first message. -/
 theorem verifier_rbrKnowledgeSoundness :
     (verifier P B oSpec).rbrKnowledgeSoundness init impl (relIn P) acceptRejectRel
