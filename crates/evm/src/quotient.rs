@@ -216,7 +216,8 @@ mod tests {
         let masks = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
         let index = Index::new(&circuit);
         let index_root = commit(&index.table).root;
-        let proved = prove(&circuit, &index, &index_root, &statement, &cells, &masks);
+        let seed = std::array::from_fn(|_| rng.next_u64() as u8);
+        let proved = prove(&circuit, &index, &index_root, &statement, &cells, &masks, &seed);
         (index_root, statement, proved.proof)
     }
 

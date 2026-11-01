@@ -59,13 +59,24 @@ fn main() {
         directions: rng.next_u64() as u32,
     };
     let statement = secret.statement();
+    // The masks and the padding's seed, from the test generator so that the proof digest repeats: a deployment
+    // draws them from `quotient::protocol::fresh_randomness`.
     let masks = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
+    let seed: [u8; 32] = std::array::from_fn(|_| rng.next_u64() as u8);
 
     let start = Instant::now();
     let cells = circuit.cells(&membership_inputs(&secret));
     let witness_secs = time("witness (cells)", start);
     let start = Instant::now();
-    let proved = prove(&circuit, &index, &index_committed.root, &statement, &cells, &masks);
+    let proved = prove(
+        &circuit,
+        &index,
+        &index_committed.root,
+        &statement,
+        &cells,
+        &masks,
+        &seed,
+    );
     let reduction_secs = time("reduction (commit both tables)", start);
     let peak_reduction = peak();
     assert!(proved.fits);

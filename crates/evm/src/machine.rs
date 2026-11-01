@@ -97,8 +97,9 @@ pub enum TableId {
 }
 
 /// The rows, `2^log_rows`, for which `PCS_OPEN` knows the protocol's layouts: where each of its three tables is
-/// a stack leanVM's WHIR commits, of `2^15` to `2^28` words in at most 64 lanes.
-pub const LOG_ROWS: std::ops::RangeInclusive<usize> = 13..=22;
+/// a stack leanVM's WHIR commits, of `2^15` to `2^28` words in at most 64 lanes, and the two secret ones have
+/// hidden layouts (`quotient::protocol::MIN_LOG_ROWS`, `crates/quotient/HIDING.md`).
+pub const LOG_ROWS: std::ops::RangeInclusive<usize> = quotient::protocol::MIN_LOG_ROWS..=22;
 
 /// The id of the layout of `table` for a circuit of `2^log_rows` rows: `256 · table + log_rows`.
 pub fn layout_id(table: TableId, log_rows: usize) -> u64 {

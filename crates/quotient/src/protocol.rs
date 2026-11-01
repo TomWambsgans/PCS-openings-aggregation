@@ -34,7 +34,7 @@ const _: () = assert!(PUBLIC_ROWS << 2 == 1 << REGION);
 const PUBLIC_EXCESS: usize = 9216;
 
 /// Where `q` and the gate's quotient spill past whole chunks, with room for the masks.
-const Q_SPILL: usize = PUBLIC_EXCESS + 64;
+pub(crate) const Q_SPILL: usize = PUBLIC_EXCESS + 64;
 
 /// Why the reduction rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,34 +85,68 @@ fn cell_vars(log_rows: usize) -> usize {
     log_rows + 2
 }
 
-/// The wiring table: its stack is the table itself.
+/// The wiring table: its stack is the table itself. It is public, so its layout is not hidden.
 pub fn wiring_layout(log_rows: usize) -> Layout {
     let m = cell_vars(log_rows);
     Layout::new(m, m, m, &[(0, 1 << m)])
 }
 
-/// The witness table: the four row polynomials, then their masks, sixteen entries of the next chunk.
+/// The random lanes of the witness table's hidden layout: the fewest with which its opening hides it (HIDING.md).
+pub const WITNESS_RANDOM_LANES: usize = 7;
+
+/// The random lanes of the quotient table's hidden layout: the fewest with which its opening hides it (HIDING.md).
+pub const QUOTIENT_RANDOM_LANES: usize = 7;
+
+/// The fewest rows the hidden layouts take: below `2^17` rows the witness table's lanes are too short for its
+/// overflow lane to hold the `33` pieces its blocks give up and the masks, at `2^LOG_PIECE` entries a piece.
+pub const MIN_LOG_ROWS: usize = 17;
+
+/// The witness table: the four row polynomials, then their masks, sixteen entries of the next chunk. Hidden:
+/// `32` block lanes, the overflow lane and [`WITNESS_RANDOM_LANES`], `40` lanes.
 pub fn witness_layout(log_rows: usize) -> Layout {
     let m = cell_vars(log_rows);
-    Layout::new(m + 1, m, m + 1, &[(0, 1 << m), (1, 16)])
+    Layout::hidden(m + 1, m, m + 1, &[(0, 1 << m), (1, 16)], WITNESS_RANDOM_LANES)
 }
 
 /// The quotient table: `m + 6` variables, its chunks of `2^m` indexed by two digits, `h` or `q`, that pair or
 /// the gate's quotient, and the extension's two limbs. Stacked in lanes of a quarter chunk: `h` below `2^m`,
 /// `q` below `3 · 2^m` plus what the public weight's degree adds, and the gate's quotient below
-/// `(2 - 1/4) · 2^m` plus what the masks add.
+/// `(2 - 1/4) · 2^m` plus what the masks add. Hidden: `55` block lanes, the overflow lane (the pieces the blocks
+/// give up, and the four spills) and [`QUOTIENT_RANDOM_LANES`], `63` lanes.
 pub fn quotient_layout(log_rows: usize) -> Layout {
     let m = cell_vars(log_rows);
+    Layout::hidden(m + 6, m, m + 4, &quotient_chunks(m, Q_SPILL, 64), QUOTIENT_RANDOM_LANES)
+}
+
+/// The quotient table's chunks, for `2^m` cells: `q` spills `spill` entries past three chunks, the gate's
+/// quotient `tail` past `(2 - 1/4)` chunks.
+pub(crate) fn quotient_chunks(m: usize, spill: usize, tail: usize) -> Vec<(usize, usize)> {
     let n = 1usize << m;
     let mut chunks = vec![];
     for e in 0..3 {
         chunks.push((16 * e, n));
         chunks.extend((0..3).map(|digit| (16 * e + 4 + digit, n)));
-        chunks.push((16 * e + 7, Q_SPILL));
+        chunks.push((16 * e + 7, spill));
     }
     chunks.push((8, n));
-    chunks.push((9, 3 * n / 4 + 64));
-    Layout::new(m + 6, m, m + 4, &chunks)
+    chunks.push((9, 3 * n / 4 + tail));
+    chunks
+}
+
+/// The seed of one table's randomness, from the proof's: Keccak-256 of a label and the seed.
+fn table_seed(seed: &[u8; 32], table: &[u8]) -> [u8; 32] {
+    primitives::hash::hash(&[b"pcs-quotient-pad-".as_slice(), table, seed].concat())
+}
+
+/// Fresh randomness for a proof from `rand`'s thread generator (ChaCha, seeded and reseeded by the operating
+/// system): the masks and the tables' seed that [`prove`] takes.
+pub fn fresh_randomness() -> ([[F64; 3]; 4], [u8; 32]) {
+    use rand::RngCore;
+    let mut rng = rand::rng();
+    let masks = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
+    let mut seed = [0; 32];
+    rng.fill_bytes(&mut seed);
+    (masks, seed)
 }
 
 /// The circuit as the verifier's commitment sees it: the coefficients of its wiring polynomial, which sends a
@@ -207,7 +241,7 @@ fn coordinate_weight(k: usize) -> Option<F192> {
 }
 
 /// The two coordinates of the extension over the base field, and the scale of their weights `(1, Y, Y^2, Y^3)`.
-fn extension() -> ([F192; 2], F192) {
+pub(crate) fn extension() -> ([F192; 2], F192) {
     let (y, y2) = (F192::Y, F192::Y * F192::Y);
     let (d0, d1) = (F192::ONE + y, F192::ONE + y2);
     ([y * d0.inv(), y2 * d1.inv()], (d0 * d1).inv())
@@ -288,8 +322,9 @@ pub struct Tables {
     pub quotient_committed: Committed,
 }
 
-/// Prove `statement` from the cells of a witness, against the circuit committed as `index_root`. `masks` must be
-/// uniformly random. Panics on a challenge the verifier rejects.
+/// Prove `statement` from the cells of a witness, against the circuit committed as `index_root`. `masks` and
+/// `seed` (the tables' padding, HIDING.md) must be uniformly random and secret, drawn from a cryptographic
+/// generator such as [`fresh_randomness`]. Panics on a challenge the verifier rejects.
 pub fn prove(
     circuit: &Circuit,
     index: &Index,
@@ -297,6 +332,7 @@ pub fn prove(
     statement: &Statement,
     cells: &[F64],
     masks: &[[F64; 3]; 4],
+    seed: &[u8; 32],
 ) -> Proved {
     let m = cell_vars(circuit.log_rows);
     let n = 1usize << m;
@@ -314,18 +350,21 @@ pub fn prove(
             mask[4 * i + j] = coeff;
         }
     }
-    let layout = witness_layout(circuit.log_rows);
-    let lane = 1 << layout.log_lane();
-    let witness = Table::new(layout, |_, block, out| {
-        let at = block * lane;
-        if at < n {
-            out.copy_from_slice(&w_hat[at..at + lane]);
-        } else {
-            out[..16].copy_from_slice(&mask);
-        }
-    });
+    // Hidden, its stack holds the coefficients out of order: they are read back from it where they are needed.
+    let witness = Table::hidden(
+        witness_layout(circuit.log_rows),
+        &table_seed(seed, b"witness"),
+        |start, out| {
+            for (i, o) in (start..).zip(out.iter_mut()) {
+                *o = if i < n {
+                    w_hat[i]
+                } else {
+                    mask.get(i - n).copied().unwrap_or(F64::ZERO)
+                };
+            }
+        },
+    );
     drop(w_hat);
-    let w_hat = &witness.stack[..n];
     let witness_committed = tracing::info_span!("Commit").in_scope(|| opening::commit(&witness));
     ps.send_root(&witness_committed.root);
     drop(span);
@@ -369,7 +408,8 @@ pub fn prove(
     let mut values = Vec::with_capacity(placed.max(2 * big));
     values.resize(2 * big, F64::ZERO);
     let (w_values, sigma_values) = values.split_at_mut(big);
-    coset_values(w_values, &[w_hat, &mask]);
+    witness.read(0, &mut w_values[..n]);
+    coset_values(w_values, &[&[], &mask]);
     coset_values(sigma_values, &[index.sigma()]);
     let mut q = Vec::with_capacity(big.max(placed.div_ceil(3)));
     q.resize(big, F192::ZERO);
@@ -427,21 +467,21 @@ pub fn prove(
     // not be, and what the layout leaves out is dropped: the claims are then false.
     let fits = q[3 * n + layout.covered(m, 7)..].iter().all(|v| v.is_zero())
         && q_gate[n + layout.covered(m, 9)..].iter().all(|v| v.is_zero());
-    let lane = 1 << layout.log_lane();
-    let per_chunk = n / lane;
-    let quotient = Table::new_in(layout, values, |_, block, out| {
-        let (c, piece) = (block / per_chunk, block % per_chunk);
+    let quotient = Table::hidden_in(layout, values, &table_seed(seed, b"quotient"), |start, out| {
+        // A run of pieces of one block, or a piece: in one chunk.
+        let (c, within) = (start >> m, start & (n - 1));
         let (digit, limb) = (c & 3, c >> 4);
-        let from = digit * n + piece * lane;
+        let from = digit * n + within;
+        let len = out.len();
         let at = |values: &[F192], out: &mut [F64]| {
-            for (o, v) in out.iter_mut().zip(&values[from..from + lane]) {
+            for (o, v) in out.iter_mut().zip(&values[from..from + len]) {
                 *o = F64([v.c0, v.c1, v.c2][limb]);
             }
         };
         match c & 12 {
             0 => at(&h_hat, out),
             4 => at(&q, out),
-            _ => out.copy_from_slice(&q_gate[from..from + lane]),
+            _ => out.copy_from_slice(&q_gate[from..from + len]),
         }
     });
     drop((h_hat, q_gate));
@@ -454,9 +494,12 @@ pub fn prove(
     let digits: Vec<F192> = std::iter::successors(Some(t), |&w| Some(w * w + w))
         .take(m + 1)
         .collect();
+    let mut w_hat = vec![F64::ZERO; n];
+    witness.read(0, &mut w_hat);
     let a: [F192; 4] = std::array::from_fn(|j| {
-        domain::evaluate(w_hat, j, 4, &digits[2..m]) + digits[m] * domain::evaluate(&mask, j, 4, &digits[2..4])
+        domain::evaluate(&w_hat, j, 4, &digits[2..m]) + digits[m] * domain::evaluate(&mask, j, 4, &digits[2..4])
     });
+    drop(w_hat);
     a.iter().for_each(|&x| ps.send(x));
     ps.send(domain::evaluate(index.sigma(), 0, 1, &digits[..m]));
 
@@ -770,6 +813,10 @@ mod tests {
         std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())))
     }
 
+    fn seed(rng: &mut Rng) -> [u8; 32] {
+        std::array::from_fn(|_| rng.next_u8())
+    }
+
     fn truth(index: &Index, proved: &Proved) -> [bool; 4] {
         let holds = |table: &Table, claim: &Claim| table.eval(&claim.point) == claim.value;
         let claims = &proved.claims;
@@ -782,8 +829,9 @@ mod tests {
     }
 
     /// The prover's output, pinned: the proof and its three openings on the toy circuit hash to what the prover
-    /// of commit d940553 (before its memory was cut) made, so a change to how the prover computes cannot change
-    /// a byte of what it proves.
+    /// made when the hidden layouts came in (HIDING.md; the pin of commit d940553, before them, was
+    /// `7d2d3430…`), so a change to how the prover computes cannot change a byte of what it proves. The seed of
+    /// the tables' padding is part of the input: a deterministic prover, given it.
     #[test]
     fn proofs_are_pinned() {
         let mut rng = Rng::new(0x1D);
@@ -801,13 +849,14 @@ mod tests {
             &statement,
             &cells,
             &masks(&mut rng),
+            &seed(&mut rng),
         );
         let openings = open(proved.tables, &proved.claims, &index, &index_committed);
         let hex: String = digest(&proved.proof, &openings)
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        assert_eq!(hex, "7d2d343092b7f9541a8b027fce333863cc41696bd6848a73109b9e285bf687c6");
+        assert_eq!(hex, "aebdde8c0b12a3263b42bf8728c1b0a727843844d286e53ad7bb87b6cff3a75c");
     }
 
     /// On a small circuit: an honest proof leaves four true claims that open, and a witness that breaks one gate,
@@ -836,6 +885,7 @@ mod tests {
             &statement,
             &cells,
             &masks(&mut rng),
+            &seed(&mut rng),
         );
         assert!(proved.fits);
         assert_eq!(truth(&index, &proved), [true; 4]);
@@ -862,6 +912,7 @@ mod tests {
             &other,
             &cells,
             &masks(&mut rng),
+            &seed(&mut rng),
         );
         assert_eq!(truth(&index, &wrong), [true, true, true, false]);
 
@@ -911,6 +962,7 @@ mod tests {
                     &statement,
                     &bad,
                     &masks(&mut rng),
+                    &seed(&mut rng),
                 ),
             );
             assert!(truth.contains(&false), "{name}: {truth:?}");

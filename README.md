@@ -54,7 +54,8 @@ Zero-knowledge Merkle membership with Keccak-256 (depth 32: `y = H(x | 0x11..)`,
 one χ gate on bits, its claims opened by leanVM's WHIR unchanged. See [`NOTICE.md`](NOTICE.md) for what comes
 from where.
 
-- `crates/quotient`: circuit, prover, Rust verifier (`protocol::reduce`), and the openings (`opening`).
+- `crates/quotient`: circuit, prover, Rust verifier (`protocol::reduce`), and the openings (`opening`), whose
+  hidden layouts make the roots and the openings hide the witness ([`HIDING.md`](crates/quotient/HIDING.md)).
 - `crates/evm`: the same verifier compiled to EVM bytecode, run on revm with `FIELD_MUL` (10 gas) and a mock
   `PCS_OPEN` precompile (ABI in `machine.rs`), which the contract calls once per commitment: three calls for the
   four claims.

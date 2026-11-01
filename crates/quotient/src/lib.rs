@@ -6,6 +6,8 @@
 
 pub mod circuit;
 pub mod domain;
+#[cfg(test)]
+mod hiding;
 pub mod opening;
 pub mod protocol;
 pub mod statement;
