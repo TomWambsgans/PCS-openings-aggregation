@@ -10,5 +10,7 @@ pub mod domain;
 mod hiding;
 pub mod opening;
 pub mod protocol;
+#[cfg(test)]
+mod review_hiding;
 pub mod statement;
 pub mod transcript;
