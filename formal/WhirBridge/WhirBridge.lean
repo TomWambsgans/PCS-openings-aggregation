@@ -2,3 +2,4 @@
 import WhirBridge.Opening
 import WhirBridge.Sound
 import WhirBridge.Table
+import WhirBridge.Variant
