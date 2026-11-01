@@ -33,6 +33,21 @@ Part of this repository. Updated as work lands.
 
 ## Reviews and their outcome
 
+- **End-to-end cryptography**: no soundness break at our sizes: after the union bounds over WHIR's level-0 Johnson
+  lists (no OOD sample at level 0), every reduction round keeps ≥ 130 bits (`review/whir_params.py`). But: claims on
+  one commitment must be opened together (a split opening of the quotient table's two claims would be forgeable at
+  ~2^111: the mock and the contract do it right; now documented as a requirement); with leanerVM's generic list cap
+  the copy round as bounded in the paper drops to 125 bits → a tighter Lean bound is in progress; WHIR's code-side
+  accounting omits a factor leanerVM proves (leanerVM's certified parameters are fine; forwarded to the F2 bridge);
+  the opening seed should bind the layout and version (planned). Two concrete ZK attacks on the pre-hiding code
+  (solving the masks from the opened mask lane; per-coset fingerprints that deanonymize the Merkle path) → being
+  re-run against the hidden layouts by the hiding reviewer. Fourteen overclaims → wording corrected (README section
+  after the design note, doc comments, `formal/README.md`).
+- **Prover memory / `pcs` changes**: the claim holds (identical proofs across 674 randomized WHIR cases, 160 opening
+  layouts, thread counts, x86 NTT constants; 5.58 GiB measured). Found: an aliasing pattern in the NTT encode that Miri
+  flags as UB — pre-existing in leanVM, copied once more by the memory work — and an empty-claims panic → fix agent
+  running (with a report for leanVM upstream).
+
 - **Lean formal layer**: the core is sound (axiom sweep, bounds recomputed by hand, an independent Rust↔Lean
   comparison of every claim coordinate). But the end theorems hold for every wiring — for a degenerate one they say
   nothing — and the circuit argument was not connected to them; the README overstated ZK and the computability of
