@@ -39,7 +39,10 @@ builds them in about 6.5 minutes from mumbai's Mathlib cache.
 
 mumbai's `verifyWhir` (`Statement/LeanVmVerifier.lean:1505-1553`, a transcription of `verifier.py` at
 `c445e3d5`) against the vendored `crates/verifier/src/whir.rs`, and `openingCheck` against
-`crates/quotient/src/opening.rs`:
+`crates/quotient/src/opening.rs`. The vendored `whir.rs`, `transcript.rs`, `merkle.rs`, `multilinear.rs`,
+`field.rs` and `hash.rs` are byte-identical, past their two-line headers, to leanVM `c445e3d5`'s (checked
+against a fetch of that commit, mumbai's `leanvm-tree.sh`), so what mumbai's fuzzing establishes of leanVM's
+Rust verifier holds of ours.
 
 * **Parameters.** `derive_config` (`whir.rs:34-60`) is `Whir.ladder` (`LeanVmVerifier.lean:110-161`): the
   same folds (6, then 4 or what remains while more than 5 variables remain), rate rule, window `15..28`,
