@@ -38,7 +38,8 @@ theorem probEvent_le_add_of_eq_on {α : Type} (X Y : ProbComp α) (good : α →
     split_ifs with h
     · exact heq o h.2
     · rfl
-  have h3 : Pr{let o ← Y}[S o ∧ good o] ≤ Pr{let x ← Y}[S x] := prEvent_mono _ _ _ fun o h => h.1
+  have h3 : Pr{let o ← Y}[S o ∧ good o] ≤ Pr{let x ← Y}[S x] :=
+    prEvent_mono _ _ _ fun o h => h.1
   calc Pr{let x ← X}[S x] ≤ Pr{let o ← X}[S o ∧ good o] + Pr{let o ← X}[¬ good o] := h1
     _ ≤ Pr{let x ← Y}[S x] + ε := add_le_add (h2 ▸ h3) hbad
 
@@ -56,7 +57,8 @@ theorem prob_not_good_challenges (gK : Fin 4 → K[X]) (van : K[X]) (hvan0 : van
     Pr{let c ← challenges (E := E) (H := H)}[¬ Good (P := P) gK van c.2.2.1 c.2.2.2.1]
       ≤ (zkError P van : ENNReal) := by
   unfold challenges
-  refine prEvent_bind_le_of_forall_le _ _ _ fun c₁ => prEvent_bind_le_of_forall_le _ _ _ fun c₂ => ?_
+  refine prEvent_bind_le_of_forall_le _ _ _ fun c₁ =>
+    prEvent_bind_le_of_forall_le _ _ _ fun c₂ => ?_
   -- What remains is a uniform `(ch, t, ρ)`, whose event looks at `(ch, t)` only.
   have hmap : (($ᵗ (E × E × E)) >>= fun ch => ($ᵗ E) >>= fun t => ($ᵗ E) >>= fun ρ =>
         (pure (c₁, c₂, ch, t, ρ) : ProbComp (H × H × (E × E × E) × E × E)))
@@ -274,12 +276,12 @@ theorem exists_handles (c₀ : (ofFn (ZAnswer P H)).QueryCache) (stmt : Fin P.wo
   exact ⟨hnone _ rfl, fun c₂ => hnone _ rfl, fun c₂ a s => hnone _ rfl⟩
 
 /-- **128 bits.** At the protocol's sizes the challenges' part of the bound is below `2^-128`. -/
-theorem zkError_le (hq : Fintype.card E = 2 ^ 192) (hN : P.nCells = 2 ^ 22) (van : K[X])
-    (hdeg : van.natDegree ≤ 2 ^ 20) : zkError P van ≤ 1 / 2 ^ 128 := by
+theorem zkError_le (hq : Fintype.card E = 2 ^ 192) (hN : P.nCells = 2 ^ 24) (van : K[X])
+    (hdeg : van.natDegree ≤ 2 ^ 22) : zkError P van ≤ 1 / 2 ^ 128 := by
   unfold zkError
   refine div_le_two_pow Fintype.card_pos ?_
   rw [hq, hN]
-  calc (2 * 2 ^ 22 + 4 * van.natDegree) * 2 ^ 128 ≤ (2 * 2 ^ 22 + 4 * 2 ^ 20) * 2 ^ 128 := by
+  calc (2 * 2 ^ 24 + 4 * van.natDegree) * 2 ^ 128 ≤ (2 * 2 ^ 24 + 4 * 2 ^ 22) * 2 ^ 128 := by
         gcongr
     _ ≤ 2 ^ 192 := by norm_num
 

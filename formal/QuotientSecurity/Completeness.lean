@@ -151,7 +151,7 @@ theorem accepts_of_consistent (stmt : Fin P.words → F) (g : Witness F) (R : Qu
   have hcd := congrArg (fun p : F[X] => p.eval t) hcopy
   have hgd := congrArg (fun p : F[X] => p.eval t) hgate
   simp only [copyDefect, copyPoly, gateDefect, gatePoly, dPoly, dNextPoly, eval_add, eval_mul,
-    eval_C, eval_X, eval_zero, P.gate_eval] at hcd hgd
+    eval_C, eval_X, eval_zero, gate_eval] at hcd hgd
   refine ⟨rfl, rfl, ?_, ?_, htop⟩
   · have e := fun c => cellAt_opened P g t c
     rw [e 0]

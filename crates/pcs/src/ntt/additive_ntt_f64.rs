@@ -1,5 +1,8 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit c445e3d51a5a85031df47240595698f3b24897bf, file crates/pcs/src/ntt/additive_ntt_f64.rs.
 // MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
+// Modified here: per-layer twiddle offsets and `AdditiveNttF64::replica`, so that a codeword can be encoded one
+// replica at a time (the same words, in half the memory at rate 1/2); and `encode_interleaved_rows_in_place` /
+// `encode_interleaved_rows_with`, whose deep pass runs only on the blocks holding a wanted row.
 //! Additive NTT over GF(2^64) in the Lin-Chung-Han novel polynomial basis.
 //!
 //! It is the Reed-Solomon encoder of every WHIR commitment over K = F_{2^64}.
@@ -62,13 +65,41 @@ pub type RowSink<'a> = dyn Fn(usize, &[F64]) + Sync + 'a;
 #[derive(Clone, Debug)]
 pub struct AdditiveNttF64 {
     evals: Vec<Vec<F64>>,
+    /// What each layer's twiddles add, all zero when empty: a transform of one replica of a larger codeword
+    /// ([`Self::replica`]).
+    offsets: Vec<F64>,
 }
 
 impl AdditiveNttF64 {
     fn new(basis: &[F64]) -> Self {
         Self {
             evals: generate_evals_from_subspace(basis),
+            offsets: Vec::new(),
         }
+    }
+
+    /// The transform of replica `replica` alone of a codeword this one encodes at log inverse rate
+    /// `log_inv_rate`: `2^(d - log_inv_rate)` rows whose layer `L` is this transform's layer `L + log_inv_rate`
+    /// on that replica's blocks, so that encoding the message with it leaves exactly the rows
+    /// `[replica · 2^(d - log_inv_rate), (replica + 1) · 2^(d - log_inv_rate))` of the whole codeword.
+    ///
+    /// A twiddle is F_2-linear in its block index, and at layer `L + log_inv_rate` a block of the replica has
+    /// index `replica · 2^L + b`: the replica adds one constant per layer.
+    pub fn replica(&self, log_inv_rate: usize, replica: usize) -> Self {
+        let l = self.log_domain_size();
+        assert!(log_inv_rate <= l && replica < 1 << log_inv_rate);
+        Self {
+            evals: self.evals[..l - log_inv_rate].to_vec(),
+            offsets: (0..l - log_inv_rate)
+                .map(|layer| self.twiddle(layer + log_inv_rate, replica << layer))
+                .collect(),
+        }
+    }
+
+    /// What layer `layer`'s twiddles add.
+    #[inline]
+    fn offset(&self, layer: usize) -> F64 {
+        self.offsets.get(layer).copied().unwrap_or(F64::ZERO)
     }
 
     /// Standard NTT with basis `{1, x, …, x^(dim-1)}`. Requires `dim ≤ 63` so
@@ -90,7 +121,7 @@ impl AdditiveNttF64 {
     /// - The normalized `s_i` is F_2-linear, so this is a subset sum of row `i` of the table.
     pub fn twiddle(&self, layer: usize, block: usize) -> F64 {
         let v = &self.evals[self.log_domain_size() - layer - 1];
-        span_get(&v[1..], block)
+        span_get(&v[1..], block) + self.offset(layer)
     }
 
     /// The seven twiddles a radix-8 group needs, breadth-first: layer `layer`,
@@ -106,7 +137,7 @@ impl AdditiveNttF64 {
             &self.evals[l - layer - 2],
             &self.evals[l - layer - 3],
         );
-        let (mut t0, mut a, mut c) = (F64::ZERO, F64::ZERO, F64::ZERO);
+        let (mut t0, mut a, mut c) = (self.offset(layer), self.offset(layer + 1), self.offset(layer + 2));
         for j in 0..layer {
             if (block >> j) & 1 == 1 {
                 t0 += v0[1 + j];
@@ -141,7 +172,25 @@ impl AdditiveNttF64 {
     pub fn encode_interleaved_in_place(&self, data: &mut [F64], num_ntts: usize, log_inv_rate: usize) {
         // The message is the buffer's own first replica.
         let msg = parallel::SendPtr(data.as_mut_ptr());
-        self.transform(data, num_ntts, log_inv_rate, Some(msg), None);
+        self.transform(data, num_ntts, log_inv_rate, Some(msg), None, None);
+    }
+
+    /// [`Self::encode_interleaved_in_place`] for the rows `rows` (sorted, distinct) alone: those rows are the
+    /// codeword's, every other row is left part-transformed.
+    ///
+    /// A row's value is the butterflies of the blocks that hold it, one per layer, so the deep pass runs only on
+    /// the blocks holding a wanted row: a few hundred rows of millions leave the deep layers a few full sweeps'
+    /// work rather than one per layer.
+    pub fn encode_interleaved_rows_in_place(
+        &self,
+        data: &mut [F64],
+        num_ntts: usize,
+        log_inv_rate: usize,
+        rows: &[usize],
+    ) {
+        assert!(rows.is_sorted_by(|a, b| a < b), "sorted, distinct rows");
+        let msg = parallel::SendPtr(data.as_mut_ptr());
+        self.transform(data, num_ntts, log_inv_rate, Some(msg), None, Some(rows));
     }
 
     /// Encode in place, handing `on_rows` every finished block of rows.
@@ -158,7 +207,7 @@ impl AdditiveNttF64 {
         on_rows: &RowSink<'_>,
     ) {
         let msg = parallel::SendPtr(data.as_mut_ptr());
-        self.transform(data, num_ntts, log_inv_rate, Some(msg), Some(on_rows));
+        self.transform(data, num_ntts, log_inv_rate, Some(msg), Some(on_rows), None);
     }
 
     /// RS-encode a message held in a buffer of its own, handing `on_rows` every finished block of rows.
@@ -185,7 +234,28 @@ impl AdditiveNttF64 {
         );
         // Read-only from here on: the pointer only feeds the first pass's reads.
         let msg = parallel::SendPtr(msg.as_ptr().cast_mut());
-        self.transform(data, num_ntts, log_inv_rate, Some(msg), Some(on_rows));
+        self.transform(data, num_ntts, log_inv_rate, Some(msg), Some(on_rows), None);
+    }
+
+    /// [`Self::encode_interleaved_with`] for the rows `rows` (sorted, distinct) alone, as
+    /// [`Self::encode_interleaved_rows_in_place`] leaves them.
+    pub fn encode_interleaved_rows_with(
+        &self,
+        data: &mut [F64],
+        msg: &[F64],
+        num_ntts: usize,
+        log_inv_rate: usize,
+        rows: &[usize],
+    ) {
+        assert_eq!(
+            msg.len() << log_inv_rate,
+            data.len(),
+            "the codeword is 2^log_inv_rate messages"
+        );
+        assert!(rows.is_sorted_by(|a, b| a < b), "sorted, distinct rows");
+        // Read-only from here on: the pointer only feeds the first pass's reads.
+        let msg = parallel::SendPtr(msg.as_ptr().cast_mut());
+        self.transform(data, num_ntts, log_inv_rate, Some(msg), None, Some(rows));
     }
 
     /// Run layers `start..d` of a `2^d`-row transform in as few sweeps of the buffer as possible.
@@ -230,6 +300,7 @@ impl AdditiveNttF64 {
         start: usize,
         msg: Option<parallel::SendPtr<F64>>,
         on_rows: Option<&RowSink<'_>>,
+        wanted: Option<&[usize]>,
     ) {
         // The buffer is 2^log_d rows of `num_ntts` words.
         assert!(num_ntts > 0);
@@ -301,6 +372,16 @@ impl AdditiveNttF64 {
             let log_sub = log_d - deep_start;
             let sub_len = num_ntts << log_sub;
             let block_len = data.len() >> start;
+            // The deep layers of one sub-block: all its blocks, or those holding a wanted row.
+            let deep_layers = |buf: &mut [F64], sub_idx: usize| match wanted {
+                None => self.run_layers(buf, log_d, num_ntts, deep_start, log_d, deep_start, sub_idx),
+                Some(rows) => {
+                    let first = sub_idx << log_sub;
+                    let rows = &rows
+                        [rows.partition_point(|&r| r < first)..rows.partition_point(|&r| r < first + (1 << log_sub))];
+                    self.run_layers_on_rows(buf, log_d, num_ntts, deep_start, sub_idx, first, rows);
+                }
+            };
             parallel::chunks_mut(data, sub_len, |sub_idx, sub| match msg {
                 // A separate message: build the sub-block in scratch, then write it out once.
                 //
@@ -315,7 +396,7 @@ impl AdditiveNttF64 {
                     // - It is disjoint from the codeword.
                     // - This sub-block ends inside its replica, so the read stays in bounds.
                     scratch.copy_from_slice(unsafe { std::slice::from_raw_parts(m.add(off), sub_len) });
-                    self.run_layers(scratch, log_d, num_ntts, deep_start, log_d, deep_start, sub_idx);
+                    deep_layers(scratch, sub_idx);
                     if let Some(f) = deep_rows {
                         f(sub_idx << log_sub, scratch);
                     }
@@ -327,7 +408,7 @@ impl AdditiveNttF64 {
                 }),
                 // The replicas are already in place: run the layers where they are.
                 None => {
-                    self.run_layers(sub, log_d, num_ntts, deep_start, log_d, deep_start, sub_idx);
+                    deep_layers(sub, sub_idx);
                     if let Some(f) = deep_rows {
                         f(sub_idx << log_sub, sub);
                     }
@@ -518,6 +599,41 @@ impl AdditiveNttF64 {
                     );
                 }
                 layer += 1;
+            }
+        }
+    }
+
+    /// [`Self::run_layers`] from `first_layer` to the last, over sub-block `sub_idx` (of `2^first_layer`) whose
+    /// first row is `first`, on the blocks that hold one of `rows` (sorted, in the sub-block) alone.
+    #[allow(clippy::too_many_arguments)]
+    fn run_layers_on_rows(
+        &self,
+        buf: &mut [F64],
+        log_d: usize,
+        num_ntts: usize,
+        first_layer: usize,
+        sub_idx: usize,
+        first: usize,
+        rows: &[usize],
+    ) {
+        for layer in first_layer..log_d {
+            let block_size = 1usize << (log_d - layer);
+            let num_blocks_in_buf = 1usize << (layer - first_layer);
+            let mut done = None;
+            for &row in rows {
+                let block = (row - first) / block_size;
+                if done == Some(block) {
+                    continue;
+                }
+                done = Some(block);
+                let twiddle = self.twiddle(layer, sub_idx * num_blocks_in_buf + block);
+                let start = block * block_size * num_ntts;
+                butterfly_interleaved_block(
+                    &mut buf[start..start + block_size * num_ntts],
+                    twiddle,
+                    block_size / 2,
+                    num_ntts,
+                );
             }
         }
     }
@@ -1299,7 +1415,7 @@ mod tests {
             let mut a = orig.clone();
             forward_scalar_from_layer(&ntt, &mut a, 1, 0);
             let mut c = orig.clone();
-            ntt.transform(&mut c, 1, 0, None, None);
+            ntt.transform(&mut c, 1, 0, None, None, None);
             assert_eq!(a, c, "parallel == scalar at log_d={log_d}");
 
             ntt.inverse_transform(&mut a);
@@ -1339,7 +1455,7 @@ mod tests {
             forward_scalar_from_layer(&ntt, &mut want, lanes, start_layer);
             // Under test: the pass-planning driver.
             let mut got = original;
-            ntt.transform(&mut got, lanes, start_layer, None, None);
+            ntt.transform(&mut got, lanes, start_layer, None, None, None);
 
             assert_eq!(got, want, "log_d={log_d}, lanes={lanes}, start_layer={start_layer}");
         }
@@ -1436,7 +1552,7 @@ mod tests {
                 let block = n_lanes - 1 - lane;
                 let mut want = vec![F64::ZERO; block_len];
                 replicate_rows(&mut want, &msg[block * rows..(block + 1) * rows]);
-                ntt.transform(&mut want, 1, log_inv_rate, None, None);
+                ntt.transform(&mut want, 1, log_inv_rate, None, None, None);
                 for pos in 0..block_len {
                     assert_eq!(
                         got[pos * n_lanes + lane],
@@ -1465,7 +1581,7 @@ mod tests {
                     per_lane[lane][pos] = v;
                 }
             }
-            ntt.transform(&mut soa, lanes, 0, None, None);
+            ntt.transform(&mut soa, lanes, 0, None, None, None);
             for (lane, lane_data) in per_lane.iter_mut().enumerate() {
                 forward_scalar_from_layer(&ntt, lane_data, 1, 0);
                 for pos in 0..n {

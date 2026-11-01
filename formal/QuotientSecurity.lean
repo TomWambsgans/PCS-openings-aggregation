@@ -99,9 +99,9 @@ import QuotientSecurity.Statement
 #guard_msgs in
 #print axioms QuotientSecurity.exists_handles
 
-/-- info: 'QuotientSecurity.AdderCircuit.determined' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+/-- info: 'QuotientSecurity.ChiCircuit.determined' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
-#print axioms QuotientSecurity.AdderCircuit.determined
+#print axioms QuotientSecurity.ChiCircuit.determined
 
 /-- info: 'QuotientSecurity.Params.exists_witness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
@@ -194,6 +194,10 @@ import QuotientSecurity.Statement
 /-- info: 'QuotientSecurity.knowledgeSoundness_ofCantor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms QuotientSecurity.knowledgeSoundness_ofCantor
+
+/-- info: 'QuotientSecurity.Params.ofCantor_identity_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Params.ofCantor_identity_eq
 
 /-- info: 'QuotientSecurity.exists_instance' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

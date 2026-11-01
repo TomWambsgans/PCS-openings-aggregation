@@ -7,7 +7,7 @@ import QuotientSecurity.Degrees
 # The verifier's four claims are the model's acceptance
 
 `Params.Accepts`, on which the security theorems are stated, speaks of polynomials. This file
-states the four claims the verifier of `flock::quotient` outputs, as multilinear evaluations of
+states the four claims the verifier of `quotient::protocol` (`reduce`) outputs, as multilinear evaluations of
 the three committed tables at the points and with the values it computes, and proves that they
 hold exactly when `Params.Accepts` does for the polynomials the tables hold.
 -/
@@ -49,7 +49,7 @@ noncomputable def claimValue (α β γ t ρ : F) (a : Fin 4 → F) (s : F) : F :
         + (P.pub γ).eval t * P.cellAt a t 0
           * ((α + P.cellAt a t 0 + β * t) * (α + P.cellAt a t 0 + β * s))) * P.vRows.eval t
       + ρ * ((α + P.cellAt a t 0 + β * t) * (α + P.cellAt a t 0 + β * s))
-        * gate P.θ (P.cellAt a t 0) (P.cellAt a t 1) (P.cellAt a t 2) (P.cellAt a t 3))
+        * gate (P.cellAt a t 0) (P.cellAt a t 1) (P.cellAt a t 2) (P.cellAt a t 3))
     / (P.claimDen α β t a s * P.vRows.eval t)
 
 /-- `Accepts`, with its intermediate values named. -/

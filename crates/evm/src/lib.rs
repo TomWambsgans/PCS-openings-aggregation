@@ -8,6 +8,8 @@
 //! graph: the two cannot disagree on what is computed. A field element is the low 192 bits of a word, limb 0
 //! lowest; addition is `XOR`.
 
+#[cfg(test)]
+mod adversarial;
 mod codegen;
 mod contract;
 pub mod machine;

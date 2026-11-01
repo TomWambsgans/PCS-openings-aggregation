@@ -62,7 +62,7 @@ abbrev Masks : Type := Fin 4 → Fin 3 → K
 polynomial `j`, `i < 3`; the last four are zero. -/
 def maskEntries (masks : Masks) : Array K :=
   Array.ofFn (n := 16) fun e ↦
-    if h : e.val / 4 < 3 then masks ⟨e.val % 4, Nat.mod_lt _ (by decide)⟩ ⟨e.val / 4, h⟩ else 0
+    if e.val / 4 < 3 then masks (Fin.ofNat 4 (e.val % 4)) (Fin.ofNat 3 (e.val / 4)) else 0
 
 /-- `public_weight` (`protocol.rs:184-190`): the weight of cell `i` of the public region, `γ^J` times its
 bit's weight, `J = ⌊i / 2^8⌋` the word, or zero off the `X` and `Y` cells. -/

@@ -3,7 +3,7 @@
 import QuotientSecurity.LogDerivative
 
 /-!
-# The reduction of `flock::quotient`, as polynomials
+# The reduction of `quotient::protocol`, as polynomials
 
 The protocol of `doc/quotient/main.tex` with its tables read as the polynomials they hold: a claim
 on a table is an evaluation of those polynomials, and the claim at the fixed point is a sum over
@@ -19,12 +19,14 @@ namespace QuotientSecurity
 
 variable {F : Type*} [Field F]
 
-/-- The gate: a full adder on the bits of `x`, `y` and the carry of `c`, packed in `v`. -/
-def gate {R : Type*} [CommRing R] (θ x y c v : R) : R :=
-  let bx := x * (θ * x + θ * θ)
-  let bY := y * (θ * y + θ * θ)
-  let cc := c * c + c
-  v + bx + bY + cc + θ * (bx * bY + cc * (bx + bY))
+/-- The gate, `V + X + C + Y·C`: on bits it says `V = X ⊕ (C ∧ ¬Y)`, Keccak's χ (`quotient::protocol`'s
+`gate`, the cells of a row being `X, Y, C, V`). Of degree 2. -/
+def gate {R : Type*} [CommRing R] (x y c v : R) : R :=
+  v + x + c + y * c
+
+theorem gate_eval (a b c d : F[X]) (t : F) :
+    (gate a b c d).eval t = gate (a.eval t) (b.eval t) (c.eval t) (d.eval t) := by
+  simp [gate]
 
 /-- The offset of a cell from the `X` cell of its row: `0, 1, θ, θ + 1`. -/
 def shift (θ : F) : Fin 4 → F := ![0, 1, θ, θ + 1]
@@ -79,7 +81,7 @@ def target (stmt : Fin P.words → F) (γ : F) : F := ∑ J : Fin P.words, γ ^ 
 
 /-- The relation proved: cells that satisfy every gate, every copy, and the public words. -/
 def Sat (stmt : Fin P.words → F) (w : P.T × Fin 4 → F) : Prop :=
-  (∀ x : P.T, gate P.θ (w (x, 0)) (w (x, 1)) (w (x, 2)) (w (x, 3)) = 0) ∧
+  (∀ x : P.T, gate (w (x, 0)) (w (x, 1)) (w (x, 2)) (w (x, 3)) = 0) ∧
     (∀ i, w (P.σ i) = w i) ∧ ∀ J, P.wordSum J w = stmt J
 
 /-- The prover's first message: four polynomials in the row. -/
@@ -119,7 +121,7 @@ noncomputable def dNextPoly (g : Witness F) (α β : F) : F[X] :=
   C α + cellPoly P g 0 + C β * P.sigmaPoly
 
 noncomputable def gatePoly (g : Witness F) : F[X] :=
-  gate (C P.θ) (cellPoly P g 0) (cellPoly P g 1) (cellPoly P g 2) (cellPoly P g 3)
+  gate (cellPoly P g 0) (cellPoly P g 1) (cellPoly P g 2) (cellPoly P g 3)
 
 noncomputable def copyPoly (g : Witness F) (α β γ : F) : F[X] :=
   dPoly P g α β + dNextPoly P g α β
@@ -158,7 +160,7 @@ def Accepts (stmt : Fin P.words → F) (g : Witness F) (R : Quotients F)
   let x := cellAt P a t 0
   let d := α + x + β * t
   let d' := α + x + β * s
-  let gt := gate P.θ x (cellAt P a t 1) (cellAt P a t 2) (cellAt P a t 3)
+  let gt := gate x (cellAt P a t 1) (cellAt P a t 2) (cellAt P a t 3)
   let copies := d + d' + (P.pub γ).eval t * x * (d * d')
   let den := d * d' + P.vCells.eval t
   let e := P.vCells.eval t / den

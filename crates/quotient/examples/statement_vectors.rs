@@ -5,9 +5,10 @@
 //! `cargo run --release -p quotient --example statement_vectors -- OUT [--full]`
 //!
 //! - `R` lines: the reduction alone ([`protocol::verify`]) on random nine-scalar streams (and a few of other
-//!   lengths, or with a root that is not two halves) at `2^13`, `2^17` and `2^22` rows, and on the honest proofs
-//!   below: the two roots and the four claims, or the rejection.
-//! - `P` lines: whole proofs (the reduction and the three openings) on a small circuit of `2^13` rows, honest and
+//!   lengths, or with a root that is not two halves) at `2^16` to `2^23` rows (the layouts take `2^17` to `2^22`,
+//!   [`protocol::supported`]), and on the honest proofs below: the two roots and the four claims, or the rejection.
+//! - `Q` lines: the honest prover's inputs (input bits, the tables' seed, the masks) and the stream it sends.
+//! - `P` lines: whole proofs (the reduction and the three openings) on a small circuit of `2^17` rows, honest and
 //!   tampered, the openings in their raw form (one full Merkle path per query, [`opening::verify_paths`]), with
 //!   the Rust verifier's verdict on that raw form. With `--full`, also the membership circuit (`2^22` rows).
 //! - `I` lines: a circuit's size, its number of inputs and its commitment (the root of its wiring table), for the
@@ -25,7 +26,7 @@ use primitives::test_rng::Rng;
 use quotient::circuit::{Builder, Circuit, Src, membership, membership_inputs, public_words};
 use quotient::opening::{self, Claim, Layout, commit, wire_proof};
 use quotient::protocol::{
-    Claims, Index, Openings, Proved, open, prove, quotient_layout, verify, wiring_layout, witness_layout,
+    Claims, Index, Openings, open, prove, quotient_layout, verify, wiring_layout, witness_layout,
 };
 use quotient::statement::{DEPTH, Secret, Statement};
 use quotient::transcript::Proof;
@@ -159,17 +160,24 @@ struct Whole {
 }
 
 impl Whole {
-    fn of(log_rows: usize, index_root: &Hash, statement: &Statement, proved: &Proved, openings: &Openings) -> Self {
-        let claims = &proved.claims;
+    fn of(
+        log_rows: usize,
+        index_root: &Hash,
+        statement: &Statement,
+        stream: &[F192],
+        roots: &[Hash; 2],
+        claims: &Claims,
+        openings: &Openings,
+    ) -> Self {
         Self {
             log_rows,
             index_root: *index_root,
             statement: *statement,
-            stream: proved.proof.stream.clone(),
+            stream: stream.to_vec(),
             openings: [
                 raw(
                     &witness_layout(log_rows),
-                    &proved.roots[0],
+                    &roots[0],
                     std::slice::from_ref(&claims.witness),
                     &openings.witness,
                 ),
@@ -181,7 +189,7 @@ impl Whole {
                 ),
                 raw(
                     &quotient_layout(log_rows),
-                    &proved.roots[1],
+                    &roots[1],
                     &[claims.quotient.clone(), claims.sum.clone()],
                     &openings.quotient,
                 ),
@@ -294,7 +302,7 @@ fn small() -> Circuit {
         };
     }
     let _ = b.not(acc);
-    b.finish(13, &public_words(&x, &x))
+    b.finish(17, &public_words(&x, &x))
 }
 
 /// A circuit of one Keccak-256 of a 64-byte block, `root = H(x ‖ x)` (as `protocol.rs`'s test `toy`).
@@ -321,9 +329,9 @@ fn masks(rng: &mut Rng) -> [[F64; 3]; 4] {
     std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())))
 }
 
-/// A `Q` line: the honest prover's inputs (the circuit by name, its input bits as bytes, the masks) and the
-/// reduction's stream it sends, which the Lean prover must reproduce.
-fn prover_line(name: &str, inputs: &[bool], masks: &[[F64; 3]; 4], stream: &[F192]) -> String {
+/// A `Q` line: the honest prover's inputs (the circuit by name, its input bits as bytes, the tables' seed, the
+/// masks) and the reduction's stream it sends, which the Lean prover must reproduce.
+fn prover_line(name: &str, inputs: &[bool], seed: &[u8; 32], masks: &[[F64; 3]; 4], stream: &[F192]) -> String {
     let mut out = format!("Q {name} {}", inputs.len());
     for byte in inputs.chunks(8) {
         let value = byte
@@ -332,6 +340,7 @@ fn prover_line(name: &str, inputs: &[bool], masks: &[[F64; 3]; 4], stream: &[F19
             .fold(0u8, |acc, (i, &bit)| acc | (bit as u8) << i);
         write!(out, " {value:02x}").unwrap();
     }
+    write!(out, " {}", hex_hash(seed)).unwrap();
     for coeffs in masks {
         for coeff in coeffs {
             write!(out, " {:016x}", coeff.0).unwrap();
@@ -350,17 +359,27 @@ fn proofs(lines: &mut Vec<String>, rng: &mut Rng, name: &str, circuit: &Circuit,
     for (statement, inputs) in cases {
         let cells = circuit.cells(inputs);
         let masks = masks(rng);
-        let proved = prove(circuit, &index, &index_committed.root, statement, &cells, &masks);
+        let seed = random_hash(rng);
+        let proved = prove(circuit, &index, &index_committed.root, statement, &cells, &masks, &seed);
         assert!(proved.fits);
-        lines.push(prover_line(name, inputs, &masks, &proved.proof.stream));
-        let openings = open(&proved, &index, &index_committed);
-        let honest = Whole::of(circuit.log_rows, &index_committed.root, statement, &proved, &openings);
+        lines.push(prover_line(name, inputs, &seed, &masks, &proved.proof.stream));
+        let (stream, roots, claims) = (proved.proof.stream.clone(), proved.roots, proved.claims.clone());
+        let openings = open(proved.tables, &claims, &index, &index_committed);
+        let honest = Whole::of(
+            circuit.log_rows,
+            &index_committed.root,
+            statement,
+            &stream,
+            &roots,
+            &claims,
+            &openings,
+        );
         assert!(honest.accepts(), "the honest proof is accepted");
         lines.push(reduction_line(
             circuit.log_rows,
             &index_committed.root,
             statement,
-            &proved.proof.stream,
+            &stream,
         ));
         lines.push(honest.line());
         for (name, case) in tampered(&honest) {
@@ -377,9 +396,9 @@ fn main() {
     let mut rng = Rng::new(0x5747_A7E5);
     let mut lines = Vec::new();
 
-    // The reduction on random streams.
-    for log_rows in [13usize, 17, 22] {
-        for case in 0..40 {
+    // The reduction on random streams, at sizes the layouts take (`2^17` to `2^22` rows) and two they do not.
+    for (log_rows, count) in [(16usize, 10), (17, 40), (20, 20), (22, 40), (23, 10)] {
+        for case in 0..count {
             let index_root = random_hash(&mut rng);
             let statement = Statement {
                 y: random_hash(&mut rng),
@@ -406,7 +425,7 @@ fn main() {
 
     // Whole proofs on a small circuit.
     let circuit = small();
-    let cases: Vec<(Statement, Vec<bool>)> = (0..2)
+    let cases: Vec<(Statement, Vec<bool>)> = (0..1)
         .map(|_| {
             let x = random_hash(&mut rng);
             let inputs = (0..256).map(|i| (x[i / 8] >> (i % 8)) & 1 == 1).collect();

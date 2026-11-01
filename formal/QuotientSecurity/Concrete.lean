@@ -6,7 +6,7 @@ import QuotientSecurity.CantorExists
 import QuotientSecurity.RandomOracle
 
 /-!
-# The parameters of `flock::quotient` on a Cantor basis
+# The parameters of `quotient::protocol` on a Cantor basis
 
 The cells are the span of the first `n + 2` vectors of a Cantor basis, a row's four cells the
 shifts by `0, 1, θ, θ + 1` with `θ` the second vector. This file builds `Params` on them, with
@@ -353,6 +353,59 @@ noncomputable def Params.ofCantorBounds (d : ℕ) (hd : ∀ γ, (pub γ).natDegr
     simp only [natDegree_X_sub_C, Finset.sum_const, Finset.card_univ, smul_eq_mul, mul_one]
     exact (card_cantorT B hm).le
 
+/-! ### The claims against `quotient::protocol::reduce`, coordinate by coordinate
+
+What Lean cannot check, compared by reading `crates/quotient/src/protocol.rs` (`reduce`,
+`sum_point`, `extension`, the three layouts and how `prove` fills the tables) against
+`claims_iff_accepts_ofCantor` below. `m = n + 2 = log_rows + 2` (24 at the instance),
+`w_k = sq^[k] t` (`reduce`'s `w`, `k ≤ m + 1`), `u_k = w_k / (1 + w_k)` (`reduce`'s `u`, here
+`claimPoint`). Rust lists a point low coordinate first and coordinate `k` weighs bit `k` of a
+table's index by `eq` (`opening::eq_bits`, `multilinear::mle_eval_par`), which is `mle`'s
+coordinate `k` (`if b k then u k else 1 + u k`). The transcript is the same: the statement, the
+witness's root, `(α, β, γ)`, the quotient's root, `t`, `a_0..a_3` and `next` (here `a`, `s`), `ρ`.
+
+* **Witness table** (`witness_layout`, `m + 1` variables; entry `j + 4 i` is coefficient `i` of
+  `g_j`, the masks in the chunk of bit `m`). Point `[ρ, ρ^2, u_2, …, u_m]`, here
+  `Fin.cons ρ (Fin.cons (ρ ^ 2) (claimPoint 2 (n + 1) t))`; `witnessOfTable` reads coordinates 0
+  and 1 as `j` and the rest as `g_j`'s digits, composed with `rowPoly` (`w_{k+2} = w_k ∘ w_2`),
+  as `prove`'s `a_j = evaluate(w_hat, j, 4, digits[2..m]) + digits[m] * evaluate(mask, j, 4, ..)`.
+  Value `opened * middle * inverses[m]`: `opened = (1 + ρ^2)(a_0 + ρ (a_0 + a_1))
+  + ρ^2 (a_2 + ρ (a_2 + a_3)) = ∑ j, opening ρ j * a j` and `middle * inverses[m]
+  = ∏_{2 ≤ k ≤ m} (1 + w_k)⁻¹ = (claimScale 2 (n + 1) t)⁻¹`.
+* **Wiring table** (`wiring_layout`, `m` variables, the coefficients of the wiring polynomial).
+  Point `u[..m] = claimPoint 0 (n + 2) t`; value `next * wiring_scale`, `wiring_scale
+  = ∏_{k < m} (1 + w_k)⁻¹ = (claimScale 0 (n + 2) t)⁻¹`.
+* **Quotient table** (`quotient_layout`, `m + 6` variables). Chunk `c = index >> m`:
+  `digit = c & 3` is coordinates `m, m + 1`; `c & 4` chooses `h` or `q` (`κ`, coordinate `m + 2`);
+  `c & 8` the copy pair or the gate's (`τ`, `m + 3`); `c >> 4` the limb (`e₀ + 2 e₁`, coordinates
+  `m + 4, m + 5`), an element of `E` being `c0 + c1 Y + c2 Y^2` (`F192`). That is `subTable`'s
+  order and `slotPoly`'s `1, Y, Y^2, Y^3`, and `quotientsOfTable` sends the slots
+  `(κ, τ) = (0, 0), (1, 0), (0, 1), (1, 1)` to `h, q, qGate, junk`, where `prove` puts `h`, `q`,
+  the gate's quotient (limb 0 only, digits 0 and 1 only) and nothing. The layout's chunks are a
+  subset of the table, the rest zero: a table of the layout is a table here. Point
+  `[u_0, …, u_{m+1}, w_m * copy_inverse, ρ, y0, y1]`, here `claimPoint 0 (n + 2 + 1 + 1) t`, then
+  `vCells.eval t / claimDen` (`vCells = digitPoly m`, `copy_inverse = (d d' + w_m)⁻¹`), `ρ`,
+  `Y / (1 + Y)`, `Y^2 / (1 + Y^2)` (`extension`). Value `scale * quotient_scale * copy_inverse
+  * rows_inverse * identities`: `scale = ((1 + Y)(1 + Y^2))⁻¹`, `quotient_scale
+  = ∏_{k ≤ m + 1} (1 + w_k)⁻¹ = (claimScale 0 (n + 2 + 1 + 1) t)⁻¹`, `copy_inverse * rows_inverse
+  = (claimDen * vRows.eval t)⁻¹`, `rows = ∑_{k < m - 1} tau_k w_k = (rowsPoly tau).eval t`
+  (`rowsPoly_eq_vRows`), and `identities = (1 + ρ) copies rows + ρ product gate`, `claimValue`'s
+  numerator: `d = α + x + β t`, `d' = α + x + β next`, `product = d d'`,
+  `copies = d + d' + public x product` with `public` the product `pubProd` of `PublicWeight.lean`
+  (`b = coordinates(11)` is `invSeq`, `m_k` is `regionMu`), and `gate = v + x + c + y c` (this
+  file's `gate`) of the four cells `cell(shift, second) = a_0 + (t + shift) a_1 + w_1(t + shift)
+  (a_2 + (t + shift) a_3)`, which is `cellAt a t` (`digit`, `shift θ`), with `θ = beta()[1]
+  = B.β 1` and `w_1(θ) = w_1(θ + 1) = 1`.
+* **Sum claim.** Point `sum_point = [1; m] ++ [0; 4] ++ [y0, y1] = sumPoint (n + 2) Y`; value
+  `scale * target`, `target = s_0 + γ s_1 + γ^2 (s_2 + γ s_3) + γ^4`, which is
+  `target ![s 0, s 1, s 2, s 3, 1, 0, 0, 0] γ` (`membership_target`).
+* **Rejection.** `reduce` rejects when `∏_{k ≤ m + 1} (1 + w_k) * (d d' + w_m) * rows = 0`; here
+  `ht` and `hnz` assume the opposite. `Accepts` asks only `hnz`, so the model accepts more.
+
+No mismatch found. The constants are left as hypotheses: the basis (`beta()` is a Cantor basis,
+the Rust test `transform_matches_the_basis`), `tau` (`row_vanishing`, the linear system of
+`rowsPoly_eq_vRows`), and the bit weights `c`. -/
+
 /-- **The four claims are the model's acceptance, on the instance**: `claims_iff_accepts` with
 its hypotheses on the cells and the vanishing polynomial met, for any wiring table whose
 polynomial carries the wiring. -/
@@ -452,21 +505,32 @@ end Cells
 section Sizes
 
 variable {F : Type} [Field F] [DecidableEq F] [CharP F 2] [Fintype F] [SampleableType F]
-variable {N : ℕ} (B : CantorBasis F N) (hm : 20 + 2 ≤ N)
-  (σ : Equiv.Perm (Fin (20 + 2) → Bool))
-  (wordSum : Fin 8 → ((Fin (20 + 2) → Bool) → F) →ₗ[F] F) (pub : F → F[X])
-  (hPub : ∀ (γ : F) (w : (Fin (20 + 2) → Bool) → F),
+variable {N : ℕ} (B : CantorBasis F N) (hm : 22 + 2 ≤ N)
+  (σ : Equiv.Perm (Fin (22 + 2) → Bool))
+  (wordSum : Fin 8 → ((Fin (22 + 2) → Bool) → F) →ₗ[F] F) (pub : F → F[X])
+  (hPub : ∀ (γ : F) (w : (Fin (22 + 2) → Bool) → F),
     ∑ x, (pub γ).eval (B.point x) * w x = ∑ J : Fin 8, γ ^ (J : ℕ) * wordSum J w)
-  (hd : ∀ γ, (pub γ).natDegree ≤ 2 ^ 22 + 9 * 2 ^ 10)
+  (hd : ∀ γ, (pub γ).natDegree ≤ 2 ^ 24 + 9 * 2 ^ 10)
 
-theorem Params.ofCantor_identity :
-    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity ≤ 2 ^ 27 := by
+/-- **The identities' degree on the instance**, exactly as `Bounds.identity` counts it at
+`2^22` rows (`N = 2^24` cells): with the witness's polynomials of degree `2^23`, the quotients'
+`2^26`, the wiring and the cells' vanishing polynomial `2^24`, the rows' `2^22` and the public
+weight's `2^24 + 9 * 2^10`, a cell's polynomial has degree `4 * 2^23 + 3` and a denominator
+`3 * 2^24 + 4`, and `2 * (3 * 2^24 + 4) + 2^24 + 2^22 + 2^26 + (2^24 + 9 * 2^10)
++ 2 * (2^25 + 3) = 2^28 + 2^22 + 9230`, that is `16.25 N` and a little more. -/
+theorem Params.ofCantor_identity_eq :
+    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity = 2 ^ 28 + 2 ^ 22 + 9230 := by
   norm_num [Params.Bounds.identity, Params.Bounds.denominator, Params.Bounds.cell,
     Params.ofCantorBounds]
 
+theorem Params.ofCantor_identity :
+    (Params.ofCantorBounds B hm σ 8 wordSum pub hPub _ hd).identity ≤ 2 ^ 29 := by
+  rw [Params.ofCantor_identity_eq]
+  norm_num
+
 open OracleComp OracleSpec in
-/-- **128 bits on the instance.** With `2^20` rows and eight public words over a field of `2^192`
-elements, and a public weight of degree at most `2^22 + 9 * 2^10`, an adversary making `Q`
+/-- **128 bits on the instance.** With `2^22` rows and eight public words over a field of `2^192`
+elements, and a public weight of degree at most `2^24 + 9 * 2^10`, an adversary making `Q`
 queries wins with probability at most `(Q + 3) / 2^128`. -/
 theorem knowledgeSoundness_ofCantor (hq : Fintype.card F = 2 ^ 192)
     (adv : OracleComp (ofFn (Answer (Params.ofCantor B hm σ 8 wordSum pub hPub)
@@ -487,11 +551,11 @@ omit [SampleableType F] in
 /-- **The instance exists** in every field of `2^192` elements: a Cantor basis and, for any
 wiring and public words, a public weight within the degree the theorem above asks. -/
 theorem exists_instance (hq : Fintype.card F = 2 ^ 192) :
-    ∃ B : CantorBasis F (20 + 2), ∀ wordSum : Fin 8 → ((Fin (20 + 2) → Bool) → F) →ₗ[F] F,
-      ∃ pub : F → F[X], (∀ (γ : F) (w : (Fin (20 + 2) → Bool) → F),
+    ∃ B : CantorBasis F (22 + 2), ∀ wordSum : Fin 8 → ((Fin (22 + 2) → Bool) → F) →ₗ[F] F,
+      ∃ pub : F → F[X], (∀ (γ : F) (w : (Fin (22 + 2) → Bool) → F),
           ∑ x, (pub γ).eval (B.point x) * w x = ∑ J : Fin 8, γ ^ (J : ℕ) * wordSum J w) ∧
-        ∀ γ, (pub γ).natDegree ≤ 2 ^ 22 + 9 * 2 ^ 10 := by
-  obtain ⟨B⟩ := exists_cantorBasis_big hq (20 + 2) (by norm_num) (by norm_num)
+        ∀ γ, (pub γ).natDegree ≤ 2 ^ 24 + 9 * 2 ^ 10 := by
+  obtain ⟨B⟩ := exists_cantorBasis_big hq (22 + 2) (by norm_num) (by norm_num)
   refine ⟨B, fun wordSum => ?_⟩
   obtain ⟨pub, h1, h2⟩ := exists_pub B le_rfl 8 wordSum
   exact ⟨pub, h1, fun γ => (h2 γ).trans (by norm_num)⟩

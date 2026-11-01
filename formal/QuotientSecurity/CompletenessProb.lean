@@ -163,7 +163,8 @@ theorem completeness_prob (hE : P.Exact) (c₀ : (ofFn (ZAnswer P H)).QueryCache
     (fun o => Fresh c₀ stmt o.1.c₁) (fun o => o.1.verdict = false)
     (fun o hf => realNI_eq_openNI c₀ stmt gK van o hf)
   have h3 : Pr{let o ← openNI c₀ stmt gK van}[Fresh c₀ stmt o.1.c₁ ∧ o.1.verdict = false]
-      ≤ Pr{let o ← openNI c₀ stmt gK van}[Good (P := P) gK van o.1.ch o.1.t ∧ o.1.verdict = false]
+      ≤ Pr{let o ← openNI c₀ stmt gK van}[
+            Good (P := P) gK van o.1.ch o.1.t ∧ o.1.verdict = false]
         + Pr{let o ← openNI c₀ stmt gK van}[¬ Good (P := P) gK van o.1.ch o.1.t] :=
     prEvent_le_add_of_imp_or fun o _ ho => by
       by_cases hG : Good (P := P) gK van o.1.ch o.1.t

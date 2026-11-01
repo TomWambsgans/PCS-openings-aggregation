@@ -161,10 +161,11 @@ theorem knowledgeSoundness (adv : OracleComp (ofFn (Answer P B)) (Proof P B)) (Q
         List.mem_append_right _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)),
         h4, Or.inr hacc'⟩
 
-/-- **128 bits.** At the sizes of `flock::quotient`, an adversary making `Q` queries wins with
+/-- **128 bits.** At the sizes of `quotient::protocol` (`2^24` cells, eight words, identities of
+degree at most `2^29`, a field of `2^192` elements), an adversary making `Q` queries wins with
 probability at most `(Q + 3) / 2^128`. -/
-theorem knowledgeSoundness_bits (hq : Fintype.card F = 2 ^ 192) (hN : P.nCells = 2 ^ 22)
-    (hw : P.words = 8) (hd : B.identity ≤ 2 ^ 27)
+theorem knowledgeSoundness_bits (hq : Fintype.card F = 2 ^ 192) (hN : P.nCells = 2 ^ 24)
+    (hw : P.words = 8) (hd : B.identity ≤ 2 ^ 29)
     (adv : OracleComp (ofFn (Answer P B)) (Proof P B)) (Q : ℕ) (hQ : IsTotalQueryBound adv Q) :
     Pr{let r ← (simulateQ randomOracle (experiment adv)).run' ∅}[
         r.2 = true ∧ ¬ P.Sat r.1.stmt (P.cells r.1.g.1)]

@@ -79,7 +79,7 @@ theorem accepts_opened (stmt : Fin P.words → F) (g : Witness F) (R : Quotients
   set d' := α + x + β * P.sigmaPoly.eval t with hd'
   set v := P.vCells.eval t with hv
   set vR := P.vRows.eval t with hvR
-  set gt := gate P.θ x ((cellPoly P g 1).eval t) ((cellPoly P g 2).eval t)
+  set gt := gate x ((cellPoly P g 1).eval t) ((cellPoly P g 2).eval t)
     ((cellPoly P g 3).eval t) with hgt
   have hden : d * d' + v ≠ 0 := left_ne_zero_of_mul hne
   have hvR0 : vR ≠ 0 := right_ne_zero_of_mul hne
@@ -105,7 +105,7 @@ theorem accepts_opened (stmt : Fin P.words → F) (g : Witness F) (R : Quotients
   have hgd : (gateDefect P g R α β).eval t
       = vR * (d * d' * R.qGate.eval t + v * R.junk.eval t) + d * d' * gt := by
     simp only [gateDefect, gatePoly, dPoly, dNextPoly, eval_add, eval_mul, eval_C, eval_X,
-      P.gate_eval]
+      gate_eval]
     rfl
   rw [hcd, hgd]
   have : (1 + ρ) * (vR * (d * d' * H + v * R.q.eval t + (d + d' + (P.pub γ).eval t * x * (d * d'))))
