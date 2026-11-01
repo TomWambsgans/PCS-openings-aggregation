@@ -26,8 +26,9 @@ tables' Merkle roots, and the four values simulated as `formal/`'s reduction sim
    when the row of `t` (`w₂(t)`) is in `K` (then so are the real ones), in `E` otherwise; `next`, the
    wiring polynomial at `t`, honestly (it is public). Then `ρ`, and the verifier's four claims
    (`claimsAt`).
-4. **The fake tables** (`fakeStack`): each table uniform on its layout's lanes, **conditioned on its
-   claims**: its last `3·#claims` entries solved for (the claims are linear over `K` limb by limb).
+4. **The fake tables** (`fakeStack`): each hidden stack uniform on its layout's lanes, **conditioned on
+   its claims**: `3·#claims` of its entries solved for (the claims are linear over `K` limb by limb); that
+   is a uniform table with those claims, uniformly padded.
 5. **The programmed trees** (`programmedTree`): each fake table's WHIR tree built honestly over the
    simulator's `π` up to the root's two children, and `π` **programmed** at the root node's input so
    that its Keccak-256 is the root drawn in step 2 (the answer's other `21` lanes uniform).
@@ -40,10 +41,13 @@ programmed point replaces its forward edge; the inverse of the answer it replace
 uniform state, which a distinguisher finds with negligible probability). The tables are hash maps, so
 each query costs one lookup.
 
-**This simulator is the target of layer F3** (`formal/README.md`): the tables the Rust prover commits are
-not padded, its openings reveal codeword symbols of the witness table, so `ZeroKnowledge` does not hold
-of the current prover and no simulator can make it hold; step 4's distribution is the one the padded
-tables are meant to give the opened information.
+**Why step 4 is the right distribution** (`crates/quotient/HIDING.md`): the secret tables are committed in
+hidden layouts, and for fixed challenges a translation of the padding maps the opening's view of a table onto
+that of any other table with the same claims (under conditions (Q), (S), (R) there, on the challenges); so the
+honest opening of the real table is distributed as that of a uniform table with the same claims, uniformly
+padded, which is `fakeStack`'s stack. Conditions (S) and (R) are checked at random challenges, not proved for
+every claim point (`HIDING.md`, "What remains open"), and the deployed prover draws its padding from ChaCha12
+where `prover` (`Security.lean`) takes it uniform.
 -/
 
 @[expose] public section
@@ -151,22 +155,23 @@ def programmedTree (height : ℕ) (word : Word) (root : Digest) : SimM Tree := d
 
 /-! ### Fake tables -/
 
-/-- **A uniform stack conditioned on claims**: uniform words on the layout's lanes, then the last
-`k = 3·#claims` of them solved for, so that each claim's value is the table's (the claims are linear
-over `K`, one equation per claim and limb; Gauss–Jordan elimination, `Domain.eliminate`). A singular
-system (negligible) leaves the words uniform. -/
+/-- **A uniform stack conditioned on claims**: uniform words on the layout's lanes, then `k = 3·#claims` of
+them solved for (the last `k` entries of lane `0`, a block lane, where the claims weigh), so that each claim's
+value is the stack's (the claims are linear over `K`, one equation per claim and limb, their weight on the
+stack `Layout.weightAt`; Gauss–Jordan elimination, `Domain.eliminate`). In a hidden layout this is a
+uniform table conditioned on its claims, padded uniformly: the stack is an affine bijection of the table and
+the padding, and the claims weigh the table only. A singular system (negligible) leaves the words uniform. -/
 def fakeStack (L : Layout) (claims : List Claim) : ProbComp (Array K) := do
   let lane := 2 ^ L.logLane
-  let size := L.blocks.length * lane
+  let size := L.lanes.length * lane
   let r ← (Array.range size).mapM fun _ ↦ uniformK
   let k := 3 * claims.length
-  let free : List ℕ := (List.range k).map (size - 1 - ·)
-  -- Each claim's weight at a stack position: its lane weight times its `eq` on the lane's coordinates.
-  let weights := claims.map fun c ↦ (L.laneWeights c.point, LeanVM.Prover.eqKernelA (c.point.take L.logLane))
-  let weightAt (w : List E × Array E) (p : ℕ) : E := w.1.getD (p / lane) 0 * w.2.getD (p % lane) 0
+  let free : List ℕ := (List.range k).map (lane - 1 - ·)
+  let weights := claims.map L.claimWeights
+  let weightAt (w : ClaimWeights) (p : ℕ) : E := L.weightAt w (p / lane) (p % lane)
   -- The fixed part of each claim: the weights on every position but the free ones.
   let rows : Array (Array K) := Array.ofFn (n := k) fun e ↦
-    let (c, w) := (claims.getD (e.val / 3) ⟨[], 0⟩, weights.getD (e.val / 3) ([], #[]))
+    let (c, w) := (claims.getD (e.val / 3) ⟨[], 0⟩, weights.getD (e.val / 3) ⟨[], [], #[], #[]⟩)
     let limb := e.val % 3
     let fixed := (List.range size).foldl
       (fun acc p ↦ if free.contains p then acc else acc + weightAt w p * ofK (r.getD p 0)) 0

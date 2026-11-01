@@ -25,7 +25,7 @@ deployed Keccak-f[1600], independent of `π`.
   statement, the proof and the adversary's transcript, outputs no witness, with probability at most
   `ε Q`.
 * **Completeness** (`Completeness δ`): for every statement and witness of the relation, the honest
-  prover's (`prover`) proof, with uniform masks, is rejected with probability at most `δ`.
+  prover's (`prover`) proof, with uniform coins (masks and padding), is rejected with probability at most `δ`.
 * **Zero knowledge** (`ZeroKnowledge ζ`, statistical, the permutation programmable): for every
   statement and witness of the relation and every distinguisher of at most `Q` calls of `π` and
   `π⁻¹`, its verdict on the honest proof in the model and on **`simulator`**'s proof, the simulator
@@ -35,10 +35,19 @@ deployed Keccak-f[1600], independent of `π`.
 them (`README.md` gives the targets). A bound is part of what is proved: `KnowledgeSoundness ε` for
 `ε = 1` says nothing.
 
-**`ZeroKnowledge` does not hold of the current prover**: its tables are not padded and its openings
-reveal codeword symbols of the witness table (layer F3 of `formal/README.md`, not built in Rust). It is
-stated for the honest prover as defined, so that it becomes provable when the prover's tables are padded
-(the verifier unchanged): `prover` will change then, not the verifier, the simulator or the statement.
+**Zero knowledge rests on the hidden layouts** (`crates/quotient/HIDING.md`): the prover pads its two
+secret tables (`Layout.hidden`), and its opening of a table is then distributed as that of any other table
+with the same claims, under conditions (S) and (R) on the challenges that `HIDING.md` checks at random
+challenges but does not prove for every claim point. The statement's prover takes its padding uniform; the
+deployed one expands a 32-byte seed by ChaCha12 (a pseudorandom generator, outside this model).
+
+**One Keccak-256.** Deployed, one Keccak-256 serves the reduction's chain, the WHIR Merkle trees
+(`hash_pair` is byte for byte the relation's `pair`), the openings' duplex and the relation. As in mumbai, the
+model has one random permutation `π`, which every hash of the protocol queries (there is no private oracle);
+the relation is over the deployed Keccak-256, which the circuit computes. Knowledge soundness needs no
+collision clause: the extracted secret satisfies the relation exactly. A consumer that reads more from a
+statement than the relation says (that `y` names one `x`) gets it up to a collision of the deployed
+Keccak-256, `StatementBinds`, as mumbai's `DigestBinds`.
 -/
 
 @[expose] public section
@@ -89,13 +98,29 @@ def sampleMasks : OracleComp RandomPermutationOracles Masks := do
   let w ← (List.range 12).mapM fun _ ↦ coinWord
   return fun j i ↦ K.ofLane (w.getD (3 * j.val + i.val) 0)
 
+/-- **Uniform padding** for a table of layout `L` from the model's coins: a uniform word at every position of
+every lane's stream (`2^ℓ` words a lane, as many as a stream can be read at). The deployed prover draws it
+from ChaCha12 keyed by Keccak-256 of a secret 32-byte seed (`Table::hidden`); the statement's prover takes it
+uniform. -/
+def samplePadding (L : Layout) : OracleComp RandomPermutationOracles Padding := do
+  let lane := 2 ^ L.logLane
+  let w ← (List.range (L.lanes.length * lane)).mapM fun _ ↦ coinWord
+  let words := w.toArray
+  return fun l i ↦ K.ofLane (words.getD (l * lane + i) 0)
+
+/-- The honest prover's coins: the masks and the two secret tables' padding. -/
+def sampleCoins : OracleComp RandomPermutationOracles (Masks × Padding × Padding) := do
+  return (← sampleMasks, ← samplePadding (witnessLayout logRows),
+    ← samplePadding (quotientLayout logRows))
+
 /-! ### The honest prover, the extractor, the simulator -/
 
 /-- **The honest prover** over `F`: `proverWith` (`Prover.lean`), the Rust's `prove` then `open`, on the
-membership circuit's cells of the secret, with the masks given, `2^25` nonces per proof of work. -/
+membership circuit's cells of the secret, with the coins given (the masks and the two tables' padding),
+`2^25` nonces per proof of work. -/
 def prover {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState) (stmt : Statement)
-    (w : Secret) (masks : Masks) : m (Option Proof) :=
-  proverWith F nonceFuel stmt w masks
+    (w : Secret) (coins : Masks × Padding × Padding) : m (Option Proof) :=
+  proverWith F nonceFuel stmt w coins.1 coins.2.1 coins.2.2
 
 /-- **The extractor**: `transcriptExtractorFor` (`Extractor.lean`) at the membership circuit. From the
 statement, the adversary's transcript and the proof, a secret: the witness table's tree inverted
@@ -148,13 +173,13 @@ def KnowledgeSoundness (ε : ℕ → ℝ≥0∞) : Prop :=
 
 /-! ### Completeness -/
 
-/-- **The completeness experiment**: the setup, the honest prover's proof with uniform masks, then the
+/-- **The completeness experiment**: the setup, the honest prover's proof with uniform coins, then the
 verifier's verdict, all over `π`; no proof is a failure. -/
 noncomputable def completenessExperiment (stmt : Statement) (w : Secret) : ProbComp Bool :=
   runWithRandomPermutation do
     let indexRoot ← setupWith queryPermutation
-    let masks ← sampleMasks
-    match ← prover queryPermutation stmt w masks with
+    let coins ← sampleCoins
+    match ← prover queryPermutation stmt w coins with
     | none => return false
     | some proof => verifier queryPermutation indexRoot stmt proof
 
@@ -171,13 +196,13 @@ and oracle access to `π` and `π⁻¹`. It may depend on the statement and the 
 after them). -/
 abbrev Distinguisher : Type := Option Proof → OracleComp RandomPermutationOracles Bool
 
-/-- **The real experiment**: the honest prover's proof of `stmt` from `w` with uniform masks over `π`,
+/-- **The real experiment**: the honest prover's proof of `stmt` from `w` with uniform coins over `π`,
 then the distinguisher, against the lazily sampled permutation. -/
 noncomputable def realExperiment (stmt : Statement) (w : Secret) (D : Distinguisher) :
     ProbComp Bool :=
   runWithRandomPermutation do
-    let masks ← sampleMasks
-    D (← prover queryPermutation stmt w masks)
+    let coins ← sampleCoins
+    D (← prover queryPermutation stmt w coins)
 
 /-- **The ideal experiment**: `simulator`'s proof of `stmt`, without the witness, then the
 distinguisher, its every query answered by the simulator (`Simulator.simOracle`), from no edge. -/
@@ -197,6 +222,17 @@ def ZeroKnowledge (ζ : ℕ → ℝ≥0∞) : Prop :=
       Pr{let b ← idealExperiment stmt D}[b = true] ≤
         Pr{let b ← realExperiment stmt w D}[b = true] + ζ Q
 
+/-! ### Collisions of the deployed Keccak-256 -/
+
+/-- **A collision of the deployed Keccak-256** on two 64-byte blocks (`pair`, `Relation.lean`). -/
+def PairCollision (a b : Bytes32 × Bytes32) : Prop := a ≠ b ∧ pair a.1 a.2 = pair b.1 b.2
+
+/-- **The statement binds `x`, up to a collision** (mumbai's `DigestBinds` for this relation): two secrets of
+one statement have the same `x`, or their hashes of `y`, `(x, 0x11^32)` and `(x', 0x11^32)`, collide. -/
+def StatementBinds : Prop :=
+  ∀ w w' : Secret, w.statement = w'.statement →
+    w.x = w'.x ∨ PairCollision (w.x, Vector.replicate 32 yPad) (w'.x, Vector.replicate 32 yPad)
+
 /-! ### The end theorems -/
 
 /-- **The end theorems**, at the bounds `ε`, `δ`, `ζ` the proofs will fix (`README.md`). -/
@@ -205,9 +241,12 @@ structure Theorems (ε : ℕ → ℝ≥0∞) (δ : ℝ≥0∞) (ζ : ℕ → ℝ
   knowledgeSoundness : KnowledgeSoundness ε
   /-- Completeness of the honest `prover`. -/
   completeness : Completeness δ
-  /-- Statistical zero knowledge for `simulator` (the target of layer F3: not true of the current,
-  unpadded prover). -/
+  /-- Statistical zero knowledge for `simulator` (the tables hidden as `crates/quotient/HIDING.md` says;
+  its conditions (S), (R) on the challenges are part of what `ζ` must cover). -/
   zeroKnowledge : ZeroKnowledge ζ
+  /-- The statement binds `x` up to a collision of the deployed Keccak-256 (needed by no other field: an
+  extracted secret satisfies the relation exactly). -/
+  statementBinds : StatementBinds
 
 end PcsQuotient
 

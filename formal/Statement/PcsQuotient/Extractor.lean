@@ -33,8 +33,10 @@ and the transcript's length, not in the proof's.
    lane by lane with prefix pruning (at most `2^18` candidates at every admissible shape, mumbai's
    `LeanVM.candidates_ncard_le`; infeasible at deployed sizes except on the fast path, as mumbai says
    of its own extractor).
-4. **The secret** (`secretOfStack`): a candidate's first `2^m` entries are the cells' polynomial in the
-   Cantor novel basis; its values on the cells (`Domain.values`, `m · 2^m` operations) give each input
+4. **The secret** (`secretOfStack`): the table's first `2^m` entries, read back from a candidate stack
+   through the witness table's hidden layout (`Layout.readEntry`: the blocks' pieces, the held pieces as
+   the sum of the overflow and share lanes), are the cells' polynomial in the Cantor novel basis; its
+   values on the cells (`Domain.values`, `m · 2^m` operations) give each input
    row's `V` cell, read as a bit (`1` is true), and the input bits spell `x`, the siblings and the
    directions (`secretOfInputs`). The extractor returns the first candidate's secret that satisfies the
    relation (checked natively: `33` Keccak-256), `none` if no candidate's does.
@@ -56,11 +58,15 @@ open LeanVM.Protocol.Compile LeanVM.Extraction
 -/
 def witnessRootOf (proof : Proof) : Option Digest := digestOfScalars proof.reduction.witnessRoot
 
-/-- **The input bits a stack spells** for `circuit`: the stack's first `2^m` entries taken from the
-novel basis to the cells' values; each input row's `V` cell read as a bit (`1` is true). -/
+/-- **The input bits a stack spells** for `circuit`: the witness table's first `2^m` entries read back from
+the stack through its hidden layout (`Layout.readEntry`), taken from the novel basis to the cells' values;
+each input row's `V` cell read as a bit (`1` is true). -/
 def inputBitsOfStack (circuit : Circuit) {μ : ℕ} (stack : Vector K (2 ^ μ)) : List Bool :=
   let mv := cellVars circuit.logRows
-  let cells := Domain.values mv 0 (Array.ofFn (n := 2 ^ mv) fun i ↦ stack.toArray.getD i.val 0)
+  let entries := stack.toArray
+  let wHat := Array.ofFn (n := 2 ^ mv) fun i ↦
+    (witnessLayout circuit.logRows).readEntry (entries.getD · 0) i.val
+  let cells := Domain.values mv 0 wHat
   circuit.inputs.toList.map fun r ↦ decide (cells.getD (4 * r + 3) 0 = 1)
 
 /-- **The secret a stack spells**: its input bits read as `x`, the siblings and the directions. -/

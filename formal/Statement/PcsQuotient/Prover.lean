@@ -14,12 +14,13 @@ public import Statement.Prover.Whir
 # The honest prover
 
 The prover `Completeness` names (`Security.lean`), an executable program over a permutation `F` in any
-monad, Keccak-256 the sponge over `F`: `proveWith F fuel circuit stmt cells masks`, the Rust's `prove`
-then `open` (`protocol.rs:282-455, 638-658`) step by step.
+monad, Keccak-256 the sponge over `F`: `proveWith F fuel circuit stmt cells masks witnessPad quotientPad`, the Rust's `prove`
+then `open` (`protocol.rs`) step by step.
 
 1. **The witness table**: the cells' polynomial in the novel basis (`Domain.coefficients`), and its
    masks, sixteen entries of the next chunk (entry `4i + j` the coefficient `i` of row polynomial
-   `j`); committed by WHIR (`commitWith`), its root sent; `α, β, γ` drawn.
+   `j`); stacked in its hidden layout with its padding (`Layout.stackOf`), committed by WHIR
+   (`commitWith`), its root sent; `α, β, γ` drawn.
 2. **The sum's polynomial** `h`: at cell `i`, `1/(α + w_i + β B(i)) + 1/(α + w_i + β B(σ(i)))`, plus
    the public weight times the cell on the public region; in the novel basis.
 3. **The quotients** on the coset `β_{m+2} + span(β₀ … β_{m+1})`, four times the cells: the copy
@@ -48,23 +49,80 @@ open PcsQuotient.Domain PcsQuotient.Transcript
 
 /-! ### Tables as stacks -/
 
-/-- The stack of a table whose entry `i` is `entry i`: lane `l` holds the entries of block
-`blocks[l]` (`Table::new`, `opening.rs:112-119`). -/
-def Layout.stackOf (L : Layout) (entry : ℕ → K) : Array K :=
+/-- **A table's padding**: for each lane `l`, the words of its randomness `pad l 0, pad l 1, …`, in the order a
+hidden stack takes them (`Table::hidden`: the Rust draws them from the lane's generator, ChaCha12 keyed by
+Keccak-256 of the table's seed and the lane; the honest prover of the statement takes them uniform). -/
+abbrev Padding : Type := ℕ → ℕ → K
+
+/-- **The stack of a table** whose entry `i` is `entry i` (`Table::new`, `Table::hidden`, `opening.rs`). Public
+layout: lane `l` holds block `b` whole. Hidden layout, pieces of `2^s`: a block lane's first piece is padding,
+then its block, its pieces in pairs swapped on an odd lane (piece `k` holds the block's piece `k ⊕ 1`); the
+overflow lane's first piece is padding, its pieces `1 … H` the held pieces plus the share lane's padding there
+(`ρ`), the rest padding (its stream continuing); a random lane is padding. -/
+def Layout.stackOf (L : Layout) (entry : ℕ → K) (pad : Padding) : Array K :=
   let lane := 2 ^ L.logLane
-  Array.ofFn (n := L.blocks.length * lane) fun p ↦
-    entry (L.blocks.getD (p.val / lane) 0 * lane + p.val % lane)
+  match L.logPiece with
+  | none => Array.ofFn (n := L.lanes.length * lane) fun p ↦
+    match L.laneAt (p.val / lane) with
+    | .block b => entry (b * lane + p.val % lane)
+    | _ => 0
+  | some s =>
+    let piece := 2 ^ s
+    let held := L.pieces.length
+    let share := L.share.getD 0
+    Array.ofFn (n := L.lanes.length * lane) fun p ↦
+      let (l, i) := (p.val / lane, p.val % lane)
+      match L.laneAt l with
+      | .block b =>
+        if i < piece then pad l i
+        else if l % 2 = 0 then entry (b * lane + i)
+        else entry (b * lane + ((i / piece) ^^^ 1) * piece + i % piece)
+      | .overflow =>
+        if i < piece then pad l i
+        else if i < (held + 1) * piece then
+          entry (L.pieces.getD (i / piece - 1) 0 * piece + i % piece) + pad share i
+        else pad l (i - held * piece)
+      | .random => pad l i
+
+/-- A claim's weight on a stack, tabulated once (`Layout::tensors`, `opening.rs`): its lane and piece scales
+(`Layout.scales`), and the `eq` tables of its lane coordinates and of its coordinates below a piece. -/
+structure ClaimWeights where
+  lanes : List E
+  pieces : List E
+  low : Array E
+  pieceLow : Array E
+
+/-- The tables of a claim's weight on `L`. -/
+def Layout.claimWeights (L : Layout) (c : Claim) : ClaimWeights :=
+  ⟨(L.scales c.point).1, (L.scales c.point).2, eqKernelA (c.point.take L.logLane),
+    eqKernelA (c.point.take (L.logPiece.getD 0))⟩
+
+/-- **A claim's weight at entry `y` of lane `l`** (`Layout::weight_at`, `opening.rs`): public layout, its lane
+scale times its `eq` at `y`; hidden layout, zero on a first piece; on a block lane, its lane scale times its
+`eq` at `y` with the piece pair swapped on an odd lane; on the overflow and share lanes, the held piece's scale
+times its `eq` below the piece; zero on the other random lanes. -/
+def Layout.weightAt (L : Layout) (w : ClaimWeights) (l y : ℕ) : E :=
+  match L.logPiece with
+  | none => w.lanes.getD l 0 * w.low.getD y 0
+  | some s =>
+    if y / 2 ^ s = 0 then 0
+    else
+      let held := w.pieces.getD (y / 2 ^ s - 1) 0 * w.pieceLow.getD (y % 2 ^ s) 0
+      match L.laneAt l with
+      | .block _ => w.lanes.getD l 0 * w.low.getD (y ^^^ (l % 2 * 2 ^ s)) 0
+      | .overflow => held
+      | .random => if L.share = some l then held else 0
 
 /-- The witness table's masks: three coefficients of `K` for each of the four row polynomials. -/
 abbrev Masks : Type := Fin 4 → Fin 3 → K
 
-/-- The sixteen mask entries (`prove`, `protocol.rs:300-305`): entry `4i + j` is coefficient `i` of row
+/-- The sixteen mask entries (`prove`, `protocol.rs`): entry `4i + j` is coefficient `i` of row
 polynomial `j`, `i < 3`; the last four are zero. -/
 def maskEntries (masks : Masks) : Array K :=
   Array.ofFn (n := 16) fun e ↦
     if e.val / 4 < 3 then masks (Fin.ofNat 4 (e.val % 4)) (Fin.ofNat 3 (e.val / 4)) else 0
 
-/-- `public_weight` (`protocol.rs:184-190`): the weight of cell `i` of the public region, `γ^J` times its
+/-- `public_weight` (`protocol.rs`): the weight of cell `i` of the public region, `γ^J` times its
 bit's weight, `J = ⌊i / 2^8⌋` the word, or zero off the `X` and `Y` cells. -/
 def publicCellWeight (i : ℕ) (γ : E) : E :=
   if i &&& 2 ≠ 0 then 0
@@ -76,13 +134,12 @@ def limbOf (x : E) (l : ℕ) : K := LeanVM.Prover.limbAt x l
 /-! ### The WHIR opening -/
 
 /-- **The weight table of the batched claims** in WHIR's variable order: entry `i` is the stack position
-`⌊i / 64⌋ + 2^(logN−6)·(i mod 64)`, the lane `i mod 64` and the entry `⌊i / 64⌋` of it, where the claim's
-weight is its `eq` on the lane's coordinates times its lane weight (`open`, `opening.rs:175-187`). -/
+`⌊i / 64⌋ + 2^(logN−6)·(i mod 64)`, entry `⌊i / 64⌋` of lane `i mod 64`, where each claim weighs
+`Layout.weightAt` (`open`, `opening.rs`). -/
 def weightTable (L : Layout) (scales : List E) (claims : List Claim) : Array E :=
-  let parts := (claims.zip scales).map fun (c, s) ↦
-    (eqKernelA (c.point.take L.logLane), (L.laneWeights c.point).map (s * ·))
+  let parts := (claims.zip scales).map fun (c, s) ↦ (L.claimWeights c, s)
   Array.ofFn (n := 2 ^ L.logN) fun i ↦
-    parts.foldl (fun acc (eqs, lw) ↦ acc + lw.getD (i.val % 64) 0 * eqs.getD (i.val / 64) 0) 0
+    parts.foldl (fun acc (w, s) ↦ acc + s * L.weightAt w (i.val % 64) (i.val / 64)) 0
 
 /-- **The honest WHIR opening** of `claims` on the stack `stack`, as a script of the prover's moves
 (mumbai's `openingFast` with this weight table): receive the batching challenge, then run the levels
@@ -118,17 +175,18 @@ def proveOpeningWith (fuel : ℕ) (L : Layout) (tree : Tree) (stack : Array K) (
 
 /-! ### The reduction's prover -/
 
-/-- The witness table's stack: the cells' coefficients `wHat`, then the masks. -/
-def witnessStack (logRows : ℕ) (wHat mask : Array K) : Array K :=
+/-- The witness table's stack: the cells' coefficients `wHat`, then the masks, hidden with `pad`. -/
+def witnessStack (logRows : ℕ) (wHat mask : Array K) (pad : Padding) : Array K :=
   let n := 2 ^ cellVars logRows
-  (witnessLayout logRows).stackOf fun i ↦ if i < n then wHat.getD i 0 else mask.getD (i - n) 0
+  (witnessLayout logRows).stackOf (fun i ↦ if i < n then wHat.getD i 0 else mask.getD (i - n) 0) pad
 
-/-- **The quotient table's stack** (`prove`, `protocol.rs:404-427`): chunk `c` of `2^m` entries holds
-limb `⌊c / 16⌋` of `h` (`c mod 16 = 0`) or of `q` (`c mod 16 ∈ 4 … 7`, its digit `c mod 4`), or the
+/-- **The quotient table's stack** (`prove`, `protocol.rs`), hidden with `pad`: chunk `c` of `2^m` entries
+holds limb `⌊c / 16⌋` of `h` (`c mod 16 = 0`) or of `q` (`c mod 16 ∈ 4 … 7`, its digit `c mod 4`), or the
 gate's quotient (`c ∈ {8, 9}`, its digit `c mod 4`). -/
-def quotientStack (logRows : ℕ) (hHat qHat : Array E) (qGateHat : Array K) : Array K :=
+def quotientStack (logRows : ℕ) (hHat qHat : Array E) (qGateHat : Array K) (pad : Padding) :
+    Array K :=
   let n := 2 ^ cellVars logRows
-  (quotientLayout logRows).stackOf fun i ↦
+  (quotientLayout logRows).stackOf (pad := pad) fun i ↦
     let c := i / n
     let src := c % 4 * n + i % n
     if c &&& 12 = 0 then limbOf (hHat.getD src 0) (c / 16)
@@ -139,11 +197,12 @@ def quotientStack (logRows : ℕ) (hHat qHat : Array E) (qGateHat : Array K) : A
 def digitsOf (t : E) (count : ℕ) : List E :=
   (List.range count).foldl (fun ws _ ↦ ws ++ [ws.getLastD t * ws.getLastD t + ws.getLastD t]) [t]
 
-/-- **The honest prover** over `F` (`prove` then `open`, `protocol.rs:282-455, 638-658`): the proof of
-`stmt` from the cells of a witness of `circuit`, with the masks `masks` (uniform, for zero knowledge),
+/-- **The honest prover** over `F` (`prove` then `open`, `protocol.rs`): the proof of
+`stmt` from the cells of a witness of `circuit`, with the masks `masks` and the tables' padding `witnessPad`, `quotientPad` (uniform, for zero knowledge),
 trying `fuel` nonces per proof of work; `none` if a proof of work fails or the reduction rejects its own
 challenges (the Rust panics). -/
-def proveWith (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array K) (masks : Masks) :
+def proveWith (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array K) (masks : Masks)
+    (witnessPad quotientPad : Padding) :
     m (Option Proof) := do
   let mv := cellVars circuit.logRows
   let n := 2 ^ mv
@@ -155,7 +214,7 @@ def proveWith (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array
   -- 1. The witness table.
   let wHat := coefficients mv 0 cells
   let mask := maskEntries masks
-  let wStack := witnessStack circuit.logRows wHat mask
+  let wStack := witnessStack circuit.logRows wHat mask witnessPad
   let witnessTree ← commitWith F (mv + 1) wStack
   let c ← Chain.startWith F (label indexTree.root stmt)
   let witnessRoot := digestScalars witnessTree.root
@@ -213,7 +272,7 @@ def proveWith (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array
     (v + x + cc + y * cc) * rowInv.getD (i.val % 4) 0
   let qHat := coefficients (mv + 2) offset qValues
   let qGateHat := coefficients (mv + 2) offset qGateValues
-  let qStack := quotientStack circuit.logRows hHat qHat qGateHat
+  let qStack := quotientStack circuit.logRows hHat qHat qGateHat quotientPad
   let quotientTree ← commitWith F (mv + 4) qStack
   let quotientRoot := digestScalars quotientTree.root
   let c := (c.absorb quotientRoot.1).absorb quotientRoot.2
@@ -239,9 +298,11 @@ def proveWith (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array
 
 /-- **The honest prover of the membership statement** over `F`: `proveWith` on the membership circuit's
 cells for the secret `w` (`membershipInputs`, `Circuit.cells`). -/
-def proverWith (fuel : ℕ) (stmt : Statement) (w : Secret) (masks : Masks) : m (Option Proof) :=
+def proverWith (fuel : ℕ) (stmt : Statement) (w : Secret) (masks : Masks)
+    (witnessPad quotientPad : Padding) : m (Option Proof) :=
   let circuit := membership logRows
-  proveWith F fuel circuit stmt (circuit.cells (membershipInputs w)) masks
+  proveWith F fuel circuit stmt (circuit.cells (membershipInputs w)) masks witnessPad
+    quotientPad
 
 end With
 

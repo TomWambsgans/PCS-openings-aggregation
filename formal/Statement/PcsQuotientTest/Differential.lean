@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import PcsQuotient
 import VCVio.OracleComp.RunIO
+import PcsQuotientTest.ChaCha
 
 /-!
 # The differential test
@@ -109,7 +110,7 @@ def toyBuilder : BuildM (List Src × List Src) := do
 
 /-- The circuits the vectors name. -/
 def circuitNamed : String → Option Circuit
-  | "small" => let ((y, r), b) := smallBuilder.run Builder.new; some (finish 13 (publicWords y r) b)
+  | "small" => let ((y, r), b) := smallBuilder.run Builder.new; some (finish 17 (publicWords y r) b)
   | "toy" => let ((y, r), b) := toyBuilder.run Builder.new; some (finish 17 (publicWords y r) b)
   | "membership" => some (membership 22)
   | _ => none
@@ -170,15 +171,16 @@ def checkLine (line : String) : Except String (String × Bool) := do
       pure ("I", c.logRows == logRows && c.usedRows == used && c.inputs.size == inputs &&
         decide (lean.toList = root.toList))
   | "Q" =>
-    let ((name, bits, masks, stream), _) ← (do
+    let ((name, bits, seed, masks, stream), _) ← (do
         let name ← token
         let count ← nat
         let bytes ← (List.range ((count + 7) / 8)).mapM fun _ ↦ do pure (← hexNat (← token))
         let bits := (List.range count).map fun i ↦ (bytes.getD (i / 8) 0).testBit (i % 8)
+        let seed ← bytes32
         let words ← (List.range 12).mapM fun _ ↦ kWord
         let masks : Masks := fun j i ↦ words.getD (3 * j.val + i.val) 0
         let stream ← many eElem
-        pure (name, bits, masks, stream) : Parse _).run rest
+        pure (name, bits, seed, masks, stream) : Parse _).run rest
     match circuitNamed name with
     | none => throw s!"unknown circuit {name}"
     | some c =>
@@ -189,7 +191,9 @@ def checkLine (line : String) : Except String (String × Bool) := do
             (fun acc k ↦ if bits.getD (8 * j.val + k) false then acc ||| (1 <<< k.toUInt8) else acc) 0
           ⟨x, x⟩
       let keccak := fun s ↦ (pure (LeanVM.Semantics.keccakF1600 s) : Id _)
-      match Id.run (proveWith (m := Id) keccak (2 ^ 25) c stmt (c.cells bits) masks) with
+      let pad (table : String) (L : Layout) := ChaCha.paddingOfSeed seed.toList table L
+      match Id.run (proveWith (m := Id) keccak (2 ^ 25) c stmt (c.cells bits) masks
+          (pad "witness" (witnessLayout c.logRows)) (pad "quotient" (quotientLayout c.logRows))) with
       | none => pure ("Q", false)
       | some proof =>
         let indexRoot := Id.run (c.indexRootWith (m := Id) keccak)
@@ -200,12 +204,13 @@ end PcsQuotientTest
 
 namespace PcsQuotientTest
 
+
 /-! ### Self-tests of the extractor and the simulator (`--self-test`) -/
 
 /-- The small circuit of the vectors. -/
 def smallCircuit : Circuit :=
   let ((y, r), b) := smallBuilder.run Builder.new
-  finish 13 (publicWords y r) b
+  finish 17 (publicWords y r) b
 
 /-- Keccak-f[1600], each call recorded as a forward query of the permutation with its answer. -/
 abbrev LogM := StateM (Array (Common.PermutationQuery LeanVM.Semantics.KeccakState ×
@@ -216,22 +221,31 @@ def loggedKeccak (s : LeanVM.Semantics.KeccakState) : LogM LeanVM.Semantics.Kecc
   modify (·.push (.forward s, y))
   return y
 
-/-- **The extractor's path on an honest commitment**: an adversary commits the honest witness table
-of the small circuit (its transcript, the tree's Keccak-f calls); through the transcript's Keccak-256
-evaluations, the Merkle inversion and the fast path, the extractor reads back the input bits. -/
+/-- **The extractor's Merkle inversion through a transcript**: an adversary commits a word of `8` rows of
+`64` words (its transcript, the tree's Keccak-f calls, `4` blocks a row); through the transcript's Keccak-256
+evaluations (mumbai's `keccakEvaluationsOfTranscript`, quadratic in the transcript, so a small tree), the
+extractor's `committedLeaves` reads back every row. -/
+def inversionTest : Bool :=
+  let word : LeanVM.Protocol.Compile.Word := fun p ↦
+    (List.range 64).map fun j ↦ K.ofLane (UInt64.ofNat (1000003 * (64 * p + j) + 7))
+  let (tree, log) := (LeanVM.Prover.buildTreeM (m := LogM) loggedKeccak 3 word).run #[]
+  let paths := LeanVM.keccakEvaluationsOfTranscript log.toList
+  let leaves := LeanVM.Extraction.committedLeaves (LeanVM.lookupEvaluation paths) (paths.map (·.1))
+    tree.root 3 64
+  (List.range 8).all fun p ↦ decide (leaves.getD p [] = word p)
+
+/-- **The extractor's decoding of an honest witness table**: the hidden stack of the small circuit's
+witness table (padding from a seed), its WHIR word, the fast path's candidate, and the input bits read back
+through the hidden layout and the cells' values: they are the inputs. -/
 def extractionTest (bits : List Bool) (masks : Masks) : Bool :=
   let c := smallCircuit
   let mv := cellVars c.logRows
-  let stack := witnessStack c.logRows (Domain.coefficients mv 0 (c.cells bits)) (maskEntries masks)
-  let (tree, log) := (commitWith (m := LogM) loggedKeccak (mv + 1) stack).run #[]
-  let paths := LeanVM.keccakEvaluationsOfTranscript log.toList
-  let proof : PcsQuotient.Proof := ⟨⟨LeanVM.Protocol.KeccakHash.digestScalars tree.root, (0, 0), #v[0, 0, 0, 0], 0⟩, ⟨[], []⟩, ⟨[], []⟩, ⟨[], []⟩⟩
-  match witnessWord c.logRows (LeanVM.lookupEvaluation paths) (paths.map (·.1)) proof with
-  | none => false
-  | some word =>
-    match LeanVM.Extraction.fastStacks (mv + 1) logInvRate word with
-    | stack :: _ => inputBitsOfStack c stack == bits
-    | [] => false
+  let pad := ChaCha.paddingOfSeed ((List.range 32).map (·.toUInt8)) "witness" (witnessLayout c.logRows)
+  let stack := witnessStack c.logRows (Domain.coefficients mv 0 (c.cells bits)) (maskEntries masks) pad
+  let word := LeanVM.Prover.stackWordFast (mv + 1) logInvRate stack
+  match LeanVM.Extraction.fastStacks (mv + 1) logInvRate word with
+  | stack :: _ => inputBitsOfStack c stack == bits
+  | [] => false
 
 /-- **The simulator on the small circuit**: its proof of a statement it has no witness for (none
 exists: random bytes) is accepted by the verifier querying the simulator's permutation, as a
@@ -255,14 +269,17 @@ end PcsQuotientTest
 open PcsQuotientTest in
 def main (args : List String) : IO UInt32 := do
   if args.contains "--self-test" then
+    let inverted := inversionTest
+    IO.println s!"extractor (Merkle inversion through a transcript): {inverted}"
     let bits := bitsFrom 7 256
     let masks : Masks := fun j i ↦ K.ofLane (UInt64.ofNat (1000003 * (3 * j.val + i.val) + 17))
     let extracted := extractionTest bits masks
-    IO.println s!"extractor (fast path on an honest commitment): {extracted}"
+    IO.println s!"extractor (fast path on an honest hidden commitment): {extracted}"
+    (← IO.getStdout).flush
     let bytes : Vector UInt8 32 := Vector.ofFn fun j ↦ UInt8.ofNat (37 * j.val + 11)
     let simulated ← simulationTest ⟨bytes, Vector.ofFn fun j ↦ bytes[j] ^^^ 0x5a⟩
     IO.println s!"simulator (accepted proof of a false statement): {simulated}"
-    return if extracted && simulated then 0 else 1
+    return if inverted && extracted && simulated then 0 else 1
   let path := args.headD "vectors.txt"
   let lines := ((← IO.FS.readFile path).splitOn "\n").filter (· ≠ "")
   let mut agreed : Std.HashMap String ℕ := {}

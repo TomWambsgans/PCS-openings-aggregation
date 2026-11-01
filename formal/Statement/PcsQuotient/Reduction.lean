@@ -12,10 +12,11 @@ public import PcsQuotient.Transcript
 /-!
 # The reduction: five field elements to four claims
 
-The verifier of the reduction (`reduce` and `verify`, `protocol.rs:469-628`): from the statement and
+The verifier of the reduction (`reduce` and `verify`, `protocol.rs`): from the statement and
 the reduction's proof (two commitments and five elements of `E`), the two commitments it names and
 **four claims**, each a multilinear evaluation claim on a committed table: one on the witness table,
-one on the circuit's wiring table, two on the quotient table (`Claims`). It rejects only a malformed
+one on the circuit's wiring table, two on the quotient table (`Claims`). It rejects only a size the layouts do
+not take (`Supported`: `2^17` to `2^22` rows), a malformed
 commitment (a root's halves with a top limb) or a challenge at which a denominator vanishes; the
 claims carry the rest, and the openings (`Opening.lean`) check them.
 
@@ -31,7 +32,7 @@ the point `(w_k(t))_k` is a univariate evaluation, each identity is one claim.
 here the scalar is `E`. Two forms differ without changing a value: the proof is a structure
 (`ReductionProof`, nine scalars in the stream's order) rather than a stream (a stream of another
 length, which the Rust rejects as exhausted or trailing, is no `ReductionProof`); and the inverses are
-taken one by one (`x⁻¹`) where the Rust inverts one product (by the norm to `K`, `protocol.rs:249-265`)
+taken one by one (`x⁻¹`) where the Rust inverts one product (by the norm to `K`, `protocol.rs`)
 and unwinds it, after the same check that no denominator is zero.
 -/
 
@@ -44,24 +45,37 @@ open PcsQuotient.Domain PcsQuotient.Transcript
 
 /-! ### Constants -/
 
-/-- `REGION` (`protocol.rs:30`): the public bits are the cells of the span of `11` basis vectors,
+/-- `REGION` (`protocol.rs`): the public bits are the cells of the span of `11` basis vectors,
 the `X` and `Y` cells of the `512` public rows. -/
 def region : ℕ := 11
 
-/-- `cell_vars` (`protocol.rs:84-86`): the cells' variables, `m = logRows + 2` (four cells a row).
+/-- `cell_vars` (`protocol.rs`): the cells' variables, `m = logRows + 2` (four cells a row).
 -/
 def cellVars (logRows : ℕ) : ℕ := logRows + 2
 
 /-- `LOG_ROWS` (`circuit.rs:22`): the membership circuit has `2^22` rows, so `2^24` cells. -/
 def logRows : ℕ := 22
 
-/-- `bit_weight` (`protocol.rs:175-181`): the weight of bit `j < 128` of a public word, `x^j` in limb
+/-- `MIN_LOG_ROWS` (`protocol.rs`): below `2^17` rows the witness table's hidden layout does not fit. -/
+def minLogRows : ℕ := 17
+
+/-- `MAX_LOG_ROWS` (`protocol.rs`): above `2^22` rows the quotient table's stack exceeds WHIR's `2^28` words.
+-/
+def maxLogRows : ℕ := 22
+
+/-- `supported` (`protocol.rs`): the sizes the layouts take; the verifier rejects any other
+(`VerifyError::Shape`). -/
+def Supported (logRows : ℕ) : Prop := minLogRows ≤ logRows ∧ logRows ≤ maxLogRows
+
+instance (logRows : ℕ) : Decidable (Supported logRows) := inferInstanceAs (Decidable (_ ∧ _))
+
+/-- `bit_weight` (`protocol.rs`): the weight of bit `j < 128` of a public word, `x^j` in limb
 `0` below `64` and `x^(j−64)` in limb `1` above: the weighted bits of a word sum to the element it is
 read as. -/
 def bitWeight (j : ℕ) : E :=
   if j < 64 then E.ofLimbs (K.ofBits (2 ^ j)) 0 0 else E.ofLimbs 0 (K.ofBits (2 ^ (j - 64))) 0
 
-/-- `coordinate_weight` (`protocol.rs:194-201`): `m_k` for coordinate `k` of the public region, the
+/-- `coordinate_weight` (`protocol.rs`): `m_k` for coordinate `k` of the public region, the
 region's weight being `∏_k (1 + x_k (1 + m_k))`; `none` for `k ≥ 8`, where it is a power of `γ`. -/
 def coordinateWeight (k : ℕ) : Option E :=
   if k = 0 then some (bitWeight 1)
@@ -72,19 +86,19 @@ def coordinateWeight (k : ℕ) : Option E :=
 /-- `F192::Y`: the element `y`, limb `1`. -/
 def ey : E := E.ofLimbs 0 1 0
 
-/-- `extension` (`protocol.rs:204-208`): the two coordinates `(y/(1+y), y²/(1+y²))` of the extension
+/-- `extension` (`protocol.rs`): the two coordinates `(y/(1+y), y²/(1+y²))` of the extension
 over the base field, and the scale `1/((1+y)(1+y²))` of the weights `(1, y, y², y³)` they give. -/
 def extension : (E × E) × E :=
   let d0 := 1 + ey
   let d1 := 1 + ey * ey
   ((ey * d0⁻¹, ey * ey * d1⁻¹), (d0 * d1)⁻¹)
 
-/-- `sum_point` (`protocol.rs:211-214`): the fixed point of the second claim on the quotient table,
+/-- `sum_point` (`protocol.rs`): the fixed point of the second claim on the quotient table,
 the top coefficient of its first chunk: `m` ones, four zeros, the extension's coordinates. -/
 def sumPoint (logRows : ℕ) : List E :=
   List.replicate (cellVars logRows) 1 ++ List.replicate 4 0 ++ [extension.1.1, extension.1.2]
 
-/-- `label` (`protocol.rs:217-225`): the transcript's seed, `"pcs-quotient-kc1"`, the circuit's
+/-- `label` (`protocol.rs`): the transcript's seed, `"pcs-quotient-kc1"`, the circuit's
 commitment and the statement (`112` bytes). -/
 def label (indexRoot : Digest) (stmt : Statement) : List UInt8 :=
   "pcs-quotient-kc1".toUTF8.toList ++ digestBytes indexRoot ++ stmt.y.toList ++ stmt.root.toList
@@ -101,12 +115,18 @@ def Statement.halves (stmt : Statement) : List E :=
   [(PcsQuotient.halves stmt.y).1, (PcsQuotient.halves stmt.y).2,
     (PcsQuotient.halves stmt.root).1, (PcsQuotient.halves stmt.root).2]
 
+/-- **The statement embedding**: the eight public words `J < 8` the circuit's public rows hold (`finish`,
+`circuit.rs`; `Circuit.lean`), each a 128-bit word in the low two limbs of `E`: `y` and `root` as their
+halves, big-endian (`halves`), then word `4`, the constant one (bit `0` set: the row that pins `1`), and
+words `5 … 7`, zero (the rows that pin `0`). The public bits must sum to `Σ_J γ^J · word_J`. -/
+def statementWords (stmt : Statement) : List E := stmt.halves ++ [1, 0, 0, 0]
+
 /-! ### The proof and the claims -/
 
 /-- **The reduction's proof**: two commitments, each as the two scalars it rides the stream as
 (`root_scalars`, `transcript.rs:16-18`: its 128-bit halves, two little-endian words each), and five
 elements of `E`: the four row values `a_j` at `t` and `next`, the wiring polynomial at `t`. The Rust
-stream is `witnessRoot, quotientRoot, values, next`, in this order (`prove`, `protocol.rs:319-441`).
+stream is `witnessRoot, quotientRoot, values, next`, in this order (`prove`, `protocol.rs`).
 -/
 structure ReductionProof where
   witnessRoot : E × E
@@ -131,7 +151,7 @@ structure Claim where
   value : E
   deriving DecidableEq
 
-/-- **The four claims** (`Claims`, `protocol.rs:166-172`): on the witness table, on the circuit's
+/-- **The four claims** (`Claims`, `protocol.rs`): on the witness table, on the circuit's
 wiring table, on the quotient table, and on the quotient table at the fixed point `sumPoint`. -/
 structure Claims where
   witness : Claim
@@ -146,7 +166,7 @@ structure Reduced where
   quotientRoot : Digest
   claims : Claims
 
-/-! ### The claims at given challenges (`protocol.rs:488-566`) -/
+/-! ### The claims at given challenges (`protocol.rs`) -/
 
 /-- **The claims of a proof at the challenges** `α, β, γ, t, ρ`, or `none` if a denominator
 vanishes (`VerifyError::Degenerate`). Line by line `reduce` after its transcript reads. -/
@@ -182,8 +202,8 @@ def claimsAt (logRows : ℕ) (stmt : Statement) (α β γ t ρ : E) (a : Vector 
         | none => 1 + gammas.getD (k - 8) 0
       acc * (1 + coordinate * slope))
     outside
-  let s := stmt.halves
-  let target := s.getD 0 0 + γ * s.getD 1 0 + gamma2 * (s.getD 2 0 + γ * s.getD 3 0) + gamma2 * gamma2
+  -- `Σ_J γ^J · word_J` by Horner's rule; the Rust writes it `s₀ + γ s₁ + γ²(s₂ + γ s₃) + γ⁴`, the same value.
+  let target := (statementWords stmt).foldr (fun word acc ↦ word + γ * acc) 0
   -- The rows' polynomial at `t`, the copy identity's denominator.
   let tau := rowVanishing m
   let rows := (List.range (m - 1)).foldl (fun acc k ↦ acc + ofK (tau.getD k 0) * wAt k) 0
@@ -219,11 +239,13 @@ section With
 variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
 
 /-- **The reduction's verifier** over the permutation `F` (`verify` and `reduce`,
-`protocol.rs:469-628`): read the witness table's root, draw `α, β, γ`; read the quotient table's
-root, draw `t`; read the four values and `next`, draw `ρ`; then the claims. `none` on a root whose
+`protocol.rs`): read the witness table's root, draw `α, β, γ`; read the quotient table's
+root, draw `t`; read the four values and `next`, draw `ρ`; then the claims. `none` on a size the layouts do
+not take (`Shape`), a root whose
 halves have a top limb (`NotARoot`) or a vanishing denominator (`Degenerate`). -/
 def reduceWith (logRows : ℕ) (indexRoot : Digest) (stmt : Statement) (p : ReductionProof) :
     m (Option Reduced) := do
+  if ¬ Supported logRows then return none
   let c ← Chain.startWith F (label indexRoot stmt)
   let c := (c.absorb p.witnessRoot.1).absorb p.witnessRoot.2
   match digestOfScalars p.witnessRoot with

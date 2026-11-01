@@ -11,13 +11,13 @@ public import PcsQuotient.Opening
 
 **The proof** (`Proof`): the reduction's proof (two commitments and five elements of `E`,
 `Reduction.lean`) and three WHIR opening proofs, one per commitment, the quotient table's two claims
-together (`Openings`, `protocol.rs:631-635`), each in mumbai's format (`Opening.lean`).
+together (`Openings`, `protocol.rs`), each in mumbai's format (`Opening.lean`).
 
 **The verifier** (`verifyWith`), over a permutation `F` in any monad, Keccak-256 the sponge over
 `F`: the reduction down to the two roots and the four claims, then each opening against its root:
 the witness claim against the witness table's root, the wiring claim against the circuit's
 commitment `indexRoot`, the quotient table's two claims against its root (`verify_openings`,
-`protocol.rs:661-687`). It accepts when all three openings hold. In the model `F` is the random
+`protocol.rs`). It accepts when all three openings hold. In the model `F` is the random
 permutation; deployed, Keccak-f[1600] (`verify`), at `logRows = 22` and the membership circuit's
 commitment (`Circuit.lean`, `Security.lean`).
 

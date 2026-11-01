@@ -26,7 +26,7 @@ or rows before it (or itself, for an input), constants folded as the Rust folds 
 bits a row, and the **wiring** `σ` sends each cell to the next cell of its cycle, a cycle being a
 source (a constant, or a row's `V` cell) and the cells that read it, in cell order.
 
-**The circuit's commitment** (`indexRootWith`, `Index::new`, `protocol.rs:127-141`): the wiring
+**The circuit's commitment** (`indexRootWith`, `Index::new`, `protocol.rs`): the wiring
 polynomial, `σ` read as the points `B(σ(i))` and taken to the novel basis (`Domain.coefficients`), is
 the wiring table, its own stack (`wiringLayout`), committed by leanVM's WHIR commitment at rate `1/2`:
 the `64` lanes' codewords (mumbai's `stackWordFast`) under a Merkle tree of Keccak-256 over `F`
@@ -328,7 +328,7 @@ def Circuit.cells (c : Circuit) (inputs : List Bool) : Array K :=
 
 /-! ### The circuit's commitment -/
 
-/-- **The wiring table** (`Index::new`, `protocol.rs:128-141`): `B(σ(i))` for every cell, in the novel
+/-- **The wiring table** (`Index::new`, `protocol.rs`): `B(σ(i))` for every cell, in the novel
 basis; the wiring layout stacks it whole. -/
 def Circuit.wiringTable (c : Circuit) : Array K :=
   Domain.coefficients (c.logRows + 2) 0 (c.sigma.map Domain.point)

@@ -137,6 +137,46 @@ def rowVanishing (m : ℕ) : List K :=
   let reduced := (List.range n).foldl (eliminate n) rows
   (List.range n).map (fun k ↦ (reduced.getD k #[]).getD n 0) ++ [1]
 
+/-! ### The constants' defining properties
+
+The constants above are computed; what makes them the protocol's constants is stated here, each property
+decidable and kernel-checked by `PcsQuotientTest/Constants.lean` (`decide`) at the sizes the protocol uses.
+`S`, hence every `w_k`, is additive (`GF(2)`-linear) in characteristic two, so the properties on basis
+vectors give the ones on every point of the span (`domain.rs`'s `transform_matches_the_basis` tests those). -/
+
+/-- **The Cantor basis property** (`formal/`'s `CantorBasis`): `β₀ = 1` and `S(β_{k+1}) = β_k`, `k < 27`. -/
+def IsCantorBasis : Prop :=
+  betaAt 0 = 1 ∧ ∀ k : Fin (basisSize - 1), S (betaAt (k.val + 1)) = betaAt k.val
+
+instance : Decidable IsCantorBasis := inferInstanceAs (Decidable (_ ∧ _))
+
+/-- The `k`-th coordinate of `x` as the constants `b` read it: `Σ_{j ≥ k} b[j − k] · w_j(x)`. -/
+def coordinateOf (count k : ℕ) (x : K) : K :=
+  (List.range' k (count - k)).foldl
+    (fun acc j ↦ acc + (coordinates count).getD (j - k) 0 * (chain x count).getD j 0) 0
+
+/-- **The coordinates' property**: on the span of `β₀ … β_{count−1}`, coordinate `k` of `β_j` is `[j = k]`;
+by additivity, coordinate `k` of `B(i)` is bit `k` of `i`. -/
+def CoordinatesRead (count : ℕ) : Prop :=
+  ∀ k j : Fin count, coordinateOf count k.val (betaAt j.val) = if j = k then 1 else 0
+
+instance (count : ℕ) : Decidable (CoordinatesRead count) :=
+  inferInstanceAs (Decidable (∀ _ _, _))
+
+/-- The rows' polynomial at `x`: `Σ_{k < m−1} τ_k · w_k(x)` (`row_poly` of `prove`). -/
+def rowPolyAt (m : ℕ) (x : K) : K :=
+  ((chain x (m - 1)).zip (rowVanishing m)).foldl (fun acc (w, t) ↦ acc + t * w) 0
+
+/-- **The rows' polynomial's property**: monic in `w_{m−2}` (`τ_{m−2} = 1`: degree `2^(m−2)`), zero at
+`β₂ … β_{m−1}`, and not zero at `1`, `β₁`, `1 + β₁`; by additivity, on the span of `β₀ … β_{m−1}` it vanishes
+exactly at the points `B(i)` with `i ≡ 0 mod 4`, the cells of role `X`. -/
+def RowVanishingProperty (m : ℕ) : Prop :=
+  (rowVanishing m).getLast? = some 1 ∧ (∀ j : Fin m, 2 ≤ j.val → rowPolyAt m (betaAt j.val) = 0) ∧
+    rowPolyAt m 1 ≠ 0 ∧ rowPolyAt m (betaAt 1) ≠ 0 ∧ rowPolyAt m (1 + betaAt 1) ≠ 0
+
+instance (m : ℕ) : Decidable (RowVanishingProperty m) :=
+  inferInstanceAs (Decidable (_ ∧ _ ∧ _ ∧ _ ∧ _))
+
 /-! ### The novel basis and the additive transform (`domain.rs:118-283`) -/
 
 /-- **A polynomial in the novel basis at a point** given by its digits `w_k(x)` (`evaluate`,
