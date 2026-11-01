@@ -15,6 +15,7 @@ what follows from mumbai's theorems. Everything here is sorry-free and depends o
 | `WhirBridge/Sound.lean` | **`openingSpec`**: round-by-round soundness of `openingCheck` for every admissible layout and every list of claims, from mumbai's `stackedSpec` with the deployed codes. The numbers (`whirEps_le`, `eBatch_le`, `eBatch_one`, `eBatch_two`, `listMax_ours`), our three layouts (`witnessLayout`, `wiringLayout`, `quotientLayout`, transcribed from `protocol.rs`) and `layouts_ok`. |
 | `WhirBridge/Table.lean` | **`holds_iff`**: a stack satisfies a claim's stack weight exactly when the **table** it stands for has the claimed multilinear value; **`openingDoom_iff`**: mumbai's doom is "every candidate's table violates a claim". `layouts_valid`. |
 | `WhirBridge/Variant.lean` | **`variant_sound`**, **`variant_sound_table`**: Fiat–Shamir soundness in the two-oracle random-oracle model, from mumbai's `romSound`, of the opening **with leanVM's transcript shape** (root absorbed as commitment 0), for a fixed statement, the second in table terms; `variant_bound_le`: at most `2^-63` against `2^64` queries. |
+| `WhirBridge/Family.lean` | **`family_sound`**: the same for an adversary that **chooses the claims** (a family of statements, the claims hashed into the IV, one program for all statements reading them unabsorbed, as mumbai's `anyProgram` for leanVM); `family_bound_le`: at most `2^-63` against `2^64` queries. |
 | `Test/Check.lean` | Runs `openingVerifyWithHash` (the Lean `opening::verify`, mumbai's Keccak) on an opening proof made by the Rust prover (`crates/quotient/tests/whir_bridge_vector.rs`: two claims, 27 lanes out of order with a gap, `placed` short of the stack, the pruned paths expanded): **the honest proof is accepted**, a wrong value, a changed stream scalar and a changed leaf word are rejected (14 s, interpreted). |
 | `WhirBridge/Gaps.lean` | `openingVerifyWithHash`: **our actual transcript** compiled (root hashed into the seed); `OpeningRomSound`: the theorem it needs, stated and not proved; the list of missing pieces. `layouts_nodup`. |
 
@@ -118,7 +119,7 @@ being tuned to it. In the random-oracle model (`variant_sound`, the transcript w
 fixed statement): an adversary of `Q_A` queries makes the verifier accept while every candidate of the
 extracted root word violates a claim with probability at most
 
-`(Q_A + 10122) · (2^-128 + 5 (Q_A + 10122) / 2^256)`, about `Q_A · 2^-128`, at most `2^-63` for `Q_A ≤ 2^64` (`variant_bound_le`),
+`(Q_A + 10122) · (2^-128 + 5 (Q_A + 10122) / 2^256)`, about `Q_A · 2^-128`, at most `2^-63` for `Q_A ≤ 2^64` (`variant_bound_le`; the same bound for claims the adversary chooses, `family_sound`, `family_bound_le`),
 
 `10122` bounding the verifier's queries over every admissible shape (mumbai's `whirBound`).
 
@@ -143,14 +144,13 @@ What mumbai's proofs do not cover of our opening (stated in `Gaps.lean`):
    `romSound` to seeds that carry roots (the root history holding `Ev.commit` with the `extract`ed word,
    `Fail` extended to the root inside the seeding hash input, `final_ineq` and `step_ineqH` re-proved).
    The certificate side is done (`openingSpec`). **Alternatively change the Rust**: absorb the root as the
-   opening's first two stream scalars and seed with `keccak256(LABEL ‖ claims)`; then `variant_sound`
-   applies.
-2. **Adversarial statements.** `variant_sound` is for a fixed statement. Claims chosen by the adversary
-   (ours come out of the reduction's transcript) need a family `Seeds (List Claim)` naming the claims
-   (`Seeds.inj`) and one program for all statements, as mumbai builds for leanVM
-   (`EndToEnd/Sound/Statements.lean`: `anyProgram`, `stmtHistory`, `anyCert`, `leanVmSeeds`). Note that
-   `seed`'s encoding is injective only for a fixed layout (no lengths, and `LABEL` is shared by the three
-   openings): fine for three fixed verifiers, not for one family over layouts.
+   opening's first two stream scalars and seed with `keccak256(LABEL ‖ claims)` (IV) and a zero public
+   digest; then `family_sound` (claims chosen by the adversary) applies as proved.
+2. **Adversarial statements** are covered for that shape (`family_sound`, statements `Stmt L`: claims on one
+   layout, every point of `vars` coordinates, at most `2^46 + 1` of them). `seed`'s encoding of the claims is
+   injective only for a fixed layout (no lengths; `LABEL` is shared by the three openings, and the layout
+   is not in the seed): fine for three fixed verifiers, each with its layout, not for one family over
+   layouts.
 3. **List decoding, no out-of-domain sample at level 0.** An accepted opening yields a candidate among
    the up to `L₀` tables of the root's Johnson list satisfying **all** its claims jointly (the quotient
    table's two claims bind one table), not a unique table. The reduction's soundness must hold for each

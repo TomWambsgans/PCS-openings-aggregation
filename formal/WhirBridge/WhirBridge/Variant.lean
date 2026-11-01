@@ -335,14 +335,13 @@ theorem inv_pow_eq_div (k n : ℕ) (h : k ≤ n) :
 
 /-- **The numbers** (as mumbai's `leanVm_bound_le`): against `2^64` queries, the bound of
 `variant_sound` is at most `2^-63`. -/
-theorem variant_bound_le (label : Bytes) (D : Digest) {QA : ℕ} (hQ : QA ≤ 2 ^ 64) :
-    ((QA + variantQueries : ℕ) : ℝ≥0∞) *
-        (εWhir + failBound (fixedSeeds label D) (QA + variantQueries)) ≤ (2 : ℝ≥0∞)⁻¹ ^ 63 := by
+theorem bound_le {X : Type} (σ : Seeds X) (hσ : σ.offs = []) {QA : ℕ} (hQ : QA ≤ 2 ^ 64) :
+    ((QA + variantQueries : ℕ) : ℝ≥0∞) * (εWhir + failBound σ (QA + variantQueries)) ≤
+      (2 : ℝ≥0∞)⁻¹ ^ 63 := by
   rw [variantQueries_eq]
   set N := QA + 10122 with hN
-  have hfail : failBound (fixedSeeds label D) N =
-      ((5 * N : ℕ) : ℝ≥0∞) / ((2 ^ 256 : ℕ) : ℝ≥0∞) := by
-    rw [failBound, Nat.cast_pow, Nat.cast_ofNat]
+  have hfail : failBound σ N = ((5 * N : ℕ) : ℝ≥0∞) / ((2 ^ 256 : ℕ) : ℝ≥0∞) := by
+    rw [failBound, hσ, Nat.cast_pow, Nat.cast_ofNat]
     rfl
   rw [hfail, εWhir, inv_pow_eq_div 128 256 (by norm_num),
     ENNReal.div_add_div_same, ← mul_div_assoc, ← Nat.cast_add, ← Nat.cast_mul,
@@ -353,5 +352,10 @@ theorem variant_bound_le (label : Bytes) (D : Digest) {QA : ℕ} (hQ : QA ≤ 2 
   calc N * (2 ^ 128 + 5 * N) ≤ (2 ^ 64 + 10122) * (2 ^ 128 + 5 * (2 ^ 64 + 10122)) :=
         Nat.mul_le_mul hN' (Nat.add_le_add_left (Nat.mul_le_mul_left 5 hN') _)
     _ ≤ 2 ^ 193 := by norm_num
+
+theorem variant_bound_le (label : Bytes) (D : Digest) {QA : ℕ} (hQ : QA ≤ 2 ^ 64) :
+    ((QA + variantQueries : ℕ) : ℝ≥0∞) *
+        (εWhir + failBound (fixedSeeds label D) (QA + variantQueries)) ≤ (2 : ℝ≥0∞)⁻¹ ^ 63 :=
+  bound_le _ rfl hQ
 
 end WhirBridge

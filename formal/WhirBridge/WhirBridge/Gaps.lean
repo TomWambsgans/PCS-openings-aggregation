@@ -42,16 +42,13 @@ root, the claims and the proof. What it would take:
    (`step_ineqH`, `Potential.lean`) re-proved with commitments at the root. The certificate is
    unchanged: `openingSpec` (proved here) is a specification from the root's doom.
    *Or*, change the Rust: absorb the root as the opening's first two stream scalars and seed with
-   `keccak256(LABEL ‖ claims)` alone; that is `variantProg`/`fixedSeeds`, and `variant_sound`
-   (proved) covers it for a fixed statement.
-2. **An adversarially chosen statement**: `variant_sound` is for a fixed statement (a family of
-   one, `fixedSeeds`). Claims chosen by the adversary need a family `Seeds (List Claim)` whose
-   seeding names the claims through collision-free answers (`Seeds.inj`: the claims' byte
-   encoding of `seed` is injective for a fixed layout, every point having `vars` coordinates;
-   `LABEL` is shared by the three openings and the layout is not in the seed), and one program
-   for all statements, as mumbai builds for leanVM (`EndToEnd/Sound/Statements.lean`:
-   `anyProgram`, `stmtHistory`, `anyCert`, `leanVmSeeds`, with its general lemmas
-   `reachable_drop`, `after_drop`, `esc_drop`, `boundary_drop`).
+   `keccak256(LABEL ‖ claims)` alone; that is `variantProg`, and `variant_sound` (a fixed
+   statement) and `family_sound` (claims chosen by the adversary, `Family.lean`) cover it, proved.
+2. **An adversarially chosen statement** is covered for that shape: `family_sound` builds, as
+   mumbai does for leanVM (`EndToEnd/Sound/Statements.lean`), the seedings naming the claims
+   (`Seeds.inj`: `seed`'s encoding of the claims is injective for a fixed layout, every point of
+   `vars` coordinates) and one program for all statements. `LABEL` is shared by the three
+   openings and the layout is not in the seed: each verifier has its own fixed layout.
 3. **The random-permutation model**: mumbai moves leanVM's theorem from two random oracles to one
    random permutation (`LeanVMRpm.lean`, `Common.keccak256_transfer2`, at `q²/2^508`); this bridge
    stops at the two-oracle model.
