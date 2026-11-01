@@ -1,3 +1,7 @@
+// Part of this repository: an independent review's adversarial tests (commit 5ff0904), adapted to the selector,
+// the index root in storage, the strict check of `PCS_OPEN`'s reply and the word 1 returned; the test of any
+// returned data passing is turned around (`only_the_word_one_passes`), as is that of calldata dropping a root's
+// third limb. MIT OR Apache-2.0; see NOTICE.md.
 //! Adversarial tests of the verifier contract and of its calls of `PCS_OPEN`, none of which needs a proof: the
 //! contract's claims are compared with the Rust verifier's on random and tampered calldata, degenerate proofs are
 //! built from the transcript, the bytecode is walked for its stack, jumps and gas, and the calls are answered by
@@ -21,14 +25,17 @@ use revm::primitives::hardfork::SpecId;
 use revm::primitives::{Address, Bytes, TxKind, U256};
 use revm::state::{AccountInfo, Bytecode};
 
-use crate::machine::{FIELD_MUL, FIELD_MUL_GAS, LOG_ROWS, PCS_OPEN, PcsOpen, call, root_word};
-use crate::quotient::{calldata, claims_contract, contract, decode, openings};
+use crate::codegen::INDEX_ROOT_SLOT;
+use crate::machine::{Chain, FIELD_MUL, FIELD_MUL_GAS, LOG_ROWS, Outcome, PCS_OPEN, PcsOpen, root_word};
+use crate::quotient::{Contract, VERIFIED, VERIFY, calldata, claims_contract, contract, decode, init_code, openings};
 
-const CALLDATA_LEN: usize = 64 + 64 + 5 * 24;
+/// The selector, then the statement, the commitments and the proof's five scalars.
+const CALLDATA_LEN: usize = 4 + 64 + 64 + 5 * 24;
 
 /// Calldata as the statement and proof it stands for: the inverse of [`calldata`].
 fn parse(data: &[u8]) -> (Statement, Proof) {
     assert_eq!(data.len(), CALLDATA_LEN);
+    let data = &data[4..];
     let word = |at: usize| u64::from_be_bytes(data[at..at + 8].try_into().unwrap());
     let mut stream = vec![];
     for i in 0..4 {
@@ -50,8 +57,13 @@ fn random_bytes<const N: usize>(rng: &mut Rng) -> [u8; N] {
     std::array::from_fn(|_| rng.next_u8())
 }
 
+/// The selector of `verify`, then random arguments.
 fn random_calldata(rng: &mut Rng) -> Vec<u8> {
-    (0..CALLDATA_LEN).map(|_| rng.next_u8()).collect()
+    VERIFY
+        .iter()
+        .copied()
+        .chain((4..CALLDATA_LEN).map(|_| rng.next_u8()))
+        .collect()
 }
 
 /// Calldata the Rust verifier rejects as degenerate: the copy identity's denominator `d · d' + w_m` is zero, which
@@ -78,7 +90,7 @@ fn degenerate(index_root: &Hash, log_rows: usize, rng: &mut Rng) -> Vec<u8> {
     let d = alpha + x + beta * t;
     let next = (w[m] * d.inv() + alpha + x) * beta.inv();
     chain.send(next);
-    calldata(&statement, &chain.into_proof())
+    calldata(&statement, &chain.into_proof()).expect("roots of 128 bits")
 }
 
 /// The block holding the openings of the claims the Rust verifier leaves on `data`, if it leaves any.
@@ -93,10 +105,33 @@ fn block_for(index_root: &Hash, data: &[u8], log_rows: usize) -> PcsOpen {
     block
 }
 
+/// A contract deployed for the circuit committed as `index_root`, with no owner, on a chain of its own.
+struct Deployed {
+    chain: Chain,
+    address: Address,
+    index_root: Hash,
+}
+
+fn deploy(contract: &Contract, index_root: &Hash) -> Deployed {
+    let mut chain = Chain::default();
+    let init = init_code(contract, index_root, Address::ZERO);
+    let address = chain.deploy(&init).0.expect("a deployment");
+    Deployed {
+        chain,
+        address,
+        index_root: *index_root,
+    }
+}
+
+/// A call of the contract, in a block whose openings are `block`'s.
+fn call(deployed: &Deployed, data: &[u8], block: &PcsOpen) -> Outcome {
+    deployed.chain.call(deployed.address, data, block)
+}
+
 /// The verifiers on one calldata, each check one assertion: the claims contract returns what `verify` leaves; the
-/// contract succeeds, returning nothing, against the openings of those claims exactly when `verify` accepts, and
+/// contract succeeds, returning the word 1, against the openings of those claims exactly when `verify` accepts, and
 /// fails against `other`'s, a block for other claims.
-fn agree(index_root: &Hash, log_rows: usize, codes: &(Vec<u8>, Vec<u8>), data: &[u8], other: &PcsOpen) -> bool {
+fn agree(index_root: &Hash, log_rows: usize, codes: &(Deployed, Deployed), data: &[u8], other: &PcsOpen) -> bool {
     let (statement, proof) = parse(data);
     let expected = verify(index_root, &statement, &proof, log_rows);
     assert_ne!(
@@ -110,7 +145,11 @@ fn agree(index_root: &Hash, log_rows: usize, codes: &(Vec<u8>, Vec<u8>), data: &
         "claims contract, {data:02x?}"
     );
     let own = call(&codes.1, data, &block_for(index_root, data, log_rows)).output;
-    assert_eq!(own, expected.is_ok().then(Vec::new), "contract, {data:02x?}");
+    assert_eq!(
+        own,
+        expected.is_ok().then(|| VERIFIED.to_vec()),
+        "contract, {data:02x?}"
+    );
     assert_eq!(
         call(&codes.1, data, other).output,
         None,
@@ -119,10 +158,11 @@ fn agree(index_root: &Hash, log_rows: usize, codes: &(Vec<u8>, Vec<u8>), data: &
     expected.is_ok()
 }
 
-fn codes(index_root: &Hash, log_rows: usize) -> (Vec<u8>, Vec<u8>) {
+/// The claims contract and the contract, deployed for `index_root`.
+fn codes(index_root: &Hash, log_rows: usize) -> (Deployed, Deployed) {
     (
-        claims_contract(index_root, log_rows).code,
-        contract(index_root, log_rows).code,
+        deploy(&claims_contract(log_rows), index_root),
+        deploy(&contract(log_rows), index_root),
     )
 }
 
@@ -133,12 +173,15 @@ fn random_calldata_agrees() {
     for log_rows in LOG_ROWS {
         for index_root in [[0; 32], [0xff; 32], random_bytes(&mut rng)] {
             let codes = codes(&index_root, log_rows);
-            let mut extremes: Vec<Vec<u8>> = [0u8, 0xff, 0x80, 0x01].iter().map(|&b| vec![b; CALLDATA_LEN]).collect();
+            let mut extremes: Vec<Vec<u8>> = [0u8, 0xff, 0x80, 0x01]
+                .iter()
+                .map(|&b| [&VERIFY[..], &[b; CALLDATA_LEN - 4]].concat())
+                .collect();
             // Roots of all ones, scalars of all zeros, and the reverse.
             let mut mixed = vec![0xff; 128];
-            mixed.resize(CALLDATA_LEN, 0);
-            extremes.push(mixed.iter().map(|b| !b).collect());
-            extremes.push(mixed);
+            mixed.resize(CALLDATA_LEN - 4, 0);
+            extremes.push([&VERIFY[..], &mixed.iter().map(|b| !b).collect::<Vec<_>>()].concat());
+            extremes.push([&VERIFY[..], &mixed].concat());
             let other = block_for(&index_root, &random_calldata(&mut rng), log_rows);
             let samples = extremes.into_iter().chain((0..200).map(|_| random_calldata(&mut rng)));
             for data in samples {
@@ -148,8 +191,9 @@ fn random_calldata_agrees() {
     }
 }
 
-/// Every single-bit change of a calldata, at the smallest and the largest circuit: the verifiers agree, and the
-/// openings of the original's claims never pass the changed calldata.
+/// Every single-bit change of a calldata, at the smallest and the largest circuit: the verifiers agree on every
+/// change of the arguments, the openings of the original's claims never pass the changed calldata, and every
+/// change of the selector reverts.
 #[test]
 fn bit_flips_agree() {
     let mut rng = Rng::new(0xF11);
@@ -158,11 +202,17 @@ fn bit_flips_agree() {
         let codes = codes(&index_root, log_rows);
         let base = random_calldata(&mut rng);
         let honest = block_for(&index_root, &base, log_rows);
-        assert_eq!(call(&codes.1, &base, &honest).output, Some(vec![]));
+        assert_eq!(call(&codes.1, &base, &honest).output, Some(VERIFIED.to_vec()));
         for bit in 0..8 * CALLDATA_LEN {
             let mut data = base.clone();
             data[bit / 8] ^= 1 << (bit % 8);
-            assert!(agree(&index_root, log_rows, &codes, &data, &honest), "bit {bit}");
+            if bit < 32 {
+                assert_eq!(call(&codes.0, &data, &PcsOpen::default()).output, None, "bit {bit}");
+                assert_eq!(call(&codes.1, &data, &honest).output, None, "bit {bit}");
+                assert_eq!(call_with(&codes.1, &data, Reply::Attest).output, None, "bit {bit}");
+            } else {
+                assert!(agree(&index_root, log_rows, &codes, &data, &honest), "bit {bit}");
+            }
         }
     }
 }
@@ -174,7 +224,7 @@ fn bit_flips_agree() {
 #[test]
 fn degenerate_proofs_revert() {
     let mut rng = Rng::new(0xDE6);
-    for log_rows in [13, 17, 22] {
+    for log_rows in [*LOG_ROWS.start(), 20, *LOG_ROWS.end()] {
         let index_root = random_bytes(&mut rng);
         let codes = codes(&index_root, log_rows);
         let other = PcsOpen::default();
@@ -190,7 +240,10 @@ fn degenerate_proofs_revert() {
             let mut near = data.clone();
             near[CALLDATA_LEN - 1] ^= 1;
             assert!(agree(&index_root, log_rows, &codes, &near, &other));
-            assert_eq!(call_with(&codes.1, &near, Reply::Attest).output, Some(vec![]));
+            assert_eq!(
+                call_with(&codes.1, &near, Reply::Attest).output,
+                Some(VERIFIED.to_vec())
+            );
         }
     }
 }
@@ -222,8 +275,8 @@ fn root_words_are_the_calldata_words() {
     for _ in 0..1000 {
         let data = random_calldata(&mut rng);
         let (_, proof) = parse(&data);
-        assert_eq!(calldata(&parse(&data).0, &proof), data);
-        for (i, at) in [(0, 64), (2, 96)] {
+        assert_eq!(calldata(&parse(&data).0, &proof), Ok(data.clone()));
+        for (i, at) in [(0, 68), (2, 100)] {
             let root = scalars_root(&[proof.stream[i], proof.stream[i + 1]]).unwrap();
             assert_eq!(root_word(&root)[..], data[at..at + 32]);
             assert_eq!(root_scalars(&root), [proof.stream[i], proof.stream[i + 1]]);
@@ -231,26 +284,27 @@ fn root_words_are_the_calldata_words() {
     }
 }
 
-/// `calldata` drops a commitment scalar's third limb unchecked: a proof the Rust verifier rejects (`NotARoot`)
-/// becomes calldata the contract accepts, that of the proof without the limb.
+/// A proof the Rust verifier rejects for a commitment scalar wider than 128 bits (`NotARoot`) has no calldata:
+/// `calldata` refuses it rather than drop the third limb, which would make it calldata the contract accepts. A
+/// proof scalar's third limb is kept.
 #[test]
 fn calldata_of_a_proof_that_is_not_a_root() {
     let mut rng = Rng::new(0x2007);
     let index_root = random_bytes(&mut rng);
-    let codes = codes(&index_root, 22);
     let data = random_calldata(&mut rng);
-    let (statement, mut proof) = parse(&data);
-    proof.stream[0].c2 = 1;
-    assert_eq!(
-        verify(&index_root, &statement, &proof, 22).err(),
-        Some(VerifyError::Transcript(TranscriptError::NotARoot))
-    );
-    assert_eq!(calldata(&statement, &proof), data);
-    let block = block_for(&index_root, &data, 22);
-    assert_eq!(
-        call(&codes.1, &calldata(&statement, &proof), &block).output,
-        Some(vec![])
-    );
+    let (statement, proof) = parse(&data);
+    for at in 0..4 {
+        let mut wide = proof.clone();
+        wide.stream[at].c2 = 1;
+        assert_eq!(
+            verify(&index_root, &statement, &wide, 22).err(),
+            Some(VerifyError::Transcript(TranscriptError::NotARoot))
+        );
+        assert_eq!(calldata(&statement, &wide), Err(TranscriptError::NotARoot), "{at}");
+    }
+    let mut wide = proof.clone();
+    wide.stream[4].c2 ^= 1;
+    assert_ne!(calldata(&statement, &wide).expect("a proof scalar's 192 bits"), data);
 }
 
 /// How `PCS_OPEN` answers, in place of the mock's lookup.
@@ -264,6 +318,8 @@ enum Reply {
     RevertOne,
     /// Two words.
     Long,
+    /// The word 1 but its first byte: 31 bytes.
+    Short,
     /// Nothing.
     Nothing,
     /// No precompile at the address: an empty account.
@@ -310,6 +366,7 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for Rogue {
             Reply::Zero => (InstructionResult::Return, vec![0; 32]),
             Reply::RevertOne => (InstructionResult::Revert, one),
             Reply::Long => (InstructionResult::Return, [one.clone(), one].concat()),
+            Reply::Short => (InstructionResult::Return, one[1..].to_vec()),
             Reply::Nothing | Reply::Absent => (InstructionResult::Return, vec![]),
         };
         Ok(Some(InterpreterResult {
@@ -349,14 +406,19 @@ struct Called {
     inputs: Vec<Vec<u8>>,
 }
 
-/// [`call`], with `PCS_OPEN` answering as `reply` says.
-fn call_with(code: &[u8], data: &[u8], reply: Reply) -> Called {
+/// [`call`], with `PCS_OPEN` answering as `reply` says: the deployed contract's code and stored root, in an
+/// account of their own.
+fn call_with(deployed: &Deployed, data: &[u8], reply: Reply) -> Called {
+    let code = deployed.chain.code(deployed.address);
     let (contract, caller) = (Address::with_last_byte(0xc0), Address::with_last_byte(0xca));
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(
         contract,
-        AccountInfo::from_bytecode(Bytecode::new_legacy(Bytes::copy_from_slice(code))),
+        AccountInfo::from_bytecode(Bytecode::new_legacy(Bytes::from(code))),
     );
+    let root = U256::from_be_bytes(deployed.index_root);
+    db.insert_account_storage(contract, U256::from(INDEX_ROOT_SLOT), root)
+        .expect("an account");
     let mut evm = Context::mainnet()
         .with_db(db)
         .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
@@ -389,42 +451,42 @@ fn call_with(code: &[u8], data: &[u8], reply: Reply) -> Called {
     }
 }
 
-/// The contract tests only that a call returned data: any reply but none passes it, the word 0 and a reverted
-/// call too. Against the ABI (`machine`), whose precompile returns the word 1 or nothing, that is enough; against
-/// anything else at the address, it accepts every proof.
+/// The contract takes a call to attest only if it succeeds returning exactly the word 1: the word 0, a reverted
+/// call carrying the word 1, two words, 31 bytes, nothing and an absent precompile all revert, at the first call.
 #[test]
-fn any_returned_data_passes() {
+fn only_the_word_one_passes() {
     let mut rng = Rng::new(0x0DA7A);
     let index_root = random_bytes(&mut rng);
-    let code = contract(&index_root, 22).code;
+    let deployed = deploy(&contract(22), &index_root);
     let data = random_calldata(&mut rng);
     for (reply, passes) in [
         (Reply::Attest, true),
-        (Reply::Zero, true),
-        (Reply::RevertOne, true),
-        (Reply::Long, true),
+        (Reply::Zero, false),
+        (Reply::RevertOne, false),
+        (Reply::Long, false),
+        (Reply::Short, false),
         (Reply::Nothing, false),
         (Reply::Absent, false),
     ] {
-        let called = call_with(&code, &data, reply);
-        assert_eq!(called.output.is_some(), passes, "{reply:?}");
+        let called = call_with(&deployed, &data, reply);
+        assert_eq!(called.output, passes.then(|| VERIFIED.to_vec()), "{reply:?}");
         let calls = match reply {
-            Reply::Nothing => 1,
+            Reply::Attest => 3,
             Reply::Absent => 0,
-            _ => 3,
+            _ => 1,
         };
         assert_eq!(called.inputs.len(), calls, "{reply:?}");
     }
 }
 
 /// The three inputs the contract sends are, byte for byte, those the mock is given for the Rust verifier's claims,
-/// in order: no more calls, no other bytes.
+/// in order: no more calls, no other bytes. The wiring table's is against the root in storage.
 #[test]
 fn inputs_are_the_rust_openings() {
     let mut rng = Rng::new(0x1A9);
     for log_rows in LOG_ROWS {
         let index_root = random_bytes(&mut rng);
-        let code = contract(&index_root, log_rows).code;
+        let deployed = deploy(&contract(log_rows), &index_root);
         for _ in 0..20 {
             let data = random_calldata(&mut rng);
             let (statement, proof) = parse(&data);
@@ -433,8 +495,8 @@ fn inputs_are_the_rust_openings() {
                 .iter()
                 .map(|(root, id, claims)| crate::machine::pcs_open_input(root, *id, claims))
                 .collect();
-            let called = call_with(&code, &data, Reply::Attest);
-            assert_eq!(called.output, Some(vec![]));
+            let called = call_with(&deployed, &data, Reply::Attest);
+            assert_eq!(called.output, Some(VERIFIED.to_vec()));
             assert_eq!(called.inputs, expected);
         }
     }
@@ -449,7 +511,8 @@ struct Walk {
     memory_words: u64,
     /// `(offset, size)` of each `STATICCALL`'s input.
     calls: Vec<(u64, u64)>,
-    fail: Vec<u64>,
+    /// Where each `JUMPI` would go.
+    jumps: Vec<u64>,
     end: usize,
 }
 
@@ -458,10 +521,12 @@ fn memory_cost(words: u64) -> u64 {
 }
 
 /// Walk `code` from its start to its `STOP` or `RETURN`, no jump taken, pricing each instruction as Cancun (and
-/// Prague, Osaka) does with `PCS_OPEN` warm and free. Offsets and sizes must be pushed constants.
+/// Prague, Osaka) does with `PCS_OPEN` warm and free and the first `SLOAD` of a slot cold. Offsets and sizes must
+/// be pushed constants.
 fn walk(code: &[u8]) -> Walk {
     let mut walk = Walk::default();
     let mut stack: Vec<Option<u64>> = vec![];
+    let mut loaded = vec![];
     let mut pc = 0;
     let pop = |stack: &mut Vec<Option<u64>>| stack.pop().expect("no underflow");
     let expand = |walk: &mut Walk, offset: Option<u64>, size: Option<u64>| -> u64 {
@@ -502,9 +567,9 @@ fn walk(code: &[u8]) -> Walk {
                 stack.push(second);
                 ("DUP", 3)
             }
-            0x90 => {
+            0x90 | 0x91 => {
                 let len = stack.len();
-                stack.swap(len - 1, len - 2);
+                stack.swap(len - 1, len - 2 - (op - 0x90) as usize);
                 ("SWAP", 3)
             }
             FIELD_MUL => {
@@ -524,7 +589,7 @@ fn walk(code: &[u8]) -> Walk {
                 stack.push(None);
                 (if op == 0x15 { "ISZERO" } else { "CALLDATALOAD" }, 3)
             }
-            0x36 | 0x3d | 0x5a => {
+            0x34 | 0x36 | 0x3d | 0x5a => {
                 stack.push(None);
                 ("env", 2)
             }
@@ -543,6 +608,13 @@ fn walk(code: &[u8]) -> Walk {
                 pop(&mut stack);
                 ("MSTORE", 3 + expand(&mut walk, offset, Some(32)))
             }
+            0x54 => {
+                let slot = pop(&mut stack).expect("a constant slot");
+                let cold = !loaded.contains(&slot);
+                loaded.push(slot);
+                stack.push(None);
+                ("SLOAD", if cold { 2_100 } else { 100 })
+            }
             0x20 => {
                 let (offset, size) = (pop(&mut stack), pop(&mut stack));
                 let cost = 30 + 6 * size.unwrap().div_ceil(32) + expand(&mut walk, offset, size);
@@ -557,7 +629,7 @@ fn walk(code: &[u8]) -> Walk {
             0x57 => {
                 let dest = pop(&mut stack).expect("a pushed destination");
                 pop(&mut stack);
-                walk.fail.push(dest);
+                walk.jumps.push(dest);
                 ("JUMPI", 10)
             }
             0xfa => {
@@ -566,9 +638,9 @@ fn walk(code: &[u8]) -> Walk {
                 assert_eq!(address, Some(0x12));
                 let (offset, size) = (pop(&mut stack), pop(&mut stack));
                 let (ret_offset, ret_size) = (pop(&mut stack), pop(&mut stack));
-                assert_eq!((ret_offset, ret_size), (Some(0), Some(0)));
+                assert_eq!((ret_offset, ret_size), (Some(0), Some(32)));
                 walk.calls.push((offset.unwrap(), size.unwrap()));
-                let cost = 100 + expand(&mut walk, offset, size);
+                let cost = 100 + expand(&mut walk, offset, size) + expand(&mut walk, ret_offset, ret_size);
                 stack.push(None);
                 ("STATICCALL", cost)
             }
@@ -606,16 +678,17 @@ fn boundaries(code: &[u8]) -> Vec<bool> {
     starts
 }
 
-/// The code's straight line: a stack far from its limit, every jump to the one revert, deployable size, and the
-/// gas revm charges (`machine::call`) equal to an independent pricing of each instruction. Prints both
-/// contracts' gas by opcode: `cargo test --release -p evm -- --nocapture gas_by_opcode`.
+/// The code's straight line: a stack far from its limit, its first jump to `setIndexRoot` right after it and
+/// every other one to the one revert, after that, deployable size, and the gas revm charges equal to an
+/// independent pricing of each instruction. Prints both contracts' gas by opcode:
+/// `cargo test --release -p evm -- --nocapture gas_by_opcode`.
 #[test]
 fn gas_by_opcode() {
     let mut rng = Rng::new(0x6A5);
     for log_rows in LOG_ROWS {
         let index_root = random_bytes(&mut rng);
-        let returning = claims_contract(&index_root, log_rows);
-        let calling = contract(&index_root, log_rows);
+        let returning = claims_contract(log_rows);
+        let calling = contract(log_rows);
         let data = random_calldata(&mut rng);
         let block = block_for(&index_root, &data, log_rows);
         let mut totals = vec![];
@@ -628,12 +701,18 @@ fn gas_by_opcode() {
             assert!(walk.max_stack <= 1024);
             assert_eq!(walk.memory_words as usize, compiled.memory_words);
             let starts = boundaries(code);
-            let revert = *walk.fail.first().unwrap();
-            assert!(walk.fail.iter().all(|&at| at == revert));
-            assert!(starts[revert as usize] && code[revert as usize] == 0x5b);
-            assert_eq!(&code[revert as usize..revert as usize + 4], &[0x5b, 0x5f, 0x5f, 0xfd]);
-            assert_eq!(revert as usize, walk.end + 1);
-            let outcome = call(code, &data, &block);
+            let (&entry, fails) = walk.jumps.split_first().unwrap();
+            let entry = entry as usize;
+            assert_eq!(entry, walk.end + 1);
+            assert!(starts[entry] && code[entry] == 0x5b);
+            let revert = fails[0] as usize;
+            assert!(fails.iter().all(|&at| at as usize == revert));
+            assert!(revert > entry && starts[revert]);
+            assert_eq!(&code[revert..revert + 4], &[0x5b, 0x5f, 0x5f, 0xfd]);
+            // `setIndexRoot`'s one jump is to the revert too.
+            let to_revert = [0x61, (revert >> 8) as u8, revert as u8, 0x57];
+            assert!(code[entry..revert].windows(4).any(|window| window == to_revert));
+            let outcome = call(&deploy(compiled, &index_root), &data, &block);
             assert!(outcome.output.is_some());
             let total: u64 = walk.gas.values().sum();
             assert_eq!(total, outcome.execution, "{name}, 2^{log_rows} rows");
@@ -669,11 +748,11 @@ fn gas_by_opcode() {
 fn out_of_gas_in_the_call_reverts() {
     let mut rng = Rng::new(0x006);
     let index_root = random_bytes(&mut rng);
-    let code = contract(&index_root, 22).code;
+    let deployed = deploy(&contract(22), &index_root);
     let data = random_calldata(&mut rng);
     let mut block = block_for(&index_root, &data, 22);
     block.claim_gas = 4_000_000;
-    assert_eq!(call(&code, &data, &block).output, None);
+    assert_eq!(call(&deployed, &data, &block).output, None);
     block.claim_gas = 1_000_000;
-    assert_eq!(call(&code, &data, &block).output, Some(vec![]));
+    assert_eq!(call(&deployed, &data, &block).output, Some(VERIFIED.to_vec()));
 }
