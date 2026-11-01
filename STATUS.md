@@ -21,7 +21,16 @@ Part of this repository. Updated as work lands; the newest state is at the top o
 
 ## Reviews and their outcome
 
-- Adversarial review #1 (implementation): no soundness break. ZK was broken as built (calldata-only distinguisher through deterministic roots; unpadded openings) → fixed by the hiding layouts (both attacks are now regression tests that fail). `log_rows` range off by one (low; hidden layouts now need ≥ 17). Gas formulas correct.
+- Adversarial review: EVM contract + `PCS_OPEN` — no contract/Rust mismatch (> 6,000 random calldata, every single-bit
+  flip, all lengths 0..312, 24 crafted degenerate proofs); claims are bound to the proof (captured precompile inputs
+  equal the Rust openings byte for byte); gas reproduced opcode by opcode. Findings, being fixed with the EVM
+  realism work: the call check fails open on any non-empty return data (medium: require success, 32 bytes, word 1);
+  the only reachable rejection (a prover can make `d·d' + w_m = 0` without grinding) was untested (now tested);
+  `calldata()` drops a nonzero root limb (low); success returns empty data, ETH not refused, `push2` offsets
+  unchecked, the mock does not reject bad input lengths cheaply (low/info).
+- Adversarial review #1 (implementation): no soundness break. ZK was broken as built (calldata-only distinguisher
+  through deterministic roots; unpadded openings) → fixed by the hiding layouts (both attacks are now regression
+  tests that fail). `log_rows` range: fixed (`supported`, `VerifyError::Shape`, 17..=22). Gas formulas correct.
 
 ## In progress
 
