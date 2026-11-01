@@ -63,7 +63,9 @@ root, the claims and the proof. What it would take:
    `Statement/LeanVm.lean`, "Scope and trust").
 5. **The Rust is the model**: `openingCheck` mirrors `opening::verify` and mumbai's `verifyWhir`
    transcribes the Python verifier at `c445e3d5`; that the vendored Rust `verify_whir` computes
-   the same is test evidence (mumbai's `scripts/fuzz-verifier.py`), not proof.
+   the same is test evidence (mumbai's `scripts/fuzz-verifier.py`; our vendored verifier is
+   byte-identical to leanVM's at that commit), not proof. `Test/Check.lean` runs
+   `openingVerifyWithHash` with the deployed Keccak on a Rust opening proof and accepts it.
 6. **Composition with the reduction**: an accepted opening gives, except with the bound's
    probability, a candidate among the **at most `2^18`** of the Johnson list of the root's word
    (`candidates_bound` of mumbai) whose table satisfies **all** the opening's claims (one opening

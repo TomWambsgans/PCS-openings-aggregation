@@ -15,6 +15,7 @@ what follows from mumbai's theorems. Everything here is sorry-free and depends o
 | `WhirBridge/Sound.lean` | **`openingSpec`**: round-by-round soundness of `openingCheck` for every admissible layout and every list of claims, from mumbai's `stackedSpec` with the deployed codes. The numbers (`whirEps_le`, `eBatch_le`, `eBatch_one`, `eBatch_two`, `listMax_ours`), our three layouts (`witnessLayout`, `wiringLayout`, `quotientLayout`, transcribed from `protocol.rs`) and `layouts_ok`. |
 | `WhirBridge/Table.lean` | **`holds_iff`**: a stack satisfies a claim's stack weight exactly when the **table** it stands for has the claimed multilinear value; **`openingDoom_iff`**: mumbai's doom is "every candidate's table violates a claim". `layouts_valid`. |
 | `WhirBridge/Variant.lean` | **`variant_sound`**, **`variant_sound_table`**: Fiat–Shamir soundness in the two-oracle random-oracle model, from mumbai's `romSound`, of the opening **with leanVM's transcript shape** (root absorbed as commitment 0), for a fixed statement, the second in table terms; `variant_bound_le`: at most `2^-63` against `2^64` queries. |
+| `Test/Check.lean` | Runs `openingVerifyWithHash` (the Lean `opening::verify`, mumbai's Keccak) on an opening proof made by the Rust prover (`crates/quotient/tests/whir_bridge_vector.rs`: two claims, 27 lanes out of order with a gap, `placed` short of the stack, the pruned paths expanded): **the honest proof is accepted**, a wrong value, a changed stream scalar and a changed leaf word are rejected (14 s, interpreted). |
 | `WhirBridge/Gaps.lean` | `openingVerifyWithHash`: **our actual transcript** compiled (root hashed into the seed); `OpeningRomSound`: the theorem it needs, stated and not proved; the list of missing pieces. `layouts_nodup`. |
 
 ## Building
@@ -27,6 +28,8 @@ git clone https://github.com/Verified-zkEVM/leanerVM ../leanervm
 cd ../leanervm && git checkout 6175f1a07f0dc33bd3d640de0063d1006143ee91 && cd lean_vm
 lake exe cache get && python3 -I ../lake-build.py . LeanVM     # several CPU-hours
 cd ../../WhirBridge && lake build                                # a minute or two
+cargo test -p quotient --release --test whir_bridge_vector -- --ignored   # from the repository root
+lake env lean --run Test/Check.lean ../../target/whir_bridge_vector.txt
 ```
 
 On `h1` it lives at `/root/pcs-quotient-fv/whir-bridge` next to `/root/pcs-quotient-fv/leanervm`. The
@@ -73,6 +76,9 @@ Rust verifier holds of ours.
   fold by fold. Its `F192` lane weights lifted by `ext` (`opening.rs:201-203`) are the verifier's `E`:
   both fields are `K[y]/(y^3+y+1)`, `K = GF(2)[x]/(x^64+x^4+x^3+x+1)` (`crates/primitives/src/field/gf2_64x3.rs:3`,
   `crates/verifier/src/field.rs:3`).
+* **Executed**: the Lean mirror with the deployed Keccak accepts a proof of the Rust prover, so the seed's
+  bytes, `LABEL`, `λ`, the target, the weight closure and mumbai's `verifyWhir` agree with `opening::verify`
+  on it (`Test/Check.lean`); test evidence, as mumbai's for leanVM.
 * **The one mismatch that matters is the transcript, not the verifier**: `verify_whir` takes the root
   as an argument (`whir.rs:148, 157`) and `opening::verify` seeds its duplex with
   `(keccak256(LABEL), keccak256(root ‖ claims))` (`opening.rs:151-161, 233-234`), never absorbing the
