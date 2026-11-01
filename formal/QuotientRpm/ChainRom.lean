@@ -414,4 +414,170 @@ theorem prob_chainBad (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (
 
 end Probability
 
+/-! ## An accepted proof of a false statement makes a fresh query bad -/
+
+section Trace
+
+theorem verify_queryBound (π : ChainProof P B) : IsTotalQueryBound (W.verifyWith hashQuery π) 8 := by
+  simp only [Wire.verifyWith, hashQuery]
+  repeat' (first | trivial | refine isTotalQueryBound_query_bind_iff.mpr ⟨by norm_num, fun _ => ?_⟩)
+
+theorem experiment_queryBound (A : OracleComp HashSpec (ChainProof P B)) (Q : ℕ)
+    (hQ : IsTotalQueryBound A Q) : IsTotalQueryBound (chainExperiment W A) (Q + 8) := by
+  have h : ∀ π, IsTotalQueryBound (W.verifyWith hashQuery π >>= fun b => pure (π, b)) (8 + 0) :=
+    fun π => isTotalQueryBound_bind (verify_queryBound W π) fun b =>
+      (trivial : IsTotalQueryBound (pure (π, b) : OracleComp HashSpec (ChainProof P B × Bool)) 0)
+  have := isTotalQueryBound_bind hQ h
+  rwa [Nat.add_zero] at this
+
+open Classical in
+/-- The run of the experiment against a table: the adversary's proof, the verifier's verdict on
+it, and the chain's eight inputs after the adversary's queries. -/
+theorem experiment_run (A : OracleComp HashSpec (ChainProof P B)) (T : Table) :
+    let π := evalWithAnswerFn (QueryImpl.ofFn T) A
+    let x₀ := W.label π.stmt
+    let e₁ := W.enc₁ π.g
+    let x₁ := Wire.afterRoot (T x₀) (T e₁)
+    let x₂ := (T x₁).toList
+    let x₃ := (T x₂).toList
+    let e₂ := W.enc₂ π.R
+    let x₄ := Wire.afterRoot (T x₃) (T e₂)
+    let x₅ := W.afterValues (T x₄) π.v
+    (tableQueryLog (chainExperiment W A) T).map Sigma.fst =
+        (tableQueryLog A T).map Sigma.fst ++ [x₀, e₁, x₁, x₂, x₃, e₂, x₄, x₅] ∧
+      evalWithAnswerFn (QueryImpl.ofFn T) (chainExperiment W A) =
+        (π, decide (P.Accepts (W.decode π.stmt) π.g.1 π.R.1 (W.chal (T x₁)) (W.chal (T x₂))
+          (W.chal (T x₃)) (W.chal (T x₄)) π.v.1 π.v.2 (W.chal (T x₅)))) := by
+  intro π x₀ e₁ x₁ x₂ x₃ e₂ x₄ x₅
+  constructor
+  · simp only [chainExperiment, Wire.verifyWith, hashQuery, tableQueryLog_bind,
+      tableQueryLog_query_bind, tableQueryLog_pure, List.map_append, List.map_cons, List.map_nil,
+      evalWithAnswerFn_bind, evalWithAnswerFn_liftM_query, evalWithAnswerFn_pure]
+    rfl
+  · simp only [chainExperiment, Wire.verifyWith, hashQuery, evalWithAnswerFn_bind,
+      evalWithAnswerFn_liftM_query, evalWithAnswerFn_pure]
+    rfl
+
+open Classical in
+/-- **The trace**: on every table, a winning run asks a bad fresh query. -/
+theorem trace_chainBad (A : OracleComp HashSpec (ChainProof P B)) (T : Table)
+    (hwin : Wins W (evalWithAnswerFn (QueryImpl.ofFn T) (chainExperiment W A))) :
+    FreshBad (chainBad W) T ∅ ((tableQueryLog (chainExperiment W A) T).map Sigma.fst) := by
+  obtain ⟨hL, heval⟩ := experiment_run W A T
+  set π := evalWithAnswerFn (QueryImpl.ofFn T) A
+  set x₀ := W.label π.stmt
+  set e₁ := W.enc₁ π.g
+  set x₁ := Wire.afterRoot (T x₀) (T e₁)
+  set x₂ := (T x₁).toList
+  set x₃ := (T x₂).toList
+  set e₂ := W.enc₂ π.R
+  set x₄ := Wire.afterRoot (T x₃) (T e₂)
+  set x₅ := W.afterValues (T x₄) π.v
+  set L := (tableQueryLog (chainExperiment W A) T).map Sigma.fst
+  rw [heval] at hwin
+  obtain ⟨hacc, hsat⟩ := hwin
+  have hacc' := of_decide_eq_true hacc
+  by_contra hnb
+  have nb : ∀ y ∈ L, ¬ chainBad W (before L y) y T := fun y hy => by
+    simpa using not_bad_before (chainBad W) T ∅ L hnb y hy (Finset.notMem_empty _)
+  -- No collision: the answers to distinct inputs differ, and an input's answer appears in
+  -- another only if it was asked first.
+  have hinj : ∀ y ∈ L, ∀ z ∈ L, T y = T z → y = z := by
+    intro y hy z hz hyz
+    by_contra hne
+    rcases before_trichotomy L y z hy hz hne with h | h
+    · exact nb z hz (Or.inl (Or.inl ⟨y, h, hyz⟩))
+    · exact nb y hy (Or.inl (Or.inl ⟨z, h, hyz.symm⟩))
+  have hord : ∀ y ∈ L, ∀ z ∈ L,
+      ((T y).toList = z.take 32 ∨ rootWords (T y) = (z.drop 32).take 64) → y ∈ before L z := by
+    intro y hy z hz h
+    by_contra hb
+    by_cases hyz : y = z
+    · subst hyz
+      exact nb y hy (Or.inl (Or.inr ⟨y, Finset.mem_insert_self _ _, h⟩))
+    · rcases before_trichotomy L y z hy hz hyz with h' | h'
+      · exact hb h'
+      · exact nb y hy (Or.inl (Or.inr ⟨z, Finset.mem_insert_of_mem h', h⟩))
+  have injB : ∀ y, Set.InjOn T ↑(before L y) := fun y a ha b hb hab =>
+    hinj a (mem_of_mem_before L a y ha) b (mem_of_mem_before L b y hb) hab
+  have mem : ∀ y ∈ [x₀, e₁, x₁, x₂, x₃, e₂, x₄, x₅], y ∈ L := fun y hy => by
+    rw [hL]
+    exact List.mem_append_right _ hy
+  have m0 := mem x₀ (by simp)
+  have m1 := mem e₁ (by simp)
+  have m2 := mem x₁ (by simp)
+  have m3 := mem x₂ (by simp)
+  have m4 := mem x₃ (by simp)
+  have m5 := mem e₂ (by simp)
+  have m6 := mem x₄ (by simp)
+  have m7 := mem x₅ (by simp)
+  have take32 : ∀ st : Bytes32, st.toList.take 32 = st.toList := fun st =>
+    List.take_of_length_le (by simp)
+  -- The chain's inputs come in their order.
+  have b01 : x₀ ∈ before L x₁ := hord x₀ m0 x₁ m2 (Or.inl (Wire.take_afterRoot _ _).symm)
+  have b11 : e₁ ∈ before L x₁ := hord e₁ m1 x₁ m2 (Or.inr (Wire.rootPart_afterRoot _ _).symm)
+  have b12 : x₁ ∈ before L x₂ := hord x₁ m2 x₂ m3 (Or.inl (take32 _).symm)
+  have b23 : x₂ ∈ before L x₃ := hord x₂ m3 x₃ m4 (Or.inl (take32 _).symm)
+  have b34 : x₃ ∈ before L x₄ := hord x₃ m4 x₄ m6 (Or.inl (Wire.take_afterRoot _ _).symm)
+  have be4 : e₂ ∈ before L x₄ := hord e₂ m5 x₄ m6 (Or.inr (Wire.rootPart_afterRoot _ _).symm)
+  have b45 : x₄ ∈ before L x₅ := hord x₄ m6 x₅ m7 (Or.inl (W.take_afterValues _ _).symm)
+  have s12 := before_subset_of_mem L x₁ x₂ b12
+  have s23 := before_subset_of_mem L x₂ x₃ b23
+  have s34 := before_subset_of_mem L x₃ x₄ b34
+  have s45 := before_subset_of_mem L x₄ x₅ b45
+  have c04 : x₀ ∈ before L x₄ := s34 (s23 (s12 b01))
+  have c14 : e₁ ∈ before L x₄ := s34 (s23 (s12 b11))
+  have c24 : x₁ ∈ before L x₄ := s34 (s23 b12)
+  have c34 : x₂ ∈ before L x₄ := s34 b23
+  -- The round that the existing proof's trace names.
+  let π' : Proof P B := ⟨W.decode π.stmt, π.g, π.R, π.v⟩
+  let tbl : ∀ k, Answer P B k := fun k => match k with
+    | .first .. => (W.chal (T x₁), W.chal (T x₂), W.chal (T x₃))
+    | .second .. => W.chal (T x₄)
+    | .third .. => W.chal (T x₅)
+  rcases bad_of_accepts π' tbl hacc' hsat with hb | hb | hb
+  · obtain ⟨h1, h2⟩ := hb
+    refine nb x₁ m2 (Or.inr (Or.inl ⟨π.stmt, π.g, ⟨T x₀, T e₁, ⟨b01, rfl⟩, ⟨b11, rfl⟩, rfl,
+      injB x₁⟩, ⟨fun h => not_mem_before_of_mem_before b12 h, fun h => ?_, fun h => ?_, h1, h2⟩⟩))
+    · exact not_mem_before_of_mem_before (s23 b12) h
+    · have e : x₃ = x₂ := h
+      rw [e] at b23
+      exact not_mem_before_self L x₂ b23
+  · obtain ⟨h1, h2⟩ := hb
+    exact nb x₄ m6 (Or.inr (Or.inr (Or.inl ⟨π.stmt, π.g, π.R, _, ⟨T x₀, T e₁, T x₁, T x₂, T x₃, T e₂,
+      ⟨c04, rfl⟩, ⟨c14, rfl⟩, ⟨c24, rfl⟩, ⟨c34, rfl⟩, ⟨b34, rfl⟩, ⟨be4, rfl⟩, rfl, rfl, injB x₄⟩,
+      h1, h2⟩)))
+  · obtain ⟨h1, h2⟩ := hb
+    exact nb x₅ m7 (Or.inr (Or.inr (Or.inr ⟨π.stmt, π.g, π.R, _, _, π.v,
+      ⟨T x₀, T e₁, T x₁, T x₂, T x₃, T e₂, T x₄, ⟨s45 c04, rfl⟩, ⟨s45 c14, rfl⟩, ⟨s45 c24, rfl⟩,
+        ⟨s45 c34, rfl⟩, ⟨s45 b34, rfl⟩, ⟨s45 be4, rfl⟩, ⟨b45, rfl⟩, rfl, rfl, rfl, injB x₅⟩,
+      h1, h2⟩)))
+
+end Trace
+
+/-! ## Knowledge soundness -/
+
+/-- **Knowledge soundness with the Keccak-256 chain, in the random-oracle model.** For every
+adversary making at most `Q` queries of the random oracle `H : bytes → 32 bytes`, the probability
+that the verifier, hashing with `H` through the chain, accepts its proof while the cells read off
+the proof's first message do not satisfy the relation for the statement its bytes stand for is at
+most `(Q + 8) (roundError + 3 (Q + 8) / 2^256)`: the existing proof's round error per query,
+and the chain's collisions and prefix events, the verifier's eight hashes counted. -/
+theorem knowledgeSoundness_chain (A : OracleComp HashSpec (ChainProof P B)) (Q : ℕ)
+    (hQ : IsTotalQueryBound A Q) :
+    Pr{let r ← (simulateQ randomOracle (chainExperiment W A)).run' ∅}[Wins W r] ≤
+      ((Q + 8 : ℕ) : ℝ≥0∞) * ((roundError P B : ℝ≥0∞) + 3 * ((Q + 8 : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
+  refine prEvent_randomOracle_le_of_freshBad (chainExperiment W A) (Q + 8)
+    (experiment_queryBound W A Q hQ) (Set.range fun v : Bytes32 => v.toList) (Set.finite_range _)
+    (Wins W) (chainBad W) _ (fun S hS c t ht hcard => ?_) (fun T h => trace_chainBad W A T h)
+  have hS' : ∀ v : Bytes32, v.toList ∈ S := fun v => hS _ ⟨v, rfl⟩
+  refine (prob_chainBad W hS' c t ht).trans ?_
+  have hcard' : (histOf c).card < Q + 8 := by
+    simpa [histOf, Finset.card_map] using hcard
+  rw [add_comm]
+  gcongr
+  have : 3 * (histOf c).card + 2 ≤ 3 * (Q + 8) := by omega
+  calc ((3 * (histOf c).card + 2 : ℕ) : ℝ≥0∞) ≤ ((3 * (Q + 8) : ℕ) : ℝ≥0∞) := by exact_mod_cast this
+    _ = 3 * ((Q + 8 : ℕ) : ℝ≥0∞) := by push_cast; ring
+
 end QuotientRpm
