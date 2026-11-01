@@ -1,6 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import QuotientSecurity.Hiding.Model
-import QuotientSecurity.Hiding.Span
+import QuotientSecurity.Hiding.SpanStrong
 
 /-!
 # The hidden layouts of `crates/quotient` (`opening::Layout::hidden`)
@@ -257,21 +257,19 @@ def RoundsReached {m : ℕ} (pos : ι → (Fin k → Bool)) (Wc : Fin m → ι �
     (roundsMap pos φ (combinedW pos Wc lam) ''
       kerMoves (foldW pos φ) L.first (LinearMap.range (L.stackR (K := K))))
 
-/-- **Condition (S)**: three random lanes other than the share whose fold weights are independent. -/
+/-- **Condition (S)**: random lanes other than the share whose fold weights span `E` over `K`. -/
 def FoldSpans (pos : ι → (Fin k → Bool)) (φ : Fin k → E) : Prop :=
-  ∃ r : Fin 3 → ι, (∀ i, L.isRand (r i) ∧ r i ≠ L.share) ∧
-    LinearIndependent K fun i => foldW pos φ (r i)
+  ∃ (p : ℕ) (r : Fin p → ι), (∀ i, L.isRand (r i) ∧ r i ≠ L.share) ∧
+    Submodule.span K (Set.range fun i => foldW pos φ (r i)) = ⊤
 
 /-- (S) lets the randomness at any entry past the first piece move `f¹` anywhere. -/
-theorem foldSpans_moves [FiniteDimensional K E] (h3 : Module.finrank K E = 3)
-    (pos : ι → (Fin k → Bool)) (φ : Fin k → E) (hS : L.FoldSpans (K := K) pos φ) :
+theorem foldSpans_moves (pos : ι → (Fin k → Bool)) (φ : Fin k → E)
+    (hS : L.FoldSpans (K := K) pos φ) :
     ∀ y ∉ L.first, ∀ e : E, ∃ ρ ∈ LinearMap.range (L.stackR (K := K)),
       OnColumn y ρ ∧ foldMap (foldW pos φ) ρ y = e := by
   classical
-  obtain ⟨r, hr, hind⟩ := hS
+  obtain ⟨p, r, hr, htop⟩ := hS
   intro y _ e
-  have htop : Submodule.span K (Set.range fun i => foldW pos φ (r i)) = ⊤ :=
-    hind.span_eq_top_of_card_eq_finrank' (by simp [h3])
   have he : e ∈ Submodule.span K (Set.range fun i => foldW pos φ (r i)) := htop ▸ Submodule.mem_top
   obtain ⟨c, hc⟩ := (Submodule.mem_span_range_iff_exists_fun K).mp he
   set kv : ι → K := fun l => ∑ i, if r i = l then c i else 0
@@ -300,8 +298,7 @@ theorem foldSpans_moves [FiniteDimensional K E] (h3 : Module.finrank K E = 3)
 /-- **`HIDING.md`'s theorem.** At challenges `(λ, φ)` meeting (S) and (R), with the first piece's
 codeword at the opened positions onto (Q), the opening's view up to the first fold of two tables
 with the same claims, and anything computed from it, are identically distributed. -/
-theorem hidden_view_evalDistEq [FiniteDimensional K E] (h3 : Module.finrank K E = 3)
-    [SampleableType (ι → Y → K)] {m : ℕ} (pos : ι → (Fin k → Bool)) (hpos : Function.Injective pos)
+theorem hidden_view_evalDistEq [SampleableType (ι → Y → K)] {m : ℕ} (pos : ι → (Fin k → Bool)) (hpos : Function.Injective pos)
     (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc) (enc : Q → Y → K)
     (hQ : Function.Surjective (firstEval enc L.first)) (lam : Fin m → E) (φ : Fin k → E)
     (hS : L.FoldSpans (K := K) pos φ) (hR : L.RoundsReached (K := K) pos Wc lam φ)
@@ -318,7 +315,7 @@ theorem hidden_view_evalDistEq [FiniteDimensional K E] (h3 : Module.finrank K E 
     (claimsMap Wc) L.stackD L.stackR (LinearMap.ker (lastMap (K := K) φ))
     (fun T hT => L.onFirst_mem_range T hT)
     (fun T hT => roundsMap_eq_zero pos φ _ L.first hWb T hT)
-    (L.claims_stackR Wc hW) hQ (L.foldSpans_moves h3 pos φ hS) ?_ hR hd g
+    (L.claims_stackR Wc hW) hQ (L.foldSpans_moves pos φ hS) ?_ hR hd g
   intro T hT hfold
   refine roundsMap_mem_ker pos φ _ L.first hWb T ?_ hfold
   rw [ip_combinedW pos hpos, hT]
@@ -327,8 +324,7 @@ theorem hidden_view_evalDistEq [FiniteDimensional K E] (h3 : Module.finrank K E 
 /-- **Averaged over the challenges.** With `λ` from any uniform `γ` and `φ` uniform in `E^k`, the
 two tables' experiments (challenges, then anything computed from the view) give every event
 probabilities that differ by at most the probability of (S) or (R) failing. -/
-theorem hidden_prEvent_le [FiniteDimensional K E] (h3 : Module.finrank K E = 3)
-    [SampleableType (ι → Y → K)] {Γ : Type} [SampleableType Γ] [Fintype Γ] [Fintype E]
+theorem hidden_prEvent_le [SampleableType (ι → Y → K)] {Γ : Type} [SampleableType Γ] [Fintype Γ] [Fintype E]
     [SampleableType E] {m : ℕ} (pos : ι → (Fin k → Bool)) (hpos : Function.Injective pos)
     (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc) (enc : Q → Y → K)
     (hQ : Function.Surjective (firstEval enc L.first)) (lam : Γ → Fin m → E)
@@ -344,7 +340,103 @@ theorem hidden_prEvent_le [FiniteDimensional K E] (h3 : Module.finrank K E = 3)
             L.RoundsReached (K := K) pos Wc (lam c.1) c.2)] := by
   intro run
   refine prEvent_le_add_prEvent_bad (run d) (run d') _ (fun c hc => ?_) S
-  exact L.hidden_view_evalDistEq h3 pos hpos Wc hW enc hQ (lam c.1) c.2 hc.1 hc.2 (g c) hd
+  exact L.hidden_view_evalDistEq pos hpos Wc hW enc hQ (lam c.1) c.2 hc.1 hc.2 (g c) hd
+
+/-- Four random lanes (not the share) whose fold weights span `E` give (S). -/
+theorem foldSpans_of_four (pos : ι → (Fin k → Bool)) (φ : Fin k → E) (r0 rA rB rC : ι)
+    (hr : ∀ i, L.isRand (![r0, rA, rB, rC] i) ∧ ![r0, rA, rB, rC] i ≠ L.share)
+    (h : Submodule.span K (Set.range
+      ![eqW φ (pos r0), eqW φ (pos rA), eqW φ (pos rB), eqW φ (pos rC)]) = ⊤) :
+    L.FoldSpans (K := K) pos φ := by
+  refine ⟨4, ![r0, rA, rB, rC], hr, ?_⟩
+  convert h using 3
+  funext i
+  fin_cases i <;> rfl
+
+/-- `a / b ≤ c / d` in `ENNReal` from `a·d ≤ c·b` in `ℕ`. -/
+theorem natCast_div_le_natCast_div {a b c d : ℕ} (hb : 0 < b) (hd : 0 < d) (h : a * d ≤ c * b) :
+    (a : ENNReal) / b ≤ (c : ENNReal) / d := by
+  have hb0 : (b : ENNReal) ≠ 0 := by exact_mod_cast hb.ne'
+  have hd0 : (d : ENNReal) ≠ 0 := by exact_mod_cast hd.ne'
+  rw [ENNReal.div_le_iff hb0 (ENNReal.natCast_ne_top b), div_eq_mul_inv, mul_right_comm,
+    ← div_eq_mul_inv, ENNReal.le_div_iff_mul_le (Or.inl hd0) (Or.inl (ENNReal.natCast_ne_top d))]
+  exact_mod_cast h
+
+open Classical in
+/-- **Condition (S) fails rarely for uniform challenges**: four random lanes with the coordinate
+pattern of `card_not_span_four_le` (the design's: `random_lane_patterns`). -/
+theorem prob_not_foldSpans_le [Fintype K] [Fintype E] [DecidableEq E] [SampleableType E]
+    [FiniteDimensional K E] (h3 : Module.finrank K E = 3) {Γ : Type} [SampleableType Γ]
+    [Fintype Γ] (pos : ι → (Fin k → Bool)) (r0 rA rB rC : ι)
+    (hr : ∀ i, L.isRand (![r0, rA, rB, rC] i) ∧ ![r0, rA, rB, rC] i ≠ L.share)
+    (a b c : Fin k) (hac : a ≠ c) (hb : pos r0 b ≠ pos rB b)
+    (haB : pos rB a = pos r0 a) (haC : pos rC a = pos r0 a) (haA : pos rA a = !pos r0 a)
+    (hcB : pos rB c = pos r0 c) (hcA : pos rA c = pos r0 c) (hcC : pos rC c = !pos r0 c) :
+    Pr{let x ← $ᵗ (Γ × (Fin k → E))}[¬ L.FoldSpans (K := K) pos x.2]
+      ≤ (((2 * k + Fintype.card K + 1) * Fintype.card E + Fintype.card K ^ 4 : ℕ) : ENNReal) /
+          ((Fintype.card E ^ 2 : ℕ) : ENNReal) := by
+  rw [SampleableType.prEvent_uniformSample]
+  set bad := univ.filter fun φ : Fin k → E => Submodule.span K (Set.range
+    ![eqW φ (pos r0), eqW φ (pos rA), eqW φ (pos rB), eqW φ (pos rC)]) ≠ ⊤
+  have hsub : (univ.filter fun x : Γ × (Fin k → E) => ¬ L.FoldSpans (K := K) pos x.2)
+      ⊆ (univ : Finset Γ) ×ˢ bad := by
+    intro x hx
+    refine mem_product.mpr ⟨mem_univ _, mem_filter.mpr ⟨mem_univ _, fun htop => ?_⟩⟩
+    exact (mem_filter.mp hx).2 (L.foldSpans_of_four pos x.2 r0 rA rB rC hr htop)
+  have hcard := card_not_span_four_le (K := K) h3 (pos r0) (pos rA) (pos rB) (pos rC) a b c hac hb
+    haB haC haA hcB hcA hcC
+  have hle := card_le_card hsub
+  rw [card_product, card_univ] at hle
+  have hE : 0 < Fintype.card E := Fintype.card_pos
+  have hΓ : 0 < Fintype.card Γ := Fintype.card_pos
+  have hcardT : Fintype.card (Γ × (Fin k → E)) = Fintype.card Γ * Fintype.card E ^ k := by
+    rw [Fintype.card_prod, Fintype.card_fun, Fintype.card_fin]
+  rw [hcardT]
+  refine natCast_div_le_natCast_div (Nat.mul_pos hΓ (Nat.pow_pos hE)) (Nat.pow_pos hE) ?_
+  calc (univ.filter fun x : Γ × (Fin k → E) => ¬ L.FoldSpans (K := K) pos x.2).card *
+        Fintype.card E ^ 2
+      ≤ (Fintype.card Γ * bad.card) * Fintype.card E ^ 2 := Nat.mul_le_mul_right _ hle
+    _ = Fintype.card Γ * (bad.card * Fintype.card E ^ 2) := by ring
+    _ ≤ Fintype.card Γ * (((2 * k + Fintype.card K + 1) * Fintype.card E + Fintype.card K ^ 4) *
+          Fintype.card E ^ k) := Nat.mul_le_mul_left _ hcard
+    _ = _ := by ring
+
+/-- **The theorem for the hidden layouts, with its bound.** For uniform challenges, the two tables'
+experiments differ on any event by at most the probability that (R) fails plus
+`((2k + |K| + 1)·|E| + |K|^4)/|E|^2` (below `2^-127` at `k = 6`, `|K| = 2^64`, `|E| = 2^192`). -/
+theorem hidden_prEvent_le_bound [Fintype K] [Fintype E] [DecidableEq E] [SampleableType E]
+    [FiniteDimensional K E] (h3 : Module.finrank K E = 3) [SampleableType (ι → Y → K)]
+    {Γ : Type} [SampleableType Γ] [Fintype Γ] {m : ℕ} (pos : ι → (Fin k → Bool))
+    (hpos : Function.Injective pos) (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc)
+    (enc : Q → Y → K) (hQ : Function.Surjective (firstEval enc L.first)) (lam : Γ → Fin m → E)
+    (r0 rA rB rC : ι)
+    (hr : ∀ i, L.isRand (![r0, rA, rB, rC] i) ∧ ![r0, rA, rB, rC] i ≠ L.share)
+    (a b c : Fin k) (hac : a ≠ c) (hb : pos r0 b ≠ pos rB b)
+    (haB : pos rB a = pos r0 a) (haC : pos rC a = pos r0 a) (haA : pos rA a = !pos r0 a)
+    (hcB : pos rB c = pos r0 c) (hcA : pos rA c = pos r0 c) (hcC : pos rC c = !pos r0 c)
+    {O : Type} (g : Γ × (Fin k → E) → (Fin k → E × E) × (Y → E) × (Q → ι → K) → O)
+    {d d' : ι → Y → K} (hd : claimsMap (K := K) Wc (L.stackD d) = claimsMap Wc (L.stackD d'))
+    (S : (Γ × (Fin k → E)) × O → Prop) :
+    let run := fun (x : ι → Y → K) (c : Γ × (Fin k → E)) =>
+      (fun r => g c (viewMap (roundsMap pos c.2 (combinedW pos Wc (lam c.1))) (foldW pos c.2) enc
+        (L.stackD x + L.stackR r))) <$> ($ᵗ (ι → Y → K))
+    Pr{let o ← withChallenges (run d)}[S o]
+      ≤ Pr{let o ← withChallenges (run d')}[S o]
+        + (Pr{let c ← $ᵗ (Γ × (Fin k → E))}[¬ L.RoundsReached (K := K) pos Wc (lam c.1) c.2]
+        + (((2 * k + Fintype.card K + 1) * Fintype.card E + Fintype.card K ^ 4 : ℕ) : ENNReal) /
+            ((Fintype.card E ^ 2 : ℕ) : ENNReal)) := by
+  intro run
+  refine (L.hidden_prEvent_le pos hpos Wc hW enc hQ lam g hd S).trans (add_le_add le_rfl ?_)
+  calc Pr{let c ← $ᵗ (Γ × (Fin k → E))}[¬ (L.FoldSpans (K := K) pos c.2 ∧
+          L.RoundsReached (K := K) pos Wc (lam c.1) c.2)]
+      ≤ Pr{let c ← $ᵗ (Γ × (Fin k → E))}[¬ L.RoundsReached (K := K) pos Wc (lam c.1) c.2]
+        + Pr{let c ← $ᵗ (Γ × (Fin k → E))}[¬ L.FoldSpans (K := K) pos c.2] := by
+        refine (prEvent_mono _ _ _ fun c h => ?_).trans (prEvent_or_le _ _ _)
+        by_cases hR : L.RoundsReached (K := K) pos Wc (lam c.1) c.2
+        · exact Or.inr fun hS => h ⟨hS, hR⟩
+        · exact Or.inl hR
+    _ ≤ _ := add_le_add le_rfl (L.prob_not_foldSpans_le h3 pos r0 rA rB rC hr a b c hac hb haB haC
+          haA hcB hcA hcC)
 
 end HiddenLayout
 
@@ -358,6 +450,22 @@ coordinate pattern of `card_not_linearIndependent_le`, at `a = 1`, `b = 2`. -/
 theorem random_lane_patterns :
     (laneBits 1 1 = laneBits 13 1 ∧ laneBits 7 1 = !laneBits 1 1 ∧ laneBits 1 2 ≠ laneBits 13 2) ∧
     (laneBits 1 1 = laneBits 21 1 ∧ laneBits 11 1 = !laneBits 1 1 ∧ laneBits 1 2 ≠ laneBits 21 2) := by
+  decide
+
+/-- The four-lane pattern of `prob_not_foldSpans_le` on the witness table's random lanes
+(`r0, rA, rB, rC = 1, 7, 13, 25`, `a = 1`, `b = 2`, `c = 4`: lanes of `opening::Layout::hidden` for 40
+lanes and 7 random). -/
+theorem witness_lane_pattern :
+    laneBits 1 2 ≠ laneBits 13 2 ∧
+    laneBits 13 1 = laneBits 1 1 ∧ laneBits 25 1 = laneBits 1 1 ∧ laneBits 7 1 = !laneBits 1 1 ∧
+    laneBits 13 4 = laneBits 1 4 ∧ laneBits 7 4 = laneBits 1 4 ∧ laneBits 25 4 = !laneBits 1 4 := by
+  decide
+
+/-- The same on the quotient table's (`1, 21, 11, 41`, `a = 2`, `b = 1`, `c = 5`: 63 lanes, 7 random). -/
+theorem quotient_lane_pattern :
+    laneBits 1 1 ≠ laneBits 11 1 ∧
+    laneBits 11 2 = laneBits 1 2 ∧ laneBits 41 2 = laneBits 1 2 ∧ laneBits 21 2 = !laneBits 1 2 ∧
+    laneBits 11 5 = laneBits 1 5 ∧ laneBits 21 5 = laneBits 1 5 ∧ laneBits 41 5 = !laneBits 1 5 := by
   decide
 
 theorem laneBits_injective : Function.Injective laneBits := by
