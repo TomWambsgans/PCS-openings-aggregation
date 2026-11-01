@@ -89,7 +89,31 @@ def lineHead : Parse (ℕ × Digest × Statement × List E) := do
   let stream ← many eElem
   pure (logRows, indexRoot, ⟨y, root⟩, stream)
 
-/-- Check one line: `none` if Lean and Rust agree, the reason otherwise. -/
+/-- The small circuit of the vectors (`small`, `statement_vectors.rs`): `256` inputs, XORs and χs
+folding them, the inputs as both public values; `2^13` rows. -/
+def smallBuilder : BuildM (List Src × List Src) := do
+  let x ← (List.range 256).mapM fun _ ↦ Build.input
+  let mut acc := x.getD 0 .zero
+  for i in [1:256] do
+    acc ← if i % 3 = 0 then Build.chi acc (x.getD i .zero) (x.getD (i * 7 % 256) .zero)
+      else Build.xor acc (x.getD i .zero)
+  let _ ← Build.not acc
+  return (x, x)
+
+/-- One Keccak-256 of `x ‖ x` (`toy`, `statement_vectors.rs`); `2^17` rows. -/
+def toyBuilder : BuildM (List Src × List Src) := do
+  let x ← (List.range 256).mapM fun _ ↦ Build.input
+  let digest ← Build.keccak256Block (x ++ x)
+  return (x, digest)
+
+/-- The circuits the vectors name. -/
+def circuitNamed : String → Option Circuit
+  | "small" => let ((y, r), b) := smallBuilder.run Builder.new; some (finish 13 (publicWords y r) b)
+  | "toy" => let ((y, r), b) := toyBuilder.run Builder.new; some (finish 17 (publicWords y r) b)
+  | "membership" => some (membership 22)
+  | _ => none
+
+/-- Check one line: whether Lean and Rust agree, and the line's kind. -/
 def checkLine (line : String) : Except String (String × Bool) := do
   let tokens := (line.splitOn " ").filter (· ≠ "")
   let (kind, rest) := match tokens with
@@ -130,6 +154,45 @@ def checkLine (line : String) : Except String (String × Bool) := do
       | none => false
       | some p => verify logRows indexRoot stmt ⟨p, w, i, q⟩
     pure ("P", lean == (verdict == "ACCEPT"))
+  | "I" =>
+    let ((name, logRows, used, inputs, root), _) ← (do
+        let name ← token
+        let logRows ← nat
+        let used ← nat
+        let inputs ← nat
+        let root ← digest
+        pure (name, logRows, used, inputs, root) : Parse _).run rest
+    match circuitNamed name with
+    | none => throw s!"unknown circuit {name}"
+    | some c =>
+      let lean := Id.run (c.indexRootWith (m := Id) fun s ↦ pure (LeanVM.Semantics.keccakF1600 s))
+      pure ("I", c.logRows == logRows && c.usedRows == used && c.inputs.size == inputs &&
+        decide (lean.toList = root.toList))
+  | "Q" =>
+    let ((name, bits, masks, stream), _) ← (do
+        let name ← token
+        let count ← nat
+        let bytes ← (List.range ((count + 7) / 8)).mapM fun _ ↦ do pure (← hexNat (← token))
+        let bits := (List.range count).map fun i ↦ (bytes.getD (i / 8) 0).testBit (i % 8)
+        let words ← (List.range 12).mapM fun _ ↦ kWord
+        let masks : Masks := fun j i ↦ words.getD (3 * j.val + i.val) 0
+        let stream ← many eElem
+        pure (name, bits, masks, stream) : Parse _).run rest
+    match circuitNamed name with
+    | none => throw s!"unknown circuit {name}"
+    | some c =>
+      let stmt : Statement :=
+        if name = "membership" then (secretOfInputs bits).statement
+        else
+          let x : Vector UInt8 32 := Vector.ofFn fun j ↦ (List.range 8).foldl
+            (fun acc k ↦ if bits.getD (8 * j.val + k) false then acc ||| (1 <<< k.toUInt8) else acc) 0
+          ⟨x, x⟩
+      let keccak := fun s ↦ (pure (LeanVM.Semantics.keccakF1600 s) : Id _)
+      match Id.run (proveWith (m := Id) keccak (2 ^ 25) c stmt (c.cells bits) masks) with
+      | none => pure ("Q", false)
+      | some proof =>
+        let indexRoot := Id.run (c.indexRootWith (m := Id) keccak)
+        pure ("Q", decide (proof.reduction.stream = stream) && verify c.logRows indexRoot stmt proof)
   | k => throw s!"unknown line kind {k}"
 
 end PcsQuotientTest

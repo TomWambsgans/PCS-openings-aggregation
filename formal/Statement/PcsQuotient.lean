@@ -2,3 +2,5 @@
 module
 
 public import PcsQuotient.Verifier
+public import PcsQuotient.Circuit
+public import PcsQuotient.Prover

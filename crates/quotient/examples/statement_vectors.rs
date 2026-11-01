@@ -10,6 +10,9 @@
 //! - `P` lines: whole proofs (the reduction and the three openings) on a small circuit of `2^13` rows, honest and
 //!   tampered, the openings in their raw form (one full Merkle path per query, [`opening::verify_paths`]), with
 //!   the Rust verifier's verdict on that raw form. With `--full`, also the membership circuit (`2^22` rows).
+//! - `I` lines: a circuit's size, its number of inputs and its commitment (the root of its wiring table), for the
+//!   small circuit and a circuit of one Keccak-256 (`2^17` rows), and with `--index` (or `--full`) the membership
+//!   circuit: the Lean builder and commitment must reproduce them.
 //!
 //! Tokens are separated by spaces: a hash is 64 hex digits (its bytes in order), an element of `E` its three limbs
 //! `c0:c1:c2` in hex, a word of `K` 16 hex digits.
@@ -281,24 +284,65 @@ fn small() -> Circuit {
     b.finish(13, &public_words(&x, &x))
 }
 
+/// A circuit of one Keccak-256 of a 64-byte block, `root = H(x ‖ x)` (as `protocol.rs`'s test `toy`).
+fn toy() -> Circuit {
+    let mut b = Builder::new();
+    let x: Vec<Src> = (0..256).map(|_| b.input()).collect();
+    let digest = b.keccak256_64(&[&x[..], &x[..]].concat());
+    b.finish(17, &public_words(&x, &digest))
+}
+
+/// An `I` line: a circuit's size, its inputs and its commitment, which the Lean builder must reproduce.
+fn index_line(name: &str, circuit: &Circuit) -> String {
+    let root = commit(&Index::new(circuit).table).root;
+    format!(
+        "I {name} {} {} {} {}",
+        circuit.log_rows,
+        circuit.used_rows,
+        circuit.n_inputs(),
+        hex_hash(&root)
+    )
+}
+
 fn masks(rng: &mut Rng) -> [[F64; 3]; 4] {
     std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())))
 }
 
-fn proofs(lines: &mut Vec<String>, rng: &mut Rng, circuit: &Circuit, cases: &[(Statement, Vec<bool>)]) {
+/// A `Q` line: the honest prover's inputs (the circuit by name, its input bits as bytes, the masks) and the
+/// reduction's stream it sends, which the Lean prover must reproduce.
+fn prover_line(name: &str, inputs: &[bool], masks: &[[F64; 3]; 4], stream: &[F192]) -> String {
+    let mut out = format!("Q {name} {}", inputs.len());
+    for byte in inputs.chunks(8) {
+        let value = byte.iter().enumerate().fold(0u8, |acc, (i, &bit)| acc | (bit as u8) << i);
+        write!(out, " {value:02x}").unwrap();
+    }
+    for coeffs in masks {
+        for coeff in coeffs {
+            write!(out, " {:016x}", coeff.0).unwrap();
+        }
+    }
+    write!(out, " {}", stream.len()).unwrap();
+    for &x in stream {
+        write!(out, " {}", hex_e(x)).unwrap();
+    }
+    out
+}
+
+fn proofs(
+    lines: &mut Vec<String>,
+    rng: &mut Rng,
+    name: &str,
+    circuit: &Circuit,
+    cases: &[(Statement, Vec<bool>)],
+) {
     let index = Index::new(circuit);
     let index_committed = commit(&index.table);
     for (statement, inputs) in cases {
         let cells = circuit.cells(inputs);
-        let proved = prove(
-            circuit,
-            &index,
-            &index_committed.root,
-            statement,
-            &cells,
-            &masks(rng),
-        );
+        let masks = masks(rng);
+        let proved = prove(circuit, &index, &index_committed.root, statement, &cells, &masks);
         assert!(proved.fits);
+        lines.push(prover_line(name, inputs, &masks, &proved.proof.stream));
         let openings = open(&proved, &index, &index_committed);
         let honest = Whole::of(circuit.log_rows, &index_committed.root, statement, &proved, &openings);
         assert!(honest.accepts(), "the honest proof is accepted");
@@ -359,7 +403,14 @@ fn main() {
             (Statement { y: x, root: x }, inputs)
         })
         .collect();
-    proofs(&mut lines, &mut rng, &circuit, &cases);
+    proofs(&mut lines, &mut rng, "small", &circuit, &cases);
+
+    // The circuits' commitments, which the Lean builder must reproduce.
+    lines.push(index_line("small", &circuit));
+    lines.push(index_line("toy", &toy()));
+    if args.iter().any(|a| a == "--index") || full {
+        lines.push(index_line("membership", &membership()));
+    }
 
     // The membership circuit itself.
     if full {
@@ -372,6 +423,7 @@ fn main() {
         proofs(
             &mut lines,
             &mut rng,
+            "membership",
             &circuit,
             &[(secret.statement(), membership_inputs(&secret))],
         );
