@@ -42,6 +42,8 @@ pub enum VerifyError {
     Transcript(TranscriptError),
     /// A denominator of the claims is zero.
     Degenerate,
+    /// A circuit size the layouts do not support: `log_rows` outside [`MIN_LOG_ROWS`]`..=`[`MAX_LOG_ROWS`].
+    Shape,
 }
 
 /// What the verifier computes with: the field, or a recorder of its operations, which is how the EVM contract is
@@ -100,6 +102,14 @@ pub const QUOTIENT_RANDOM_LANES: usize = 7;
 /// The fewest rows the hidden layouts take: below `2^17` rows the witness table's lanes are too short for its
 /// overflow lane to hold the `33` pieces its blocks give up and the masks, at `2^LOG_PIECE` entries a piece.
 pub const MIN_LOG_ROWS: usize = 17;
+
+/// The most rows: above `2^22` rows the quotient table's stack is more than the `2^28` words leanVM's WHIR takes.
+pub const MAX_LOG_ROWS: usize = 22;
+
+/// Whether the layouts support a circuit of `2^log_rows` rows.
+pub fn supported(log_rows: usize) -> bool {
+    (MIN_LOG_ROWS..=MAX_LOG_ROWS).contains(&log_rows)
+}
 
 /// The witness table: the four row polynomials, then their masks, sixteen entries of the next chunk. Hidden:
 /// `32` block lanes, the overflow lane and [`WITNESS_RANDOM_LANES`], `40` lanes.
@@ -334,6 +344,11 @@ pub fn prove(
     masks: &[[F64; 3]; 4],
     seed: &[u8; 32],
 ) -> Proved {
+    assert!(
+        supported(circuit.log_rows),
+        "2^{} rows: the layouts take 2^{MIN_LOG_ROWS} to 2^{MAX_LOG_ROWS}",
+        circuit.log_rows
+    );
     let m = cell_vars(circuit.log_rows);
     let n = 1usize << m;
     assert_eq!(cells.len(), n);
@@ -667,6 +682,9 @@ pub fn verify(
     proof: &Proof,
     log_rows: usize,
 ) -> Result<([Hash; 2], Claims), VerifyError> {
+    if !supported(log_rows) {
+        return Err(VerifyError::Shape);
+    }
     let mut stream = Stream {
         chain: VerifierChain::new(&label(index_root, statement), proof),
         statement: *statement,
@@ -768,6 +786,9 @@ pub fn verify_openings(
     openings: &Openings,
 ) -> Result<(), verifier::VerifierError> {
     use opening::{verify, wire_proof};
+    if !supported(log_rows) {
+        return Err(verifier::VerifierError::WhirShape);
+    }
     verify(
         &witness_layout(log_rows),
         &roots[0],
@@ -793,6 +814,23 @@ mod tests {
     use super::*;
     use crate::circuit::{Builder, Src, public_words};
     use primitives::test_rng::Rng;
+
+    /// A size the layouts do not take is rejected, not a panic: the verifiers return an error before reading.
+    #[test]
+    fn unsupported_sizes_are_rejected() {
+        let statement = Statement {
+            y: [1; 32],
+            root: [2; 32],
+        };
+        let proof = Proof {
+            stream: vec![F192::ZERO; 9],
+        };
+        for log_rows in [0, 13, MIN_LOG_ROWS - 1, MAX_LOG_ROWS + 1, 40] {
+            assert!(!supported(log_rows));
+            assert_eq!(verify(&[0; 32], &statement, &proof, log_rows), Err(VerifyError::Shape));
+        }
+        assert!((MIN_LOG_ROWS..=MAX_LOG_ROWS).all(supported));
+    }
 
     /// A small circuit with the membership statement's shape: `root` is a Keccak-256 of `y`, the input.
     fn toy() -> Circuit {
