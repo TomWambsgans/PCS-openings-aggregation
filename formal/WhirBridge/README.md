@@ -100,7 +100,7 @@ they are met:
 | table variables / `log_n` / lanes (at `LOG_ROWS = 22`) | 25 / 25 / 33 | 24 / 24 / 64 | 30 / 28 / 59 |
 | WHIR levels, queries | 5: 224, 56, 32, 23, 17 | 5: 224, 56, 32, 23, 17 | 6: 225, 56, 32, 23, 18, 14 |
 | per-group escape `εmax` (every group after `λ`, discounted by its proof of work) | `2^-128` | `2^-128` | `2^-128` |
-| batching challenge `λ` (the lead, `(J−1)·L₀/|E|`) | `0` (one claim) | `0` (one claim) | `≤ 2^-174` (two claims; `≤ 3564/2^192 ≈ 2^-180.2` with the shape's own list bound) |
+| batching challenge `λ` (the lead, `(J−1)·L₀/2^192`) | `0` (one claim) | `0` (one claim) | `≤ 2^-174` (two claims; `≤ 3564/2^192 ≈ 2^-180.2` with the shape's own list bound) |
 | level-0 Johnson list `L₀` (candidates per root) | `≤ 7908` | `≤ 9952` | `≤ 3564` |
 
 The `2^-128` is mumbai's certificate (`whirEps (deployedCodes μ R) config ≤ 2^-128`): at our three shapes
