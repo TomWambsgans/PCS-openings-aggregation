@@ -26,6 +26,11 @@ option. Every file says where it comes from in its first lines.
   - `formal/`: the Lean proofs of `formal/quotient` (sorry-free for the original circuit), being ported to
     this circuit; each file names its source. Dependency revisions are those of
     [leanerVM](https://github.com/Verified-zkEVM/leanerVM)'s `mumbai` branch (MIT OR Apache-2.0).
+- **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
+  Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
+  proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's
+  assembly of leanVM's verifier (`lean_vm/LeanVM/Protocol/EndToEnd/Sound/`, `Verifier/Cost.lean`). Each
+  file says so in its header.
 - **Third-party credits carried by the vendored files** (each file names its own):
   [succinctlabs/flock](https://github.com/succinctlabs/flock) (MIT OR Apache-2.0),
   [Plonky3](https://github.com/Plonky3/Plonky3) (MIT OR Apache-2.0),
