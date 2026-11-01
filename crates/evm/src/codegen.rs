@@ -1,14 +1,15 @@
 // Adapted from leanVM (https://github.com/leanEthereum/leanVM), branch PCS-openings-aggregation, commit 651453c6,
-// file crates/evm/src/codegen.rs. MIT OR Apache-2.0; see NOTICE.md.
+// file crates/evm/src/codegen.rs; the calls of `PCS_OPEN` are new here. MIT OR Apache-2.0; see NOTICE.md.
 //! A recorded graph as EVM bytecode: straight-line code, a value used once left on the stack and a shared one
 //! kept in a memory slot, which is reused after its last read.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use crate::machine::FIELD_MUL;
+use crate::machine::{FIELD_MUL, PCS_OPEN};
 use crate::record::{Graph, Node};
 
+const STOP: u8 = 0x00;
 const KECCAK256: u8 = 0x20;
 const ISZERO: u8 = 0x15;
 const AND: u8 = 0x16;
@@ -19,15 +20,20 @@ const SHR: u8 = 0x1c;
 const CALLDATALOAD: u8 = 0x35;
 const CALLDATASIZE: u8 = 0x36;
 const CALLDATACOPY: u8 = 0x37;
+const CODECOPY: u8 = 0x39;
+const RETURNDATASIZE: u8 = 0x3d;
+const POP: u8 = 0x50;
 const MLOAD: u8 = 0x51;
 const MSTORE: u8 = 0x52;
 const JUMPI: u8 = 0x57;
+const GAS: u8 = 0x5a;
 const JUMPDEST: u8 = 0x5b;
 const PUSH0: u8 = 0x5f;
 const DUP1: u8 = 0x80;
 const DUP2: u8 = 0x81;
 const SWAP1: u8 = 0x90;
 const RETURN: u8 = 0xf3;
+const STATICCALL: u8 = 0xfa;
 const REVERT: u8 = 0xfd;
 
 /// Memory below the slots is scratch for hashing: the seed's 112 bytes, or a state and the scalars it absorbs.
@@ -61,13 +67,43 @@ fn word(limbs: [u64; 3]) -> [u8; 32] {
     bytes
 }
 
+/// A word the contract writes to its output region.
+#[derive(Clone, Copy, Debug)]
+pub enum Word {
+    /// A recorded value.
+    Node(u32),
+    Const([u8; 32]),
+    /// The word of calldata at this offset.
+    Calldata(usize),
+}
+
+/// What the contract does with its output region, once written.
+pub enum Ending {
+    /// Return it.
+    Return,
+    /// Call `PCS_OPEN` on each of these runs of words of it, in order and back to back; revert unless every call
+    /// attests, and return nothing.
+    PcsOpen(Vec<usize>),
+}
+
 enum Item {
     Code(Vec<u8>),
     /// Keep the value on top of the stack in the node's slot, too.
     Store(u32),
     Load(u32),
-    /// Pop the value into returned word `k`.
+    /// Pop the value into output word `k`.
     Output(usize),
+    /// Copy `words` constant words, from `data` on in the code's data, to output words `first` on.
+    CopyConst {
+        first: usize,
+        words: usize,
+        data: usize,
+    },
+    /// Call `PCS_OPEN` on `words` output words from `first` on, and revert unless it attests.
+    PcsOpen {
+        first: usize,
+        words: usize,
+    },
     /// Jump to the revert if the top of the stack is nonzero.
     FailIf,
 }
@@ -197,11 +233,23 @@ pub struct Contract {
 }
 
 /// The contract: revert unless calldata is `calldata_len` bytes and every node of `graph.nonzero` is nonzero,
-/// else return `outputs`, one word each. The proof's scalars start at byte `scalars` of calldata.
-pub fn compile(graph: &Graph, outputs: &[u32], prefix: &[u8; 48], scalars: usize, calldata_len: usize) -> Contract {
+/// else write `outputs` to a region of fresh memory, one word each, and end as `ending` says. The proof's
+/// scalars start at byte `scalars` of calldata.
+pub fn compile(
+    graph: &Graph,
+    outputs: &[Word],
+    ending: &Ending,
+    prefix: &[u8; 48],
+    scalars: usize,
+    calldata_len: usize,
+) -> Contract {
     let n = graph.nodes.len();
     let mut uses = vec![0u32; n];
-    for &root in graph.nonzero.iter().chain(outputs) {
+    let output_nodes = outputs.iter().filter_map(|word| match word {
+        Word::Node(id) => Some(id),
+        _ => None,
+    });
+    for &root in graph.nonzero.iter().chain(output_nodes) {
         uses[root as usize] += 1;
     }
     for at in (0..n).rev() {
@@ -256,9 +304,52 @@ pub fn compile(graph: &Graph, outputs: &[u32], prefix: &[u8; 48], scalars: usize
         compiler.code(&[ISZERO]);
         compiler.items.push(Item::FailIf);
     }
-    for (k, &id) in outputs.iter().enumerate() {
-        compiler.eval(id);
+    // The region is fresh memory: a zero word is left as it is, and a run of constants is copied from the code
+    // (`CODECOPY` and its three operands, 12 gas and 3 a word) when that is cheaper than a `PUSH` of each nonzero
+    // word and of its address, and an `MSTORE` (9 gas).
+    let mut data = Vec::new();
+    let mut k = 0;
+    while k < outputs.len() {
+        let run = outputs[k..]
+            .iter()
+            .take_while(|word| matches!(word, Word::Const(_)))
+            .count();
+        let constants = || {
+            outputs[k..k + run].iter().filter_map(|word| match word {
+                Word::Const(bytes) => Some(bytes),
+                _ => None,
+            })
+        };
+        let nonzero = constants().filter(|bytes| **bytes != [0; 32]).count();
+        if 12 + 3 * run < 9 * nonzero {
+            compiler.items.push(Item::CopyConst {
+                first: k,
+                words: run,
+                data: data.len(),
+            });
+            constants().for_each(|bytes| data.extend_from_slice(bytes));
+            k += run;
+            continue;
+        }
+        match outputs[k] {
+            Word::Node(id) => compiler.eval(id),
+            Word::Const(bytes) if bytes == [0; 32] => {
+                k += 1;
+                continue;
+            }
+            Word::Const(bytes) => compiler.code(&push(&bytes)),
+            Word::Calldata(offset) => compiler.code(&[&push_usize(offset)[..], &[CALLDATALOAD]].concat()),
+        }
         compiler.items.push(Item::Output(k));
+        k += 1;
+    }
+    if let Ending::PcsOpen(runs) = ending {
+        assert_eq!(runs.iter().sum::<usize>(), outputs.len(), "the calls cover the region");
+        let mut first = 0;
+        for &words in runs {
+            compiler.items.push(Item::PcsOpen { first, words });
+            first += words;
+        }
     }
     let count = |of: &dyn Fn(Node) -> bool| (0..n).filter(|&at| uses[at] > 0 && of(graph.nodes[at])).count();
     let field_muls = count(&|node| matches!(node, Node::Mul(..)));
@@ -302,23 +393,55 @@ pub fn compile(graph: &Graph, outputs: &[u32], prefix: &[u8; 48], scalars: usize
     let address = |id: u32| push_usize(slots + 32 * slot[id as usize]);
     let returned = slots + 32 * n_slots;
 
-    let assemble = |fail: usize| {
+    // Code, then the revert, then the constants copied: a `PUSH2` of either address has one length on both passes.
+    let push2 = |at: usize| [0x61, (at >> 8) as u8, at as u8];
+    let assemble = |fail: usize, data_at: usize| {
         let mut code = Vec::new();
         for item in &items {
-            match item {
-                Item::Code(bytes) => code.extend_from_slice(bytes),
-                Item::Store(id) => code.extend([&[DUP1][..], &address(*id), &[MSTORE]].concat()),
-                Item::Load(id) => code.extend([&address(*id)[..], &[MLOAD]].concat()),
+            match *item {
+                Item::Code(ref bytes) => code.extend_from_slice(bytes),
+                Item::Store(id) => code.extend([&[DUP1][..], &address(id), &[MSTORE]].concat()),
+                Item::Load(id) => code.extend([&address(id)[..], &[MLOAD]].concat()),
                 Item::Output(k) => code.extend([&push_usize(returned + 32 * k)[..], &[MSTORE]].concat()),
-                Item::FailIf => code.extend([0x61, (fail >> 8) as u8, fail as u8, JUMPI]),
+                Item::CopyConst { first, words, data } => code.extend(
+                    [
+                        &push_usize(32 * words)[..],
+                        &push2(data_at + data),
+                        &push_usize(returned + 32 * first),
+                        &[CODECOPY],
+                    ]
+                    .concat(),
+                ),
+                // `STATICCALL(gas, PCS_OPEN, input, input length, 0, 0)`: the call attests iff it returns data, which
+                // no failing call and no absent precompile does. Its success flag says no more, and is dropped.
+                Item::PcsOpen { first, words } => code.extend(
+                    [
+                        &[PUSH0, PUSH0][..],
+                        &push_usize(32 * words),
+                        &push_usize(returned + 32 * first),
+                        &push(PCS_OPEN.as_slice()),
+                        &[GAS, STATICCALL, POP, RETURNDATASIZE, ISZERO],
+                        &push2(fail),
+                        &[JUMPI],
+                    ]
+                    .concat(),
+                ),
+                Item::FailIf => code.extend([&push2(fail)[..], &[JUMPI]].concat()),
             }
         }
-        code.extend([&push_usize(32 * outputs.len())[..], &push_usize(returned), &[RETURN]].concat());
+        match ending {
+            Ending::Return => {
+                code.extend([&push_usize(32 * outputs.len())[..], &push_usize(returned), &[RETURN]].concat())
+            }
+            Ending::PcsOpen(_) => code.push(STOP),
+        }
         code
     };
-    let mut code = assemble(0);
-    code = assemble(code.len());
-    code.extend([JUMPDEST, PUSH0, PUSH0, REVERT]);
+    const REVERT_CODE: [u8; 4] = [JUMPDEST, PUSH0, PUSH0, REVERT];
+    let mut code = assemble(0, 0);
+    code = assemble(code.len(), code.len() + REVERT_CODE.len());
+    code.extend(REVERT_CODE);
+    code.extend(data);
     Contract {
         code,
         field_muls,
