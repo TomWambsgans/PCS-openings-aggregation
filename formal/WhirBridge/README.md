@@ -144,8 +144,9 @@ What mumbai's proofs do not cover of our opening (stated in `Gaps.lean`):
    `romSound` to seeds that carry roots (the root history holding `Ev.commit` with the `extract`ed word,
    `Fail` extended to the root inside the seeding hash input, `final_ineq` and `step_ineqH` re-proved).
    The certificate side is done (`openingSpec`). **Alternatively change the Rust**: absorb the root as the
-   opening's first two stream scalars and seed with `keccak256(LABEL ‖ claims)` (IV) and a zero public
-   digest; then `family_sound` (claims chosen by the adversary) applies as proved.
+   opening's first two stream scalars (the verifier also checking they are the root it expects, which
+   only rejects more), and seed with `keccak256(LABEL ‖ claims)` as the IV and a zero public digest; then
+   `family_sound` (claims chosen by the adversary) applies as proved.
 2. **Adversarial statements** are covered for that shape (`family_sound`, statements `Stmt L`: claims on one
    layout, every point of `vars` coordinates, at most `2^46 + 1` of them). `seed`'s encoding of the claims is
    injective only for a fixed layout (no lengths; `LABEL` is shared by the three openings, and the layout
