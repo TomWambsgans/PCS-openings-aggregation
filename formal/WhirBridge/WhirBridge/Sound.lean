@@ -140,6 +140,29 @@ theorem eBatch_le_εWhir {μ R : ℕ} (hw : Whir.Admissible μ R) {J : ℕ} (hJ 
       rw [Nat.cast_pow, Nat.cast_ofNat, show (192 : ℕ) = 64 + 128 from rfl,
         two_pow_div_two_pow]
 
+/-- Level 0's list bound is its certificate's `listHi` (as in mumbai's `deployed_spec_hyps`). -/
+theorem listMax_le_listHi {μ R : ℕ} (h : Whir.Admissible μ R) :
+    (code₀ μ R).listMax ≤ (LeanVM.Protocol.Whir.Params.certOf μ R 0).listHi := by
+  obtain ⟨q₀, rest, hc, -⟩ := LeanVM.Protocol.Whir.Complete.exists_ladder h
+  have hok := LeanVM.Protocol.Whir.Params.shapeOK_all μ
+    (by have := h.2.1; unfold Whir.maxLogStack at this; omega) R
+    (by have := h.2.2.2; unfold Whir.maxLogInvRate at this; omega) h
+  rw [LeanVM.Protocol.Whir.Params.shapeOK, hc] at hok
+  simp only [Bool.and_eq_true] at hok
+  have h0 := LeanVM.Protocol.Whir.Params.chkLevels_head hok.1
+  rw [code₀, LeanVM.Protocol.Whir.Params.deployedCodes, LeanVM.Protocol.Whir.Params.codesOf,
+    LeanVM.Protocol.Whir.Params.mkCode_eq h0]
+  exact LeanVM.Protocol.Whir.Params.Cert.listMax_le h0
+
+/-- **The candidates per commitment at our shapes** (rate `1/2`): level 0's Johnson list has at
+most `9952` stacks at `log_n = 24` (wiring), `7908` at `25` (witness), `3564` at `28`
+(quotient), below mumbai's global `2^18`. -/
+theorem listMax_ours :
+    (code₀ 24 1).listMax ≤ 9952 ∧ (code₀ 25 1).listMax ≤ 7908 ∧ (code₀ 28 1).listMax ≤ 3564 := by
+  refine ⟨(listMax_le_listHi (by decide)).trans (le_of_eq (by decide +kernel)),
+    (listMax_le_listHi (by decide)).trans (le_of_eq (by decide +kernel)),
+    (listMax_le_listHi (by decide)).trans (le_of_eq (by decide +kernel))⟩
+
 /-! ## The layouts of `crates/quotient/src/protocol.rs` -/
 
 /-- `cell_vars(log_rows) = log_rows + 2` (`protocol.rs:84-86`). -/
