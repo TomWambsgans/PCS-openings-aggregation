@@ -746,6 +746,9 @@ pub fn verify_openings(
 }
 
 #[cfg(test)]
+mod adversarial;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::circuit::{Builder, Src, public_words};

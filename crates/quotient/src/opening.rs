@@ -313,6 +313,9 @@ pub fn verify(
 }
 
 #[cfg(test)]
+mod adversarial;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use primitives::test_rng::Rng;
