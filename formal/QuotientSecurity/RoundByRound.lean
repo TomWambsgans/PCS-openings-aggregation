@@ -39,14 +39,14 @@ open Params
 
 /-- The error of each challenge: the copy argument, the degree of the identities, and three. -/
 noncomputable def rbrError : (pSpec P B).ChallengeIdx → ℝ≥0
-  | ⟨⟨1, _⟩, _⟩ => ((2 * P.nCells ^ 2 + 4 * P.nCells + P.words : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0)
+  | ⟨⟨1, _⟩, _⟩ => ((4 * P.nCells + P.words : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0)
   | ⟨⟨3, _⟩, _⟩ => ((B.identity : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0)
   | _ => ((3 : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0)
 
 open Classical in
 theorem prob_first (stmt : Fin P.words → F) (g : B.Msg₁) :
     Pr{let c ← $ᵗ (F × F × F)}[¬ State₁ stmt g ∧ State₂ stmt g c]
-      ≤ (((2 * P.nCells ^ 2 + 4 * P.nCells + P.words : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0) : ℝ≥0) := by
+      ≤ (((4 * P.nCells + P.words : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0) : ℝ≥0) := by
   rw [SampleableType.prEvent_uniformSample]
   have hcard : (Fintype.card (F × F × F) : ENNReal) = ((Fintype.card F ^ (2 + 1) : ℕ) : ENNReal) := by
     rw [Fintype.card_prod, Fintype.card_prod]; push_cast; ring

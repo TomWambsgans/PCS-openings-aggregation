@@ -59,10 +59,15 @@ other twenty-two its row.
    10 spell `J` and whose bits from 11 on are zero, each with the product of `c k` over its set
    bits `k < 8`.
 
-The cells are arbitrary field elements. That they are bits, determined by the input bits, is a
-consequence and not a hypothesis: `cells_determined` (`Circuit.lean`) proves it for a wiring with
-no loop, input rows reading their own output three times, whose zero and one are pinned by
-public words. -/
+The cells are arbitrary field elements, and the relation alone does not make them bits: with the
+identity wiring and zero weights every statement satisfies it (`formal/Review/Degenerate.lean`).
+For a loop-free circuit of χ gates whose input rows read their own output three times,
+`cells_determined` (`Circuit.lean`) shows that a satisfying assignment is the circuit's computation
+on some input bits, given that the zero and the one are pinned (its hypotheses `hzero`, `hone`),
+which public words 5 and 4 provide when the statement's words 4 to 7 are `(1, 0, 0, 0)`. That
+step, the link from an `Instance`'s cells to `Params`' cells, and the deployed circuit itself are
+not yet in Lean (layer F0 of `formal/README.md`): the end theorems do not use `cells_determined`
+and hold for every wiring. -/
 def Relation (stmt : Fin 8 → F) (w : (Fin (22 + 2) → Bool) → F) : Prop :=
   (∀ y : Fin 22 → Bool, gate (w (cellBits (y, 0))) (w (cellBits (y, 1)))
       (w (cellBits (y, 2))) (w (cellBits (y, 3))) = 0) ∧

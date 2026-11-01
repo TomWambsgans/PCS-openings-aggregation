@@ -18,7 +18,9 @@ option. Every file says where it comes from in its first lines.
   - `crates/quotient`: the protocol of `flock::quotient` (`doc/quotient/main.tex` there), its Cantor-basis
     domain (copied), its circuit's wiring and public rows, the Keccak-256 transcript chain, and the idea of
     opening a claim on a table whose stack holds only the lanes that can be nonzero. New here: the gate
-    (one χ on bits), the Keccak-256 statement, and the tables' layouts for leanVM's WHIR as it is.
+    (one χ on bits), the Keccak-256 statement, and the tables' layouts for leanVM's WHIR as it is, including
+    the hidden layouts of `crates/quotient/HIDING.md` (which adapt the padding of `flock::membership`,
+    `crates/flock/membership-zk.md` on the same branch) and their exact checks (`src/hiding.rs`).
   - `crates/evm`: the bytecode generator, the recording scalar and the revm machine with `FIELD_MUL`.
   - `formal/`: the Lean proofs of `formal/quotient` (sorry-free for the original circuit), being ported to
     this circuit; each file names its source. Dependency revisions are those of

@@ -47,14 +47,19 @@ def Bounds.Msg₂ (B : P.Bounds) : Type _ :=
       R.q.natDegree ≤ B.quotient ∧ R.qGate.natDegree ≤ B.quotient ∧
       R.junk.natDegree ≤ B.quotient }
 
-/-- The degree of a cell's polynomial, of a denominator, and of the two identities: a bound on
-each term of either identity, summed (the gate is of degree 2, so its term is `2 * cell`). -/
+/-- The degree of a cell's polynomial, of a denominator, and of the two identities: the largest
+of the bounds on the terms of either identity, `D D' h`, `v_cells q`, `D`, `D'`, `pub w D D'`,
+`v_rows (D D' q_gate + v_cells j)` and `D D' gate` (the gate is of degree 2, so its term is
+`2 * cell`). It bounds the product the verifier inverts, `(D D' + v_cells) v_rows`, too.
+`identity` is irreducible: on the instance's literal sizes, unfolding its `max` by evaluation
+exhausts the recursion depth (`Params.ofCantor_identity_eq` computes it). -/
 def Bounds.cell (B : P.Bounds) : ℕ := 3 + B.witness * 4
 
 def Bounds.denominator (B : P.Bounds) : ℕ := B.cell + B.sigma + 1
 
-def Bounds.identity (B : P.Bounds) : ℕ :=
-  2 * B.denominator + B.cells + B.rows + B.quotient + B.pub + 2 * B.cell
+@[irreducible] def Bounds.identity (B : P.Bounds) : ℕ :=
+  max (max (2 * B.denominator) B.cells + max B.cells B.rows + B.quotient)
+    (2 * B.denominator + max (B.pub + B.cell) (2 * B.cell))
 
 theorem natDegree_digit_le (j : Fin 4) : (digit j : F[X]).natDegree ≤ 3 := by
   fin_cases j
@@ -143,7 +148,7 @@ theorem natDegree_gateDefect_le (g : B.Msg₁) (R : B.Msg₂) (α β : F) :
   unfold gateDefect Bounds.identity
   refine natDegree_add_le_of_degree_le ?_ ?_
   · refine (natDegree_mul_le_of_le hr (natDegree_add_le_of_degree_le
-      (n := 2 * B.denominator + B.cells + B.quotient) ?_ ?_)).trans (by omega)
+      (n := max (2 * B.denominator) B.cells + B.quotient) ?_ ?_)).trans (by omega)
     · exact (natDegree_mul_le_of_le (natDegree_mul_le_of_le hd hd') h3).trans (by omega)
     · exact (natDegree_mul_le_of_le hv h4).trans (by omega)
   · exact (natDegree_mul_le_of_le (natDegree_mul_le_of_le hd hd') hg).trans (by omega)

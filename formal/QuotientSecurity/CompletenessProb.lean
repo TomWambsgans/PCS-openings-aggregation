@@ -62,7 +62,7 @@ theorem natDegree_rejectPoly_le (Bd : P.Bounds) (g : Bd.Msg₁) (α β : E) :
   have h1 := Params.natDegree_dPoly_le Bd g α β
   have h2 := Params.natDegree_dNextPoly_le Bd g α β
   have h3 : (Params.dPoly P g.1 α β * Params.dNextPoly P g.1 α β + P.vCells).natDegree
-      ≤ 2 * Bd.denominator + Bd.cells :=
+      ≤ max (2 * Bd.denominator) Bd.cells :=
     natDegree_add_le_of_degree_le (natDegree_mul_le.trans (by omega)) (Bd.hCells.trans (by omega))
   unfold rejectPoly Params.Bounds.identity
   exact natDegree_mul_le.trans (by have := Bd.hRows; omega)
