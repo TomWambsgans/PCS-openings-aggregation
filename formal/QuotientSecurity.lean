@@ -195,6 +195,10 @@ import QuotientSecurity.Statement
 #guard_msgs in
 #print axioms QuotientSecurity.knowledgeSoundness_ofCantor
 
+/-- info: 'QuotientSecurity.Params.ofCantor_identity_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Params.ofCantor_identity_eq
+
 /-- info: 'QuotientSecurity.exists_instance' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms QuotientSecurity.exists_instance
