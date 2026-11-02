@@ -24,6 +24,7 @@ import ZK.CoreBudget
 import ZK.CoreDeployed
 import ZK.CoreTrees
 import ZK.CoreOpen
+import ZK.CoreRed
 import ZK.Axioms
 
 /-!

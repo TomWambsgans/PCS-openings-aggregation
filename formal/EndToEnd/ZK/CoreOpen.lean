@@ -29,12 +29,12 @@ attribute [local instance high] Primitives.instFintypeF64 Primitives.instSamplea
 
 set_option linter.unusedSectionVars false
 
-theorem eOfLimbs_limbsOf (x : E) : eOfLimbs (limbsOf x) = x :=
+theorem eOfLimbs_limbsOf₀ (x : E) : eOfLimbs (limbsOf x) = x :=
   Primitives.F192.ofLimbs_limb x
 
 theorem map_eOfLimbs_limbsOf (l : List E) : (l.map limbsOf).map eOfLimbs = l := by
   rw [List.map_map]
-  exact (List.map_congr_left fun x _ ↦ eOfLimbs_limbsOf x).trans (List.map_id l)
+  exact (List.map_congr_left fun x _ ↦ eOfLimbs_limbsOf₀ x).trans (List.map_id l)
 
 variable (π : Equiv.Perm Eager.St) (fuel : ℕ)
 
