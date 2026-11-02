@@ -1410,6 +1410,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gf2_linear"
+version = "0.1.0"
+dependencies = [
+ "primitives",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1741,10 +1748,12 @@ version = "0.1.0"
 dependencies = [
  "bench",
  "fiat_shamir",
+ "gf2_linear",
  "leanvm_flock_gas",
  "lv42_fiat_shamir",
  "lv42_flock",
  "lv42_parallel",
+ "lv42_pcs",
  "lv42_primitives",
  "parallel",
  "pcs",

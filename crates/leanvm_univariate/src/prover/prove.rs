@@ -216,8 +216,8 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
         stack1.fill_unused(0xC1);
         stack_f.fill_unused(0xF0);
     }
-    let committed1 = opening::commit(&stack1.words, stack1.layout.vars, stack1.placed());
-    let committed_f = opening::commit(&stack_f.words, stack_f.layout.vars, stack_f.placed());
+    let committed1 = opening::commit_keeping_codeword(&stack1.words, stack1.layout.vars, stack1.placed());
+    let committed_f = opening::commit_keeping_codeword(&stack_f.words, stack_f.layout.vars, stack_f.placed());
     report.stacks.push((Commitment::C1, stack1.placed(), stack1.layout.vars));
     report.stacks.push((Commitment::Setup, stack_f.placed(), stack_f.layout.vars));
     clock.lap(&mut report, "C1 and setup: WHIR commits");
@@ -333,7 +333,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     if config.garbage {
         stack2.fill_unused(0xC2);
     }
-    let committed2 = opening::commit(&stack2.words, stack2.layout.vars, stack2.placed());
+    let committed2 = opening::commit_keeping_codeword(&stack2.words, stack2.layout.vars, stack2.placed());
     report.stacks.push((Commitment::C2, stack2.placed(), stack2.layout.vars));
     clock.lap(&mut report, "C2: WHIR commit");
     writer.send_root(config.stand_in_roots.map_or_else(|| halves(&committed2.root), |r| r[1]));
@@ -402,6 +402,9 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
         writer.send(to_v(v));
     }
     clock.lap(&mut report, "values at t");
+
+    // Past the values at t, the proof reads the stacks and their commitments alone.
+    drop((c1, setup, leaves, heap_values, heap_novel, heap_b, tree, tree_chunks, constraint, constraint_chunks));
 
     // 8. ρ, and the combined claims: the verifier's own, on the stream so far, in weighted mode (which reads nothing
     // after ρ). With the matrices' reduction pending, weighted mode reads it after the slices: `Replay` serves it there

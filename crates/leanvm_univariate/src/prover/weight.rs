@@ -18,8 +18,9 @@
 //! size but the stack is held. A factored piece's round is two inner products of `K`-words with `E`-tables per
 //! `2^(a + j)` words ([`dot_base`]), the twisted piece's one map lookup per pair of words.
 
+use gf2_linear::Linear;
 use leanvm_flock_gas::field::E;
-use primitives::field::{F64, F192, F192Unreduced, Weights8, dot_base};
+use primitives::field::{F64, F192, F192Unreduced, Weights8, dot_base, mul4};
 use primitives::multilinear::eq_table;
 
 use super::poly::from_v;
@@ -32,62 +33,6 @@ pub const LOW_VARS: usize = 8;
 const SLOT_BITS: usize = 8;
 /// Words per task of a round.
 const TASK_WORDS: usize = 1 << 15;
-
-/// `x ↦ Σ_k c_k x^(2^k)` for `N` coefficient lists at once, GF(2)-linear on `E`, as 24 byte tables:
-/// `L(x) = Σ_j T_j[byte_j(x)]`.
-pub struct Linear<const N: usize> {
-    tables: Vec<[[F192; N]; 256]>,
-}
-
-impl<const N: usize> Linear<N> {
-    /// `coefficients[n][k]` is map `n`'s coefficient of `x^(2^k)`.
-    pub fn new(coefficients: [&[F192]; N]) -> Self {
-        let top = coefficients.iter().map(|c| c.len()).max().unwrap_or(0);
-        let image = |x: F192| {
-            let mut power = x;
-            let mut sum = [F192::ZERO; N];
-            for k in 0..top {
-                for (s, c) in sum.iter_mut().zip(&coefficients) {
-                    if let Some(&c) = c.get(k) {
-                        *s += c * power;
-                    }
-                }
-                power = power.square();
-            }
-            sum
-        };
-        let mut tables = vec![[[F192::ZERO; N]; 256]; 24];
-        for (j, table) in tables.iter_mut().enumerate() {
-            let (limb, byte) = (j / 8, j % 8);
-            let bits: Vec<[F192; N]> = (0..8)
-                .map(|i| {
-                    let mut c = [0u64; 3];
-                    c[limb] = 1u64 << (8 * byte + i);
-                    image(F192::new(c[0], c[1], c[2]))
-                })
-                .collect();
-            for v in 1..256usize {
-                let low = v.trailing_zeros() as usize;
-                table[v] = std::array::from_fn(|n| table[v & (v - 1)][n] + bits[low][n]);
-            }
-        }
-        Self { tables }
-    }
-
-    #[inline]
-    pub fn at(&self, x: F192) -> [F192; N] {
-        let mut acc = [F192::ZERO; N];
-        for (limb, word) in [x.c0, x.c1, x.c2].into_iter().enumerate() {
-            for byte in 0..8 {
-                let entry = &self.tables[8 * limb + byte][(word >> (8 * byte)) as usize & 0xff];
-                for (a, &e) in acc.iter_mut().zip(entry) {
-                    *a += e;
-                }
-            }
-        }
-        acc
-    }
-}
 
 /// An `E`-table to take inner products with `K`-words: packed for [`dot_base`] when its length is a multiple of 8.
 enum Table {
@@ -202,6 +147,32 @@ enum Prep {
 fn split_eq(point: &[F192]) -> (Vec<F192>, Vec<F192>, usize) {
     let bits = point.len().min(10);
     (eq_table(&point[..bits]), eq_table(&point[bits..]), bits)
+}
+
+/// `lo[i mod 2^bits] hi[i >> bits]` for the eight indices from `first` (past `end`, zero).
+#[inline]
+fn eq8(lo: &[F192], hi: &[F192], bits: usize, first: usize, end: usize) -> [F192; 8] {
+    let mask = (1 << bits) - 1;
+    let at = |k: usize| {
+        let i = first + k;
+        if i < end { (lo[i & mask], hi[i >> bits]) } else { (F192::ZERO, F192::ZERO) }
+    };
+    let pairs: [(F192, F192); 8] = std::array::from_fn(at);
+    let low = mul4(std::array::from_fn(|k| pairs[k].0), std::array::from_fn(|k| pairs[k].1));
+    let high = mul4(std::array::from_fn(|k| pairs[4 + k].0), std::array::from_fn(|k| pairs[4 + k].1));
+    std::array::from_fn(|k| if k < 4 { low[k] } else { high[k - 4] })
+}
+
+/// A round's two sums from their parts by offset (`at[y]` and `at[2^j + y]`): `Σ_y e(y) at[y]`, each half.
+fn by_offset(at: &[F192Unreduced], e: &[F192]) -> (F192, F192) {
+    let (low, high) = at.split_at(e.len());
+    let sum = |part: &[F192Unreduced]| {
+        part.iter()
+            .zip(e)
+            .fold(F192Unreduced::ZERO, |acc, (x, &ey)| acc ^ ey.mul_unreduced(x.reduce()))
+            .reduce()
+    };
+    (sum(low), sum(high))
 }
 
 /// Fold a table's pairs at `r`: `t[2i] + r (t[2i] + t[2i + 1])`.
@@ -393,10 +364,11 @@ impl Weight {
                         }
                     }
                     (Shape::Twisted { .. }, Some((_, Some(map), lo, hi, bits))) => {
-                        let mask = (1 << bits) - 1;
-                        for i in start..end {
-                            let [w] = map.at(lo[i & mask] * hi[i >> bits]);
-                            acc ^= w.mul_base_unreduced(words[piece.offset + i]);
+                        for first in (start..end).step_by(8) {
+                            let [w] = map.at8(&eq8(lo, hi, *bits, first, end));
+                            for (k, w) in w.iter().enumerate().take(end - first) {
+                                acc ^= w.mul_base_unreduced(words[piece.offset + first + k]);
+                            }
                         }
                     }
                     _ => unreachable!(),
@@ -481,8 +453,16 @@ impl Weight {
             Prep::Dense | Prep::Twisted { .. } => (1 << (piece.vars - j - 1), (TASK_WORDS >> (j + 1)).max(1)),
             Prep::Scalar(_) => (1, 1),
         });
-        let pair_c = |at: usize| -> (F192, F192) {
-            (folded.dot_clipped(words, at), folded.dot_clipped(words, at + (1 << j)))
+        // A pair's weights `(W(2i), W(2i) + W(2i + 1))` against the folded stack's pair, by the offset `y` in its
+        // `2^j` words: `Σ_i W_0(i) C_j(2i) = Σ_y e(y) Σ_i W_0(i) C(2^(j+1) i + y)`, one mixed product a word.
+        let span = 1usize << j;
+        let pairs = |at: &mut [F192Unreduced], piece: &Piece, i: usize, w0: F192, dw: F192| {
+            let base = piece.offset + (2 * i << j);
+            let (low, high) = words[base..base + 2 * span].split_at(span);
+            for (y, (&c0, &c1)) in low.iter().zip(high).enumerate() {
+                at[y] ^= w0.mul_base_unreduced(c0);
+                at[span + y] ^= dw.mul_base_unreduced(c0 + c1);
+            }
         };
         let (a, b) = parallel::map_reduce(
             tasks.len(),
@@ -490,45 +470,32 @@ impl Weight {
             |t| {
                 let (index, start, end) = tasks[t];
                 let piece = &self.pieces[index];
-                let (mut a, mut b) = (F192Unreduced::ZERO, F192Unreduced::ZERO);
-                match (&preps[piece.shape], &self.shapes[piece.shape]) {
+                let (a, b) = match (&preps[piece.shape], &self.shapes[piece.shape]) {
                     (Prep::Factored { ga, gb, span }, Shape::Factored { h, .. }) => {
+                        let (mut a, mut b) = (F192Unreduced::ZERO, F192Unreduced::ZERO);
                         for u in start..end {
                             let at = &words[piece.offset + u * span..];
                             a ^= h[u].mul_unreduced(ga.dot(at).reduce());
                             b ^= h[u].mul_unreduced(gb.dot(at).reduce());
                         }
+                        (a.reduce(), b.reduce())
                     }
                     (Prep::Dense, Shape::Dense(table)) => {
+                        let mut at = vec![F192Unreduced::ZERO; 2 * span];
                         for i in start..end {
-                            let (w0, dw) = (table[2 * i], table[2 * i] + table[2 * i + 1]);
-                            let at = piece.offset + (2 * i << j);
-                            if j == 0 {
-                                let (c0, c1) = (words[at], words[at + 1]);
-                                a ^= w0.mul_base_unreduced(c0);
-                                b ^= dw.mul_base_unreduced(c0 + c1);
-                            } else {
-                                let (c0, c1) = pair_c(at);
-                                a ^= w0.mul_unreduced(c0);
-                                b ^= dw.mul_unreduced(c0 + c1);
-                            }
+                            pairs(&mut at, piece, i, table[2 * i], table[2 * i] + table[2 * i + 1]);
                         }
+                        by_offset(&at, e)
                     }
                     (Prep::Twisted { lo, hi, bits, map }, _) => {
-                        let mask = (1 << bits) - 1;
-                        for i in start..end {
-                            let [w0, dw] = map.at(lo[i & mask] * hi[i >> bits]);
-                            let at = piece.offset + (2 * i << j);
-                            if j == 0 {
-                                let (c0, c1) = (words[at], words[at + 1]);
-                                a ^= w0.mul_base_unreduced(c0);
-                                b ^= dw.mul_base_unreduced(c0 + c1);
-                            } else {
-                                let (c0, c1) = pair_c(at);
-                                a ^= w0.mul_unreduced(c0);
-                                b ^= dw.mul_unreduced(c0 + c1);
+                        let mut at = vec![F192Unreduced::ZERO; 2 * span];
+                        for first in (start..end).step_by(8) {
+                            let [w0, dw] = map.at8(&eq8(lo, hi, *bits, first, end));
+                            for k in 0..(end - first).min(8) {
+                                pairs(&mut at, piece, first + k, w0[k], dw[k]);
                             }
                         }
+                        by_offset(&at, e)
                     }
                     (Prep::Scalar(value), _) => {
                         // The block is one word of the folded stack, at its offset's position.
@@ -539,8 +506,8 @@ impl Weight {
                         return (a, s * (own + other));
                     }
                     _ => unreachable!(),
-                }
-                (piece.scale * a.reduce(), piece.scale * b.reduce())
+                };
+                (piece.scale * a, piece.scale * b)
             },
             |x, y| (x.0 + y.0, x.1 + y.1),
         );
@@ -620,12 +587,13 @@ impl Weight {
                 Shape::Twisted { c, point, bound } => {
                     let map = Linear::new([&c[..]]);
                     let (lo, hi, bits) = split_eq(&point[*bound..]);
-                    let mask = (1 << bits) - 1;
                     parallel::chunks_mut(block, 1 << 12, |c, chunk| {
-                        for (m, o) in chunk.iter_mut().enumerate() {
-                            let m = (c << 12) + m;
-                            let [w] = map.at(lo[m & mask] * hi[m >> bits]);
-                            *o += s * w;
+                        let (first, end) = (c << 12, (c << 12) + chunk.len());
+                        for (o, m) in chunk.chunks_mut(8).zip((first..end).step_by(8)) {
+                            let [w] = map.at8(&eq8(&lo, &hi, bits, m, end));
+                            for (o, &w) in o.iter_mut().zip(&w) {
+                                *o += s * w;
+                            }
                         }
                     });
                 }

@@ -10,6 +10,8 @@
 //! those absent lanes: the claim's `eq(point, ·)` restricted to the committed lanes, which is the same claim as the
 //! stack is zero there.
 
+use std::sync::Mutex;
+
 use fiat_shamir::digest_words;
 use fiat_shamir::merkle::Hash;
 use fiat_shamir::transcript::{Proof, ProverState};
@@ -26,15 +28,18 @@ const LABEL: &[u8; 20] = b"leanvm-univariate-op";
 /// `PCS_OPEN`'s 32 bytes (SPEC.md §13, F2).
 pub const VERSION: u64 = 2;
 
-/// A commitment: its root and Merkle tree, the stack's variables and the words its blocks place.
+/// A commitment: its root and Merkle tree, the stack's variables and the words its blocks place, and the codeword
+/// when it is kept, until an opening takes it.
 pub struct Committed {
     pub root: Hash,
     tree: Vec<Hash>,
     pub vars: usize,
     pub placed: u64,
+    codeword: Mutex<Option<Vec<F64>>>,
 }
 
-/// Commit to a stack of whole lanes (`words.len()` a multiple of `2^(vars - 6)`).
+/// Commit to a stack of whole lanes (`words.len()` a multiple of `2^(vars - 6)`), keeping the Merkle tree alone:
+/// the opening encodes the rows its queries open again from the stack.
 pub fn commit(words: &[F64], vars: usize, placed: u64) -> Committed {
     let (commitment, tree) = commit_tree_in(words, vars, LANE_FOLD, LOG_INV_RATE, Vec::new());
     Committed {
@@ -42,6 +47,21 @@ pub fn commit(words: &[F64], vars: usize, placed: u64) -> Committed {
         tree,
         vars,
         placed,
+        codeword: Mutex::new(None),
+    }
+}
+
+/// [`commit`], keeping the codeword too (`2^LOG_INV_RATE` words per word of the stack), from which the first opening
+/// reads the rows its queries open instead of encoding them again, and which it frees. The root, the tree and the
+/// proofs are [`commit`]'s.
+pub fn commit_keeping_codeword(words: &[F64], vars: usize, placed: u64) -> Committed {
+    let (commitment, data) = pcs::whir::commit(words, vars, LANE_FOLD, LOG_INV_RATE);
+    Committed {
+        root: commitment.root,
+        tree: data.merkle_tree,
+        vars,
+        placed,
+        codeword: Mutex::new(Some(data.codeword)),
     }
 }
 
@@ -69,7 +89,7 @@ fn eq_bits(index: usize, point: &[F192]) -> F192 {
     })
 }
 
-/// Prove `stack(point) = value`.
+/// Prove `stack(point) = value`. A kept codeword serves this opening and is freed after it.
 pub fn open(words: &[F64], committed: &Committed, layout: &[u8; 32], point: &[F192], value: F192) -> Proof {
     let vars = committed.vars;
     assert_eq!(point.len(), vars);
@@ -82,7 +102,17 @@ pub fn open(words: &[F64], committed: &Committed, layout: &[u8; 32], point: &[F1
         scales: (0..lanes).map(|l| eq_bits(l, &point[log_lane..])).collect(),
         low: primitives::multilinear::eq_table(&point[..log_lane]),
     };
-    recursive_prover_with_lane_tensors(&config, vars, words, &[tensor], value, None, &committed.tree, &mut ps);
+    let codeword = committed.codeword.lock().expect("the codeword").take();
+    recursive_prover_with_lane_tensors(
+        &config,
+        vars,
+        words,
+        &[tensor],
+        value,
+        codeword.as_deref(),
+        &committed.tree,
+        &mut ps,
+    );
     ps.into_proof()
 }
 
