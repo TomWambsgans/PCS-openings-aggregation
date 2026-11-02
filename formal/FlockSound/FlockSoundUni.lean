@@ -2,6 +2,7 @@
 import FlockSoundUni.RoundByRound
 import FlockSoundUni.Loops
 import FlockSoundUni.Decode
+import FlockSoundUni.Transcription
 
 /-- info: 'FlockSound.Uni.card_hit_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

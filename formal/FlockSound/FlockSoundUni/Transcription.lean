@@ -1,7 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. The evaluators are `formal/UniStatement`'s
 -- (`UniStatement/{Basic, Flock, Mapping, Security}.lean`, transcribed from `crates/leanvm_flock_gas`), the
 -- mathematical objects `formal/FlockSound`'s.
-import FlockSoundUni.TxBasic
+import FlockSoundUni.Tower
 
 /-!
 # The transcription lemmas: the code's evaluators are the soundness proof's objects
@@ -22,7 +22,10 @@ Flock's verifier (`UniStatement.Flock`) computes with `List`s, `Array`s and fold
 * **the matrices** (item 4): the stacks' extension is `matMle` (`mleArr_flockMatrixStack`), so
   `PendingHolds`' sum is the product sum (`pending_sum`, `pendingHolds_iff`);
 * **the main line** (`k = l = 3`, points as `List.ofFn`): `tx_fixedChallenges_getD`, `tx_interp`,
-  `tx_claim`, `tx_sum`, the forms `Catch.lean` consumes.
+  `tx_claim`, `tx_sum`, the forms `Catch.lean` consumes;
+* **the ring switch** (items 5 and 6, `Tower.lean`): `towerCoefficients` gives the ring claim's value
+  (`ringClaim_code`) and `towerTarget` the target `Σ_i x^i Φ_tower(s_i)` (`towerTarget_eq_target`);
+* **`FlockTx`**, all of them at the main line, in the form `lean-flock-link`'s `Tx` takes; **`flockTx`**.
 
 The skip's lemmas hold for any `k ≤ 6`, the pending reduction's for any `k + l = 6` (`k = 0` included:
 its one Lagrange weight is `1`, `tx_lag_zero`).
@@ -818,6 +821,61 @@ theorem tx_sum : ∀ (z α rLc : E) (rl : Fin 3 → E) (rh χ' : Fin 8 → E) (s
   rw [pending_sum (k := 3) (l := 3) rfl (by decide) z α rLc _ _ _ _ List.length_ofFn List.length_ofFn,
     tx_ptOf_ofFn, tx_ptOf_ofFn, tx_ptOf_ofFn, tx_sliceOf_ofFn]
 
+/-! ## `FlockTx`: the transcription, bundled -/
+
+/-- **The evaluator transcription Flock's soundness needs** (items 1–6), at the main line (`k = l = 3`,
+the lists the code reads being `List.ofFn` of the cube forms' functions): the evaluators
+`Flock.verifyDeferred` calls, and those `FlockEndHolds` and `PendingHolds` read, equal `FlockSound`'s
+objects at every input. Field by field the form `lean-flock-link`'s `Tx κ` (`FlockSoundUni/Catch.lean`)
+takes, with its `sliceList s` and `towerShifts` unfolded (`List.ofFn fun i : Fin 64 ↦ s ((cubeFin 6).symm i)`
+and `[1, 2, 4, 8, 16, 32]`, both by definition). -/
+structure FlockTx (κ : ℕ) : Prop where
+  /-- `fixed_challenges()` are leanVM's seven fixed coordinates (item 2). -/
+  fixed : ∀ i : Fin 7, Flock.fixedChallenges.getD i 0 = fixedPt i
+  /-- `E::pow` is the power. -/
+  epow : ∀ (x : E) (n : ℕ), UniStatement.epow x n = x ^ n
+  /-- The skip's start is the interpolant over the nodes `φ_8(0..15)` (item 1). -/
+  interp : ∀ (cv : Cube 3 → E) (z : E),
+    Flock.lagrangeInterpolate 16 (List.replicate 8 0 ++ List.ofFn fun i : Fin 8 ↦ cv ((cubeFin 3).symm i)) z =
+      (FlockSound.interp (skipNodes 3 (by decide)) cv).eval z
+  /-- **The ring switch's target** in tower order is `Σ_cy x^cy Φ_tower(s_cy)` (item 6). -/
+  target : ∀ (s : Cube (3 + 3) → E) (f : Fin 6 → E),
+    Flock.towerTarget (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)) (List.ofFn f) =
+      ∑ cy, packW (k := 3) (l := 3) rfl cy * stagedMap [1, 2, 4, 8, 16, 32] f (s cy)
+  /-- **The ring claim's weight** (`towerCoefficients` on the 64 twists) is `Φ_tower(eq(p, ·))` against
+  the column (item 5). -/
+  ring : ∀ (qf : LeanVM.Protocol.Column (8 + κ)) (p : Fin (8 + κ) → E) (f : Fin 6 → E),
+    ∑ k ∈ range 64, (Flock.towerCoefficients (List.ofFn f)).getD k 0 * mleE qf (twist (List.ofFn p) k) =
+      ∑ u, stagedMap [1, 2, 4, 8, 16, 32] f (eqP p u) * colWord qf u
+  /-- **The pending claim** is `r_lc` plus the terminal's two known terms (item 3). -/
+  claim : ∀ (z α rLc : E) (rl : Fin 3 → E) (rh χ' : Fin 8 → E) (s : Cube (3 + 3) → E),
+    (Flock.Pending.new (some z) (List.ofFn rl) (List.ofFn rh) (List.ofFn χ') α rLc
+        (some (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)))).claim =
+      rLc + (α ^ 2 * FlockSound.eqEval rh χ' * ∑ cy, lowW (skipNodes 3 (by decide)) z rl cy * s cy +
+        α ^ 3 * eqP χ' ((posFin (k := 3) (l := 3) rfl).symm Lv42.Parameters.Flock.constPos).2 *
+          s ((posFin (k := 3) (l := 3) rfl).symm Lv42.Parameters.Flock.constPos).1)
+  /-- **The pending sum** on the setup stacks is the matrices' part against the slices (item 4). -/
+  sum : ∀ (z α rLc : E) (rl : Fin 3 → E) (rh χ' : Fin 8 → E) (s : Cube (3 + 3) → E),
+    ∑ u ∈ range (2 ^ (Flock.Pending.new (some z) (List.ofFn rl) (List.ofFn rh) (List.ofFn χ') α rLc
+        (some (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)))).rounds),
+      Pending.G (Flock.Pending.new (some z) (List.ofFn rl) (List.ofFn rh) (List.ofFn χ') α rLc
+          (some (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)))) u *
+        Pending.L (Flock.Pending.new (some z) (List.ofFn rl) (List.ofFn rh) (List.ofFn χ') α rLc
+          (some (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)))) u =
+      ∑ cy, matPart (cubeMat (k := 3) (l := 3) rfl Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A)
+        (cubeMat (k := 3) (l := 3) rfl Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B)
+        (skipNodes 3 (by decide)) z rl rh χ' α cy * s cy
+
+/-- **The transcription holds**, for every `κ`. -/
+theorem flockTx (κ : ℕ) : FlockTx κ where
+  fixed := tx_fixedChallenges_getD
+  epow := epow_eq
+  interp := tx_interp
+  target := tower_tx_target
+  ring := tower_tx_ring κ
+  claim := tx_claim
+  sum := tx_sum
+
 end FlockSound.Uni
 
 /-! The guards below fail the build if a lemma's axioms grow beyond Lean's three. -/
@@ -898,3 +956,9 @@ end FlockSound.Uni
 #guard_msgs in
 #print axioms FlockSound.Uni.tx_sum
 
+
+/-! ## Axiom guards -/
+
+/-- info: 'FlockSound.Uni.flockTx' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.flockTx
