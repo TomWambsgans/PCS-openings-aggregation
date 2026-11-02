@@ -278,4 +278,143 @@ theorem adv_relabelC {α : Type} (A : OracleComp Common.RandomPermutationOracles
         _ =ᵈ _ := EvalDistEq.bind_left
             (by rw [← hq]; exact LeanVM.Rpm.lazyPerm_relabel LeanVM.Rpm.stateEquiv q s) _
 
+/-- **The experiment is the real world of the transfer game**: the setup its honest part before
+the adversary, the adversary (with coins) on bytes, the verifier on bytes. -/
+theorem rpmThreaded_evalDistEq (setup : OracleComp KeccakCalls Bytes32) (hS : HOnly setup)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs)) :
+    rpmThreaded W D setup A =ᵈ
+      Common.realGame2 Common.keccakPadding Common.KState.zero (gameB W D setup A) := by
+  rw [LeanVM.Rpm.realGame2_eq, gameB, Common.rpmGame2, preB,
+    hEmbed2_toRH (loggedKC setup) (hOnly_loggedKC_run setup hS [])]
+  simp only [simulateQ_bind, StateT.run'_eq, StateT.run_bind, map_bind]
+  simp only [postB, simulateQ_map, StateT.run_map, Functor.map_map, RR,
+    QueryImpl.simulateQ_compose]
+  have hpre := (LeanVM.Rpm.post_relabel (loggedKC setup) []).symm
+  simp only [projLog, LeanVM.Rpm.logMap, List.map_nil, RR, QueryImpl.simulateQ_compose] at hpre
+  rw [rpmThreaded]
+  refine EvalDistEq.trans (EvalDistEq.bind_left hpre _) ?_
+  rw [bind_map_left]
+  refine EvalDistEq.bind_right _ fun x => ?_
+  have hadv := (adv_relabelC (A x.1.1) x.2 []).symm
+  simp only [RR, QueryImpl.simulateQ_compose] at hadv
+  simp only [advB]
+  refine EvalDistEq.trans (EvalDistEq.bind_left hadv _) ?_
+  rw [bind_map_left]
+  refine EvalDistEq.bind_right _ fun p => ?_
+  have h := (LeanVM.Rpm.post_relabel' (verifyD W D (withIr x.1.1 p.1.1)) p.2).symm.map
+    fun v => ((withIr x.1.1 p.1.1, v), x.1.2, p.1.2)
+  simp only [StateT.run'_eq, Functor.map_map, RR, QueryImpl.simulateQ_compose] at h
+  simp only [StateT.run'_eq, bind_pure_comp, Functor.map_map]
+  exact h
+
+/-! ## The transfer game's discipline and permutation calls -/
+
+theorem hOnly_hash256 (x : List UInt8) : HOnly (hash256 x) :=
+  (LeanVM.Rpm.hOnly_queryH x).bind fun _ => trivial
+
+theorem hOnly_chain (π : RootProof F) : HOnly (chainWith W hash256 π) := by
+  simp only [chainWith]
+  exact (hOnly_hash256 _).bind fun _ => (hOnly_hash256 _).bind fun _ =>
+    (hOnly_hash256 _).bind fun _ => (hOnly_hash256 _).bind fun _ =>
+      (hOnly_hash256 _).bind fun _ => (hOnly_hash256 _).bind fun _ => trivial
+
+/-- **`opening::verify` follows the duplex discipline**: its one direct call before the program
+is the seed, zero from lane `8` on. -/
+theorem duplexVm_ourVerifier (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking) × Proof) :
+    DuplexVm (ourVerifier L R w) [] := by
+  rw [LeanVM.Rpm.duplexVm_iff_duplexP]
+  unfold ourVerifier openingVerifyWithHash
+  split_ifs
+  · refine ((LeanVM.Rpm.hOnly_queryH _).duplexP []).bind fun iv h' hh => ?_
+    subst hh
+    exact (LeanVM.Rpm.duplexP_queryF_bind _ _ _ _).mpr
+      ⟨LeanVM.Rpm.admissibleVm_seedInput _ _ _, fun seed =>
+        LeanVM.Rpm.duplexP_runProof _ List.mem_cons_self _⟩
+  · refine ((LeanVM.Rpm.hOnly_queryH _).duplexP []).bind fun iv h' hh => ?_
+    subst hh
+    exact (LeanVM.Rpm.duplexP_queryF_bind _ _ _ _).mpr
+      ⟨LeanVM.Rpm.admissibleVm_seedInput _ _ _, fun seed => trivial⟩
+  · trivial
+
+/-- **The deployed verifier follows the duplex discipline.** -/
+theorem duplexVm_verifyD (po : RootProof F × OpenProofs) : DuplexVm (verifyD W D po) [] := by
+  unfold verifyD
+  refine LeanVM.Rpm.DuplexVm.bind ?_ fun ch => ?_
+  · rw [LeanVM.Rpm.duplexVm_iff_duplexP]
+    exact ((hOnly_chain W po.1).duplexP []).mono fun _ _ _ => trivial
+  · exact LeanVM.Rpm.DuplexVm.bind (duplexVm_ourVerifier _ _ _) fun _ =>
+      LeanVM.Rpm.DuplexVm.bind (duplexVm_ourVerifier _ _ _) fun _ =>
+        LeanVM.Rpm.DuplexVm.bind (duplexVm_ourVerifier _ _ _) fun _ => trivial
+
+theorem duplex_postB (x : Bytes32 × Transcript)
+    (a : (RootProof F × OpenProofs) × PermutationTranscript) :
+    Common.Duplex Common.KState.zero Common.keccakNF (postB W D x a) [] := by
+  have h := LeanVM.Rpm.duplex_toRHF _ [] (duplexVm_verifyD W D (withIr x.1 a.1))
+  exact LeanVM.Rpm.duplex_map _ _ [] (by simpa using h)
+
+theorem cost_hash256_bind {β : Type} (x : List UInt8) (k : Bytes32 → OracleComp KeccakCalls β)
+    (n : ℕ) (hx : x.length / 136 + 1 ≤ n)
+    (hk : ∀ u, Common.QueryCostAtMost (k u) hashBlocks (n - (x.length / 136 + 1))) :
+    Common.QueryCostAtMost (hash256 x >>= k) hashBlocks n := by
+  rw [hash256, callKeccak256, bind_assoc]
+  simp only [pure_bind]
+  exact (Common.isWeightBound_query_bind_iff hashBlocks (.inl x) _ n).mpr ⟨hx, fun u => hk _⟩
+
+/-- **The chain makes seven calls of `π`**: six hashes, of one block each but the last's two. -/
+theorem cost_chain (π : RootProof F) :
+    Common.QueryCostAtMost (chainWith W hash256 π) hashBlocks 7 := by
+  simp only [chainWith]
+  refine cost_hash256_bind _ _ 7 (by simp [length_labelOf]) fun _ => ?_
+  refine cost_hash256_bind _ _ _ (by simp [length_labelOf]) fun _ => ?_
+  refine cost_hash256_bind _ _ _ (by simp [length_labelOf]) fun _ => ?_
+  refine cost_hash256_bind _ _ _ (by simp [length_labelOf]) fun _ => ?_
+  refine cost_hash256_bind _ _ _ (by simp [length_labelOf]) fun _ => ?_
+  refine cost_hash256_bind _ _ _ (by simp [length_labelOf]) fun _ => ?_
+  exact Common.isWeightBound_pure _ _ _
+
+theorem cost_verifyD (QOπ : ℕ)
+    (hOπ : ∀ (L : Layout) w, Common.QueryCostAtMost (ourVerifier L D.R w) hashBlocks QOπ)
+    (po : RootProof F × OpenProofs) :
+    Common.QueryCostAtMost (verifyD W D po) hashBlocks (7 + (QOπ + (QOπ + (QOπ + 0)))) :=
+  (cost_chain W po.1).bind fun _ => (hOπ _ _).bind fun _ => (hOπ _ _).bind fun _ =>
+    (hOπ _ _).bind fun _ => Common.isWeightBound_pure _ _ 0
+
+theorem cost_loggedKC {α : Type} (v : OracleComp KeccakCalls α) (n : ℕ)
+    (hv : Common.QueryCostAtMost v hashBlocks n) (l : Transcript) :
+    Common.QueryCostAtMost ((simulateQ logImplKC v).run l) hashBlocks n :=
+  Common.isWeightBound_run_simulateQ logImplKC hashBlocks hashBlocks
+    (fun t _ => Common.isWeightBound_map _ (Common.isWeightBound_query hashBlocks t)) hv l
+
+theorem cost_advB (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs))
+    (Q : ℕ) (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q)
+    (x : Bytes32 × Transcript) : Common.QueryCostAtMost (advB A x) LeanVM.Rpm.advCost Q := by
+  refine Common.isWeightBound_run_simulateQ logRelC Common.permutationCallCost LeanVM.Rpm.advCost
+    (fun t T => ?_) (hA x.1) []
+  rcases t with n | q
+  · exact Common.isWeightBound_map _ (Common.isWeightBound_query LeanVM.Rpm.advCost (.inl n))
+  · simp only [logRelC, logRel, StateT.run_mk, relP]
+    exact Common.isWeightBound_map _ (Common.isWeightBound_map _
+      (Common.isWeightBound_query LeanVM.Rpm.advCost (.inr (.inr (permQueryToRpm q)))))
+
+/-- **The permutation calls of the transfer game**: the setup's `QSπ`, the adversary's `Q`, the
+chain's `7` and the three openings' `QOπ` each. -/
+theorem cost_gameB (setup : OracleComp KeccakCalls Bytes32) (hS : HOnly setup) (QSπ : ℕ)
+    (hSπ : Common.QueryCostAtMost setup hashBlocks QSπ)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs))
+    (Q : ℕ) (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q) (QOπ : ℕ)
+    (hOπ : ∀ (L : Layout) w, Common.QueryCostAtMost (ourVerifier L D.R w) hashBlocks QOπ) :
+    Common.QueryCostAtMost (gameB W D setup A)
+      (Common.queryCost2 (Dg := Common.DigestBytes) Common.keccakPadding)
+      (QSπ + Q + 7 + 3 * QOπ) := by
+  have h : Common.QueryCostAtMost (gameB W D setup A) LeanVM.Rpm.gameCost
+      (QSπ + (Q + (7 + (QOπ + (QOπ + (QOπ + 0)))))) := by
+    rw [gameB, Common.rpmGame2, preB, hEmbed2_toRH (loggedKC setup) (hOnly_loggedKC_run setup hS [])]
+    refine (LeanVM.Rpm.isWeightBound_hfEmbed_toRHF (cost_loggedKC setup QSπ hSπ [])).bind
+      fun x => ?_
+    refine (LeanVM.Rpm.isWeightBound_advEmbed (cost_advB A Q hA x)).bind fun a => ?_
+    rw [postB, simulateQ_map]
+    exact Common.isWeightBound_map _
+      (LeanVM.Rpm.isWeightBound_hfEmbed_toRHF (cost_verifyD W D QOπ hOπ _))
+  exact h.mono (by omega)
+
 end Compose
