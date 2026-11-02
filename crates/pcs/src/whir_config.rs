@@ -8,6 +8,14 @@
 //
 // Ported from bolt-rs (https://github.com/bcc-research/bolt-rs,
 // `whir_recursive.rs`).
+//
+// Comments corrected here, no code change (reported in UPSTREAM.md): the level-0
+// OOD row's comment omitted its assumptions (the outer protocol binds the list:
+// its claims on one root are opened together and the challenges before them are
+// union-bounded over the list; `L·μ/q` assumes a uniform point in `E^μ`, else
+// `L·D/q`; a fixed point binds nothing), and the proximity-gap accounting omits
+// the factor `2^(ℓ−1)` leanerVM proves for the fold (leanerVM certifies the
+// deployed parameters with a smaller `η`).
 
 //! Field-independent configuration and soundness analysis for WHIR.
 //!
@@ -317,9 +325,16 @@ fn derive_ladder_shape(log_n: usize, initial_k: usize, log_inv_rate: usize) -> R
 // keeps `log2(q/a)` above the target on its own rather than grinding the fold
 // challenges for it. Binding to a
 // single codeword of the (Johnson-bounded) interleaved list is via
-// `ood_samples` explicit multilinear OOD evaluations, except at L0, where the
-// opening's own post-commit random evaluation claim plays the OOD role (union
-// over the list, `L*mu/q`), so `ood_samples = 0`. Plain Johnson without OOD
+// `ood_samples` explicit multilinear OOD evaluations, except at L0, where
+// `ood_samples = 0` and the PCS binds a root to a list only. [Corrected here:
+// leanVM's comment said "the opening's own post-commit random evaluation claim
+// plays the OOD role (union over the list, `L*mu/q`)", which holds only under
+// assumptions on the OUTER protocol: it binds the list, opening all the claims
+// on one root together (two openings of one root may use two list members) and
+// union-bounding the challenges it draws before those claims over the list;
+// `L*mu/q` assumes a claim point uniform in `E^mu`, a point that is a degree-`D`
+// image of fewer challenges costs `L*D/q`, and a fixed point binds nothing.
+// See `paper_ood_bits` and UPSTREAM.md.] Plain Johnson without OOD
 // binding would be unsound at these parameters: the query phase would pay a
 // union bound over the interleaved list (19 to 52 bits here) that the query
 // counts do not include.
@@ -433,6 +448,12 @@ fn reduced_rate(log_inv_rate: usize, log_msg_cols: usize) -> f64 {
 /// It is stated for a two-row word, and it is also the fold error of a `2^ℓ`-row word.
 /// The code is linear over the field the fold challenge is drawn from, so affine-line MCA is invariant under row interleaving (Jo, ePrint 2026/891, Thm 4.4).
 /// The PCS annex, Lemma `lem:fold-list`, states both hypotheses.
+///
+/// [Flagged here, not changed: leanerVM's proof of the fold error, which certifies
+/// these levels, carries a factor `2^(ℓ−1)` on this `a/|F|` that this accounting
+/// omits (5 bits at the first fold, `ℓ = 6`). leanerVM certifies the deployed
+/// parameters with a smaller `η` of its own (`Params/Deployed.lean`, `certTable`),
+/// so the bits computed here are not the certified ones. See UPSTREAM.md.]
 fn paper_thm_ca_johnson_log_a(log_inv_rate: usize, eta: f64, log_msg_cols: usize) -> f64 {
     let rho = reduced_rate(log_inv_rate, log_msg_cols);
     let sqrt_rho = rho.sqrt();
@@ -563,10 +584,15 @@ fn prev_queries_at(levels: &[WhirLevelConfig], i: usize) -> usize {
 ///   `bits = s·(192 − log₂ μ) − (2·log₂ L_int − 1)`.
 /// - `ood_samples = 0` (L0): the protocol takes no OOD sample at commitment,
 ///   so the PCS itself is only list binding (the PCS annex, opening paragraph). What this
-///   term materializes is the OUTER protocol's binding: the opening's own
-///   evaluation claim sits at a post-commit random point, so at most one
-///   list member matches it except with `L·μ/|F|` (union over the list, not
-///   pairs): `bits = 192 − log₂ L_int − log₂ μ`.
+///   term materializes is the OUTER protocol's binding, under its assumptions
+///   [stated here; leanVM's comment omits them]: the outer protocol opens all
+///   the claims on one root in one opening, and union-bounds over the list the
+///   challenges it draws before them; an evaluation claim at a point uniform in
+///   `E^μ`, drawn after the commitment, is matched by at most one list member
+///   except with `L·μ/|F|` (union over the list, not pairs):
+///   `bits = 192 − log₂ L_int − log₂ μ`. A point that is a degree-`D` image of
+///   fewer challenges (one field element, say) costs `L·D/|F|` instead, and a
+///   fixed point binds nothing.
 fn paper_ood_bits(log_inv_rate: usize, log_msg_cols: usize, eta: f64, mu_vars: usize, ood_samples: usize) -> f64 {
     let log2_l = johnson_interleaved_list_log2(log_inv_rate, log_msg_cols, eta);
     let log2_mu = (mu_vars as f64).log2();

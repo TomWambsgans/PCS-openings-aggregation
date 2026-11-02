@@ -12,8 +12,9 @@ Part of this repository. Updated as work lands.
 | Hiding (zero-knowledge) layouts for the secret tables | `crates/quotient/HIDING.md`, `src/hiding.rs` | exact rank tests; Lean proof in progress |
 | EVM verifier (generated from the Rust verifier): selector `verify(bytes32,bytes32,bytes)` = `0xde12c640`, packed 252-byte calldata, index root in storage (owner-gated `setIndexRoot`), three fail-closed `PCS_OPEN` calls, returns the word 1 | `crates/evm` | parity with Rust, adversarial tests |
 | Lean: the reduction (F1) for this protocol: knowledge soundness (Q+3)/2^128 (rounds 2^-166, 2^-164, 3/q, with margin for list unions up to 2^18), HVZK for ideal hiding commitments, completeness, ROM | `formal/` | green, sorry-free, 761 declarations on propext, Classical.choice, Quot.sound |
-| Lean: WHIR openings (F2): leanerVM `mumbai`'s proven `stackedSpec` covers our opening check; ROM soundness for leanVM's transcript shape | `formal/WhirBridge` (built on h1 against mumbai's `lean_vm`) | sorry-free; our current opening seed is the gap → being changed to the proven form |
-| Lean: hiding (F3): same view distribution for two tables with the same claims on the good challenges; unopened rows keep ≥ 2,368 / 3,840 bits | `formal/QuotientSecurity/Hiding/` | sorry-free; condition (R) is a hypothesis (provable only to ~2^-54 so far) → layout redesign in progress |
+| Lean: WHIR openings (F2): leanerVM `mumbai`'s proven `stackedSpec` covers the **wiring** opening; ROM soundness for leanVM's transcript shape | `formal/WhirBridge` (built on h1 against mumbai's `lean_vm`) | sorry-free; but the Lean layout is the public one: the deployed witness and quotient openings use hidden layouts, whose weight closure is not transcribed (the review's `Test/Check.lean` run rejects real witness/quotient proofs) → being extended to the hidden layouts, with the new seed (`opening::iv`) and `family_sound` instantiated |
+| Lean: hiding (F3): for two tables with the same claims, the **linear part** of an opening's view (lane rounds, folded table, opened rows) has the same distribution on the good challenges; unopened rows keep ≥ 2,368 / 3,840 bits; uniform padding | `formal/QuotientSecurity/Hiding/` | sorry-free; condition (R) is a hypothesis with **no bound in Lean** (holds in every test, `rounds_are_free_at_full_size`) → layout redesign in progress; not yet in the view: the roots, Merkle siblings, grinding nonces, Fiat–Shamir (the random-oracle step, F3b, in progress); not instantiated with the deployed layout |
+| Lean: the reduction's Keccak-256 chain (F4a): knowledge soundness with `transcript.rs`'s chain byte for byte, in the ROM and in leanerVM's RPM: (Q+8)(2^-163 + 3(Q+8)/2^256) + Q²/2^509 | `formal/QuotientRpm/` | sorry-free, propext, Classical.choice, Quot.sound; ideal commitments; the byte-level `Wire` (statement decoding, limbs) is a parameter, not yet tied to Rust |
 
 ## Numbers (M4 Max, 16 cores)
 
@@ -25,12 +26,14 @@ Part of this repository. Updated as work lands.
 
   | step | execution | transaction |
   |---|---|---|
-  | verifier returning the claims | 11,311 | 15,255 |
-  | + three `PCS_OPEN` calls, reply checked (success, 32 bytes, word 1), word 1 returned | 12,023 | 15,967 |
-  | + selector, no-value check | 12,051 | 16,059 |
-  | + index root from storage (cold `SLOAD` + byte reversal) | **14,289** | **18,297** |
+  | verifier returning the claims | 11,311 | 15,267 |
+  | + three `PCS_OPEN` calls, reply checked (success, 32 bytes, word 1), word 1 returned | 12,023 | 15,979 |
+  | + selector, no-value check | 12,051 | 16,071 |
+  | + index root from storage (cold `SLOAD` + byte reversal) | **14,289** | **18,309** |
 
-  At a claim price c (4 claims in 3 calls): 18,297 / 26,297 / 38,297 / 98,297 for c = 0 / 2,000 / 5,000 / 20,000.
+  At a claim price c (4 claims in 3 calls): 18,309 / 26,309 / 38,309 / 98,309 for c = 0 / 2,000 / 5,000 / 20,000.
+  (Transaction gas moves by 12 for each calldata byte that is zero in one proof and not in another: the report's
+  proof, since the per-proof randomness, has one zero byte, the one before it two.)
   Deployment: 6,308-byte code, 1,426,798 gas.
 
 ## Reviews and their outcome
@@ -41,7 +44,7 @@ Part of this repository. Updated as work lands.
   ~2^111: the mock and the contract do it right; now documented as a requirement); with leanerVM's generic list cap
   the copy round as bounded in the paper drops to 125 bits → a tighter Lean bound is in progress; WHIR's code-side
   accounting omits a factor leanerVM proves (leanerVM's certified parameters are fine; forwarded to the F2 bridge);
-  the opening seed should bind the layout and version (planned). Two concrete ZK attacks on the pre-hiding code
+  the opening seed now binds the layout and a version, in the form F2 proves. Two concrete ZK attacks on the pre-hiding code
   (solving the masks from the opened mask lane; per-coset fingerprints that deanonymize the Merkle path) → being
   re-run against the hidden layouts by the hiding reviewer. Fourteen overclaims → wording corrected (README section
   after the design note, doc comments, `formal/README.md`).
@@ -72,19 +75,32 @@ Part of this repository. Updated as work lands.
 
   `Table::new_in` / `hidden_in` now check, in debug builds, that the fill writes every word. Noted, not changed:
   `prove` recomputes σ's coset values for every proof.
+- **Lean F2 and F3 (adversarial, on 25d06ea)**: axioms clean (263 + 173 declarations), vendored WHIR files
+  byte-identical to leanVM `c445e3d5`, query counts / grinding / folds and the list bounds match. But:
+  - F2 covers only the wiring opening: its Lean layout and weight closure are the public ones, while the witness
+    and quotient openings use hidden layouts (the bridge's own `Test/Check.lean` rejects real proofs of both;
+    `formal/Review/HiddenWeight.lean` shows mumbai's `verifyWhir` with the hidden closure accepts them, so the gap
+    is the transcription) → being extended;
+  - F3's view is the linear part only: the roots, Merkle siblings, nonces and Fiat–Shamir rest on an unformalised
+    random-oracle step, and it is the interactive, per-table, honest-verifier statement → F3b started;
+  - (R) has no Lean bound; the end theorem is not instantiated with the deployed layout → with the layout redesign;
+  - the Lean samples uniform padding, the prover a CSPRNG (statistical ZK in the model, computational in the
+    generator as deployed) → documented.
+  Docs corrected (this file; `formal/README.md`).
 
 ## In progress
 
-Rust: per-proof randomness (OS RNG + KDF binding statement and witness) and the opening seed in the form F2 proves
-(fixed prefix with layout and version, root read from the proof); a hidden layout for which condition (R) holds for
-every challenge. FV: F0a (end theorem for χ circuits: zero/one pinning, statement embedding), F0b (the deployed
-circuit in Lean, Keccak gadget proofs), F4a (the Keccak-256 chain in the random-permutation model), the `Statement`
-package (computable extractor/simulator, executable verifier differential-tested against Rust).
+Rust: a hidden layout for which condition (R) holds for every challenge. (Done: per-proof randomness, OS RNG + KDF binding statement and witness; the opening seed in the form F2 proves, `opening::iv`.) FV: F0a (end theorem for χ circuits: zero/one pinning, statement embedding), F0b (the deployed circuit in Lean, Keccak gadget proofs), F2 for the hidden layouts and the new seed, F3b (zero knowledge of the whole non-interactive proof in the ROM/RPM, explicit simulator), F4 (composition: WHIR roots instead of ideal commitments, one knowledge-soundness theorem with an explicit extractor), the `Statement` package (computable extractor/simulator, executable verifier differential-tested against Rust).
 
 ## Known open items
 
 - End-to-end Lean theorem (F0–F5 of `formal/README.md`).
-- Condition (R) of the hiding layouts: proven only to ~2^-54 (layout redesign in progress).
+- Condition (R) of the hiding layouts: a hypothesis in Lean, unbounded there (≈ 2^-53 estimated in `HIDING.md`, not
+  proven; layout redesign in progress).
+- Zero knowledge is statistical for uniform prover randomness (what the Lean samples). As deployed, the masks and
+  padding come from ChaCha12 keyed by a Keccak-256 KDF of a 32-byte OS seed: zero knowledge against adversaries that
+  cannot tell that generator from uniform (as for any implementation that does not draw every bit from a physical
+  source).
 - `UPSTREAM.md`: issues in vendored leanVM code to report upstream (an aliasing UB, now fixed here; a planner
   divide-by-zero; documentation errors).
 - Possible gas saving: absorb the index root into the transcript in the byte order `PCS_OPEN` takes, to drop the

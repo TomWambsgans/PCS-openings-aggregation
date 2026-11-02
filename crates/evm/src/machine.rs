@@ -22,7 +22,11 @@
 //!    bits of its word, limb 0 lowest, and its top 64 bits are zero.
 //!
 //! **Output**: the word 1 if one of the block's openings is of exactly these claims, in this order, on the table
-//! committed as this root under this layout, and nothing otherwise, an input of another length included. A call
+//! committed as this root under this layout, and nothing otherwise, an input of another length included. Such an
+//! opening is one [`quotient::opening::verify`] accepts for the layout the id names: its transcript's IV hashes
+//! that layout's prefix ([`quotient::opening::prefix`]: the label, the version, the layout's hash, its size, WHIR's
+//! rate) then these claims, words 4 onwards as field elements, and its proof's first two scalars are the root's,
+//! word 1's two halves (`formal/WhirBridge`, `family_sound`). The ids name distinct prefixes. A call
 //! fails only for lack of gas. A contract takes a call to attest only if it succeeded and returned exactly 32 bytes,
 //! the word 1: a failed call and an address without the precompile return nothing, and anything else (the word 0,
 //! a revert with data, more words) is not an attestation either.
@@ -376,13 +380,19 @@ impl Chain {
 mod tests {
     use super::*;
 
-    /// Every layout `PCS_OPEN` knows is a stack leanVM's WHIR commits; ids outside the table name none.
+    /// Every layout `PCS_OPEN` knows is a stack leanVM's WHIR commits, and the ids name distinct openings'
+    /// prefixes (`quotient::opening::prefix`); ids outside the table name none.
     #[test]
     fn layouts_are_known_by_id() {
+        let mut prefixes = HashSet::new();
         for log_rows in LOG_ROWS {
             for table in [TableId::Witness, TableId::Wiring, TableId::Quotient] {
                 let layout = layout(U256::from(layout_id(table, log_rows))).expect("a layout");
                 assert!((15..=28).contains(&layout.log_n) && layout.lanes() <= 64);
+                assert!(
+                    prefixes.insert(quotient::opening::prefix(&layout)),
+                    "{table:?}, 2^{log_rows} rows"
+                );
             }
         }
         for id in [0u64, 12, 256 + 12, 256 + 23, 4 * 256 + 22, 1 << 40] {

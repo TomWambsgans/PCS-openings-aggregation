@@ -7,14 +7,15 @@ use super::*;
 use pcs::whir::{commit as whir_commit, recursive_prover_with_basis};
 use primitives::test_rng::Rng;
 
-/// The opening of commit d940553, verbatim but for taking the codeword from a fresh `pcs::whir::commit`.
+/// The opening of commit d940553, verbatim but for taking the codeword from a fresh `pcs::whir::commit` and for the
+/// transcript's start, which now has leanVM's shape: the IV of [`iv`], a zero public digest, the root sent first.
 fn old_open(table: &Table, claims: &[Claim]) -> (Hash, Proof) {
     let layout = &table.layout;
     let log_lane = layout.log_lane();
     let config = config_for_rate(layout.log_n, LOG_INV_RATE).expect("a WHIR shape leanVM supports");
     let (commitment, data) = whir_commit(&table.stack, layout.log_n, LANE_FOLD, LOG_INV_RATE);
-    let (iv, statement) = seed(&commitment.root, claims);
-    let mut ps = ProverState::new(digest_words(&iv), digest_words(&statement));
+    let mut ps = ProverState::new(digest_words(&iv(layout, claims)), digest_words(&PUBLIC_DIGEST));
+    ps.add_root(&commitment.root);
     let lambdas = powers(ps.sample(), claims.len());
     let target = claims
         .iter()
