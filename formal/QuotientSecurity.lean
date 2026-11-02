@@ -20,6 +20,7 @@ import QuotientSecurity.Joint
 import QuotientSecurity.Statement
 import QuotientSecurity.CircuitLayout
 import QuotientSecurity.Pinning
+import QuotientSecurity.Deployed
 import QuotientSecurity.Hiding
 
 /-- info: 'QuotientSecurity.verifier_rbrKnowledgeSoundness' depends on axioms: [propext, Classical.choice, Quot.sound] -/

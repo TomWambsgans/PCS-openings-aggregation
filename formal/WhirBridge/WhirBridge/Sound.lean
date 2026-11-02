@@ -15,9 +15,10 @@ import LeanVM.Protocol.Whir.Complete.Opening
 /-!
 # The opening check is round-by-round sound
 
-`openingSpec L R hw claims`: for every layout whose stack size and rate are admissible
+`openingSpec S R hw claims`: for every stacking (a layout's: `Layout.stacking`, whose `check` is
+`opening::verify`'s, `Layout.check_eq`) whose stack size and rate are admissible
 (`15 ≤ log_n ≤ 28`, `1 ≤ R ≤ 4`) and **every** list of claims, a specification (mumbai's `Spec`,
-`lean_vm/LeanVM/Protocol/Compile/Spec.lean`) of `openingCheck L R claims`, from
+`lean_vm/LeanVM/Protocol/Compile/Spec.lean`) of `S.check R claims`, from
 `OpeningDoom` (the level-0 commitment has the stack's shape and **every candidate** of its word
 at level 0's Johnson threshold violates one of the claims), never returning in doom (the
 postcondition is `False`), with
@@ -32,12 +33,7 @@ postcondition is `False`), with
 
 A `Spec` is the input of mumbai's Fiat-Shamir theorem (`Compile.Rom.romSound`), through
 `Spec.toCert` once it is placed in a whole program; what that needs and what it does not cover
-of this repository's transcript is `WhirBridge/Gaps.lean`.
-
-`witnessLayout`, `wiringLayout`, `quotientLayout` transcribe `crates/quotient/src/protocol.rs`;
-at `LOG_ROWS = 22` their stacks have `25`, `24` and `28` variables, and for every
-`13 ≤ log_rows ≤ 22` all three are admissible at rate `1/2` and pass `Layout::new`'s assertions
-(`layouts_ok`, decided).
+of this repository's transcript is `WhirBridge/Verifier.lean`.
 -/
 
 namespace WhirBridge
@@ -77,25 +73,25 @@ theorem whirEps_le {μ R : ℕ} (hw : Whir.Admissible μ R) {config : List Whir.
 
 /-! ## The opening check -/
 
-/-- **The opening's doom** (mumbai's `StackedPre` on our claims): the level-0 commitment has the
-stack's shape, and every candidate of its word at level 0's Johnson threshold violates at least
-one claim. -/
-def OpeningDoom (L : Layout) (R : ℕ) (claims : List Claim) (cs : List (ℕ × ℕ × Word)) : Prop :=
-  StackedPre L.logN R (code₀ L.logN R) (stackClaims L claims) cs
+/-- **The opening's doom** (mumbai's `StackedPre` on a stacking's claims): the level-0 commitment
+has the stack's shape, and every candidate of its word at level 0's Johnson threshold violates at
+least one claim. -/
+def OpeningDoom (S : Stacking) (R : ℕ) (claims : List Claim) (cs : List (ℕ × ℕ × Word)) : Prop :=
+  StackedPre S.logN R (code₀ S.logN R) (S.claims claims) cs
 
-/-- **The opening check is round-by-round sound**: for every admissible layout and every list of
-claims, from `OpeningDoom` it never returns in doom; its first group (the batching challenge)
-escapes with probability at most `eBatch J code₀`, every later one at most `2^-128`. -/
-noncomputable def openingSpec (L : Layout) (R : ℕ) (hw : Whir.Admissible L.logN R)
+/-- **The opening check is round-by-round sound**: for every stacking at an admissible shape and
+every list of claims, from `OpeningDoom` it never returns in doom; its first group (the batching
+challenge) escapes with probability at most `eBatch J code₀`, every later one at most `2^-128`. -/
+noncomputable def openingSpec (S : Stacking) (R : ℕ) (hw : Whir.Admissible S.logN R)
     (claims : List Claim) :
-    Spec (openingCheck L R claims) (fun h ↦ OpeningDoom L R claims (commits h))
-      (fun _ _ ↦ False) εWhir (eBatch claims.length (code₀ L.logN R)) 0 :=
+    Spec (S.check R claims) (fun h ↦ OpeningDoom S R claims (commits h))
+      (fun _ _ ↦ False) εWhir (eBatch claims.length (code₀ S.logN R)) 0 :=
   (Spec.ite
-    (fun _ ↦ (stackedAt hw (stackClaims L claims) (isMultiaffine_stackClaims L claims)).mono
-      (fun _ h ↦ h) (fun _ _ h ↦ h) le_rfl (by rw [stackClaims, List.length_map]) le_rfl)
-    (fun _ ↦ (Spec.fail (Pre := fun h ↦ OpeningDoom L R claims (commits h))
+    (fun _ ↦ (stackedAt hw (S.claims claims) (S.isMultiaffine_claims claims)).mono
+      (fun _ h ↦ h) (fun _ _ h ↦ h) le_rfl (by rw [Stacking.claims, List.length_map]) le_rfl)
+    (fun _ ↦ (Spec.fail (Pre := fun h ↦ OpeningDoom S R claims (commits h))
       (Post := fun (_ : Unit) _ ↦ False)).mono (fun _ h ↦ h) (fun _ _ h ↦ h) le_rfl
-        zero_le le_rfl)).congr (openingCheck_eq_ite L R claims).symm
+        zero_le le_rfl)).congr (S.check_eq_ite R claims).symm
 
 /-! ## The numbers -/
 
@@ -162,74 +158,5 @@ theorem listMax_ours :
   refine ⟨(listMax_le_listHi (by decide)).trans (le_of_eq (by decide +kernel)),
     (listMax_le_listHi (by decide)).trans (le_of_eq (by decide +kernel)),
     (listMax_le_listHi (by decide)).trans (le_of_eq (by decide +kernel))⟩
-
-/-! ## The layouts of `crates/quotient/src/protocol.rs` -/
-
-/-- `cell_vars(log_rows) = log_rows + 2` (`protocol.rs:84-86`). -/
-def cellVars (logRows : ℕ) : ℕ := logRows + 2
-
-/-- `wiring_layout` (`protocol.rs:89-92`): the stack is the table. -/
-def wiringLayout (logRows : ℕ) : Layout :=
-  Layout.new (cellVars logRows) (cellVars logRows) (cellVars logRows) [(0, 2 ^ cellVars logRows)]
-
-/-- `witness_layout` (`protocol.rs:95-98`): the four row polynomials, then their masks, sixteen
-entries of the next chunk. -/
-def witnessLayout (logRows : ℕ) : Layout :=
-  Layout.new (cellVars logRows + 1) (cellVars logRows) (cellVars logRows + 1)
-    [(0, 2 ^ cellVars logRows), (1, 16)]
-
-/-- `Q_SPILL = PUBLIC_EXCESS + 64` (`protocol.rs:34-37`). -/
-def qSpill : ℕ := 9216 + 64
-
-/-- The chunks of `quotient_layout` (`protocol.rs:104-115`). -/
-def quotientChunks (logRows : ℕ) : List (ℕ × ℕ) :=
-  let n := 2 ^ cellVars logRows
-  ((List.range 3).flatMap fun e ↦
-      (16 * e, n) :: (List.range 3).map (fun digit ↦ (16 * e + 4 + digit, n)) ++
-        [(16 * e + 7, qSpill)]) ++
-    [(8, n), (9, 3 * n / 4 + 64)]
-
-/-- `quotient_layout` (`protocol.rs:104-115`): `m + 6` variables, stacked in lanes of a quarter
-chunk. -/
-def quotientLayout (logRows : ℕ) : Layout :=
-  Layout.new (cellVars logRows + 6) (cellVars logRows) (cellVars logRows + 4)
-    (quotientChunks logRows)
-
-/-- `LOG_ROWS` (`crates/quotient/src/circuit.rs:22`). -/
-def logRows : ℕ := 22
-
-/-- At `LOG_ROWS = 22`: the witness, wiring and quotient stacks have `25`, `24`, `28`
-variables, `33`, `64`, `59` lanes. -/
-theorem deployed_sizes :
-    (witnessLayout logRows).logN = 25 ∧ (wiringLayout logRows).logN = 24 ∧
-      (quotientLayout logRows).logN = 28 ∧
-      (witnessLayout logRows).lanes = 33 ∧ (wiringLayout logRows).lanes = 64 ∧
-      (quotientLayout logRows).lanes = 59 := by
-  decide +kernel
-
-/-- **The protocol's layouts are admissible** at rate `1/2` and pass `Layout::new`'s assertions,
-for every `13 ≤ log_rows ≤ 22` (the deployed `22` the largest). -/
-theorem layouts_ok : ∀ r, 13 ≤ r → r ≤ 22 →
-    Whir.Admissible (witnessLayout r).logN logInvRate ∧
-      Whir.Admissible (wiringLayout r).logN logInvRate ∧
-      Whir.Admissible (quotientLayout r).logN logInvRate ∧
-      Layout.NewOK (cellVars r + 1) (cellVars r) (cellVars r + 1)
-        [(0, 2 ^ cellVars r), (1, 16)] ∧
-      Layout.NewOK (cellVars r) (cellVars r) (cellVars r) [(0, 2 ^ cellVars r)] ∧
-      Layout.NewOK (cellVars r + 6) (cellVars r) (cellVars r + 4) (quotientChunks r) := by
-  decide +kernel
-
-/-- **Our three openings at `LOG_ROWS = 22`**, round-by-round: the witness and wiring openings
-(one claim each, lead `0`) and the quotient opening (two claims, lead at most `2^-174`), every
-later group at most `2^-128`. -/
-noncomputable def witnessSpec (claims : List Claim) :=
-  openingSpec (witnessLayout logRows) logInvRate (layouts_ok 22 (by norm_num) le_rfl).1 claims
-
-noncomputable def wiringSpec (claims : List Claim) :=
-  openingSpec (wiringLayout logRows) logInvRate (layouts_ok 22 (by norm_num) le_rfl).2.1 claims
-
-noncomputable def quotientSpec (claims : List Claim) :=
-  openingSpec (quotientLayout logRows) logInvRate (layouts_ok 22 (by norm_num) le_rfl).2.2.1
-    claims
 
 end WhirBridge

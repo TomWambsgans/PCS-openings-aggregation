@@ -16,10 +16,10 @@ import LeanVM.Protocol.EndToEnd.Front.LayoutArith
 
 mumbai's doom (`StackedPre`) and its extractor speak of *stacks*: a candidate `q` of the level-0
 word satisfies a stack claim `(w, v)` when `Σ_x w(x) q(x) = v` over the stack's cube
-(`StackClaim.Holds`). `opening.rs` commits a table of `vars` variables as the stack of its blocks:
-lane `l` holds the table's block `blocks[l]` of `2^ℓ` entries, `ℓ = log_n − 6`, and the table is
-zero outside them. `Layout.table L q` is that table read back from a stack, and
-`Layout.tableEval L q p` its multilinear extension at `p`.
+(`StackClaim.Holds`). A public layout (`Layout::new`) commits a table of `vars` variables as the
+stack of its blocks: lane `l` holds the table's block `blocks[l]` of `2^ℓ` entries, `ℓ = log_n − 6`,
+and the table is zero outside them (a hidden layout's table is `Hidden.lean`'s). `Blocks.table L q` is that table read back from a stack, and
+`Blocks.tableEval L q p` its multilinear extension at `p`.
 
 `holds_iff`: **for every stack `q`, `q` satisfies the stack claim of a claim `c` exactly when the
 table `L.table q` has `c.value` as its multilinear extension at `c.point`** (for a well-formed
@@ -34,25 +34,25 @@ namespace WhirBridge
 open LeanVM.Parameters LeanVM.Protocol LeanVM.Protocol.Compile LeanVM.Protocol.Verifier
 open LeanVM.Protocol.EndToEnd Finset
 
-/-- What the meaning of the claims needs of a layout (`Layout::new` gives all of it, its
-assertions `Layout.NewOK` and `log_n ≥ 6`): `64` lanes of `2^ℓ` entries, at most `64` of them
-used, each holding a block of the table. -/
-structure Layout.Valid (L : Layout) : Prop where
+/-- What the meaning of the claims needs of a public stacking (`Layout::new` gives all of it, its
+assertions and `log_n ≥ 6`): `64` lanes of `2^ℓ` entries, at most `64` of them used, each holding a
+block of the table. -/
+structure Blocks.Valid (L : Blocks) : Prop where
   six_le : laneFold ≤ L.logN
   lane_le : L.logLane ≤ L.vars
   lanes_le : L.lanes ≤ 2 ^ laneFold
   block_lt : ∀ b ∈ L.blocks, b < 2 ^ (L.vars - L.logLane)
 
-/-- **The table a stack stands for** (`opening.rs:36-37, 113-119`): entry `o + 2^ℓ·b`
+/-- **The table a public stack stands for** (`Table::new`, `opening.rs:392-412`): entry `o + 2^ℓ·b`
 (`o < 2^ℓ`) is entry `o + 2^ℓ·l` of the stack for the lane `l` holding block `b`, and `0` where no
 lane holds it; written as the sum over the lanes holding the block, which is that one entry for
 distinct blocks (as `Layout::new` lists them). -/
-def Layout.table (L : Layout) (q : Column L.logN) (t : ℕ) : K :=
+def Blocks.table (L : Blocks) (q : Column L.logN) (t : ℕ) : K :=
   ∑ l ∈ range L.lanes, if L.blocks.getD l 0 = t / 2 ^ L.logLane then
     q.values.getD (t % 2 ^ L.logLane + 2 ^ L.logLane * l) 0 else 0
 
-/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:122-130`). -/
-def Layout.tableEval (L : Layout) (q : Column L.logN) (p : List E) : E :=
+/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:504-516`). -/
+def Blocks.tableEval (L : Blocks) (q : Column L.logN) (p : List E) : E :=
   ∑ t ∈ range (2 ^ L.vars), ofK (L.table q t) * eqEval (boolPoint L.vars t) p
 
 /-! ## Sums -/
@@ -100,25 +100,25 @@ theorem ofK_ite (P : Prop) [Decidable P] (a : K) :
 /-! ## The claim's weight on the cube -/
 
 /-- A claim's weight, as `eq` of the lane coordinates times the lanes' sum. -/
-theorem claimWeight_eq (L : Layout) (c : Claim) (x : List E) :
+theorem claimWeight_eq (L : Blocks) (c : Claim) (x : List E) :
     claimWeight L c x = eqEval (c.point.take L.logLane) (x.take L.logLane) *
       ∑ i ∈ range L.lanes, (L.laneWeights c.point).getD i 0 * eqBits (x.drop L.logLane) i := by
-  have hl : (L.laneWeights c.point).length = L.lanes := by simp [Layout.laneWeights, Layout.lanes]
+  have hl : (L.laneWeights c.point).length = L.lanes := by simp [Blocks.laneWeights, Blocks.lanes]
   rw [claimWeight, eqLow_eq_eqEval, lanes_eq_sum, List.range_eq_range', ← hl, zip_range'_sum]
   simp
 
 /-- A lane's weight is `eq` of the point's high coordinates at the lane's block. -/
-theorem laneWeight_getD (L : Layout) (p : List E) {l : ℕ} (hl : l < L.lanes) :
+theorem laneWeight_getD (L : Blocks) (p : List E) {l : ℕ} (hl : l < L.lanes) :
     (L.laneWeights p).getD l 0 =
       eqEval (boolPoint (p.length - L.logLane) (L.blocks.getD l 0)) (p.drop L.logLane) := by
-  have hl' : l < (L.laneWeights p).length := by simpa [Layout.laneWeights, Layout.lanes] using hl
-  rw [List.getD_eq_getElem _ _ hl', List.getD_eq_getElem _ _ (by simpa [Layout.lanes] using hl)]
-  simp only [Layout.laneWeights, List.getElem_map]
+  have hl' : l < (L.laneWeights p).length := by simpa [Blocks.laneWeights, Blocks.lanes] using hl
+  rw [List.getD_eq_getElem _ _ hl', List.getD_eq_getElem _ _ (by simpa [Blocks.lanes] using hl)]
+  simp only [Blocks.laneWeights, List.getElem_map]
   rw [eqBits_eq_eqEval, LeanVM.Protocol.EndToEnd.Front.selectorPoint_eq_boolPoint, List.length_drop]
   rfl
 
 /-- On the cube, the lane sum picks the lane's weight. -/
-theorem lanes_at_boolPoint (L : Layout) (hL : L.Valid) (p : List E) {l : ℕ}
+theorem lanes_at_boolPoint (L : Blocks) (hL : L.Valid) (p : List E) {l : ℕ}
     (hl : l < 2 ^ laneFold) :
     ∑ i ∈ range L.lanes, (L.laneWeights p).getD i 0 * eqBits (boolPoint laneFold l) i =
       if l ∈ range L.lanes then (L.laneWeights p).getD l 0 else 0 := by
@@ -134,7 +134,7 @@ theorem lanes_at_boolPoint (L : Layout) (hL : L.Valid) (p : List E) {l : ℕ}
 
 /-! ## The two sums -/
 
-variable (L : Layout) (hL : L.Valid) (c : Claim) (hc : c.point.length = L.vars)
+variable (L : Blocks) (hL : L.Valid) (c : Claim) (hc : c.point.length = L.vars)
   (q : Column L.logN)
 
 include hL hc in
@@ -147,7 +147,7 @@ theorem stack_sum :
             eqEval (boolPoint (L.vars - L.logLane) (L.blocks.getD l 0))
               (c.point.drop L.logLane)) := by
   have hN : L.logN = L.logLane + laneFold := by
-    have := hL.six_le; simp only [Layout.logLane]; omega
+    have := hL.six_le; simp only [Blocks.logLane]; omega
   have hR : range (2 ^ L.logN) = range (2 ^ L.logLane * 2 ^ laneFold) := by
     rw [← pow_add, ← hN]
   have hpt : ∀ o l, o < 2 ^ L.logLane →
@@ -213,16 +213,16 @@ theorem table_sum :
       conv_lhs => rw [← List.take_append_drop L.logLane c.point]
       exact LeanVM.Protocol.Whir.Complete.eqEval_append _ _ _ _
         (by simp [boolPoint, hc, hL.lane_le])
-    rw [Layout.table, hdiv, hmod, ofK_sum, Finset.sum_mul, hsplit]
+    rw [Blocks.table, hdiv, hmod, ofK_sum, Finset.sum_mul, hsplit]
     refine Finset.sum_congr rfl fun l _ ↦ ?_
     rw [ofK_ite]
     split_ifs <;> simp
-  rw [Layout.tableEval, hR, sum_range_mul_split,
+  rw [Blocks.tableEval, hR, sum_range_mul_split,
     Finset.sum_congr rfl fun b hb ↦ Finset.sum_congr rfl fun o ho ↦ hentry b hb o ho,
     sum_three_swap]
   refine Finset.sum_congr rfl fun l hl ↦ Finset.sum_congr rfl fun o _ ↦ ?_
   have hmem : L.blocks.getD l 0 ∈ L.blocks := by
-    rw [List.getD_eq_getElem _ _ (by simpa [Layout.lanes] using hl)]
+    rw [List.getD_eq_getElem _ _ (by simpa [Blocks.lanes] using hl)]
     exact List.getElem_mem _
   rw [Finset.sum_ite_eq, if_pos' (mem_range.2 (hL.block_lt _ hmem))]
 
@@ -235,9 +235,9 @@ theorem holds_iff :
 
 /-- **The opening's doom in table terms**: the level-0 commitment has the stack's shape, and
 every candidate's table violates one of the claims. -/
-theorem openingDoom_iff (L : Layout) (hL : L.Valid) (R : ℕ) (claims : List Claim)
+theorem openingDoom_iff (L : Blocks) (hL : L.Valid) (R : ℕ) (claims : List Claim)
     (hc : ∀ c ∈ claims, c.point.length = L.vars) (cs : List (ℕ × ℕ × Word)) :
-    OpeningDoom L R claims cs ↔
+    OpeningDoom L.stacking R claims cs ↔
       LeanVM.Protocol.Whir.Sound.ShapeOK 0 (code₀ L.logN R) laneBits cs ∧
         ∀ q ∈ Candidates L.logN R (code₀ L.logN R).thr (LeanVM.Protocol.Whir.Sound.wordOf cs 0),
           ∃ c ∈ claims, L.tableEval q c.point ≠ c.value := by
@@ -250,26 +250,68 @@ theorem openingDoom_iff (L : Layout) (hL : L.Valid) (R : ℕ) (claims : List Cla
   · rintro ⟨c, hcm, hn⟩
     exact ⟨_, List.mem_map.2 ⟨c, hcm, rfl⟩, fun h ↦ hn ((holds_iff L hL c (hc c hcm) q).1 h)⟩
 
-/-- `Layout::new`'s layouts are valid: our three, for every `13 ≤ log_rows ≤ 22`. -/
-theorem layouts_valid : ∀ r, 13 ≤ r → r ≤ 22 →
-    (witnessLayout r).Valid ∧ (wiringLayout r).Valid ∧ (quotientLayout r).Valid := by
-  intro r h1 h2
-  have key : ∀ r, 13 ≤ r → r ≤ 22 →
-      (laneFold ≤ (witnessLayout r).logN ∧ (witnessLayout r).logLane ≤ (witnessLayout r).vars ∧
-        (witnessLayout r).lanes ≤ 2 ^ laneFold ∧
-        ∀ b ∈ (witnessLayout r).blocks,
-          b < 2 ^ ((witnessLayout r).vars - (witnessLayout r).logLane)) ∧
-      (laneFold ≤ (wiringLayout r).logN ∧ (wiringLayout r).logLane ≤ (wiringLayout r).vars ∧
-        (wiringLayout r).lanes ≤ 2 ^ laneFold ∧
-        ∀ b ∈ (wiringLayout r).blocks,
-          b < 2 ^ ((wiringLayout r).vars - (wiringLayout r).logLane)) ∧
-      (laneFold ≤ (quotientLayout r).logN ∧ (quotientLayout r).logLane ≤ (quotientLayout r).vars ∧
-        (quotientLayout r).lanes ≤ 2 ^ laneFold ∧
-        ∀ b ∈ (quotientLayout r).blocks,
-          b < 2 ^ ((quotientLayout r).vars - (quotientLayout r).logLane)) := by
-    decide +kernel
-  obtain ⟨⟨a1, a2, a3, a4⟩, ⟨b1, b2, b3, b4⟩, ⟨c1, c2, c3, c4⟩⟩ := key r h1 h2
-  exact ⟨⟨a1, a2, a3, a4⟩, ⟨b1, b2, b3, b4⟩, ⟨c1, c2, c3, c4⟩⟩
+
+/-! ## A public layout is a public stacking -/
+
+/-- A lane's block (`0` for a lane holding none). -/
+def Lane.blockD : Lane → ℕ
+  | .block b => b
+  | _ => 0
+
+/-- **A public layout's blocks** (`Layout::new`'s layouts). -/
+def Layout.toBlocks (L : Layout) : Blocks := ⟨L.vars, L.logN, L.lanes.map Lane.blockD⟩
+
+/-- A public layout: no piece, every lane a block. -/
+def Layout.IsPublic (L : Layout) : Prop := L.logPiece = none ∧ ∀ l ∈ L.lanes, ∃ b, l = .block b
+
+/-- A sum over `zipIdx` as a sum over the indices. -/
+theorem sum_zipIdx {α : Type} (d : α) (g : α × ℕ → E) : ∀ (xs : List α) (k : ℕ),
+    ((xs.zipIdx k).map g).sum = ∑ i ∈ range xs.length, g (xs.getD i d, k + i)
+  | [], k => by simp
+  | a :: xs, k => by
+    rw [List.zipIdx_cons, List.map_cons, List.sum_cons, sum_zipIdx d g xs (k + 1),
+      List.length_cons, Finset.sum_range_succ', add_comm]
+    simp only [List.getD_cons_succ, List.getD_cons_zero, add_zero]
+    refine congrArg (· + _) (Finset.sum_congr rfl fun i _ ↦ ?_)
+    rw [show k + 1 + i = k + (i + 1) by omega]
+
+theorem and_one_cases (i : ℕ) : i &&& 1 = 0 ∨ i &&& 1 = 1 := by
+  rw [Nat.and_one_is_mod]
+  exact Nat.mod_two_eq_zero_or_one i
+
+/-- Both parities: every block lane. -/
+theorem onTerm_add (ps le : List E) (ll : Lane × ℕ) :
+    onTerm ps le 0 ll + onTerm ps le 1 ll =
+      match ll.1 with
+      | .block _ => ps.getD ll.2 0 * le.getD ll.2 0
+      | _ => 0 := by
+  rcases ll with ⟨_ | _ | _, i⟩ <;> simp only [onTerm]
+  · rcases and_one_cases i with h | h <;> simp [h]
+  · simp
+  · simp
+
+/-- **A public layout's claim weight is its blocks'**. -/
+theorem Layout.claimWeight_toBlocks (L : Layout) (hP : L.IsPublic) (c : Claim) :
+    L.claimWeight c = WhirBridge.claimWeight L.toBlocks c := by
+  funext x
+  have hlog : L.toBlocks.logLane = L.logLane := rfl
+  have hlanes : L.toBlocks.lanes = L.lanes.length := by simp [Blocks.lanes, Layout.toBlocks]
+  rw [claimWeight_public L c hP.1, claimWeight_eq, hlog, hlanes, eqZ_eq_eqEval,
+    onParity_eq_sum, onParity_eq_sum, ← List.sum_map_add, sum_zipIdx .random _ _ 0]
+  refine congrArg (_ * ·) (Finset.sum_congr rfl fun i hi ↦ ?_)
+  have hi' : i < L.lanes.length := mem_range.1 hi
+  obtain ⟨b, hb⟩ := hP.2 _ (List.getElem_mem hi')
+  have hget : L.lanes.getD i .random = .block b := by
+    rw [List.getD_eq_getElem _ _ hi', hb]
+  simp only [zero_add]
+  rw [onTerm_add, hget]
+  simp only
+  rw [laneEqs_getD, if_pos hi']
+  congr 1
+  rw [List.getD_eq_getElem _ _ (by simpa [Layout.laneScales] using hi'),
+    List.getD_eq_getElem _ _ (by simpa [Blocks.laneWeights, Layout.toBlocks] using hi')]
+  simp [Layout.laneScales, Blocks.laneWeights, Layout.toBlocks, hb, Lane.blockD]
+  rfl
 
 /-! ## What the composition imports
 
@@ -313,10 +355,10 @@ theorem candidates_ours (W : Word) :
 
 /-- **Joint extraction**: a root's commitment of the stack's shape that is not doomed for an
 opening has one candidate whose table satisfies all of that opening's claims. -/
-theorem joint_of_not_doom (L : Layout) (hL : L.Valid) (R : ℕ) (claims : List Claim)
+theorem joint_of_not_doom (L : Blocks) (hL : L.Valid) (R : ℕ) (claims : List Claim)
     (hc : ∀ c ∈ claims, c.point.length = L.vars) (cs : List (ℕ × ℕ × Word))
     (hshape : LeanVM.Protocol.Whir.Sound.ShapeOK 0 (code₀ L.logN R) laneBits cs)
-    (hnot : ¬ OpeningDoom L R claims cs) :
+    (hnot : ¬ OpeningDoom L.stacking R claims cs) :
     ∃ q ∈ Candidates L.logN R (code₀ L.logN R).thr (LeanVM.Protocol.Whir.Sound.wordOf cs 0),
       ∀ c ∈ claims, L.tableEval q c.point = c.value := by
   rw [openingDoom_iff L hL R claims hc cs] at hnot
