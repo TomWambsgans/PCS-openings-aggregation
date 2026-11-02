@@ -598,6 +598,169 @@ theorem not_randPos_block (h : L.OK) (l : Fin L.lanes.length) {b : ℕ}
 
 end Weights
 
+/-! ## The verifier's points and values, compiled -/
+
+section Points
+
+open Polynomial
+
+variable {E : Type} [Field E] [DecidableEq E] [CharP E 2]
+
+/-- `claimPoint`, compiled. -/
+def claimPointC (first m : ℕ) (t : E) : Fin m → E :=
+  fun k => sq^[(k : ℕ) + first] t / (1 + sq^[(k : ℕ) + first] t)
+
+theorem claimPointC_eq (first m : ℕ) (t : E) : claimPointC first m t = claimPoint first m t := rfl
+
+/-- `claimScale`, compiled. -/
+def claimScaleC (first m : ℕ) (t : E) : E := ∏ k : Fin m, (1 + sq^[(k : ℕ) + first] t)
+
+theorem claimScaleC_eq (first m : ℕ) (t : E) : claimScaleC first m t = claimScale first m t := rfl
+
+/-- `sumPoint`, compiled. -/
+def sumPointC (m : ℕ) (Y : E) : Fin (m + 1 + 1 + 1 + 1 + 1 + 1) → E :=
+  Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (fun _ => 1) 0) 0) 0) 0)
+    (Y / (1 + Y))) (Y ^ 2 / (1 + Y ^ 2))
+
+theorem sumPointC_eq (m : ℕ) (Y : E) : sumPointC m Y = sumPoint m Y := rfl
+
+/-- **The witness claim's point** (`pointW`), compiled. -/
+def pointWc (c : DChal E) : List E :=
+  List.ofFn (Fin.cons c.1.2 (Fin.cons (c.1.2 ^ 2) (claimPointC 2 (22 + 1) c.1.1.2)) :
+    Fin (22 + 1 + 1 + 1) → E)
+
+theorem pointWc_eq (c : DChal E) : pointWc c = pointW c := rfl
+
+/-- **The witness claim's value** (`valsW`), compiled. -/
+def valWc (c : DChal E) (v : Vals E) : E :=
+  (∑ j, Params.opening c.1.2 j * v.1 j) / claimScaleC 2 (22 + 1) c.1.1.2
+
+theorem valsW_eq (c : DChal E) (v : Vals E) : valsW c v = fun _ => valWc c v := rfl
+
+/-- The digit basis at a point (`digit`): `1, x, x² + x, x³ + x²`. -/
+def digitAt (j : Fin 4) (x : E) : E := ![1, x, x ^ 2 + x, (x ^ 2 + x) * x] j
+
+theorem eval_digit (j : Fin 4) (x : E) : (digit j : E[X]).eval x = digitAt j x := by
+  fin_cases j <;> simp [digit, digitAt]
+
+/-- `Params.cellAt`, compiled. -/
+def cellAtC (θ : E) (a : Fin 4 → E) (t : E) (c : Fin 4) : E :=
+  ∑ j, digitAt j (t + shift θ c) * a j
+
+theorem cellAtC_eq (P : Params E) (a : Fin 4 → E) (t : E) (c : Fin 4) :
+    cellAtC P.θ a t c = P.cellAt a t c := by
+  simp only [cellAtC, Params.cellAt, eval_digit]
+
+/-- `Params.claimDen`, compiled (the polynomials evaluated by `Polynomial.eval`). -/
+def claimDenC (P : Params E) (α β t : E) (a : Fin 4 → E) (s : E) : E :=
+  (α + cellAtC P.θ a t 0 + β * t) * (α + cellAtC P.θ a t 0 + β * s) + P.vCells.eval t
+
+theorem claimDenC_eq (P : Params E) (α β t : E) (a : Fin 4 → E) (s : E) :
+    claimDenC P α β t a s = P.claimDen α β t a s := by
+  simp only [claimDenC, Params.claimDen, cellAtC_eq]
+
+/-- `Params.claimValue`, compiled. -/
+def claimValueC (P : Params E) (α β γ t ρ : E) (a : Fin 4 → E) (s : E) : E :=
+  ((1 + ρ) * ((α + cellAtC P.θ a t 0 + β * t) + (α + cellAtC P.θ a t 0 + β * s)
+        + (P.pub γ).eval t * cellAtC P.θ a t 0
+          * ((α + cellAtC P.θ a t 0 + β * t) * (α + cellAtC P.θ a t 0 + β * s))) * P.vRows.eval t
+      + ρ * ((α + cellAtC P.θ a t 0 + β * t) * (α + cellAtC P.θ a t 0 + β * s))
+        * gate (cellAtC P.θ a t 0) (cellAtC P.θ a t 1) (cellAtC P.θ a t 2) (cellAtC P.θ a t 3))
+    / (claimDenC P α β t a s * P.vRows.eval t)
+
+theorem claimValueC_eq (P : Params E) (α β γ t ρ : E) (a : Fin 4 → E) (s : E) :
+    claimValueC P α β γ t ρ a s = P.claimValue α β γ t ρ a s := by
+  simp only [claimValueC, Params.claimValue, cellAtC_eq, claimDenC_eq]
+
+/-- **The quotient claim's point** (`pointQ`), compiled. -/
+def pointQc (P₀ : Params E) (Y : E) (c : DChal E) (v : Vals E) : List E :=
+  List.ofFn (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (claimPointC 0 (22 + 2 + 1 + 1) c.1.1.2)
+      (P₀.vCells.eval c.1.1.2 / claimDenC P₀ c.1.1.1.1 c.1.1.1.2.1 c.1.1.2 v.1 v.2)) c.1.2)
+      (Y / (1 + Y))) (Y ^ 2 / (1 + Y ^ 2)) :
+    Fin (22 + 2 + 1 + 1 + 1 + 1 + 1 + 1) → E)
+
+theorem pointQc_eq (P₀ : Params E) (Y : E) (c : DChal E) (v : Vals E) :
+    pointQc P₀ Y c v = pointQ P₀ Y c v := by
+  simp only [pointQc, pointQ, claimDenC_eq, claimPointC_eq]
+
+/-- The sum claim's point (`pointS`), compiled. -/
+def pointSc (Y : E) : List E := List.ofFn (sumPointC (22 + 2) Y)
+
+theorem pointSc_eq (Y : E) : pointSc Y = pointS Y := rfl
+
+/-- **The quotient table's claimed values** (`valsQ`), compiled. -/
+def valsQc (P₀ : Params E) (stmt : Fin P₀.words → E) (Y : E) (c : DChal E) (v : Vals E) :
+    Fin 2 → E :=
+  ![claimValueC P₀ c.1.1.1.1 c.1.1.1.2.1 c.1.1.1.2.2 c.1.1.2 c.1.2 v.1 v.2 /
+      ((1 + Y) * (1 + Y ^ 2)) / claimScaleC 0 (22 + 2 + 1 + 1) c.1.1.2,
+    P₀.target stmt c.1.1.1.2.2 / ((1 + Y) * (1 + Y ^ 2))]
+
+theorem valsQc_eq (P₀ : Params E) (stmt : Fin P₀.words → E) (Y : E) (c : DChal E) (v : Vals E) :
+    valsQc P₀ stmt Y c v = valsQ P₀ stmt Y c v := by
+  simp only [valsQc, valsQ, claimValueC_eq, claimScaleC_eq]
+
+end Points
+
 end Builder
+
+open Builder
+
+/-! ## The simulator's tables -/
+
+section Tables
+
+variable {K E : Type} [Field K] [DecidableEq K] [Field E] [Algebra K E] [DecidableEq E] [CharP E 2]
+
+/-- The witness stack's overflow lane `32`. -/
+def ovW : ιW := ⟨32, by rw [lanes_W]; norm_num⟩
+
+/-- Entry `y` of the overflow lane of the witness stack. -/
+def eW (y : ℕ) (hy : y < 2 ^ 19 := by norm_num) : ιW × YW := (ovW, ⟨y, by rw [logLane_W]; exact hy⟩)
+
+/-- **The witness table's candidates**: entries `256 .. 260` of the overflow lane (the point's
+coordinates `ρ`, `ρ²`), columns `e₀+e₁+e₂+e₃`, `e₁+e₃`, `e₂+e₃`; then entries `256, 260, 264`
+(`u₂`, `u₃`), columns `e₀`, `e₁`, `e₁+e₂`. -/
+def candsW : List (Builder.Cols ιW YW K) :=
+  [![[(eW 256, 1), (eW 257, 1), (eW 258, 1), (eW 259, 1)], [(eW 257, 1), (eW 259, 1)],
+      [(eW 258, 1), (eW 259, 1)]],
+    ![[(eW 256, 1)], [(eW 260, 1)], [(eW 260, 1), (eW 264, 1)]]]
+
+/-- The witness claim's weight (`openW`'s). -/
+def wW (c : DChal E) : ιW → YW → E := Lw.claimW (fun _ : Fin 1 => pointWc c) 0
+
+/-- **The simulator's witness table**: zero but on the first candidate triple of `candsW` with a
+nonzero determinant, where it is Cramer's solution for the verifier's claimed value. -/
+def simTW (rep : Rep K E) (_Y : E) (c : DChal E) (v : Vals E) : ιW → YW → K :=
+  sparse (solveOne rep.coords (wW c) candsW (valWc c v))
+
+/-- The quotient stack's overflow lane. -/
+def ovQ : ιQ := ⟨32, by rw [lanes_Q]; norm_num⟩
+
+/-- Lane `l` and entry `y` of the quotient stack. -/
+def eQ (l y : ℕ) (hl : l < 63 := by norm_num) (hy : y < 2 ^ 22 := by norm_num) : ιQ × YQ :=
+  (⟨l, by rw [lanes_Q]; exact hl⟩, ⟨y, by rw [logLane_Q]; exact hy⟩)
+
+/-- **The sum claim's triple**: entry `2^22 - 1` of the lanes `3, 19, 43` (blocks `3, 67, 131`). -/
+def colsS : Builder.Cols ιQ YQ K :=
+  ![[(eQ 3 (2 ^ 22 - 1), 1)], [(eQ 19 (2 ^ 22 - 1), 1)], [(eQ 43 (2 ^ 22 - 1), 1)]]
+
+/-- **The quotient claim's candidates**: the overflow lane's pieces `1, 17, 33` (blocks `0, 64, 128`),
+then `5, 21, 37` (blocks `16, 80, 144`), their first entries. -/
+def candsQ : List (Builder.Cols ιQ YQ K) :=
+  [![[(eQ 32 256, 1)], [(eQ 32 (256 * 17), 1)], [(eQ 32 (256 * 33), 1)]],
+    ![[(eQ 32 (256 * 5), 1)], [(eQ 32 (256 * 21), 1)], [(eQ 32 (256 * 37), 1)]]]
+
+/-- The quotient table's claims' weights (`openQ`'s). -/
+def wQ (P₀ : Params E) (Y : E) (c : DChal E) (v : Vals E) : Fin 2 → ιQ → YQ → E :=
+  Lq.claimW ![pointQc P₀ Y c v, pointSc Y]
+
+/-- **The simulator's quotient table**: the sum claim solved on `colsS`, then the quotient claim,
+less what that gave it, on the first candidate of `candsQ` with a nonzero determinant. -/
+def simTQ (rep : Rep K E) (P₀ : Params E) (stmt : Fin P₀.words → E) (Y : E) (c : DChal E)
+    (v : Vals E) : ιQ → YQ → K :=
+  sparse (solveTwo rep.coords (wQ P₀ Y c v 0) (wQ P₀ Y c v 1) colsS candsQ
+    (valsQc P₀ stmt Y c v 0) (valsQc P₀ stmt Y c v 1))
+
+end Tables
 
 end QuotientZk.Instance
