@@ -2,10 +2,13 @@
 import UniComplete.Basic
 import UniComplete.Trace
 import UniComplete.Bus
+import UniComplete.Div
 import UniComplete.Quotients
 import UniComplete.Batch
 import UniComplete.Prover
 import UniComplete.Claims
 import UniComplete.Witness
 import UniComplete.Honest
+import UniComplete.Setup
 import UniComplete.Whir
+import UniComplete.Domain
