@@ -446,3 +446,18 @@ Each entry says what changed, why, and what the prover must change (none if the 
    (`Σ_limb basis · selector` once per column), terms on one row add `coefficient · part` before the row multiplies
    them, and `q_flock`'s 18 slots share the eq of their 18 instance coordinates (only their 8 slot bits' factors
    differ). Measured, main line straight: 196,524 → 185,541 (the batch's weights 33,165 → 22,660). Prover: nothing.
+
+5. **Lever 4a: Flock's matrices' reduction runs in the batching sumcheck** (`flock_min::verify_deferred`,
+   `Pending`, `verifier::batch`). On the main line its sum `Σ_(x, y) G(x, y) L̂(x) ŝ(y)` (the skip's `k` row bits and
+   the column's 6 packing bits, degree 2 a variable) joins the batch as the next power of `λ`, zero-extended by
+   `eq(·, 0)` on the batch's other variables, so its `k + 6 = 9` rounds are the batch's first 9 and cost no scalars.
+   After the stacks' three values the prover sends `a`, `b` (the claims on `A0`, `B0` at `(ρ, row_low, chi_in, σ,
+   chi_in')`, `(ρ, σ)` the batch's first 9 coordinates), and the batch's terminal adds `λ^3 (a + α b) L̂(ρ) ŝ(σ)
+   Π_(j≥9)(1 + r_j)`. Its rounds' challenges are drawn after `C2` now: they are union-bounded over `L1 L2`.
+   Measured, main line: calldata 7,516 → 7,084 B (−18 scalars); straight 185,541 → 184,417; deployed 199,342 →
+   197,610; tx (EIP-7623, `c = 0`, deployed) 319,262 → 310,642; EIP-7976 481,024 → 453,376.
+   Prover: the matrices' reduction no longer has its own 9 rounds and its `a`, `b` after the slices. After the slices
+   the transcript draws the ring map at once; at the end, the batching sumcheck's round polynomials are the stacks'
+   batch plus `λ^3` times the matrices' product sum (its tables zero-extended by `δ_0` on variables 9..27), and `a`,
+   `b` follow the three stack values. `flock_min::tests::the_pending_matrices_reduction_merges_into_a_longer_sumcheck`
+   is an honest prover of this merge.
