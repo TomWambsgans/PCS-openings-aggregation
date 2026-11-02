@@ -3,6 +3,8 @@ import E2ECompleteness.Chain
 import E2ECompleteness.Transfer
 import E2ECompleteness.Regular
 import E2ECompleteness.End
+import E2ECompleteness.WithHash
+import E2ECompleteness.Experiment
 
 /-!
 # `PcsQuotient.Completeness`, end to end
