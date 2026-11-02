@@ -20,6 +20,11 @@ tracing.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true
 
+[features]
+# Test-only: the differential test of the Lean skeleton (`tests/skel_trace.rs`), which records every
+# Keccak call of a proof. Off in every production build.
+skel-trace = ["primitives/trace", "fiat_shamir/trace"]
+
 [dev-dependencies]
 primitives = { workspace = true, features = ["test-util"] }
 bench.workspace = true

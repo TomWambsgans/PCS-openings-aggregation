@@ -14,6 +14,11 @@ use std::mem::{MaybeUninit, needs_drop};
 #[cfg(feature = "test-util")]
 pub mod test_rng;
 
+/// A record of every Keccak call, for the skeleton's differential test (feature `trace`, off in
+/// every production build).
+#[cfg(feature = "trace")]
+pub mod trace;
+
 /// Format an integer with comma-separated groups of three decimal digits.
 ///
 /// This accepts every standard signed and unsigned integer type through its

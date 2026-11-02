@@ -99,8 +99,26 @@ in that PRG).
   and the gadget's (R)); `FSFresh` (the honest prover's Fiat–Shamir inputs fresh but with probability `εFS`: every
   such input holds the previous chain state or duplex capacity, or a fresh root; a collision bound not formalized);
   `Factors` for the deployed prover (structural: the masks and the two paddings are independent and WHIR's
-  messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed, not
-  differential-tested). The lift to leanerVM's random-permutation model is separate (`QuotientZk/Rpm.lean`).
+  messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed; equal by
+  test, not by proof: see the next item). The lift to leanerVM's random-permutation model is separate
+  (`QuotientZk/Rpm.lean`).
+- **`skel` against the Rust prover, by test** (`QuotientZk/Test/SkelTrace.lean`, executable `skeltrace`;
+  `crates/quotient/tests/skel_trace.rs`, feature `skel-trace`, which records every Keccak call of a proof through
+  test-only hooks): at `2^17` rows `skel`, run as compiled with mumbai's Keccak-256 and Keccak-f[1600] as the
+  oracle, on the prover's statement, secret leaf digests and messages (cut from its transcript at its draws),
+  makes the prover's queries byte for byte: the label and the five chain steps, the three IVs and seeds, the 254
+  draws and 17 overflow permutations (capacity included), the 11 grinds (the smallest nonce, every try from 0),
+  the 11 trees (sizes and roots); its proof is the prover's (roots, values, streams, opened positions, siblings).
+  The differences, none touching zero knowledge: two public queries in another order (the witness tree before
+  the label; the wiring tree, the prover's setup, after `ρ`); the prover's queries the skeleton does not make
+  (the three layout ids, which the skeleton takes as constants and `c₀` can hold; its own `verify` replaying the
+  chain; and the key derivation of its randomness, all on its 32-byte secret seed but the cells' digest, whose
+  outputs only feed it: the skeleton's randomness is uniform, as documented); and grinding's closing
+  permutation, a discarded draw in the prover, the last try in the skeleton (the same query). At every size
+  `2^17 .. 2^22` the prover's draws, the scalars it absorbs between them, its trees' sizes and its stream are
+  the grammar of the shape derived from WHIR's configuration, which at `2^22` is `deployedShape` (the numbers
+  and the IV prefixes with the real layout ids). `skel` itself is not run at `2^22`: its trees' `levelUp` nests
+  one bind a pair, quadratic to run (`2^17` rows: 6 minutes).
 
 ## The port to this protocol (F1)
 
