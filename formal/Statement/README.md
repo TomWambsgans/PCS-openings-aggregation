@@ -27,7 +27,10 @@ one `π` (there is no private oracle), the circuit's commitment computed over `�
 adversary runs (deployed, the verifier holds it as a constant computed over Keccak-f[1600]); the
 **relation** is over the deployed Keccak-256, which the circuit computes on bits, independent of `π` in the
 model (mumbai's convention for leanVM's `KECCAK` instruction), with a **collision clause** where a statement
-reads more than the relation (`StatementBinds`, as mumbai's `DigestBinds`). That the deployed Keccak-f[1600]
+reads more than the relation (`StatementBinds`, as mumbai's `DigestBinds`). The three layouts' identifiers
+(`Layout.id`, the Keccak-256 of each layout's encoding in the openings' prefix) are **constants of the
+verifier**, fixed 32-byte values computed with the deployed Keccak-256, the same for every proof (the Rust
+recomputes the same bytes; `formal/WhirBridge` proves the openings sound for any fixed prefix). That the deployed Keccak-f[1600]
 behaves as a random permutation is the assumption. The adversary is classical, its code fixed before `π`
 is sampled.
 

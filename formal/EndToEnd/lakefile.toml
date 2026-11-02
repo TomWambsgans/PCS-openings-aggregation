@@ -3,7 +3,7 @@
 # The bridge between the end statements and the proofs: ONE Lake workspace in which the statement
 # (`formal/Statement`, library `PcsQuotient`) and the proof layers (`formal/Circuit`,
 # `QuotientSecurity`, `QuotientRpm`, `WhirBridge`, `Compose`, `Completeness`, `QuotientZk`,
-# `Implementation`, `Field`) are all visible, and `EndToEnd/Bridge/*.lean`, the proofs that the
+# `Implementation`, `Field`) are all visible, and `Bridge/*.lean`, the proofs that the
 # statement's definitions are the proof layers' transcriptions. It builds as `Compose` and
 # `Completeness` do, against a built checkout of leanerVM (https://github.com/Verified-zkEVM/leanerVM,
 # commit 6175f1a07f0dc33bd3d640de0063d1006143ee91) at `../leanervm`, sharing that checkout's
@@ -13,7 +13,7 @@
 # See README.md.
 name = "pcs-quotient-end-to-end"
 version = "0.1.0"
-defaultTargets = ["EndToEnd"]
+defaultTargets = ["Bridge"]
 packagesDir = "../leanervm/lean_vm/.lake/packages"
 
 [leanOptions]
@@ -76,7 +76,7 @@ srcDir = ".."
 name = "Implementation"
 srcDir = ".."
 
-# The bridge: the statement's definitions are the proofs' transcriptions.
+# The bridge: the statement's definitions are the proofs' transcriptions (`Bridge/*.lean`).
 [[lean_lib]]
-name = "EndToEnd"
-globs = ["EndToEnd", "EndToEnd.+"]
+name = "Bridge"
+globs = ["Bridge", "Bridge.+"]
