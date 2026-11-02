@@ -12,6 +12,7 @@ import QuotientSecurity.Hiding.Gadget
 import QuotientSecurity.Hiding.GadgetLayout
 import QuotientSecurity.Hiding.Solve
 import QuotientSecurity.Hiding.GadgetTheorem
+import QuotientSecurity.Hiding.Deployed
 
 /-!
 # Hiding WHIR openings of `K`-valued tables (`crates/quotient/HIDING.md`)
