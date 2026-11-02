@@ -4,7 +4,7 @@
 # `formal/quotient` (branch PCS-openings-aggregation, commit 651453c6). MIT OR Apache-2.0; see NOTICE.md.
 name = "pcs-quotient-formal"
 version = "0.1.0"
-defaultTargets = ["QuotientSecurity", "QuotientRpm"]
+defaultTargets = ["QuotientSecurity", "QuotientRpm", "QuotientZk"]
 
 [leanOptions]
 autoImplicit = false
@@ -57,3 +57,8 @@ name = "QuotientSecurity"
 # in the random-oracle model and then in leanerVM's random-permutation model.
 [[lean_lib]]
 name = "QuotientRpm"
+
+# Zero knowledge of the non-interactive proof (layer F3b): an explicit simulator that programs the
+# random oracle, in the random-oracle model and then in leanerVM's random-permutation model.
+[[lean_lib]]
+name = "QuotientZk"
