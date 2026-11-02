@@ -275,10 +275,13 @@ def membershipBuilder : BuildM (List Src × List Src) := do
 def Builder.new : Builder := ⟨Array.replicate publicRows idle, #[]⟩
 
 /-- **The membership circuit** on `2^logRows` rows (`membership`, `circuit.rs:326-346`; deployed at
-`logRows = 22`, `3 878 612` rows used). -/
+`logRows = 22`, `3 878 612` rows used). The builder's run is read by its projections (`r.1.1` the
+wires of `y`, `r.1.2` those of the root, `r.2` the builder), not by a pattern match, so that a proof
+about the circuit's fields never has to evaluate the run (a match on it is reduced only once the
+`2^22`-row run is computed). -/
 def membership (logRows : ℕ) : Circuit :=
-  let ((y, root), b) := membershipBuilder.run Builder.new
-  finish logRows (publicWords y root) b
+  let r := (membershipBuilder.run Builder.new).run
+  finish logRows (publicWords r.1.1 r.1.2) r.2
 
 /-- `membership_inputs` (`circuit.rs:349-357`): the free inputs of `membership` for a secret, `x`'s
 bits, then each level's sibling's bits and its direction, a byte's bits low first. -/
@@ -348,7 +351,26 @@ def commitWith (μ : ℕ) (stack : Array K) : m LeanVM.Prover.Tree :=
 def Circuit.indexRootWith (c : Circuit) : m Digest := do
   return (← commitWith F (c.logRows + 2) c.wiringTable).root
 
+/-- **The circuit's commitment's tree** over `F`: the Merkle tree of the WHIR commitment of its wiring
+table, whose root is `indexRootWith` (the setup computes it, `Security.lean`; the extractor reads its
+Keccak-256 evaluations, `Tree.evaluations`). -/
+def Circuit.indexTreeWith (c : Circuit) : m LeanVM.Prover.Tree :=
+  commitWith F (c.logRows + 2) c.wiringTable
+
 end With
+
+/-- **The Keccak-256 evaluations a Merkle tree holds** (mumbai's `Tree`, as `buildTreeM` builds it),
+in the order `buildTreeM` computes them: each of the `2^height` leaves' bytes (`kBytes` of its row's
+words) with its digest, then, level by level from the leaves up, each node's `64` bytes (its two
+children's digests) with its digest. A pure function of the tree. For the circuit's commitment
+(`Circuit.indexTreeWith`) these are the setup's Keccak-256 evaluations, which the extractor reads
+(`Security.lean`, `Extractor.lean`). -/
+def Tree.evaluations (t : LeanVM.Prover.Tree) : List (List UInt8 × Digest) :=
+  let level (l : ℕ) : Array Digest := t.levels.getD l #[]
+  (List.range (2 ^ t.height)).map (fun i ↦ ((t.word i).flatMap kBytes, (level 0).getD i default)) ++
+    (List.range t.height).flatMap fun l ↦ (List.range (2 ^ (t.height - (l + 1)))).map fun j ↦
+      (digestBytes ((level l).getD (2 * j) default) ++ digestBytes ((level l).getD (2 * j + 1) default),
+        (level (l + 1)).getD j default)
 
 end PcsQuotient
 

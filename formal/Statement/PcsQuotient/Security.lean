@@ -22,8 +22,9 @@ deployed Keccak-f[1600], independent of `π`.
 
 * **Knowledge soundness** (`KnowledgeSoundness ε`): for every adversary of at most `Q` calls of `π`
   and `π⁻¹`, the verifier accepts its statement and proof while **`extractor`**, reading only the
-  statement, the proof and the adversary's transcript, outputs no witness, with probability at most
-  `ε Q`.
+  statement, the proof, the adversary's transcript and the public setup's tree (the circuit
+  commitment's Merkle tree, as its Keccak-256 evaluations), outputs no witness, with probability at
+  most `ε Q`.
 * **Completeness** (`Completeness δ`): for every statement and witness of the relation, the honest
   prover's (`prover`) proof, with uniform coins (masks and padding), is rejected with probability at most `δ`.
 * **Zero knowledge** (`ZeroKnowledge ζ`, statistical, the permutation programmable): for every
@@ -64,6 +65,13 @@ open scoped ENNReal
 `logRows = 22`). -/
 def setupWith {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState) : m Digest :=
   (membership logRows).indexRootWith F
+
+/-- **The setup's tree** over `F`: the Merkle tree of the membership circuit's commitment
+(`Circuit.indexTreeWith`), whose root is `setupWith F`'s. The knowledge-soundness experiment computes
+it, and its extractor reads its Keccak-256 evaluations (`Tree.evaluations`): the setup is public. -/
+def setupTreeWith {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState) :
+    m LeanVM.Prover.Tree :=
+  (membership logRows).indexTreeWith F
 
 /-- **The verifier** over `F`, on the circuit committed as `indexRoot` (`Verifier.lean`'s `verifyWith`,
 at the membership circuit's size). -/
@@ -123,12 +131,14 @@ def prover {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState) (st
   proverWith F nonceFuel stmt w coins.1 coins.2.1 coins.2.2
 
 /-- **The extractor**: `transcriptExtractorFor` (`Extractor.lean`) at the membership circuit. From the
-statement, the adversary's transcript and the proof, a secret: the witness table's tree inverted
-through the transcript's Keccak-256 evaluations, its word list-decoded, and the first candidate's cells'
-input bits that spell a witness. Straight-line: it reads the transcript, it neither queries `π` nor
-runs the adversary again. -/
-def extractor (stmt : Statement) (T : OracleQueryLog) (proof : Proof) : Option Secret :=
-  transcriptExtractorFor (membership logRows) stmt T proof
+statement, the public setup's tree (its Keccak-256 evaluations `setupEvals`, `Tree.evaluations`), the
+adversary's transcript and the proof, a secret: the witness table's tree inverted through the setup's
+and the transcript's Keccak-256 evaluations, its word list-decoded, and the first candidate's cells'
+input bits that spell a witness. Straight-line: it reads the setup's tree and the transcript, it
+neither queries `π` nor runs the adversary again. -/
+def extractor (stmt : Statement) (setupEvals : List (List UInt8 × Digest)) (T : OracleQueryLog)
+    (proof : Proof) : Option Secret :=
+  transcriptExtractorFor (membership logRows) stmt setupEvals T proof
 
 /-- **The simulator's proof** (`Simulator.simulate`, `2^25` nonces per proof of work), its state the
 permutation it answers. -/
@@ -141,29 +151,34 @@ def simulator (stmt : Statement) : Simulator.SimM (Option Proof) :=
 to `π` and `π⁻¹` that outputs a statement and a proof. -/
 abbrev Adversary : Type := OracleComp RandomPermutationOracles (Statement × Proof)
 
-/-- An outcome of the experiment: the statement and the proof, the verdict, and the adversary's
-transcript, its queries and their answers in order. -/
-abbrev Outcome : Type := ((Statement × Proof) × Bool) × OracleQueryLog
+/-- An outcome of the experiment: the statement and the proof, the verdict, the setup's Keccak-256
+evaluations (its tree, `Tree.evaluations`), and the adversary's transcript, its queries and their
+answers in order. -/
+abbrev Outcome : Type :=
+  ((Statement × Proof) × Bool) × List (List UInt8 × Digest) × OracleQueryLog
 
 abbrev Outcome.statement (z : Outcome) : Statement := z.1.1.1
 abbrev Outcome.proof (z : Outcome) : Proof := z.1.1.2
 abbrev Outcome.accepted (z : Outcome) : Prop := z.1.2 = true
-abbrev Outcome.transcript (z : Outcome) : OracleQueryLog := z.2
+abbrev Outcome.setupEvaluations (z : Outcome) : List (List UInt8 × Digest) := z.2.1
+abbrev Outcome.transcript (z : Outcome) : OracleQueryLog := z.2.2
 
-/-- **The knowledge-soundness experiment**: the setup (the circuit's commitment over `π`), the
+/-- **The knowledge-soundness experiment**: the setup (the circuit commitment's tree over `π`), the
 adversary, its queries recorded (`Common.loggedOracles`), then the verifier over `π` on its statement
-and proof, the whole game run against the lazily sampled permutation from no edge. -/
+and proof with the tree's root, the whole game run against the lazily sampled permutation from no
+edge; the outcome holds the setup tree's Keccak-256 evaluations, public, for the extractor. -/
 noncomputable def soundnessExperiment (A : Adversary) : ProbComp Outcome :=
   runWithRandomPermutation do
-    let indexRoot ← setupWith queryPermutation
+    let tree ← setupTreeWith queryPermutation
     let (z, transcript) ← (simulateQ loggedOracles A).run []
-    let accepted ← verifier queryPermutation indexRoot z.1 z.2
-    return ((z, accepted), transcript)
+    let accepted ← verifier queryPermutation tree.root z.1 z.2
+    return ((z, accepted), Tree.evaluations tree, transcript)
 
-/-- **The adversary breaks knowledge soundness**: the verifier accepts, and `extractor` outputs no witness
-of the statement. -/
+/-- **The adversary breaks knowledge soundness**: the verifier accepts, and `extractor`, on the setup's
+tree and the adversary's transcript, outputs no witness of the statement. -/
 def BreaksKnowledgeSoundness (z : Outcome) : Prop :=
-  z.accepted ∧ ¬ ∃ w, extractor z.statement z.transcript z.proof = some w ∧ Relation z.statement w
+  z.accepted ∧ ¬ ∃ w, extractor z.statement z.setupEvaluations z.transcript z.proof = some w ∧
+    Relation z.statement w
 
 /-- **Knowledge soundness in the random-permutation model**, for the extractor `extractor`, with the
 error `ε Q` for `Q` calls of `π` and `π⁻¹` by the adversary (its coins free). -/
