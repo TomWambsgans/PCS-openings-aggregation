@@ -3,7 +3,7 @@
 -- MIT OR Apache-2.0) through `Completeness` and `WhirBridge` (`Column`, `StackClaim.Holds`,
 -- `IsMultilinearFn`).
 import E2ECompleteness.ProverDefs
-import E2ECompleteness.ProverLayout
+import Bridge.Opening
 import Completeness.HiddenOpenings
 
 /-!
@@ -44,6 +44,8 @@ open LeanVM.Parameters LeanVM.Protocol LeanVM.Protocol.EndToEnd LeanVM.Protocol.
 set_option autoImplicit false
 
 namespace E2ECompleteness
+
+open Bridge
 
 /-! ## Arrays -/
 
