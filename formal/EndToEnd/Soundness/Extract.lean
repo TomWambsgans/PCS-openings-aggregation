@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Soundness.F1Step
 import Soundness.MerkleWord
+import Soundness.Replay
 
 /-!
 # The Statement's extractor finds a secret when Compose's list holds a witness
@@ -13,15 +14,18 @@ message, `readW`) returns a list; the Statement's (`PcsQuotient.extractor`) a se
 extractor returns a secret of the statement**, on the same evaluations (the setup tree's, then the
 transcript's):
 
+* the Statement's word, read through its hash maps, is mumbai's `committedLeaves` on the setup's and
+  the transcript's evaluations (`Replay.lean`, `witnessWord_eq_committed`);
 * the two Merkle words agree on every column (`MerkleWord.lean`), so the two `decodeStacks` lists
   have the same members (`mem_decodeStacks_congr`: both are mumbai's Johnson candidates of the
   word, `mem_decodeColumns`, and the candidates read the code's columns only, `candidates_congr`);
 * a stack whose read message satisfies the relation proves membership (`provesMembership_of_sat`)
   and so spells a secret of the statement (`ReadsSecret`, the bridge's);
 * the Statement's extractor returns the first candidate's secret that satisfies the relation, the
-  fast path's first (`fastStacks`), then the list decoder's: whichever it returns satisfies the
-  relation, and it returns one since the list decoder's list holds such a stack
-  (`findSome_orElse`).
+  fast path's first (`fastStacks`), then the unique decoder's (`uniqueStacks`), then the list
+  decoder's: whichever it returns satisfies the relation, and it returns one since the list
+  decoder's list, last, holds such a stack (`orElse_spec`, `findSome_spec`). Nothing is needed of the
+  first two stages: they only return earlier.
 -/
 
 set_option linter.unusedSectionVars false
@@ -39,19 +43,29 @@ open LeanVM.Protocol.EndToEnd
 
 /-! ## Lists -/
 
-/-- The first of two lists' finds, the second's if the first finds nothing: when every find
-satisfies `p` and the second list has a find, a find satisfying `p`. -/
-theorem findSome_orElse {α β : Type} (l₁ l₂ : List α) (f : α → Option β) (p : β → Prop)
-    (hf : ∀ a b, f a = some b → p b) (h : ∃ a ∈ l₂, (f a).isSome) :
-    ∃ b, (l₁.findSome? f <|> l₂.findSome? f) = some b ∧ p b := by
-  rcases h₁ : l₁.findSome? f with _ | b
-  · obtain ⟨a, ha, hfa⟩ := h
-    rcases h₂ : l₂.findSome? f with _ | b
-    · exact absurd hfa (by rw [List.findSome?_eq_none_iff.mp h₂ a ha]; simp)
-    · obtain ⟨a', -, hfa'⟩ := List.exists_of_findSome?_eq_some h₂
-      exact ⟨b, by simp, hf a' b hfa'⟩
-  · obtain ⟨a', -, hfa'⟩ := List.exists_of_findSome?_eq_some h₁
-    exact ⟨b, by simp, hf a' b hfa'⟩
+/-- A list's find, when every find satisfies `p`, satisfies `p`. -/
+theorem findSome_sat {α β : Type} (l : List α) (f : α → Option β) (p : β → Prop)
+    (hf : ∀ a b, f a = some b → p b) : ∀ b, l.findSome? f = some b → p b := fun b h ↦ by
+  obtain ⟨a, -, hfa⟩ := List.exists_of_findSome?_eq_some h
+  exact hf a b hfa
+
+/-- A list with a find has a find satisfying `p`, when every find satisfies `p`. -/
+theorem findSome_spec {α β : Type} (l : List α) (f : α → Option β) (p : β → Prop)
+    (hf : ∀ a b, f a = some b → p b) (h : ∃ a ∈ l, (f a).isSome) :
+    ∃ b, l.findSome? f = some b ∧ p b := by
+  obtain ⟨a, ha, hfa⟩ := h
+  rcases h₂ : l.findSome? f with _ | b
+  · exact absurd hfa (by rw [List.findSome?_eq_none_iff.mp h₂ a ha]; simp)
+  · exact ⟨b, rfl, findSome_sat l f p hf b h₂⟩
+
+/-- The first of two options, the second if the first is none: when the first satisfies `p` if it
+is some, and the second is some satisfying `p`, some satisfying `p`. -/
+theorem orElse_spec {β : Type} (o₁ o₂ : Option β) (p : β → Prop)
+    (h₁ : ∀ b, o₁ = some b → p b) (h₂ : ∃ b, o₂ = some b ∧ p b) :
+    ∃ b, (o₁ <|> o₂) = some b ∧ p b := by
+  rcases o₁ with _ | b
+  · simpa using h₂
+  · exact ⟨b, rfl, h₁ b rfl⟩
 
 /-! ## The decoder's members -/
 
@@ -94,43 +108,38 @@ theorem membership_logRows : (PcsQuotient.membership PcsQuotient.logRows).logRow
   unfold PcsQuotient.membership
   exact logRows_finish _ _ _
 
-/-- The Statement's witness word, at a proof naming the witness root `d`. -/
-theorem witnessWord_eq (answers : List UInt8 → Option Digest) (keys : List (List UInt8))
-    (proof : PcsQuotient.Proof) (d : Digest)
-    (hd : digestOfScalars proof.reduction.witnessRoot = some d) :
-    PcsQuotient.witnessWord 22 answers keys proof =
-      some (LeanVM.Extraction.leafAt (LeanVM.Extraction.committedLeaves answers keys d 20
-        (2 ^ WhirBridge.laneFold)) 20 (2 ^ WhirBridge.laneFold)) := by
-  unfold PcsQuotient.witnessWord PcsQuotient.witnessRootOf
-  rw [hd]
-  rfl
-
 /-- **The Statement's extractor returns a secret** when its word is `W` and the list decoder lists a
 stack spelling a secret of the statement: any circuit of `2^n` rows, `n` a variable, so that nothing
-of the circuit, the word or the stacks' sizes is computed. -/
+of the circuit, the word or the stacks' sizes is computed. The fast path's and the unique decoder's
+candidates are tried first; whatever they return satisfies the relation. -/
 theorem extractFrom_spec (n : ℕ) (circuit : PcsQuotient.Circuit) (hlog : circuit.logRows = n)
-    (stmt : PcsQuotient.Statement) (answers : List UInt8 → Option Digest)
-    (keys : List (List UInt8)) (proof : PcsQuotient.Proof) (W : ℕ → List K)
-    (hw : PcsQuotient.witnessWord n answers keys proof = some W)
+    (stmt : PcsQuotient.Statement) (pre : Digest → ℕ → Option (List UInt8))
+    (proof : PcsQuotient.Proof) (W : ℕ → List K)
+    (hw : PcsQuotient.witnessWord n pre proof = some W)
     (st : Vector K (2 ^ (PcsQuotient.cellVars n + 1)))
     (hst : st ∈ LeanVM.Extraction.decodeStacks (PcsQuotient.cellVars n + 1)
       PcsQuotient.logInvRate W)
     (hrel : PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit st)) :
-    ∃ w, PcsQuotient.extractFrom circuit stmt answers keys proof = some w ∧
+    ∃ w, PcsQuotient.extractFrom circuit stmt pre proof = some w ∧
       PcsQuotient.Relation stmt w := by
   unfold PcsQuotient.extractFrom
   rw [hlog, hw, Option.bind_eq_bind, Option.bind_some]
-  refine findSome_orElse _ _ _ (PcsQuotient.Relation stmt) (fun a b hab => ?_) ⟨st, hst, ?_⟩
-  · by_cases hr : PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit a)
-    · rw [ite_eq_left hr] at hab
+  have hf : ∀ (a : Vector K (2 ^ (PcsQuotient.cellVars n + 1))) b,
+      (let w := PcsQuotient.secretOfStack circuit a
+        if PcsQuotient.Relation stmt w then some w else none) = some b →
+        PcsQuotient.Relation stmt b := fun a b hab => by
+    by_cases hr : PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit a)
+    · simp only [ite_eq_left hr] at hab
       cases hab
       exact hr
-    · rw [ite_eq_right hr] at hab
+    · simp only [ite_eq_right hr] at hab
       cases hab
-  · show (if PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit st) then
-      some (PcsQuotient.secretOfStack circuit st) else none).isSome = true
-    rw [ite_eq_left hrel]
-    rfl
+  refine orElse_spec _ _ _ (findSome_sat _ _ _ hf) (orElse_spec _ _ _ (findSome_sat _ _ _ hf)
+    (findSome_spec _ _ _ hf ⟨st, hst, ?_⟩))
+  show (if PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit st) then
+    some (PcsQuotient.secretOfStack circuit st) else none).isSome = true
+  rw [ite_eq_left hrel]
+  rfl
 
 /-- **If Compose's list holds a witness, the Statement's extractor finds a secret.** For a proof
 whose witness root's scalars are the digest `d`: a message of Compose's extractor's list, on the
@@ -169,7 +178,8 @@ theorem extractor_of_mem (c : Consts) (h : IsCantor c.beta) (hX : ReadsSecret c 
   have hrel : PcsQuotient.Relation stmt
       (PcsQuotient.secretOfStack (PcsQuotient.membership PcsQuotient.logRows) st) :=
     hX stmt ⟨st⟩ (provesMembership_of_sat c h stmt _ hs)
-  exact extractFrom_spec 22 _ membership_logRows stmt _ _ proof _
-    (witnessWord_eq _ _ proof d hd) st hst' hrel
+  unfold PcsQuotient.extractor PcsQuotient.transcriptExtractorFor
+  exact extractFrom_spec 22 _ membership_logRows stmt _ proof _
+    (Replay.witnessWord_eq_committed setupEvals T proof d hd) st hst' hrel
 
 end Soundness

@@ -108,3 +108,29 @@ for mu in [15, 17, 20, 22, 25]:
           f"(unique decoding: > {(n + k) / 2 / n:.2f} n), multiplicity m = {m}, Y-degree l = {ell}, "
           f"conditions n m (m+1)/2 = 2^{log2(cons):.1f}, "
           f"(l+1) m n = 2^{log2((ell + 1) * m * n):.1f} elements of K")
+
+# --- the extractor's stages at the deployed witness table (PcsQuotient/Extractor.lean's cost table) ---
+# Counted in products of K, read off the loops of mumbai's novelInv/novelFwd and of Decoder.lean
+# (toMono, gao, fromMono), constants dropped as in the table; not measured.
+mu, R = 25, 1
+kappa = mu - 6
+m_ = kappa + R
+n = 2**m_
+k = 2**kappa
+A = johnson_threshold(mu, R)
+mult = gs_multiplicity(k, n, A)
+ell = (mult * A - 1) // (k - 1)
+fast_lane = (kappa * k + kappa * k / 2) + (kappa * n + kappa * n / 2)
+ud_lane = (m_ * n + m_ * n / 2) + n * m_ * (m_ + 1) / 2 + 2**(kappa - 1) * kappa * (kappa + 1) / 2 \
+    + (kappa * n + kappa * n / 2)
+ud_per_error = 2 * (n + 1) + (n + k) / 2
+e_max = (n - k) // 2
+print(f"witness table: n = 2^{m_}, k = 2^{kappa}, Johnson threshold {A} ({A / n:.4f} n), "
+      f"unique decoding from {(n + k) // 2} agreements (radius {e_max} = 2^{log2(e_max):.0f})")
+print(f"fast path: 2^{log2(64 * fast_lane):.1f}")
+print(f"unique decoder: 2^{log2(ud_lane):.1f} per lane + 2^{log2(ud_per_error):.1f} per wrong column; "
+      f"64 lanes 2^{log2(64 * ud_lane):.1f}, at the radius "
+      f"2^{log2(64 * (ud_lane + ud_per_error * e_max + 2 * e_max**2)):.1f}")
+ms = (ell + 1)**3 * (mult * n)**2
+print(f"list decoder: m = {mult}, l = {ell}, conditions 2^{log2(gs_num_constraints(n, mult)):.1f}, "
+      f"Mulders-Storjohann (l+1)^3 (m n)^2 = 2^{log2(ms):.1f} per lane, 2^{log2(64 * ms):.1f} for 64")

@@ -5,6 +5,7 @@ import Soundness.Cost
 import Soundness.RpmV
 import Soundness.TreeLog
 import Soundness.MerkleWord
+import Soundness.Replay
 import Soundness.F1Step
 import Soundness.Extract
 import Soundness.EarlyStop
@@ -25,6 +26,7 @@ the Statement's explicit, computable extractor, proved from the proof layers wit
 | `RpmV.lean` | `Compose`'s random-permutation theorem with the verifier's cost as a whole, at the deployed claim maps (`knowledgeSoundness_rust_rpm`, `ksBound`). |
 | `TreeLog.lean` | The setup's Keccak-256 log is its tree's evaluations (`loggedKC_stackSetup`). |
 | `MerkleWord.lean` | The Statement's committed word (mumbai's `committedLeaves`) is Compose's (`merkleWord`). |
+| `Replay.lean` | The extractor's hash maps compute mumbai's lists: the replay (`transcriptEvaluations_eq`), the preimage index (`preimageIn_preimageIndex`), the witness word (`witnessWord_eq_committed`). |
 | `F1Step.lean` | A satisfying first message proves membership (`provesMembership_of_sat`); the reduction's own check (`reductionCheck_of_reduce`). |
 | `Extract.lean` | If Compose's list holds a witness, the Statement's extractor finds a secret (`extractor_of_mem`). |
 | `EarlyStop.lean` | The verifier with early stops accepts at most as often as Compose's (`es_le`); a malformed proof is rejected (`verifier_malformed`). |

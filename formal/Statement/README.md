@@ -3,7 +3,7 @@
 # Statement
 
 What `crates/quotient` is to be proved to be, in the files a reviewer reads: **definitions and end
-statements only**, no proof, one Lake package (`pcs-quotient-statement`, library `PcsQuotient`) of eleven
+statements only**, no proof, one Lake package (`pcs-quotient-statement`, library `PcsQuotient`) of thirteen
 files, `PcsQuotient/<Name>.lean` (Lean modules `PcsQuotient.<Name>`). It depends on leanerVM's
 `Statement/` package (`statement`, branch `mumbai`, commit `6175f1a0`), whose definitions it reuses
 rather than restates: `K = GF(2^64)` and `E = GF(2^192)`, Keccak-f[1600] and Keccak-256 over any
@@ -78,11 +78,16 @@ file names what it takes from leanerVM in its first lines.
    `protocol::prove` then `open`, its tables stacked in their hidden layouts with the padding it is given
    (`Layout.stackOf`), its WHIR openings by mumbai's WHIR prover pieces on this protocol's weight table
    (`openingScript`), run against the verifier's program (mumbai's `runFrom`).
-9. [`Extractor.lean`](PcsQuotient/Extractor.lean): **the extractor** (`transcriptExtractorFor`), with its
-   cost table.
-10. [`Simulator.lean`](PcsQuotient/Simulator.lean): **the simulator** (`Simulator.simulateFor`,
+9. [`Replay.lean`](PcsQuotient/Replay.lean): the transcript's Keccak-256 evaluations and the Merkle
+   inversion, as mumbai's `keccakEvaluationsOfTranscript`, `answerPairs`, `preimage` and `subtreeLeaves`
+   compute them, with hash maps (`transcriptEvaluations`, `preimageIndex`, `leavesUnder`).
+10. [`Decoder.lean`](PcsQuotient/Decoder.lean): **the unique decoder** (`UniqueDecoding.uniqueStacks`):
+    Gao's decoder on each lane, between mumbai's fast path and its list decoder.
+11. [`Extractor.lean`](PcsQuotient/Extractor.lean): **the extractor** (`transcriptExtractorFor`), with its
+    cost table.
+12. [`Simulator.lean`](PcsQuotient/Simulator.lean): **the simulator** (`Simulator.simulateFor`,
     `Simulator.simOracle`).
-11. [`Security.lean`](PcsQuotient/Security.lean): the deployed system (`setupWith`, `verifier`,
+13. [`Security.lean`](PcsQuotient/Security.lean): the deployed system (`setupWith`, `verifier`,
     `deployedIndexRoot`, `deployedVerifier`), the prover's coins, the experiments, and
     **`KnowledgeSoundness`, `Completeness`, `ZeroKnowledge`**, `StatementBinds`, collected in `Theorems`.
 
@@ -107,9 +112,12 @@ proofs in `formal/` are to import it and prove its statements about its definiti
   wiring checked against the Rust's by hash); this package's `PcsQuotient.membership` is checked against the
   Rust's by the circuit's commitment. One must be proved equal to the other (or one package import the other)
   for F0b's theorem to speak about `setupWith`'s circuit.
-* **The extractor**: `transcriptExtractorFor` is mumbai's `committedLeaves` and list decoder on the witness
-  table, then the hidden layout's read-back and the cells; `formal/Compose`'s Merkle-climbing extractor is
-  proved equal to mumbai's `extract` on injective histories (`wordOfMerkle_eq_extract`), the link to this one.
+* **The extractor**: `transcriptExtractorFor` is mumbai's replay, `committedLeaves` and decoders on the
+  witness table (with hash maps, and the unique decoder between the fast path and the list decoder), then
+  the hidden layout's read-back and the cells. `formal/EndToEnd/Soundness` proves `KnowledgeSoundness` for
+  it: its hash maps compute mumbai's lists where it reads them (`Soundness/Replay.lean`), and its last
+  stage, the list decoder, lists every Johnson candidate, so a witness in `formal/Compose`'s extractor's
+  list is one it returns (`Soundness/Extract.lean`); nothing is needed of the first two stages.
 * **The simulator**: zero knowledge is stated for any simulator, `ZeroKnowledgeWith s₀ sim simOracle ζ`
   (a simulator `Statement → StateT S ProbComp (Option Proof)`, its oracle
   `QueryImpl RandomPermutationOracles (StateT S ProbComp)`, its initial state `s₀`). The end theorem
@@ -128,7 +136,7 @@ As written in [`Security.lean`](PcsQuotient/Security.lean) (`PcsQuotient` namesp
 noncomputable def soundnessExperiment (A : Adversary) : ProbComp Outcome :=
   runWithRandomPermutation do
     let tree ← setupTreeWith queryPermutation
-    let (z, transcript) ← (simulateQ loggedOracles A).run []
+    let (z, transcript) ← (simulateQ loggedOracles (A tree.root)).run []
     let accepted ← verifier queryPermutation tree.root z.1 z.2
     return ((z, accepted), Tree.evaluations tree, transcript)
 
@@ -137,7 +145,7 @@ def BreaksKnowledgeSoundness (z : Outcome) : Prop :=
     Relation z.statement w
 
 def KnowledgeSoundness (ε : ℕ → ℝ≥0∞) : Prop :=
-  ∀ (A : Adversary) (Q : ℕ), QueryCostAtMost A permutationCallCost Q →
+  ∀ (A : Adversary) (Q : ℕ), (∀ root, QueryCostAtMost (A root) permutationCallCost Q) →
     Pr{let z ← soundnessExperiment A}[BreaksKnowledgeSoundness z] ≤ ε Q
 
 noncomputable def completenessExperiment (stmt : Statement) (w : Secret) : ProbComp Bool :=
@@ -183,7 +191,9 @@ def StatementBinds : Prop :=
     w.x = w'.x ∨ PairCollision (w.x, Vector.replicate 32 yPad) (w'.x, Vector.replicate 32 yPad)
 ```
 
-`Adversary` is `OracleComp RandomPermutationOracles (Statement × Proof)` (coins, `π`, `π⁻¹`);
+`Adversary` is `Digest → OracleComp RandomPermutationOracles (Statement × Proof)`: given the setup's
+commitment (the circuit's index root, the tree's root; it could recompute it with `π`), with coins, `π` and
+`π⁻¹`;
 `Distinguisher` is `Option Proof → OracleComp RandomPermutationOracles Bool`, quantified after the
 statement and the witness (non-adaptive zero knowledge). `sampleCoins` is the prover's coins: twelve
 uniform mask words and a uniform word at every padding position of the two hidden tables.
@@ -214,20 +224,44 @@ their digests), and nothing else: it neither queries `π`, nor sees the verifier
 adversary again. (The setup is public; reading its tree lets the extractor climb a witness tree that
 reuses the commitment's nodes, which the composed proof in `formal/Compose` needs: its extractor reads
 the setup's and the adversary's queries.) From `T`'s forward queries it replays the Keccak-256
-evaluations whose whole sponge path the adversary queried (mumbai's `keccakEvaluationsOfTranscript`),
-and inverts the witness table's Merkle tree under the root through the setup's evaluations, then those
-(mumbai's `committedLeaves`: `2^20`
-leaves of `64` words), lists the candidate stacks within the Johnson radius of the word (mumbai's
-`fastStacks`, by interpolation for a word without errors, then, only if no fast candidate works,
-`decodeStacks`, CompPoly's Guruswami–Sudan list decoder over `K` with prefix pruning, at most `2^18`
-candidates), reads each candidate's table back through the hidden layout (`Layout.readEntry`), takes the
-cells' polynomial to the cells' values (`Domain.values`), reads the input rows' `V` cells as bits, and
-returns the first candidate's secret that satisfies the relation. **Its cost** (its loops; not proved):
-mumbai's transcript replay and Merkle inversion, quadratic in the transcript (`N` evaluations, the
-setup's `2^20 − 1` among them, then `2^21` scans of `N` pairs); `64` additive transforms of `2^20` on the fast path; the list decoder as
-mumbai's cost table (infeasible at deployed sizes, as mumbai's own); per candidate the read-back of `2^24`
-entries (a scan of the layout's `≤ 64` lanes and `≤ 167` held pieces each), one transform of `2^24`, and
-`33` Keccak-256.
+evaluations whose whole sponge path the adversary queried, as mumbai's `keccakEvaluationsOfTranscript`
+does but with hash maps, keeping those of the two input lengths the witness tree hashes (64 and 512 bytes,
+`Replay.transcriptEvaluations`); it indexes the setup's and those evaluations (`Replay.preimageIndex`: each
+input's first answer, then a digest and a length to the inputs it answers) and inverts the witness table's
+Merkle tree under the root (`Replay.leavesUnder`, mumbai's `committedLeaves` read off the index: `2^20`
+leaves of `64` words, each of its `64` lanes a Reed–Solomon word of `n = 2^20` symbols for messages of
+`k = 2^19`). It decodes the word in three stages, each run only if the stages before give no witness:
+
+1. **the fast path** (mumbai's `fastStacks`): each lane interpolated from its first `2^19` columns, for a
+   word without errors there (an honest proof's);
+2. **the unique decoder** (`UniqueDecoding.uniqueStacks`, `Decoder.lean`): Gao's decoder on each lane, which
+   recovers the lane's polynomial whenever at most `⌊(n − k)/2⌋ = 2^18` of its columns are wrong, so the
+   stack whenever the word agrees with the stack's encoding on at least `(n + k)/2 = 786432` columns;
+3. **the list decoder** (mumbai's `decodeStacks`): every stack whose encoding agrees with the word on at
+   least the Johnson threshold (`741549` columns), CompPoly's Guruswami–Sudan list decoder over `K` lane by
+   lane with prefix pruning (at most `2^18` candidates).
+
+It reads each candidate's table back through the hidden layout (`Layout.readEntry`), takes the cells'
+polynomial to the cells' values (`Domain.values`), reads the input rows' `V` cells as bits, and returns the
+first candidate's secret that satisfies the relation.
+
+**Its cost** (`Extractor.lean`'s table; read off its loops, not proved), in operations of `K`, `Q` the
+transcript's queries, `N` the evaluations read (the setup's `2^20 − 1` and the transcript's):
+
+| Step | Cost |
+| --- | --- |
+| replay and evaluations | `Q` steps of `O(1)` expected hash-map operations on `200`-byte states, at most `680` bytes copied each; at most two paddings of at most `544` bytes compared per chain |
+| index and inversion | `N` insertions keyed by inputs of at most `512` bytes and `N` by digests; `2^20 − 1` node and `2^20` leaf lookups |
+| fast path | `64` inverse transforms of `2^19` and forward of `2^20`: about `2^31.4` |
+| unique decoder, if the fast path gives no witness | about `2^28.3` per lane plus about `2^21.5` per wrong column of the lane (Gao's Euclid stops after `deg v ≤ e` divisions): about `2^34.3` for a word with few wrong columns, at most `2^45.7` |
+| list decoder, if neither gives a witness | multiplicity `1149`, `Y`-degree `1625`, `2^39.3` interpolation conditions per lane; Mulders–Storjohann's reduction `(ℓ+1)³(m'n)² ≈ 2^92.3` per lane (`2^98.3` for the `64`), then Roth–Ruckenstein: infeasible |
+| per candidate | the read-back of `2^24` entries, one transform of `2^24`, `33` Keccak-256 |
+
+**The list decoder is the worst case only**: it runs only on a word whose every witness stack's encoding
+agrees with it on fewer than `786432` of its `2^20` columns (beyond the unique-decoding radius, within the
+Johnson radius); an honest proof's word takes the fast path, a word with a few wrong leaves the unique
+decoder. That the unique decoder recovers every word within its radius is Gao's theorem, tested
+(`PcsQuotientTest/Decoder.lean`) and not proved here; the soundness proof does not need it.
 
 ## The simulator
 
@@ -310,7 +344,8 @@ On a machine with the dependencies (Mathlib and the rest at mumbai's revisions):
 
 ```sh
 lake build                                   # the statement: PcsQuotient
-lake build PcsQuotientTest differential      # the constants' properties, the test
+lake build PcsQuotientTest differential      # the constants' properties, the unique decoder's
+                                             # and the hash-map inversion's tests, the test
 
 # vectors from the Rust (from the repository root): reductions, whole proofs (honest and tampered),
 # circuit commitments, the honest prover's streams; --index adds the membership circuit's commitment

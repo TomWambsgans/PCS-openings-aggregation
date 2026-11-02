@@ -137,11 +137,12 @@ def openProofsOf (proof : PcsQuotient.Proof) : OpenProofs :=
 def convP (z : PcsQuotient.Statement × PcsQuotient.Proof) : RootProof E × OpenProofs :=
   (rootProofOf z.1 z.2, openProofsOf z.2)
 
-/-- **The Statement's adversary as Compose's**: it ignores the commitment it is given (it computes
-whatever it needs of the public setup with `π`) and outputs its statement and proof, converted. -/
+/-- **The Statement's adversary as Compose's**: given the commitment as Compose's 32 bytes, it is run
+on the digest they spell (`ofB`; on the setup's, its root: `ofB (toB d) = d`), its statement and proof
+converted. -/
 def convAdv (A : PcsQuotient.Adversary) :
     Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof E × OpenProofs) :=
-  fun _ => convP <$> A
+  fun ir => convP <$> A (ofB ir)
 
 /-! ## The verifier with early stops -/
 

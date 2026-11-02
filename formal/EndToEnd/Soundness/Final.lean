@@ -10,10 +10,10 @@ import Bridge.Facts
 
 **`knowledgeSoundness : PcsQuotient.KnowledgeSoundness ksBound`**: the end statement of
 `formal/Statement` (`PcsQuotient/Security.lean`), for the Statement's own extractor
-(`PcsQuotient.extractor`: the setup tree's and the adversary's Keccak-256 evaluations, the witness
-tree inverted, the word list-decoded, a candidate's input bits read as a secret satisfying the
-relation), its own experiment (the setup over `π`, the adversary with its queries logged, the
-verifier over `π`), with no hypothesis, at the bound `ksBound Q` (`RpmV.lean`): for an adversary of
+(`PcsQuotient.extractor`: the setup tree's and the adversary's Keccak-256 evaluations, with hash
+maps, the witness tree inverted, the word decoded by interpolation, unique decoding, then list
+decoding, a candidate's input bits read as a secret satisfying the relation), its own experiment (the
+setup over `π`, the adversary given the setup's root, its queries logged, the verifier over `π`), with no hypothesis, at the bound `ksBound Q` (`RpmV.lean`): for an adversary of
 at most `Q` calls of `π`, `π⁻¹`,
 
 `ksBound Q = Σ_{i<3} openingBound (2^21 + Q + 6 + i · 10122) + N (2^-128 + 5 N / 2^256)
@@ -23,7 +23,8 @@ at most `Q` calls of `π`, `π⁻¹`,
 
 **The proof.** The Statement's experiment and Compose's random-permutation game (`rpmGame`, with
 the Statement's adversary converted, `convAdv`) run the same setup (`setupTree_eq`: the Statement's
-`setupTreeWith` is Compose's `stackSetup` of the wiring stack, `SetupBridge`) and the same adversary;
+`setupTreeWith` is Compose's `stackSetup` of the wiring stack, `SetupBridge`) and the same adversary
+on the same root (Compose gives it the root's 32 bytes, which spell the root back, `ofB_toB_root`);
 they differ only in the verifier, run last on the same state of the lazily sampled permutation
 (`prEvent_le_of_continuations`). There, for each outcome of the setup and the adversary
 (`step_le`):
@@ -128,17 +129,21 @@ theorem simulateQ_loggedSetup (q₀ : Column dS.Lσ.logN) :
 
 theorem run_loggedConvAdv (A : PcsQuotient.Adversary) (ir : Bytes32) :
     (simulateQ Common.loggedOracles (convAdv A ir)).run [] =
-      (fun p => (convP p.1, p.2)) <$> (simulateQ Common.loggedOracles A).run [] := by
+      (fun p => (convP p.1, p.2)) <$> (simulateQ Common.loggedOracles (A (ofB ir))).run [] := by
   rw [convAdv, simulateQ_map, StateT.run_map]
+
+/-- Compose's bytes of a digest spell it back. -/
+theorem ofB_toB_root (d : Digest) : ofB (toB d) = d := LeanVM.Rpm.digestOfRpm_toRpm d
 
 /-! ## The two experiments -/
 
-/-- The common prefix: the setup's tree, then the adversary with its queries logged. -/
+/-- The common prefix: the setup's tree, then the adversary, given its root, with its queries
+logged. -/
 noncomputable def prefixS (q₀ : Column dS.Lσ.logN) (A : PcsQuotient.Adversary) :
     OracleComp Common.RandomPermutationOracles
       (LeanVM.Prover.Tree × ((PcsQuotient.Statement × PcsQuotient.Proof) × Common.OracleQueryLog)) :=
   simulateQ keccakCallsOverQueryPermutation (buildS q₀) >>= fun t =>
-    (simulateQ Common.loggedOracles A).run [] >>= fun p => pure (t, p)
+    (simulateQ Common.loggedOracles (A t.root)).run [] >>= fun p => pure (t, p)
 
 theorem soundnessExperiment_eq (q₀ : Column dS.Lσ.logN)
     (hq : q₀.values.toArray = (PcsQuotient.membership PcsQuotient.logRows).wiringTable)
@@ -158,7 +163,7 @@ theorem rpmGame_eq (q₀ : Column dS.Lσ.logN) (A : PcsQuotient.Adversary) :
           pure ((withIr (toB a.1.root) (convP a.2.1), v), treeTr a.1, a.2.2)) := by
   unfold rpmGame prefixS
   rw [simulateQ_loggedSetup q₀]
-  simp only [run_loggedConvAdv, bind_map_left, bind_assoc, pure_bind]
+  simp only [run_loggedConvAdv, ofB_toB_root, bind_map_left, bind_assoc, pure_bind]
 
 /-! ## The verifiers, outcome by outcome -/
 
@@ -266,7 +271,7 @@ theorem knowledgeSoundness : PcsQuotient.KnowledgeSoundness ksBound := by
   rw [soundnessExperiment_eq q₀ hq A]
   refine le_trans ?_ (knowledgeSoundness_rust_rpm iS cS hβ_iS hc_iS
     Bridge.rowVanishing_statementConsts wS (fun _ => rfl) q₀ hcarry (convAdv A) Q
-    (fun _ => Common.isWeightBound_map _ hQ))
+    (fun ir => Common.isWeightBound_map _ (hQ (ofB ir))))
   rw [rpmGame_eq q₀ A]
   exact prEvent_le_of_continuations _ _ _ _ _ _ _ fun a s => step_le a.1 a.2.1.1 a.2.1.2 a.2.2 s
 
