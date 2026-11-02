@@ -7,6 +7,8 @@ import FlockSoundUni.Link
 import FlockSoundUni.Parse
 import FlockSoundUni.Prefix
 import FlockSoundUni.Catch
+import FlockSoundUni.Transcription
+import FlockSoundUni.Instance
 
 /-- info: 'FlockSound.Uni.card_hit_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
@@ -143,3 +145,19 @@ import FlockSoundUni.Catch
 /-- info: 'FlockSound.Uni.flockSound_error' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms FlockSound.Uni.flockSound_error
+
+/-- info: 'FlockSound.Uni.tx_of_flockTx' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.tx_of_flockTx
+
+/-- info: 'FlockSound.Uni.flockSoundInstance' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.flockSoundInstance
+
+/-- info: 'FlockSound.Uni.flockSoundInstance_err' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.flockSoundInstance_err
+
+/-- info: 'FlockSound.Uni.flockSoundInstance_error' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.flockSoundInstance_error
