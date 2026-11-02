@@ -253,7 +253,8 @@ structure OpenShape where
   pubRows : List (List UInt8)
   /-- Level 0's codeword length (`2^depth₀` leaves). -/
   depth₀ : ℕ
-  /-- Out-of-domain coordinates of the first commitment. -/
+  /-- The first commitment's (after the lane fold) tree depth and out-of-domain coordinates. -/
+  depth₁ : ℕ
   ood₀ : ℕ
   /-- Every later level: fold rounds, the commitment's depth and its out-of-domain coordinates. -/
   levels : List (ℕ × ℕ × ℕ)
@@ -387,8 +388,7 @@ def opening (sh : OpenShape) (lv₀ : List (List Bytes32)) :
   let o ← sendK o 2
   let o ← rounds o 6
   -- the first commitment (after the lane fold) and its OOD sample
-  let firstDepth := (sh.levels.headD (0, sh.depth₀ - 1, 0)).2.1
-  let o ← commitNext o firstDepth
+  let o ← commitNext o sh.depth₁
   let o ← ood o sh.ood₀
   let o ← queryPhase o 0 (sh.queries.headD 0)
   let o ← middle o 1 sh.levels (sh.queries.drop 1)
@@ -437,5 +437,62 @@ def skel (sh : Shape) : OracleComp DSpec Proof := do
   let oσ ← opening sh.wiring lvσ
   let oQ ← opening sh.quotient lvQ
   return ⟨rootOf lvW, rootOf lvQ, vals, [oW, oσ, oQ]⟩
+
+/-! ## The deployed shapes (`2^22` rows) -/
+
+/-- An opening's IV prefix (`opening::iv`): `"pcs-quotient-opening" ‖ LE64(VERSION = 2) ‖ layout_id ‖
+LE64(log_n) ‖ LE64(LOG_INV_RATE = 1)`. -/
+def ivPrefix (layoutId : Bytes32) (logN : ℕ) : List UInt8 :=
+  "pcs-quotient-opening".toUTF8.toList ++ LeanVM.Protocol.KeccakHash.wordBytes 2 ++ layoutId.toList ++
+    LeanVM.Protocol.KeccakHash.wordBytes logN.toUInt64 ++ LeanVM.Protocol.KeccakHash.wordBytes 1
+
+/-- **The witness table's opening** at `2^22` rows: `log_n = 25`, level 0 of `2^20` leaves, then
+commitments of `2^19 .. 2^16` leaves, queries `224, 56, 32, 23, 17`, four fold rounds a level,
+three residual variables. -/
+def witnessShape (layoutId : Bytes32) : OpenShape where
+  ivPrefix := ivPrefix layoutId 25
+  secret := some 0
+  pubRows := []
+  depth₀ := 20
+  depth₁ := 19
+  ood₀ := 19
+  levels := [(4, 18, 15), (4, 17, 11), (4, 16, 7)]
+  queries := [224, 56, 32, 23, 17]
+  lastFolds := 4
+  residualVars := 3
+
+/-- **The wiring table's opening**: `log_n = 24`, public level 0 of `2^19` leaves (`rows`). -/
+def wiringShape (layoutId : Bytes32) (rows : List (List UInt8)) : OpenShape where
+  ivPrefix := ivPrefix layoutId 24
+  secret := none
+  pubRows := rows
+  depth₀ := 19
+  depth₁ := 18
+  ood₀ := 18
+  levels := [(4, 17, 14), (4, 16, 10), (4, 15, 6)]
+  queries := [224, 56, 32, 23, 17]
+  lastFolds := 4
+  residualVars := 2
+
+/-- **The quotient table's opening**: `log_n = 28`, level 0 of `2^23` leaves, queries
+`225, 56, 32, 23, 18, 14`. -/
+def quotientShape (layoutId : Bytes32) : OpenShape where
+  ivPrefix := ivPrefix layoutId 28
+  secret := some 1
+  pubRows := []
+  depth₀ := 23
+  depth₁ := 22
+  ood₀ := 22
+  levels := [(4, 21, 18), (4, 20, 14), (4, 19, 10), (4, 18, 6)]
+  queries := [225, 56, 32, 23, 18, 14]
+  lastFolds := 4
+  residualVars := 2
+
+/-- **The deployed shape**: the statement, the three layouts' ids and the wiring codeword's rows. -/
+def deployedShape (st : Statement) (idW idσ idQ : Bytes32) (wiringRows : List (List UInt8)) : Shape where
+  st := st
+  witness := witnessShape idW
+  wiring := wiringShape idσ wiringRows
+  quotient := quotientShape idQ
 
 end QuotientZk.Deployed

@@ -268,7 +268,7 @@ theorem qb_tree₀ (sh : OpenShape) : IsTotalQueryBound (tree₀ sh) (tree0Bound
 
 /-- The operations of an opening. -/
 def openBound (sh : OpenShape) : ℕ :=
-  1 + (1 + (1 + (2 + (2 + (2 + (4 * 6 + (commitBound (sh.levels.headD (0, sh.depth₀ - 1, 0)).2.1 +
+  1 + (1 + (1 + (2 + (2 + (2 + (4 * 6 + (commitBound sh.depth₁ +
     ((2 * sh.ood₀ + 3) + (qpBound (sh.queries.headD 0) +
     (middleBound sh.levels (sh.queries.drop 1) + (4 * sh.lastFolds + (2 ^ sh.residualVars +
     (qpBound (sh.queries.getLastD 0) + (4 * (sh.residualVars - 1) + 2))))))))))))))
@@ -311,5 +311,16 @@ theorem skel_queryBound (sh : Shape) : IsTotalQueryBound (skel sh) (skelBound sh
     qb_bind (qb_opening _ _) fun oQ => qb_pure (n := 0) _) ?_
   unfold skelBound
   omega
+
+set_option exponentiation.threshold 300 in
+/-- **At the deployed shape**: at most `2^70` operations (grinding at its worst case dominates:
+sixteen levels of `2^65` permutations), for the wiring codeword's `2^19` rows. -/
+theorem skelBound_deployed (st : Statement) (idW idσ idQ : Bytes32) (rows : List (List UInt8))
+    (hrows : rows.length = 2 ^ 19) :
+    skelBound (deployedShape st idW idσ idQ rows) ≤ 2 ^ 70 := by
+  simp only [skelBound, deployedShape, tree0Bound, openBound, witnessShape, wiringShape,
+    quotientShape, middleBound, commitBound, qpBound, hrows, List.headD, List.drop, List.getLastD,
+    List.length_cons, List.length_nil]
+  norm_num
 
 end QuotientZk.Deployed

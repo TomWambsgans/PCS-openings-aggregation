@@ -1,6 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import QuotientZk.Deployed.RowEntropy
-import QuotientZk.Deployed.Skeleton
+import QuotientZk.Deployed.Bound
 
 /-!
 # Zero knowledge of the deployed proof, in the random-oracle model
@@ -163,12 +163,13 @@ theorem card_positions : Fintype.card (Tbl × Pos) = 2 ^ 24 := by
   simp [Fintype.card_prod, Fintype.card_fin]
 
 /-- **Zero knowledge of the deployed proof, in the random-oracle model.** For the skeleton of the
-deployed prover and a prover `P` whose view factors through each secret table (`hfac`, `hfac₂`),
-every distinguisher `D` of at most `QD` queries tells the real game from the simulated one with
-advantage at most `εFS + εhv + 2^24 (|c₀| + QP + QD) δ + 2^48 δ₂`. -/
+deployed prover (at most `skelBound sh` operations, `skel_queryBound`) and a prover `P` whose view
+factors through each secret table (`hfac`, `hfac₂`), every distinguisher `D` of at most `QD` queries
+tells the real game from the simulated one with advantage at most
+`εFS + εhv + 2^24 (|c₀| + skelBound sh + QD) δ + 2^48 δ₂`. -/
 theorem zk_deployed (sh : Shape) (P : Proto S Inp Out Msg Tbl Pos) (c₀ : List (Inp × Out))
     (simV : List Out → ProbComp (View Msg Inp Tbl Pos)) (good : List Out → Prop)
-    (εFS εhv δ δ₂ : ℝ≥0∞) (QP QD : ℕ) (hQP : IsTotalQueryBound (skel sh) QP)
+    (εFS εhv δ δ₂ : ℝ≥0∞) (QD : ℕ)
     (hFS : FSFresh P (skel sh) c₀ εFS) (hHV : JointHVZK P simV good εhv)
     (hfac : ∀ σ k x, P.opened σ k x = false → ∀ y,
       Nonempty (Factors P σ (fun s => P.rows s σ k x = y) δ))
@@ -177,14 +178,15 @@ theorem zk_deployed (sh : Shape) (P : Proto S Inp Out Msg Tbl Pos) (c₀ : List 
       Nonempty (Factors P σ (fun s => P.rows s σ k x = P.rows s σ k' x') δ₂))
     (D : Proof → OracleComp (Inp →ₒ Out) Bool) (hD : ∀ π, IsTotalQueryBound (D π) QD) :
     Close (realGame P (skel sh) c₀ D) (simGame P simV (skel sh) c₀ D)
-      (εFS + εhv + ((2 ^ 24 * (c₀.length + (QP + QD)) : ℕ) * δ + (2 ^ 48 : ℕ) * δ₂)) := by
-  have h := zk_rom P (skel sh) c₀ simV good εFS εhv δ δ₂ QP QD hQP hFS hHV.1 hHV.2
+      (εFS + εhv + ((2 ^ 24 * (c₀.length + (skelBound sh + QD)) : ℕ) * δ +
+        (2 ^ 48 : ℕ) * δ₂)) := by
+  have h := zk_rom P (skel sh) c₀ simV good εFS εhv δ δ₂ (skelBound sh) QD (skel_queryBound sh)
+    hFS hHV.1 hHV.2
     (fun σ k x hx v y => (hfac σ k x hx y).some.bound v)
     (fun σ k x k' x' hx hx' hne v => (hfac₂ σ k x k' x' hx hx' hne).some.bound v) D hD
   rw [card_positions] at h
   simpa [show (2 ^ 24) ^ 2 = 2 ^ 48 by norm_num] using h
 
-set_option exponentiation.threshold 4000 in
 /-- **At our sizes**: with the hidden layouts' `δ = δ₂ = 2^-2368` and at most `2^128` oracle entries
 and queries in all, the Merkle term is below `2^-2200`. -/
 theorem merkleTerm_le (n : ℕ) (hn : n ≤ 2 ^ 128) :
@@ -203,23 +205,30 @@ theorem merkleTerm_le (n : ℕ) (hn : n ≤ 2 ^ 128) :
           ENNReal.mul_inv (Or.inl (by positivity)) (Or.inl (by simp)), ← mul_assoc,
           ENNReal.mul_inv_cancel (by positivity) (by simp), one_mul]
 
-/-- **Zero knowledge of the deployed proof at our sizes**: `εFS + εhv + 2^-2200`, for any number of
-initial entries, prover operations and distinguisher queries up to `2^128` in all. -/
-theorem zk_deployed_bits (sh : Shape) (P : Proto S Inp Out Msg Tbl Pos) (c₀ : List (Inp × Out))
+/-- **Zero knowledge of the deployed proof at our sizes**: the deployed shape (`2^22` rows; the
+wiring codeword's `2^19` rows), the layouts' `δ = δ₂ = 2^-2368` (`hidden_hδ`, `card_pow_lanes`), and
+at most `2^127` initial oracle entries and distinguisher queries: advantage at most
+`εFS + εhv + 2^-2200`. -/
+theorem zk_deployed_bits (stmt : Statement) (idW idσ idQ : QuotientRpm.Bytes32) (rows : List (List UInt8))
+    (hrows : rows.length = 2 ^ 19) (P : Proto S Inp Out Msg Tbl Pos) (c₀ : List (Inp × Out))
     (simV : List Out → ProbComp (View Msg Inp Tbl Pos)) (good : List Out → Prop)
-    (εFS εhv : ℝ≥0∞) (QP QD : ℕ) (hQ : c₀.length + (QP + QD) ≤ 2 ^ 128)
-    (hQP : IsTotalQueryBound (skel sh) QP)
-    (hFS : FSFresh P (skel sh) c₀ εFS) (hHV : JointHVZK P simV good εhv)
+    (εFS εhv : ℝ≥0∞) (QD : ℕ) (hQ : c₀.length + QD ≤ 2 ^ 127)
+    (hFS : FSFresh P (skel (deployedShape stmt idW idσ idQ rows)) c₀ εFS)
+    (hHV : JointHVZK P simV good εhv)
     (hfac : ∀ σ k x, P.opened σ k x = false → ∀ y,
       Nonempty (Factors P σ (fun s => P.rows s σ k x = y) ((2 : ℝ≥0∞) ^ 2368)⁻¹))
     (hfac₂ : ∀ σ k x k' x', P.opened σ k x = false → P.opened σ k' x' = false →
       (k, x) ≠ (k', x') →
       Nonempty (Factors P σ (fun s => P.rows s σ k x = P.rows s σ k' x') ((2 : ℝ≥0∞) ^ 2368)⁻¹))
     (D : Proof → OracleComp (Inp →ₒ Out) Bool) (hD : ∀ π, IsTotalQueryBound (D π) QD) :
-    Close (realGame P (skel sh) c₀ D) (simGame P simV (skel sh) c₀ D)
-      (εFS + εhv + ((2 : ℝ≥0∞) ^ 2200)⁻¹) :=
-  (zk_deployed sh P c₀ simV good εFS εhv _ _ QP QD hQP hFS hHV hfac hfac₂ D hD).mono
-    (add_le_add le_rfl (merkleTerm_le _ hQ))
+    Close (realGame P (skel (deployedShape stmt idW idσ idQ rows)) c₀ D)
+      (simGame P simV (skel (deployedShape stmt idW idσ idQ rows)) c₀ D)
+      (εFS + εhv + ((2 : ℝ≥0∞) ^ 2200)⁻¹) := by
+  have hb := skelBound_deployed stmt idW idσ idQ rows hrows
+  refine (zk_deployed _ P c₀ simV good εFS εhv _ _ QD hFS hHV hfac hfac₂ D hD).mono
+    (add_le_add le_rfl (merkleTerm_le _ ?_))
+  have : (2 : ℕ) ^ 70 + 2 ^ 127 ≤ 2 ^ 128 := by norm_num
+  omega
 
 end Deployed
 

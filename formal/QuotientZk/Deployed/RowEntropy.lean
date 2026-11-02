@@ -115,6 +115,24 @@ theorem row_entropy [Fintype K] [DecidableEq K] [FiniteDimensional K E]
     rw [h0, h1]
     abel
 
+/-- **The gadget layout's free entries** (`GadgetLayout`, the redesigned `opening::Layout::hidden`):
+on stacks supported on the first piece below the gadget, the randomness is the identity, which is
+`row_entropy`'s `hR` with `F = L.first`. -/
+theorem gadget_stackR_of_onFirst (L : GadgetLayout ι Y) (T : ι → Y → K) (hT : OnFirst L.first T) :
+    L.stackR T = T := by
+  funext l y
+  show (if L.randPos l y ∧ ¬ L.ZeroAt l y then T (L.copyOf y l) y else 0) = T l y
+  by_cases hy : y ∈ L.first
+  · have h0 : ∀ p, ¬ L.AtPat p y := fun p ⟨i, hi⟩ => L.gent_first p i (hi ▸ hy)
+    have hc : L.copyOf y l = l := by simp [GadgetLayout.copyOf, h0]
+    have hz : ¬ L.ZeroAt l y := fun h => h0 2 h.1
+    have hr : L.randPos l y := Or.inl hy
+    simp [hr, hz, hc]
+  · rw [hT l y hy]
+    split_ifs
+    · exact hT _ y hy
+    · rfl
+
 end Rows
 
 /-! ## The joint view -/
