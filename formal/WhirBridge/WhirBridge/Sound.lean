@@ -28,8 +28,10 @@ postcondition is `False`), with
   certified for every admissible shape; at our three shapes it certifies at `2^-128` and not at
   `2^-129`, a kernel evaluation of `shapeOK`);
 * the batching challenge `λ` (the lead) escaping with probability at most
-  `eBatch J code₀ = (J − 1)·L₀/|E| ≤ (J − 1)·2^18/2^192` (`eBatch_le`): `0` for one claim,
-  `2^-174` for two.
+  `eBatch J code₀ = (J − 1)·L₀/|E| ≤ (J − 1)·2^18/2^192` (`eBatch_le`), `J` the stack claims (the
+  claims, and a hidden layout's gadget): `0` for the wiring opening (one claim, public), `2^-174`
+  for the witness opening (one claim and the gadget), `2^-173` for the quotient opening (two claims
+  and the gadget).
 
 A `Spec` is the input of mumbai's Fiat-Shamir theorem (`Compile.Rom.romSound`), through
 `Spec.toCert` once it is placed in a whole program; what that needs and what it does not cover
@@ -81,14 +83,15 @@ def OpeningDoom (S : Stacking) (R : ℕ) (claims : List Claim) (cs : List (ℕ �
 
 /-- **The opening check is round-by-round sound**: for every stacking at an admissible shape and
 every list of claims, from `OpeningDoom` it never returns in doom; its first group (the batching
-challenge) escapes with probability at most `eBatch J code₀`, every later one at most `2^-128`. -/
+challenge) escapes with probability at most `eBatch J code₀`, `J` the claims and the stacking's own
+stack claims, every later one at most `2^-128`. -/
 noncomputable def openingSpec (S : Stacking) (R : ℕ) (hw : Whir.Admissible S.logN R)
     (claims : List Claim) :
     Spec (S.check R claims) (fun h ↦ OpeningDoom S R claims (commits h))
-      (fun _ _ ↦ False) εWhir (eBatch claims.length (code₀ S.logN R)) 0 :=
+      (fun _ _ ↦ False) εWhir (eBatch (claims.length + S.extra.length) (code₀ S.logN R)) 0 :=
   (Spec.ite
     (fun _ ↦ (stackedAt hw (S.claims claims) (S.isMultiaffine_claims claims)).mono
-      (fun _ h ↦ h) (fun _ _ h ↦ h) le_rfl (by rw [Stacking.claims, List.length_map]) le_rfl)
+      (fun _ h ↦ h) (fun _ _ h ↦ h) le_rfl (by rw [Stacking.length_claims]) le_rfl)
     (fun _ ↦ (Spec.fail (Pre := fun h ↦ OpeningDoom S R claims (commits h))
       (Post := fun (_ : Unit) _ ↦ False)).mono (fun _ h ↦ h) (fun _ _ h ↦ h) le_rfl
         zero_le le_rfl)).congr (S.check_eq_ite R claims).symm
@@ -111,17 +114,27 @@ theorem eBatch_le {μ R : ℕ} (hw : Whir.Admissible μ R) (J : ℕ) :
   rw [eBatch, card_E_ennreal]
   gcongr
 
-/-- One claim: the batching challenge cannot escape. -/
+/-- One stack claim (the wiring table's opening: one claim, public): the batching challenge
+cannot escape. -/
 theorem eBatch_one {μ R : ℕ} (hw : Whir.Admissible μ R) : eBatch 1 (code₀ μ R) = 0 := by
   refine le_antisymm ((eBatch_le hw 1).trans ?_) zero_le
   simp
 
-/-- Two claims (the quotient table's opening): at most `2^-174`. -/
+/-- Two stack claims (the witness table's opening: one claim and the gadget): at most
+`2^-174`. -/
 theorem eBatch_two {μ R : ℕ} (hw : Whir.Admissible μ R) :
     eBatch 2 (code₀ μ R) ≤ (2 : ℝ≥0∞)⁻¹ ^ 174 := by
   refine (eBatch_le hw 2).trans (le_of_eq ?_)
   rw [show ((2 - 1) * 2 ^ 18 : ℕ) = 2 ^ 18 from rfl, Nat.cast_pow, Nat.cast_ofNat,
     show (192 : ℕ) = 18 + 174 from rfl, two_pow_div_two_pow]
+
+/-- Three stack claims (the quotient table's opening: two claims and the gadget): at most
+`2^-173`. -/
+theorem eBatch_three {μ R : ℕ} (hw : Whir.Admissible μ R) :
+    eBatch 3 (code₀ μ R) ≤ (2 : ℝ≥0∞)⁻¹ ^ 173 := by
+  refine (eBatch_le hw 3).trans (le_of_eq ?_)
+  rw [show ((3 - 1) * 2 ^ 18 : ℕ) = 2 ^ 19 from rfl, Nat.cast_pow, Nat.cast_ofNat,
+    show (192 : ℕ) = 19 + 173 from rfl, two_pow_div_two_pow]
 
 /-- The lead is below the per-group bound for up to `2^46 + 1` claims. -/
 theorem eBatch_le_εWhir {μ R : ℕ} (hw : Whir.Admissible μ R) {J : ℕ} (hJ : J ≤ 2 ^ 46 + 1) :

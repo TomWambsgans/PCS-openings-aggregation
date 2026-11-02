@@ -14,8 +14,9 @@ import LeanVM.Protocol.EndToEnd.Sound.Statements
 # Claims chosen by the adversary
 
 A statement is a list of claims on a fixed layout (`Stmt L`: every point of `vars` coordinates,
-at most `2^46 + 1` claims). Its seeding hashes `pre ‖ claims` (a fixed prefix of the verifier,
-`LABEL` and whatever else it binds, then the claims' bytes as `seed` writes them,
+at most `2^46 + 1` stack claims with the stacking's own, a hidden layout's gadget). Its seeding
+hashes `pre ‖ claims` (a fixed prefix of the verifier, `LABEL` and whatever else it binds, then the
+claims' bytes as `seed` writes them,
 `statementBytes` without the root) into the IV, the public digest being zero (`famSeeds`); the
 root is read from the proof (`variantProg`). One program serves every
 statement (`famProgram`): it reads the claims' count and scalars, never absorbed, then runs
@@ -43,10 +44,11 @@ attribute [local irreducible] instFintypeDigest instFintypeKState
 
 /-! ## Statements -/
 
-/-- A statement: claims on the layout `L`, every point of `vars` coordinates. -/
+/-- A statement: claims on the layout `L`, every point of `vars` coordinates, at most `2^46 + 1`
+with the stacking's own stack claims (the batching lead stays below `2^-128`). -/
 structure Stmt (L : Stacking) where
   claims : List Claim
-  short : claims.length ≤ 2 ^ 46 + 1
+  short : claims.length + L.extra.length ≤ 2 ^ 46 + 1
   wide : ∀ c ∈ claims, c.point.length = L.vars
 
 theorem Stmt.ext' {L : Stacking} {x x' : Stmt L} (h : x.claims = x'.claims) : x = x' := by
@@ -119,7 +121,7 @@ def famScalars (x : Stmt L) : List E := wordE (K.ofBits x.claims.length) :: flat
 def famHistory (x : Stmt L) : List Ev := (famScalars x).map Ev.read
 
 theorem claims_lt (x : Stmt L) : x.claims.length < 2 ^ 64 :=
-  lt_of_le_of_lt x.short (by norm_num)
+  lt_of_le_of_lt (le_trans (Nat.le_add_right _ _) x.short) (by norm_num)
 
 theorem after_famHistory (x : Stmt L) :
     (famProgram L R).after (famHistory x) = some (variantProg L R x.claims) := by
@@ -423,7 +425,7 @@ theorem family_sound (hw : Whir.Admissible L.logN R) (pre : Bytes)
       rw [he] at hq
       simpa [LeanVM.Protocol.Whir.Sound.wordOf, commits] using hq
     obtain ⟨cl, hcl, hn⟩ := hbad r hr q hq'
-    exact ⟨_, List.mem_map.2 ⟨cl, hcl, rfl⟩, hn⟩
+    exact ⟨_, List.mem_append_left _ (List.mem_map.2 ⟨cl, hcl, rfl⟩), hn⟩
 
 /-- **The numbers**: against `2^64` queries, the bound of `family_sound` is at most `2^-63`. -/
 theorem family_bound_le (L : Stacking) (pre : Bytes) {QA : ℕ} (hQ : QA ≤ 2 ^ 64) :

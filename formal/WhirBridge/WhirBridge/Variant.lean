@@ -104,7 +104,7 @@ def fixedSeeds (label : Bytes) (D : Digest) : Seeds Unit where
   inj _ _ _ _ _ _ _ _ _ := Subsingleton.elim _ _
 
 variable (L : Stacking) (R : ℕ) (hw : Whir.Admissible L.logN R) (claims : List Claim)
-  (hJ : claims.length ≤ 2 ^ 46 + 1)
+  (hJ : claims.length + L.extra.length ≤ 2 ^ 46 + 1)
 
 /-- The specification of the variant: from no doom, the root creates `OpeningDoom`, the opening
 check follows (`openingSpec`). -/
