@@ -1,5 +1,7 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit c445e3d51a5a85031df47240595698f3b24897bf, file crates/fiat_shamir/src/lib.rs.
 // MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
+// Changed here: test-only trace hooks under `#[cfg(feature = "trace")]` (off in every production build; see
+// `crates/primitives/src/trace.rs`), for the Lean skeleton's differential test. No other change.
 // CREDIT: the duplex challenger of https://github.com/Plonky3/Plonky3 (`challenger`), MIT OR Apache-2.0.
 //! Fiat-Shamir state and proof transport. The state is a duplex sponge over Keccak-f\[1600\],
 //! in overwrite mode.
@@ -84,7 +86,11 @@ impl FiatShamirState {
 
     /// Permute, taking the waiting scalars, and return the output's first three lanes.
     fn duplex(&mut self) -> F192 {
+        #[cfg(feature = "trace")]
+        let input = self.state;
         primitives::hash::keccak_f(&mut self.state);
+        #[cfg(feature = "trace")]
+        primitives::trace::perm(&input, &self.state);
         let out = F192::new(self.state[0], self.state[1], self.state[2]);
         self.state[..RATE_LANES].fill(0);
         self.n_pending = 0;
@@ -124,6 +130,8 @@ impl FiatShamirState {
     /// public; soundness comes from each challenge being a random-oracle image of
     /// the entire prior transcript.
     pub fn sample(&mut self) -> F192 {
+        #[cfg(feature = "trace")]
+        primitives::trace::sample();
         self.duplex()
     }
 
@@ -190,6 +198,8 @@ impl FiatShamirState {
                 start = start.saturating_add(block);
             }
         };
+        #[cfg(feature = "trace")]
+        primitives::trace::grind(bits, nonce);
         self.absorb_nonce(F192::new(nonce, 0, 0));
         nonce
     }

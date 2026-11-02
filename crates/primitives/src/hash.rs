@@ -1,5 +1,7 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit c445e3d51a5a85031df47240595698f3b24897bf, file crates/primitives/src/hash.rs.
 // MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
+// Changed here: test-only trace hooks under `#[cfg(feature = "trace")]` (off in every production build; see
+// `crates/primitives/src/trace.rs`), for the Lean skeleton's differential test. No other change.
 //! Keccak-256, the repo's one hash function: Ethereum's, which is the 256-bit hash of FIPS
 //! 202 with Keccak's original padding.
 //!
@@ -313,7 +315,10 @@ impl Hasher {
     pub fn finalize(&self) -> [u8; OUT_LEN] {
         let mut state = self.state;
         absorb(&mut state, &final_block(&self.buf[..self.buf_len]));
-        digest_of(&state)
+        let out = digest_of(&state);
+        #[cfg(feature = "trace")]
+        crate::trace::stream(&out);
+        out
     }
 }
 
@@ -326,7 +331,10 @@ impl Default for Hasher {
 /// Keccak-256 of `data`, Ethereum's `keccak256`: FIPS 202's sponge over Keccak-f\[1600\] with
 /// rate [`RATE`] and Keccak's original padding.
 pub fn hash(data: &[u8]) -> [u8; OUT_LEN] {
-    hash_from_state(data, &[0; STATE_LANES])
+    let out = hash_from_state(data, &[0; STATE_LANES]);
+    #[cfg(feature = "trace")]
+    crate::trace::hash(data, &out);
+    out
 }
 
 /// The state after absorbing `n_blocks` all-zero blocks.
@@ -645,7 +653,9 @@ pub fn hash_many_from_state(data: &[u8], len: usize, state: &[u64; STATE_LANES],
     assert_eq!(out.len(), n * OUT_LEN);
     assert_eq!(data.len(), n * len);
     // SAFETY: the asserts pin the buffer sizes, and the backend is gated on the features its intrinsics need.
-    unsafe { hash_many_with::<Backend>(data, len, state, out) }
+    unsafe { hash_many_with::<Backend>(data, len, state, out) };
+    #[cfg(feature = "trace")]
+    crate::trace::many(data, len, state, out);
 }
 
 /// Keccak-f\[1600\] of every state in place, [`LANES`] at a time.
