@@ -10,7 +10,7 @@ use fiat_shamir::transcript::Proof as WhirProof;
 use primitives::test_rng::Rng;
 use quotient::circuit::{membership, membership_inputs};
 use quotient::opening::commit;
-use quotient::protocol::{Index, Randomness, digest, open, prove_with_randomness, verify, verify_openings};
+use quotient::protocol::{Index, digest, open, prove_with_seed, verify, verify_openings};
 use quotient::statement::{DEPTH, Secret};
 
 #[global_allocator]
@@ -66,8 +66,7 @@ fn main() {
     let cells = circuit.cells(&membership_inputs(&secret));
     let witness_secs = time("witness (cells)", start);
     let start = Instant::now();
-    let randomness = Randomness::derive(&seed, &index_committed.root, &statement, &cells);
-    let proved = prove_with_randomness(&circuit, &index, &index_committed.root, &statement, &cells, &randomness);
+    let proved = prove_with_seed(&circuit, &index, &index_committed.root, &statement, &cells, &seed);
     let reduction_secs = time("reduction (commit both tables)", start);
     let peak_reduction = peak();
     assert!(proved.fits);
