@@ -543,4 +543,87 @@ theorem implReal_projHF (s : S) (op : Op Inp Tbl Pos) (st : St Inp Out Tbl Pos) 
     rw [e]
     exact (foldRO_hashJ t st.hist st.cache fun h u ↦ if h.length < P.n then h ++ [u] else h).symm
 
+/-- **The two-oracle prover is `implReal`**: run with `H` and `F` lazily sampled from empty
+caches, its output and `H`, `F` after it are `prove`'s output and `G`'s cache read through
+`hfOf`. -/
+theorem romImpl_proverHF (s : S) {β : Type} (skel : OracleComp DSpec β) :
+    (simulateQ HF.romImpl (proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s skel)).run ∅ =ᵈ
+      (fun z ↦ (z.1, hfOf z.2)) <$> prove P s skel [] := by
+  have h := Common.map_run_simulateQ_evalDistEq_of_inv (implReal P s)
+    (Common.foldRO (implHF P s)) (fun _ ↦ True) projHF (fun _ _ _ _ _ ↦ trivial)
+    (fun op st _ ↦ implReal_projHF P s op st) skel (St.init []) trivial
+  have h0 : projHF (St.init [] : St Inp Out Tbl Pos) = (([], (∅, ∅)), ∅) := by
+    have hc : (St.init [] : St Inp Out Tbl Pos).cache = ∅ := rfl
+    simp only [projHF, hc, hfOf_empty, jOf_empty]
+    rfl
+  rw [h0] at h
+  have h1 := h.map fun z ↦ (z.1, z.2.2)
+  simp only [Functor.map_map] at h1
+  unfold proverJ prove
+  rw [StateT.run'_eq, simulateQ_map, StateT.run_map, Common.run_simulateQ_foldRO,
+    Functor.map_map, Functor.map_map]
+  exact h1.symm
+
+/-! ## A distinguisher of `H` and `F` is a distinguisher of `G` -/
+
+/-- `H` and `F` as queries of `G`: `H m` the digest of `G (inl m)`, `F` on bytes the state of `G`
+at the lanes. -/
+def enc : QueryImpl HF (OracleComp (Inp →ₒ Out))
+  | .inl m => (·.1) <$> liftM ((Inp →ₒ Out).query (.inl m))
+  | .inr xb => (fun o ↦ stateEquiv o.2) <$> liftM ((Inp →ₒ Out).query (.inr (stateEquiv.symm xb)))
+
+theorem randomOracle_run {ι : Type} [DecidableEq ι] {hs : OracleSpec.{0, 0} ι}
+    [∀ t : hs.Domain, SampleableType (hs.Range t)] (t : ι) (c : hs.QueryCache) :
+    (randomOracle t).run c = Common.roStep (hs := hs) t c := by
+  rw [randomOracle.run_eq]
+  rfl
+
+theorem enc_step (t : HF.Domain) (c : (Inp →ₒ Out).QueryCache) :
+    Prod.map id hfOf <$> ((randomOracle ∘ₛ enc) t).run c =ᵈ (randomOracle t).run (hfOf c) := by
+  rcases t with m | xb
+  · simp only [QueryImpl.apply_compose, enc]
+    rw [simulateQ_map, StateT.run_map, ro_query_run', Functor.map_map, randomOracle_run]
+    rcases h : c (.inl m) with _ | o
+    · have h1 : hfOf c (.inl m) = none := by rw [hfOf_inl, h]; rfl
+      rw [Common.roStep_of_none h1, Common.roStep_of_none h, uniform_out]
+      simp only [map_bind, bind_assoc, map_pure, pure_bind, Prod.map_apply, id_eq,
+        hfOf_cacheQuery_inl]
+      refine EvalDistEq.bind_congr_of_support _ fun d _ ↦ ?_
+      exact evalDistEq_bind_const _ _
+    · have h1 : hfOf c (.inl m) = some o.1 := by rw [hfOf_inl, h]; rfl
+      rw [Common.roStep_of_some h1, Common.roStep_of_some h]
+      simp only [map_pure, Prod.map_apply, id_eq]
+      exact EvalDistEq.rfl
+  · simp only [QueryImpl.apply_compose, enc]
+    rw [simulateQ_map, StateT.run_map, ro_query_run', Functor.map_map, randomOracle_run]
+    obtain ⟨x, rfl⟩ : ∃ x, xb = stateEquiv x := ⟨stateEquiv.symm xb, (Equiv.apply_symm_apply _ _).symm⟩
+    rw [Equiv.symm_apply_apply]
+    rcases h : c (.inr x) with _ | o
+    · have h1 : hfOf c (.inr (stateEquiv x)) = none := by rw [hfOf_inr, h]; rfl
+      rw [Common.roStep_of_none h1, Common.roStep_of_none h, uniform_out]
+      simp only [map_bind, bind_assoc, map_pure, pure_bind, Prod.map_apply, id_eq,
+        hfOf_cacheQuery_inr]
+      refine (evalDistEq_bind_const _ _).trans ?_
+      exact (lanes_bind (fun y' ↦ pure (y', (hfOf c).cacheQuery (.inr (stateEquiv x)) y'))).symm
+    · have h1 : hfOf c (.inr (stateEquiv x)) = some (stateEquiv o.2) := by rw [hfOf_inr, h]; rfl
+      rw [Common.roStep_of_some h1, Common.roStep_of_some h]
+      simp only [map_pure, Prod.map_apply, id_eq]
+      exact EvalDistEq.rfl
+
+/-- **A distinguisher of `H` and `F`, read on `G`** (`enc`): from `G`'s cache `c`, it runs as
+from `H` and `F` read through `hfOf`. -/
+theorem ro_enc {α : Type} (Y : OracleComp HF α) (c : (Inp →ₒ Out).QueryCache) :
+    (simulateQ randomOracle Y).run' (hfOf c) =ᵈ
+      (simulateQ randomOracle (simulateQ enc Y)).run' c := by
+  rw [← QueryImpl.simulateQ_compose]
+  exact (Common.run'_simulateQ_evalDistEq_of_inv (randomOracle ∘ₛ enc) randomOracle
+    (fun _ ↦ True) hfOf (fun _ _ _ _ _ ↦ trivial) (fun t c _ ↦ enc_step t c) Y c trivial).symm
+
+theorem isTotalQueryBound_enc {α : Type} (Y : OracleComp HF α) (q : ℕ)
+    (hY : IsTotalQueryBound Y q) : IsTotalQueryBound (simulateQ enc Y) q :=
+  IsTotalQueryBound.simulateQ_of_step hY fun t ↦ by
+    rcases t with m | xb <;>
+    · simp only [enc, map_eq_bind_pure_comp]
+      exact isTotalQueryBound_query_bind_iff.mpr ⟨by omega, fun _ ↦ trivial⟩
+
 end QuotientZk.DRpm
