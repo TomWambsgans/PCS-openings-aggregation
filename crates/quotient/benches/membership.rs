@@ -102,6 +102,8 @@ fn main() {
     ] {
         println!("{name:<34}: {:.1} KiB", opening_bytes(proof) as f64 / 1024.0);
     }
+    // Pinned by hand: `b93236c8020642bd28b954d57532c61dd1f1bd444410b1823025a75cdf1500f1` since the randomness is
+    // derived from one seed and the openings' transcripts have leanVM's shape (`2d6342b8…fcb` before).
     let hex: String = digest(&proved.proof, &openings)
         .iter()
         .map(|b| format!("{b:02x}"))
