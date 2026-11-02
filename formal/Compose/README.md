@@ -17,6 +17,7 @@ depends on `propext`, `Classical.choice` and `Quot.sound` only (`Compose/Axioms.
 | `Compose/Final.lean` | **`knowledgeSoundness_merkle`** / `_certified`: the composed statement with the Merkle extractor `witnessExtractor`. |
 | `Compose/TwoOracle.lean` | **The same in leanerVM `mumbai`'s two-oracle model** `KeccakCalls` (Keccak-256 and Keccak-f[1600], the model of F2's `family_sound`): the bad-query engine for dependent answer types (`prEvent_randomOracle_le_of_freshBad_dep`); Keccak-256's answers read as 32 bytes (`Digest.toRpm`, `viewT`); a uniform table of both oracles read through the view is a uniform table of 32-byte answers (`prEvent_view`), so each fresh query is bad with `listBad`'s probability (`prob_kcBad`); the chain on Keccak-256, the openings any computation of both oracles, the transcript of the Keccak-256 queries (`kcExperiment`); **`knowledgeSoundness_list_kc`**. |
 | `Compose/ComposedKC.lean` | **`knowledgeSoundness_composed_kc`**, **`knowledgeSoundness_merkle_kc`**: the composed statements in mumbai's model, the three openings' doomed events now events of the experiment `family_sound` lives in. |
+| `Compose/AdversaryLog.lean` | **The extractor reads the adversary's queries only** (`adversaryExtractor`: an explicit, computable function of the adversary's Keccak-256 query log and the proof): a fresh answer after the adversary's last query that is a root it announced is bad (`rootBad`, `2/2^256`, `prob_rootBad`); without it the candidates read off the adversary's log are those read off the whole run's (`trace_adv`); **`knowledgeSoundness_merkle_adv`**: the openings' terms plus `(Q + 6 + QV) (2^-128 + 5 (Q + 6 + QV) / 2^256)`. |
 | `Compose/Extract.lean` | **The Merkle extraction is mumbai's `extract` without collisions**: a climb through the history's answers is `merkleWord`'s descent and conversely (`leafAt_of_climb`, `leafAt_some`); with answers injective on the history, at every position of the tree `merkleWord`'s row read as words is mumbai's `Rom.extract` row (`wordOfMerkle_eq_extract`). |
 
 ## The statement
@@ -61,26 +62,25 @@ transcript of every Keccak-256 query of the run.
 
 * **The openings' terms** `hW`, `hσ`, `hQd`: each opening accepts while every candidate of its
   root's decoded word violates one of its claims (the quotient table's **two** claims in **one**
-  opening: one candidate must satisfy both). These are the events F2's `family_sound` bounds, at
-  `(QA + 10122) (2^-128 + 5 (QA + 10122) / 2^256)` each, for the seed form the Rust now has
-  (`keccak256(pre ‖ claims)` IV, zero public digest, root as the first two stream scalars; its
-  instantiation for that exact transcript is in progress in `WhirBridge`; so far `WhirBridge`'s layout
-  and weight closure are the public ones, which the **wiring** opening uses: the witness and quotient
-  openings use hidden layouts, being added). To discharge them here:
-  1. (done: `TwoOracle.lean`, `ComposedKC.lean`) run this experiment in mumbai's two-oracle model (`KeccakCalls`: the chain and the Merkle
-     trees on Keccak-256, the openings' duplex on Keccak-f[1600]) — the bad-query engine of
-     `QuotientRpm/FreshBad.lean` is for one oracle, so either it is extended to the sum, or both
-     theorems are moved to the random-permutation model, where there is one oracle;
-  2. identify `merkleWord` with mumbai's `extract`/`wordOf` of the root (done for `extract`, with
-     injective answers: `wordOfMerkle_eq_extract`; still to do: the opening's committed word is
-     `extract` of the root it reads, the stage cache against the final transcript, `extract_take_eq`
-     with the probability of `Fail`), and `dec` with an **exact** list decoder
-     (it returns every stack of mumbai's `Candidates` at the level-0 Johnson threshold, read back
-     through the layout as a table, then as F1's message), so that a candidate here is a
-     candidate there;
-  3. the wiring opening: the circuit's commitment is the setup's, honest, so its only candidate is
-     the wiring table (two distinct codewords agree below the Johnson threshold), and its doom is
-     the wiring claim's failure (`WiringDoomed`).
+  opening: one candidate must satisfy both). F2 now proves exactly this kind of event for the
+  deployed openings: `WhirBridge.ours_sound` (`WhirBridge/Verifier.lean`: `opening::verify` with
+  the seed `keccak256(pre ‖ claims)`, zero public digest and the root as the first two stream
+  scalars; the witness, wiring and quotient layouts, the hidden ones included, `17 ≤ log_rows ≤
+  22`), `romExperiment A (ourVerifier L logInvRate)` accepting while `OpeningDoomed` (every
+  candidate of `extract (cache ∘ inl) root` has a table violating a claim) at most
+  `openingBound QA = (QA + 10122) (2^-128 + 5 (QA + 10122) / 2^256)`. What remains to discharge
+  `hW`, `hσ`, `hQd` from it:
+  1. (done: `TwoOracle.lean`, `ComposedKC.lean`, `AdversaryLog.lean`) the experiment in mumbai's
+     two-oracle model `KeccakCalls`, the model of `ours_sound`;
+  2. (done: `wordOfMerkle_eq_extract`) `merkleWord` is mumbai's `extract` where the answers are
+     injective;
+  3. (to do) the composed run up to opening `i` as `romExperiment` of a derived adversary, the cache
+     at its end against the transcript (stability, `Pr[Fail]`), the decoder as an exact enumeration
+     of `Candidates` read back as F1's messages, and the claims of `ourVerifier` matched to F1's
+     (`claims_iff_accepts_ofCantor`, `Concrete.lean`);
+  4. (to do) the wiring opening: the circuit's commitment is the setup's, honest, so its only
+     candidate is the wiring table (at rate `1/2` the Johnson radius is below the minimum
+     distance), and its doom is the wiring claim's failure (`WiringDoomed`).
 * **The decoder's list bound** `c.bound`: `WhirBridge.candidates_ours` (`7908`, `3564`) for
   mumbai's `Candidates`; an exact decoder inherits it.
 * **The `Wire`** (F4a's): the circuit's commitment, the statement's decoding, the limbs, as in
