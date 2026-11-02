@@ -39,7 +39,8 @@ of `verifier::MerkleOpenings`); the Rust prover ships pruned paths, which the Ru
 these (`MerkleOpenings::Pruned`, not formalized; the differential test converts them).
 
 **How mumbai's program is run** (`openingWith`): the sponge is seeded as `opening.rs` (version `2`) seeds
-it, from an IV that hashes a prefix (label, version, the layout's identifier, sizes) and the claims, with a
+it, from an IV that hashes a prefix (label, version, the layout's identifier — a constant of the verifier, the
+deployed Keccak-256 of the layout's encoding, `Layout.id` —, sizes) and the claims, with a
 zero public digest; the root rides the proof's first two scalars, absorbed and required to be the expected
 root (as leanVM's stacked opening reads it, `commitStack`), and the run of `verifyStackedOpening` starts with
 it as commitment `0`.
@@ -261,7 +262,8 @@ def stackClaims (L : Layout) (claims : List Claim) : List StackClaim :=
 
 **The transcript's seed** (version `2`, `opening.rs`'s `prefix`, `iv`, `PUBLIC_DIGEST`): the IV is the
 Keccak-256 of a prefix (the label `"pcs-quotient-opening"`, the version, the layout's identifier — the
-Keccak-256 of its encoding —, its size and the rate, each number eight little-endian bytes) and of the
+deployed Keccak-256 of its encoding, a constant of the verifier (`Layout.id`) —, its size and the rate, each
+number eight little-endian bytes) and of the
 claims (each point's coordinates then its value, three limbs of eight little-endian bytes each); the public
 digest is zero; the sponge starts at the permutation of the two (`seedInput`, as leanVM's `Transcript::new`).
 The root is not hashed: it is the proof's first two scalars, which the verifier reads and requires to be the
@@ -310,11 +312,18 @@ section With
 
 variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
 
-/-- **The opening's initial sponge** over `F` (`iv`, `prefix`, `layout_id`, `Transcript::new`): the
-permutation of the IV, Keccak-256 of the prefix and the claims, and the zero public digest. -/
+/-- **The layout's identifier** (`layout_id`, `opening.rs`): the deployed Keccak-256 of its encoding. It is
+a **constant of the verifier**, a fixed 32-byte value per layout, the same for every proof: the Rust
+recomputes the same bytes with the real Keccak-256 each time, and here it is that constant (computed with
+Keccak-f[1600], not with the permutation `F` of the model), as in `formal/WhirBridge`'s `openingPrefix`,
+whose soundness theorem holds for any fixed prefix. -/
+def Layout.id (L : Layout) : Digest := keccak256 L.encoding
+
+/-- **The opening's initial sponge** over `F` (`iv`, `prefix`, `Transcript::new`): the permutation of the
+IV, Keccak-256 over `F` of the prefix (with the layout's constant identifier `Layout.id`) and the claims,
+and the zero public digest. -/
 def openingSpongeWith (L : Layout) (claims : List Claim) : m Sponge := do
-  let layoutId ← keccak256With F L.encoding
-  let pre := openingLabel ++ u64Bytes openingVersion ++ digestBytes layoutId ++ u64Bytes L.logN ++
+  let pre := openingLabel ++ u64Bytes openingVersion ++ digestBytes L.id ++ u64Bytes L.logN ++
     u64Bytes logInvRate
   let iv ← keccak256With F (pre ++ claimBytes claims)
   return ⟨← F (seedInput iv zeroDigest), []⟩
