@@ -504,4 +504,66 @@ noncomputable def flockSound_of_tx (tx : Tx κ) : FlockSound κ :=
   ofFamily (flockProg κ) (flockProg_root κ) (flockProg_tail κ) (fun F ↦ flock_link κ F) (flockBad κ)
     (dBound κ) (card_flockBad κ) (catches_of_tx tx)
 
+/-! ## The rounds' errors -/
+
+/-- **Round `j`'s error, times `|E|`**: `4 + κ` for `τ` (one value per coordinate), `15` for `z`,
+`2` for each zerocheck round, `3` for `α`, `2` for each lincheck round, `6` for the ring map. -/
+def roundErr (κ j : ℕ) : ℕ :=
+  if j = 0 then 4 + κ else if j = 1 then 15 else if j < 13 + κ then 2 else if j = 13 + κ then 3
+  else if j < 22 + κ then 2 else 6
+
+open scoped ENNReal in
+theorem flockSound_err (tx : Tx κ) (j : ℕ) (hj : j < 23 + κ) :
+    (flockSound_of_tx tx).err j = (roundErr κ j : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
+  show ((∑ i ∈ range ((((flockRounds κ)[j]?).map (·.ns)).getD 0 + 1), dBound κ j i : ℕ) : ℝ≥0∞) /
+    (Fintype.card E : ℝ≥0∞) = _
+  have hj' : j < (flockRounds κ).length := by rw [flockRounds_length]; exact hj
+  rw [List.getElem?_eq_getElem hj', Option.map_some, Option.getD_some, flockRounds_getElem]
+  congr 2
+  unfold roundErr dBound
+  split_ifs <;> simp only [Finset.sum_const, Finset.card_range, smul_eq_mul, mul_one] <;> omega
+
+theorem roundErr_zc {j : ℕ} (h1 : 2 ≤ j) (h2 : j < 13 + κ) : roundErr κ j = 2 := by
+  unfold roundErr
+  rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_left h2]
+
+theorem roundErr_lin {j : ℕ} (h1 : 14 + κ ≤ j) (h2 : j < 22 + κ) : roundErr κ j = 2 := by
+  unfold roundErr
+  rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
+    ite_eq_right (by omega), ite_eq_left h2]
+
+theorem sum_roundErr (κ : ℕ) : ∑ j ∈ range (23 + κ), roundErr κ j = 66 + 3 * κ := by
+  rw [show 23 + κ = 2 + ((11 + κ) + (1 + (8 + 1))) by omega,
+    Finset.sum_range_add (roundErr κ) 2, Finset.sum_range_add _ (11 + κ), Finset.sum_range_add _ 1,
+    Finset.sum_range_add _ 8]
+  have e2 : ∑ x ∈ range 2, roundErr κ x = 19 + κ := by
+    have h0 : roundErr κ 0 = 4 + κ := by unfold roundErr; rw [ite_eq_left rfl]
+    have h1 : roundErr κ 1 = 15 := by unfold roundErr; rw [ite_eq_right (by omega), ite_eq_left rfl]
+    rw [Finset.sum_range_succ, Finset.sum_range_one, h0, h1]
+    omega
+  have hzc : ∀ x ∈ range (11 + κ), roundErr κ (2 + x) = 2 := fun x hx ↦
+    roundErr_zc (by omega) (by have := Finset.mem_range.mp hx; omega)
+  have hlin : ∀ x ∈ range 8, roundErr κ (2 + (11 + κ + (1 + x))) = 2 := fun x hx ↦
+    roundErr_lin (by omega) (by have := Finset.mem_range.mp hx; omega)
+  have eα : roundErr κ (2 + (11 + κ + 0)) = 3 := by
+    unfold roundErr
+    rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_left (by omega)]
+  have er : roundErr κ (2 + (11 + κ + (1 + (8 + 0)))) = 6 := by
+    unfold roundErr
+    rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
+      ite_eq_right (by omega), ite_eq_right (by omega)]
+  rw [e2, Finset.sum_congr rfl hzc, Finset.sum_congr rfl hlin, Finset.sum_range_one,
+    Finset.sum_range_one, eα, er]
+  simp only [Finset.sum_const, Finset.card_range, smul_eq_mul]
+  omega
+
+open scoped ENNReal in
+/-- **Flock's error per candidate**: `(66 + 3κ)/|E|`, the sum of its rounds' errors. -/
+theorem flockSound_error (tx : Tx κ) :
+    (flockSound_of_tx tx).flockError = ((66 + 3 * κ : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
+  have hl : (flockSound_of_tx tx).prog.rounds.length = 23 + κ := flockRounds_length κ
+  rw [FlockSound.flockError, hl, Finset.sum_congr rfl fun j hj ↦
+    flockSound_err tx j (Finset.mem_range.mp hj), ← sum_roundErr κ, Nat.cast_sum]
+  simp only [ENNReal.div_eq_inv_mul, Finset.mul_sum]
+
 end FlockSound.Uni

@@ -135,3 +135,11 @@ import FlockSoundUni.Catch
 /-- info: 'FlockSound.Uni.flockSound_of_tx' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms FlockSound.Uni.flockSound_of_tx
+
+/-- info: 'FlockSound.Uni.flockSound_err' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.flockSound_err
+
+/-- info: 'FlockSound.Uni.flockSound_error' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.flockSound_error
