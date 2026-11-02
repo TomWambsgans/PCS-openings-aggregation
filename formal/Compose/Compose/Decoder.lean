@@ -58,6 +58,9 @@ committed word on at least level 0's Johnson threshold of columns.
   at most `7908` / `3564`): at `log_rows = 22`. `mem_witnessExtractor`: what the extractor
   returns, the reads of the candidates of mumbai's `extract` of the first root (no collision in
   the transcript).
+* **In the deployed composition** (`DecoderDeployed.lean`): `witnessMatch`, `quotientMatch` are
+  `Deployed.lean`'s `WitnessMatch`, `QuotientMatch` for `tableCode`, all but the claims proved,
+  the claims reduced to tables; `knowledgeSoundness_deployed_decoded` (`_bits`).
 
 **What `read` is.** F1's messages (`B.Msg₁`, `B.Msg₂`) are tuples of `Polynomial`s over the field
 `F` of `2^192` elements (concretely `formal/Field/F192.lean`'s `F192`, CompPoly's `BF64.Ext3`, which

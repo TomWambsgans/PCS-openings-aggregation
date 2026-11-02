@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Compose.Decoder
 import Compose.DecoderCost
+import Compose.DecoderDeployed
 
 /-!
 # The decoder's axioms
@@ -223,3 +224,25 @@ info: 'Compose.length_laneListAt_le' depends on axioms: [propext, Classical.choi
 /-- info: 'Compose.gsShape_wiring' depends on axioms: [propext] -/
 #guard_msgs in
 #print axioms Compose.gsShape_wiring
+
+/-! ## In the deployed composition -/
+
+/-- info: 'Compose.witnessMatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.witnessMatch
+
+/-- info: 'Compose.quotientMatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.quotientMatch
+
+/--
+info: 'Compose.knowledgeSoundness_deployed_decoded' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Compose.knowledgeSoundness_deployed_decoded
+
+/--
+info: 'Compose.knowledgeSoundness_deployed_decoded_bits' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Compose.knowledgeSoundness_deployed_decoded_bits
