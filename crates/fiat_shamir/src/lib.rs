@@ -1,5 +1,7 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit c445e3d51a5a85031df47240595698f3b24897bf, file crates/fiat_shamir/src/lib.rs.
 // MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
+// Changed here: test-only trace hooks under `#[cfg(feature = "trace")]` (off in every production build; see
+// `crates/primitives/src/trace.rs`), for the Lean skeleton's differential test. No other change.
 // CREDIT: the duplex challenger of https://github.com/Plonky3/Plonky3 (`challenger`), MIT OR Apache-2.0.
 //! Fiat-Shamir state and proof transport. The state is a duplex sponge over Keccak-f\[1600\],
 //! in overwrite mode.
