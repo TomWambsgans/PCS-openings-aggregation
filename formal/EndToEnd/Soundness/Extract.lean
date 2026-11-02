@@ -26,8 +26,8 @@ transcript's):
 
 set_option linter.unusedSectionVars false
 
--- The membership circuit is a closed term of `2^22` rows: never unfold it by evaluation.
-attribute [local irreducible] PcsQuotient.membership PcsQuotient.membershipBuilder
+-- The membership circuit is a closed term of `2^22` rows: never unfold its builder's run.
+attribute [local irreducible] PcsQuotient.membershipBuilder
 
 namespace Soundness
 
@@ -90,7 +90,6 @@ theorem logRows_finish (lr : ℕ) (pw : List (List PcsQuotient.Src)) (b : PcsQuo
 /-- The membership circuit has `2^22` rows (its builder is not run). -/
 theorem membership_logRows : (PcsQuotient.membership PcsQuotient.logRows).logRows = 22 := by
   unfold PcsQuotient.membership
-  split
   exact logRows_finish _ _ _
 
 /-- The Statement's witness word, at a proof naming the witness root `d`. -/
@@ -104,28 +103,28 @@ theorem witnessWord_eq (answers : List UInt8 → Option Digest) (keys : List (Li
   rw [hd]
   rfl
 
-/-- What a stack gives the Statement's extractor: its secret if that satisfies the relation. -/
-def witnessOfStack (stmt : PcsQuotient.Statement) (st : Vector K (2 ^ 25)) :
-    Option PcsQuotient.Secret :=
-  if PcsQuotient.Relation stmt (PcsQuotient.secretOfStack (PcsQuotient.membership PcsQuotient.logRows) st)
-  then some (PcsQuotient.secretOfStack (PcsQuotient.membership PcsQuotient.logRows) st) else none
-
-/-- **The Statement's extractor**, at a proof naming the witness root `d`: the fast path's first
-stack spelling a secret of the statement, else the list decoder's, on the word under `d`. -/
-theorem extractor_eq (stmt : PcsQuotient.Statement) (proof : PcsQuotient.Proof) (d : Digest)
-    (hd : digestOfScalars proof.reduction.witnessRoot = some d)
-    (setupEvals : List (List UInt8 × Digest)) (T : Common.OracleQueryLog) :
-    PcsQuotient.extractor stmt setupEvals T proof =
-      let paths := setupEvals ++ keccakEvaluationsOfTranscript (permutationQueries T)
-      let W := LeanVM.Extraction.leafAt (LeanVM.Extraction.committedLeaves
-        (LeanVM.lookupEvaluation paths) (paths.map (·.1)) d 20 (2 ^ WhirBridge.laneFold)) 20
-          (2 ^ WhirBridge.laneFold)
-      ((LeanVM.Extraction.fastStacks 25 1 W).findSome? (witnessOfStack stmt) <|>
-        (LeanVM.Extraction.decodeStacks 25 1 W).findSome? (witnessOfStack stmt)) := by
-  show PcsQuotient.extractFrom (PcsQuotient.membership PcsQuotient.logRows) stmt _ _ proof = _
+/-- **The Statement's extractor returns a secret** when its word is `W` and the list decoder lists a
+stack spelling a secret of the statement: any circuit of `2^n` rows, `n` a variable, so that nothing
+of the circuit, the word or the stacks' sizes is computed. -/
+theorem extractFrom_spec (n : ℕ) (circuit : PcsQuotient.Circuit) (hlog : circuit.logRows = n)
+    (stmt : PcsQuotient.Statement) (answers : List UInt8 → Option Digest)
+    (keys : List (List UInt8)) (proof : PcsQuotient.Proof) (W : ℕ → List K)
+    (hw : PcsQuotient.witnessWord n answers keys proof = some W)
+    (st : Vector K (2 ^ (PcsQuotient.cellVars n + 1)))
+    (hst : st ∈ LeanVM.Extraction.decodeStacks (PcsQuotient.cellVars n + 1)
+      PcsQuotient.logInvRate W)
+    (hrel : PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit st)) :
+    ∃ w, PcsQuotient.extractFrom circuit stmt answers keys proof = some w ∧
+      PcsQuotient.Relation stmt w := by
   unfold PcsQuotient.extractFrom
-  rw [membership_logRows, witnessWord_eq _ _ proof d hd]
-  rfl
+  rw [hlog, hw]
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  refine findSome_orElse _ _ _ (PcsQuotient.Relation stmt) (fun a b hab => ?_) ⟨st, hst, ?_⟩
+  · split_ifs at hab with hr
+    cases hab
+    exact hr
+  · rw [if_pos hrel]
+    rfl
 
 /-- **If Compose's list holds a witness, the Statement's extractor finds a secret.** For a proof
 whose witness root's scalars are the digest `d`: a message of Compose's extractor's list, on the
@@ -164,14 +163,7 @@ theorem extractor_of_mem (c : Consts) (h : IsCantor c.beta) (hX : ReadsSecret c 
   have hrel : PcsQuotient.Relation stmt
       (PcsQuotient.secretOfStack (PcsQuotient.membership PcsQuotient.logRows) st) :=
     hX stmt ⟨st⟩ (provesMembership_of_sat c h stmt _ hs)
-  rw [extractor_eq stmt proof d hd setupEvals T]
-  refine findSome_orElse _ _ _ _ (fun a b hab => ?_) ⟨st, hst', ?_⟩
-  · unfold witnessOfStack at hab
-    split_ifs at hab with hr
-    cases hab
-    exact hr
-  · unfold witnessOfStack
-    rw [if_pos hrel]
-    rfl
+  exact extractFrom_spec 22 _ membership_logRows stmt _ _ proof _
+    (witnessWord_eq _ _ proof d hd) st hst' hrel
 
 end Soundness
