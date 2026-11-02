@@ -454,7 +454,7 @@ theorem hiddenWord_eq (h : L.OK) (t : ℕ → K) (rnd : ℕ → ℕ → K) (l : 
   have hfill : (y : ℕ) < 256 → ∀ a, L.fillWord t rnd a y = rnd a y := by
     intro hy a
     simp only [fillWord, hp, e256]
-    rw [if_pos hy]
+    rw [ite_eq_left hy]
   rcases Nat.lt_or_ge (y : ℕ) 247 with hy | hy
   · -- The first piece below the gadget: random on every lane.
     have h1 : G.randPos l y := Or.inl (hfirst.mpr hy)
@@ -463,9 +463,9 @@ theorem hiddenWord_eq (h : L.OK) (t : ℕ → K) (rnd : ℕ → ℕ → K) (l : 
       have n0 : ¬ G.AtPat 0 y := fun hz => by have := (hA 0).mp hz; omega
       have n1 : ¬ G.AtPat 1 y := fun hz => by have := (hA 1).mp hz; omega
       simp [GadgetLayout.copyOf, n0, n1]
-    rw [if_pos h1, if_pos ⟨h1, h2⟩, h3, zero_add]
+    rw [ite_eq_left h1, ite_eq_left ⟨h1, h2⟩, h3, zero_add]
     simp only [hiddenWord, hp, e256, e247]
-    rw [if_neg (by omega), hfill (by omega)]
+    rw [ite_eq_right (by omega), hfill (by omega)]
   rcases Nat.lt_or_ge (y : ℕ) 256 with hy' | hy'
   · -- The gadget's entries.
     have hg : G.AtGadget y := by
@@ -475,22 +475,22 @@ theorem hiddenWord_eq (h : L.OK) (t : ℕ → K) (rnd : ℕ → ℕ → K) (l : 
       · exact ⟨1, (hA 1).mpr (by simp; omega)⟩
       · exact ⟨2, (hA 2).mpr (by simp; omega)⟩
     have h1 : G.randPos l y := Or.inr (Or.inl hg)
-    rw [if_pos h1, zero_add]
+    rw [ite_eq_left h1, zero_add]
     simp only [hiddenWord, hp, e256, e247]
-    rw [if_pos (show 247 ≤ (y : ℕ) ∧ (y : ℕ) < 256 from ⟨hy, hy'⟩)]
+    rw [ite_eq_left (show 247 ≤ (y : ℕ) ∧ (y : ℕ) < 256 from ⟨hy, hy'⟩)]
     rcases Nat.lt_or_ge (y : ℕ) 250 with a | a
     · have g0 : ((y : ℕ) - 247) / 3 = 0 := by omega
       have p0 : G.AtPat 0 y := (hA 0).mpr (by simp; omega)
       have n2 : ¬ G.AtPat 2 y := fun hz => by have := (hA 2).mp hz; simp at this; omega
       rw [g0]
       simp only [gadgetLanes]
-      rw [if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨h1, fun hz => n2 hz.1⟩)]
+      rw [ite_eq_left (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨h1, fun hz => n2 hz.1⟩)]
       by_cases hl : (l : ℕ) = 31
-      · rw [if_pos hl, hfill hy']
+      · rw [ite_eq_left hl, hfill hy']
         have : G.copyOf y l = G.pairA 0 := by
           simp [GadgetLayout.copyOf, p0, (hB0 l).mpr hl]
         rw [this, hA0]
-      · rw [if_neg hl, hfill hy']
+      · rw [ite_eq_right hl, hfill hy']
         have n1 : ¬ G.AtPat 1 y := fun hz => by have := (hA 1).mp hz; simp at this; omega
         have nB : ¬ l = G.pairB 0 := fun h' => hl ((hB0 l).mp h')
         have : G.copyOf y l = l := by
@@ -503,13 +503,13 @@ theorem hiddenWord_eq (h : L.OK) (t : ℕ → K) (rnd : ℕ → ℕ → K) (l : 
       have n2 : ¬ G.AtPat 2 y := fun hz => by have := (hA 2).mp hz; simp at this; omega
       rw [g1]
       simp only [gadgetLanes]
-      rw [if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨h1, fun hz => n2 hz.1⟩)]
+      rw [ite_eq_left (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨h1, fun hz => n2 hz.1⟩)]
       by_cases hl : (l : ℕ) = 30
-      · rw [if_pos hl, hfill hy']
+      · rw [ite_eq_left hl, hfill hy']
         have : G.copyOf y l = G.pairA 1 := by
           simp [GadgetLayout.copyOf, n0, p1, (hB1 l).mpr hl]
         rw [this, hA1]
-      · rw [if_neg hl, hfill hy']
+      · rw [ite_eq_right hl, hfill hy']
         have nB : ¬ l = G.pairB 1 := fun h' => hl ((hB1 l).mp h')
         have : G.copyOf y l = l := by
           simp [GadgetLayout.copyOf, n0, nB]
@@ -522,9 +522,9 @@ theorem hiddenWord_eq (h : L.OK) (t : ℕ → K) (rnd : ℕ → ℕ → K) (l : 
       simp only [gadgetLanes, overflowLane]
       have hc : G.copyOf y l = l := by simp [GadgetLayout.copyOf, n0, n1]
       by_cases hl : (l : ℕ) = 32
-      · rw [if_pos hl, if_neg (show ¬ (G.randPos l y ∧ ¬ G.ZeroAt l y) from
+      · rw [ite_eq_left hl, ite_eq_right (show ¬ (G.randPos l y ∧ ¬ G.ZeroAt l y) from
           fun hz => hz.2 ⟨p2, (hov l).mpr hl⟩)]
-      · rw [if_neg hl, if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from
+      · rw [ite_eq_right hl, ite_eq_left (show G.randPos l y ∧ ¬ G.ZeroAt l y from
           ⟨h1, fun hz => hl ((hov l).mp hz.2)⟩), hc, hfill hy']
   · -- Past the first piece.
     have nf : y ∉ G.first := fun hz => by have := hfirst.mp hz; omega
@@ -541,9 +541,9 @@ theorem hiddenWord_eq (h : L.OK) (t : ℕ → K) (rnd : ℕ → ℕ → K) (l : 
     have hrp : G.randPos l y ↔ G.isRand l ∨ (l = G.ov ∧ y ∉ G.held) := by
       simp only [GadgetLayout.randPos, nf, ng, false_or]
     simp only [hiddenWord, hp, e256, e247]
-    rw [if_neg (by omega)]
+    rw [ite_eq_right (by omega)]
     simp only [fillWord, hp, e256]
-    rw [if_neg (by omega), hc]
+    rw [ite_eq_right (by omega), hc]
     have hlt : (l : ℕ) < L.lanes.length := l.isLt
     rcases hl : L.lanes[(l : ℕ)]? with _ | (b | _ | _)
     · rw [List.getElem?_eq_none_iff] at hl
@@ -558,7 +558,7 @@ theorem hiddenWord_eq (h : L.OK) (t : ℕ → K) (rnd : ℕ → ℕ → K) (l : 
         rw [hl] at this
         simp at this
       have nrp : ¬ G.randPos l y := by rw [hrp]; tauto
-      rw [if_neg nrp, if_neg (show ¬ (G.randPos l y ∧ ¬ G.ZeroAt l y) from fun hz => nrp hz.1),
+      rw [ite_eq_right nrp, ite_eq_right (show ¬ (G.randPos l y ∧ ¬ G.ZeroAt l y) from fun hz => nrp hz.1),
         add_zero]
       simp only [place, hl]
     · -- The overflow lane.
@@ -567,18 +567,18 @@ theorem hiddenWord_eq (h : L.OK) (t : ℕ → K) (rnd : ℕ → ℕ → K) (l : 
       by_cases hh : (y : ℕ) < (L.pieces.length + 1) * 256
       · have hy2 : y ∈ G.held := hheld.mpr ⟨hy', hh⟩
         have nrp : ¬ G.randPos l y := by rw [hrp]; tauto
-        rw [if_neg nrp, if_neg (show ¬ (G.randPos l y ∧ ¬ G.ZeroAt l y) from fun hz => nrp hz.1),
+        rw [ite_eq_right nrp, ite_eq_right (show ¬ (G.randPos l y ∧ ¬ G.ZeroAt l y) from fun hz => nrp hz.1),
           add_zero]
         simp only [place, hl, hp, e256]
-        rw [if_pos hh]
+        rw [ite_eq_left hh]
       · have hy2 : y ∉ G.held := fun hz => hh (hheld.mp hz).2
         have hr : G.randPos l y := hrp.mpr (Or.inr ⟨(hov l).mpr ho, hy2⟩)
-        rw [if_pos hr, if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨hr, nz⟩), zero_add]
+        rw [ite_eq_left hr, ite_eq_left (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨hr, nz⟩), zero_add]
         simp only []
-        rw [if_neg hh]
+        rw [ite_eq_right hh]
     · -- A random lane.
       have hr : G.randPos l y := hrp.mpr (Or.inl (hrand.mpr hl))
-      rw [if_pos hr, if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨hr, nz⟩), zero_add]
+      rw [ite_eq_left hr, ite_eq_left (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨hr, nz⟩), zero_add]
 
 end Layout
 

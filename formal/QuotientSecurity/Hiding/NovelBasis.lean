@@ -225,6 +225,75 @@ theorem novel_natDegree (w : Words K) {n y : ℕ} (hn : n ≤ 64) (hy : y < 2 ^ 
   have hk64 : k < 64 := lt_of_lt_of_le (mem_range.mp (mem_filter.mp hk).1) hn
   rw [natDegree_C_mul (inv_ne_zero (subRoot_ne_zero w hk64)), (subW_monic _ _).2]
 
+/-! ### The verifier's induced weight is the novel basis's -/
+
+omit [CharP K 2] in
+/-- `Σ_{y < 2^n} Π_{k<n} (bit k of y ? p_k : 1 − p_k) · Π_{k<n, bit k of y} a_k = Π_{k<n} (1 − p_k +
+p_k a_k)`: a product's multilinear extension. -/
+theorem sum_eq_prod_bits {R : Type} [CommRing R] (p a : ℕ → R) : ∀ n,
+    ∑ y ∈ range (2 ^ n), (∏ k ∈ range n, if y.testBit k then p k else 1 - p k) *
+      ∏ k ∈ (range n).filter (fun k => y.testBit k), a k = ∏ k ∈ range n, (1 - p k + p k * a k)
+  | 0 => by simp
+  | n + 1 => by
+    set T : ℕ → R := fun y => (∏ k ∈ range n, if y.testBit k then p k else 1 - p k) *
+      ∏ k ∈ (range n).filter (fun k => y.testBit k), a k with hT
+    have h1 : ∀ y ∈ range (2 ^ n), (∏ k ∈ range (n + 1), if y.testBit k then p k else 1 - p k) *
+        ∏ k ∈ (range (n + 1)).filter (fun k => y.testBit k), a k = (1 - p n) * T y := by
+      intro y hy
+      have hb : y.testBit n = false := Nat.testBit_lt_two_pow (mem_range.mp hy)
+      rw [prod_range_succ, range_add_one, filter_insert]
+      simp only [hb, Bool.false_eq_true, ite_false, hT]
+      ring
+    have h2 : ∀ y ∈ range (2 ^ n),
+        (∏ k ∈ range (n + 1), if (2 ^ n + y).testBit k then p k else 1 - p k) *
+          ∏ k ∈ (range (n + 1)).filter (fun k => (2 ^ n + y).testBit k), a k =
+        (p n * a n) * T y := by
+      intro y hy
+      have hb : (2 ^ n + y).testBit n = true := by
+        rw [Nat.testBit_two_pow_add_eq, Nat.testBit_lt_two_pow (mem_range.mp hy)]
+        rfl
+      have hlow : ∀ k ∈ range n, (2 ^ n + y).testBit k = y.testBit k :=
+        fun k hk => Nat.testBit_two_pow_add_gt (mem_range.mp hk) y
+      rw [prod_range_succ, range_add_one, filter_insert]
+      simp only [hb, ite_true]
+      rw [prod_insert (by simp), prod_congr rfl fun k hk => by rw [hlow k hk],
+        filter_congr fun k hk => by rw [hlow k hk]]
+      ring
+    rw [pow_succ, mul_two, sum_range_add, sum_congr rfl h1, sum_congr rfl h2, ← mul_sum, ← mul_sum,
+      ← add_mul, sum_eq_prod_bits p a n, prod_range_succ]
+    ring
+
+omit [CharP K 2] in
+/-- **`induced_weight` is the novel basis's** (`whir.rs`): at a point `x` (`K(q)` for a query `q`),
+the multilinear extension in `y` of `X_y(x)` at a point `p` of `E^n` is
+`Π_k (1 + p_k (1 + W_k(x) · W_k(v_k)⁻¹))`, the verifier's `product *= ONE + challenge * (K(1) + basis
+* inverses[coordinate])` (characteristic 2: `1 − p = 1 + p`, `eq(p, y) = Π_k (bit k of y ? p_k :
+1 + p_k)`). -/
+theorem novel_mle {E : Type} [Field E] [Algebra K E] (h2E : (2 : E) = 0) (v : ℕ → K) (n : ℕ)
+    (x : K) (p : ℕ → E) :
+    ∑ y ∈ range (2 ^ n), (∏ k ∈ range n, if y.testBit k then p k else 1 + p k) *
+        algebraMap K E ((novel v n y).eval x) =
+      ∏ k ∈ range n, (1 + p k * (1 + algebraMap K E ((subW v k).eval x * (subRoot v k)⁻¹))) := by
+  have hneg : ∀ z : E, 1 + z = 1 - z := by
+    intro z
+    have : z + z = 0 := by rw [← two_mul, h2E, zero_mul]
+    rw [sub_eq_add_neg, neg_eq_of_add_eq_zero_left this]
+  have hev : ∀ y, algebraMap K E ((novel v n y).eval x) =
+      ∏ k ∈ (range n).filter (fun k => y.testBit k),
+        algebraMap K E ((subW v k).eval x * (subRoot v k)⁻¹) := by
+    intro y
+    simp only [novel, eval_prod, eval_mul, eval_C, map_prod]
+    refine prod_congr rfl fun k _ => ?_
+    rw [mul_comm]
+  have hf : ∀ y : ℕ, (∏ k ∈ range n, if y.testBit k then p k else 1 + p k) =
+      ∏ k ∈ range n, if y.testBit k then p k else 1 - p k :=
+    fun y => prod_congr rfl fun k _ => by rw [hneg]
+  simp only [hev, hf]
+  rw [sum_eq_prod_bits p (fun k => algebraMap K E ((subW v k).eval x * (subRoot v k)⁻¹)) n]
+  refine prod_congr rfl fun k _ => ?_
+  rw [← hneg (p k)]
+  ring
+
 /-! ### Condition (Q) for the deployed encoding -/
 
 /-- `D = 2^LOG_PIECE − GADGET = 247`: the first piece's entries below the gadget. -/

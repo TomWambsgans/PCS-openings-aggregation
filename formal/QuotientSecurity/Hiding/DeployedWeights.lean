@@ -152,7 +152,7 @@ theorem eqBits_bits (n y idx : ℕ) :
     eqBits (bits n y : List E) idx = if ∀ k ∈ range n, idx.testBit k = y.testBit k then 1 else 0 := by
   rw [eqBits, length_bits, ← prod_boole]
   refine prod_congr rfl fun k hk => ?_
-  rw [getD_bits, if_pos (mem_range.mp hk)]
+  rw [getD_bits, ite_eq_left (mem_range.mp hk)]
   have h11 := one_add_one_eq_zero h2
   cases idx.testBit k <;> cases y.testBit k <;> simp [h11]
 
@@ -184,7 +184,7 @@ theorem drop_bits (n s y : ℕ) : (bits n y : List E).drop s = bits (n - s) (y >
 theorem eqZ_bits (a : List E) (n y : ℕ) (ha : a.length ≤ n) : eqZ a (bits n y) = eqBits a y := by
   rw [eqZ, eqBits, length_bits, min_eq_left ha]
   refine prod_congr rfl fun k hk => ?_
-  rw [getD_bits, if_pos (lt_of_lt_of_le (mem_range.mp hk) ha)]
+  rw [getD_bits, ite_eq_left (lt_of_lt_of_le (mem_range.mp hk) ha)]
   have h11 := one_add_one_eq_zero h2
   cases y.testBit k <;> simp [eq1, h11]
 
@@ -206,7 +206,7 @@ theorem getD_laneEqAt (l l' : ℕ) :
 theorem getD_laneEqAt_eq (h : L.OK) {l l' : ℕ} (hl : l < L.lanes.length) (hl' : l' < L.lanes.length) :
     (L.laneEqAt l : List E).getD l' 0 = if l' = l then 1 else 0 := by
   have h64 := h.lanes_le
-  rw [getD_laneEqAt, if_pos hl', eqBits_bits_eq h2 (by norm_num; omega) (by norm_num; omega)]
+  rw [getD_laneEqAt, ite_eq_left hl', eqBits_bits_eq h2 (by norm_num; omega) (by norm_num; omega)]
 
 /-- `on_blocks` at a lane that holds no block is zero. -/
 theorem onBlocks_zero (h : L.OK) (part : Part E) {l : ℕ} (hl : l < L.lanes.length)
@@ -246,11 +246,11 @@ theorem claimTerm_first (h : L.OK) (lam : E) (point : List E) (l : ℕ) (y : ℕ
     refine sum_eq_zero fun k hk => ?_
     rw [hpl] at hk
     have hk' := mem_range.mp hk
-    rw [drop_bits, hy0, eqBits_bits_eq h2 (Nat.two_pow_pos _) (by omega), if_neg (by omega),
+    rw [drop_bits, hy0, eqBits_bits_eq h2 (Nat.two_pow_pos _) (by omega), ite_eq_right (by omega),
       mul_zero]
   simp only [claimTerm, hs]
   rw [hpz, drop_bits, hy0, eqZ_bits h2 _ _ _ hA, onePlusProd_eq, onePlusProd_eq,
-    eqBits_bits_eq h2 (Nat.two_pow_pos _) (Nat.two_pow_pos _), if_pos rfl, mul_one,
+    eqBits_bits_eq h2 (Nat.two_pow_pos _) (Nat.two_pow_pos _), ite_eq_left rfl, mul_one,
     ← two_mul, h2, zero_mul, zero_mul, zero_add, zero_mul, mul_zero]
 
 /-- On a lane holding no block (a random lane, the overflow lane), past the held pieces, a claim's
@@ -264,7 +264,7 @@ theorem claimTerm_noBlock (h : L.OK) (lam : E) (point : List E) {l y : ℕ} (hl 
   rw [onBlocks_zero h2 h _ hl hb, mul_zero, zero_add]
   rcases hov with hov | hov
   · rw [h.overflow, getD_laneEqAt_eq h2 h hl (show overflowLane < L.lanes.length from h.n32),
-      if_neg (Ne.symm hov), mul_zero, mul_zero]
+      ite_eq_right (Ne.symm hov), mul_zero, mul_zero]
   · have hpl : (L.part lam point).pieces.length = L.pieces.length := by simp [part, pieceScales]
     have hfit : L.pieces.length + 1 ≤ 2 ^ (L.logLane - logPieceD) := by
       have hf := h.fits
@@ -283,7 +283,7 @@ theorem claimTerm_noBlock (h : L.OK) (lam : E) (point : List E) {l y : ℕ} (hl 
       refine sum_eq_zero fun k hk => ?_
       rw [hpl] at hk
       have hk' := mem_range.mp hk
-      rw [hs, drop_bits, eqBits_bits_eq h2 hyl (by omega), if_neg (by omega), mul_zero]
+      rw [hs, drop_bits, eqBits_bits_eq h2 hyl (by omega), ite_eq_right (by omega), mul_zero]
     rw [hpz, zero_mul, mul_zero]
 
 /-! ### `WeightsFit` -/
@@ -402,9 +402,9 @@ theorem gadgetTerm_bool (h : L.OK) (beta : Fin 3 → E) (scale : E) (l : Fin L.l
   have hgent : ((L.toGadget h).gent g i = y) ↔ gadgetEntry logPieceD g i = (y : ℕ) := by
     simp [toGadget, Fin.ext_iff]
   by_cases he : gadgetEntry logPieceD g i = (y : ℕ)
-  · rw [if_pos he, if_pos (hgent.mpr he)]
+  · rw [ite_eq_left he, ite_eq_left (hgent.mpr he)]
     ring
-  · rw [if_neg he, if_neg (fun h' => he (hgent.mp h'))]
+  · rw [ite_eq_right he, ite_eq_right (fun h' => he (hgent.mp h'))]
     ring
 
 /-- **The closure on the Boolean cube**: at entry `y` of lane `l`, `opening::verify`'s weight is
@@ -437,10 +437,10 @@ theorem weight_combinedW (h : L.OK) {m : ℕ} (points : Fin m → List E) (lam :
   rw [weight_bool h2 h]
   simp only [HiddenLayout.combinedW]
   rw [sum_eq_single l]
-  · rw [if_pos rfl, Fin.sum_univ_castSucc]
+  · rw [ite_eq_left rfl, Fin.sum_univ_castSucc]
     simp [GadgetLayout.withGadget, Fin.snoc_castSucc, Fin.snoc_last]
   · intro l' _ hl'
-    rw [if_neg (fun he => hl' ((pos_injective h) he))]
+    rw [ite_eq_right (fun he => hl' ((pos_injective h) he))]
   · simp
 
 omit h2 in
