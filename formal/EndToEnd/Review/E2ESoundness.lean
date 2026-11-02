@@ -23,9 +23,12 @@ Not part of any library: checked with `lake env lean Review/E2ESoundness.lean` f
    leaves `RejectGood` and the block count), so non-vacuity is not proved either.
 5. **The extractor ignores the adversary's coins** (`extractor_coins`).
 6. **The extractor's fast path fails on one error** (`#eval`, at the smallest stack, `μ = 15`): a
-   word one symbol away from a codeword gets no fast candidate, so the extractor falls to the
-   Guruswami–Sudan decoder (at the deployed witness table, `n = 2^20`, multiplicity `1149`,
-   `Y`-degree `1625`, `2^39.3` interpolation conditions per lane; `E2ESoundnessNumbers.py`).
+   word one symbol away from a codeword gets no fast candidate. Before the unique-decoding stage, the
+   extractor then fell to the Guruswami–Sudan decoder (at the deployed witness table, `n = 2^20`,
+   multiplicity `1149`, `Y`-degree `1625`, `2^39.3` interpolation conditions per lane;
+   `E2ESoundnessNumbers.py`); now Gao's unique decoder (`UniqueDecoding.uniqueStacks`) recovers the
+   stack (`#eval` at `μ = 9`, the interpreter being slow), and the list decoder runs only for words
+   beyond the unique-decoding radius (`PcsQuotient/Extractor.lean`'s cost table).
 
 **Run, not proved (non-vacuity at the deployed size).** The Statement's differential test ships
 whole proofs at `2^17` rows only. At `2^22` (from the repository root):
@@ -219,11 +222,12 @@ theorem fst_run_logged {α : Type} (A : OracleComp RandomPermutationOracles α) 
     simp [loggedOracles, ih]
 
 /-- **The honest adversary** for `(stmt, w)`: the Statement's honest prover with uniform coins,
-its proof output (`dflt` when it makes none). -/
-noncomputable def honestAdversary (stmt : Statement) (w : Secret) (dflt : Proof) : Adversary := do
-  let coins ← sampleCoins
-  let r ← prover queryPermutation stmt w coins
-  return (stmt, r.getD dflt)
+its proof output (`dflt` when it makes none); it ignores the commitment it is given. -/
+noncomputable def honestAdversary (stmt : Statement) (w : Secret) (dflt : Proof) : Adversary :=
+  fun _ => do
+    let coins ← sampleCoins
+    let r ← prover queryPermutation stmt w coins
+    return (stmt, r.getD dflt)
 
 /-- The common prefix: the setup's tree, then the honest prover's proof. -/
 noncomputable def prefixH (stmt : Statement) (w : Secret) :
@@ -251,22 +255,22 @@ dropped) and the verifier. -/
 theorem accepted_eq (A : Adversary) :
     Pr{let z ← soundnessExperiment A}[z.accepted] =
       Pr{let b ← runWithRandomPermutation (setupTreeWith queryPermutation >>= fun t =>
-          A >>= fun z => verifier queryPermutation t.root z.1 z.2)}[b = true] := by
+          A t.root >>= fun z => verifier queryPermutation t.root z.1 z.2)}[b = true] := by
   have h1 : soundnessExperiment A = runWithRandomPermutation
       (setupTreeWith queryPermutation >>= fun t =>
-        (simulateQ loggedOracles A).run [] >>= fun p =>
+        (simulateQ loggedOracles (A t.root)).run [] >>= fun p =>
           verifier queryPermutation t.root p.1.1 p.1.2 >>= fun acc =>
             pure (((p.1, acc), Tree.evaluations t, p.2) : Outcome)) := rfl
   have h2 : (setupTreeWith queryPermutation >>= fun t =>
-        A >>= fun z => verifier queryPermutation t.root z.1 z.2) =
+        A t.root >>= fun z => verifier queryPermutation t.root z.1 z.2) =
       (fun z : Outcome => z.1.2) <$> (setupTreeWith queryPermutation >>= fun t =>
-        (simulateQ loggedOracles A).run [] >>= fun p =>
+        (simulateQ loggedOracles (A t.root)).run [] >>= fun p =>
           verifier queryPermutation t.root p.1.1 p.1.2 >>= fun acc =>
             pure (((p.1, acc), Tree.evaluations t, p.2) : Outcome)) := by
     simp only [map_bind, map_pure]
     congr 1
     funext t
-    conv_lhs => rw [← fst_run_logged A []]
+    conv_lhs => rw [← fst_run_logged (A t.root) []]
     rw [bind_map_left]
     simp only [bind_pure]
   rw [h1, h2]
@@ -285,7 +289,7 @@ theorem completeness_eq (stmt : Statement) (w : Secret) :
 /-- The knowledge-soundness experiment of the honest adversary over the common prefix. -/
 theorem honest_eq (stmt : Statement) (w : Secret) (dflt : Proof) :
     (setupTreeWith queryPermutation >>= fun t =>
-        honestAdversary stmt w dflt >>= fun z => verifier queryPermutation t.root z.1 z.2) =
+        honestAdversary stmt w dflt t.root >>= fun z => verifier queryPermutation t.root z.1 z.2) =
       prefixH stmt w >>= fun a =>
         verifier queryPermutation a.1.root stmt (a.2.getD dflt) >>= fun v => pure v := by
   unfold honestAdversary prefixH
@@ -357,6 +361,35 @@ end Review.E2ESoundness.Demo
 #eval ((LeanVM.Extraction.fastStacks 15 1 (Review.E2ESoundness.Demo.word false)).length,
   (LeanVM.Extraction.fastStacks 15 1 (Review.E2ESoundness.Demo.word true)).length,
   LeanVM.Extraction.johnsonThreshold 15 1, 2 ^ 10)
+
+namespace Review.E2ESoundness.Demo
+
+open LeanVM.Parameters LeanVM.Extraction
+
+/-- The same at `2^9` words (`κ = 3`, `16` columns, unique-decoding radius `4`; the interpreter's
+products in `K` are slow, so a small stack), as its columns (computed once: a definition returning a
+function may be eta-expanded by the compiler and recompute them at every column): lane `0` a
+pseudorandom polynomial, its symbol at column `0` changed with `corrupt`. -/
+def smallColumns (corrupt : Bool) : Array (List K) :=
+  let c : Array K := Array.ofFn (n := 2 ^ 3) fun i =>
+    K.ofLane (UInt64.ofNat (i.val * 2654435761 + 12345))
+  let e := novelFwd 3 1 c
+  Array.ofFn (n := 16) fun v => (List.range 64).reverse.map fun u =>
+    if u = 0 then (if corrupt && v.val == 0 then e.getD v.val 0 + 1 else e.getD v.val 0) else 0
+
+end Review.E2ESoundness.Demo
+
+/-- info: (1, 0, 1, true) -/
+#guard_msgs in
+-- one wrong symbol: no fast candidate, and the unique-decoding stage recovers the stack, the fast
+-- path's of the word without the error
+#eval
+  let clean := Review.E2ESoundness.Demo.smallColumns false
+  let bad := Review.E2ESoundness.Demo.smallColumns true
+  let ud := PcsQuotient.UniqueDecoding.uniqueStacks 9 1 (fun v => bad.getD v [])
+  let fast := LeanVM.Extraction.fastStacks 9 1 (fun v => clean.getD v [])
+  (fast.length, (LeanVM.Extraction.fastStacks 9 1 (fun v => bad.getD v [])).length, ud.length,
+    ud == fast)
 
 /-! ## The review's own lemmas: no `sorry` -/
 

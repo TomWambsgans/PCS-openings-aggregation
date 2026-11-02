@@ -4,6 +4,8 @@ module
 public import PcsQuotient.Verifier
 public import PcsQuotient.Circuit
 public import PcsQuotient.Prover
+public import PcsQuotient.Decoder
+public import PcsQuotient.Replay
 public import PcsQuotient.Extractor
 public import PcsQuotient.Simulator
 public import PcsQuotient.Security
