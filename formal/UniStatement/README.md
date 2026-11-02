@@ -246,7 +246,65 @@ push with count 1, pull with the final counts, in their leaves); **CountsNonzero
 
 ## What is tested, what is defined
 
-RESULTS-TBD
+**Tested** (`UniStatementTest/Runner.lean`, run with `lake env lean`: the interpreter on the compiled
+definitions' IR, not the kernel), on **150 vectors** of the Rust at `ad49e74`:
+
+* **The measured shapes** (114, `tests/lean_vectors.rs`'s `lean_vectors`): the 7 configurations of `tests/gas.rs`
+  at the reference shape and leanVM's skip in weighted mode (so every Flock path: tower order with one ring term
+  and the deferred matrices, tower order with 64 coefficients, the bit-slice end deferred (lever 5a) and not,
+  leanVM's order deferred and not, no Flock), the main line at the five other measured shapes, extension W × B
+  at the largest; random streams (random counts, and the shape's counts), accepting streams (each check solved
+  for the scalar read just before it, the seed's IV the contract's; one under another program IV), **other row
+  counts that fit** (`counts`: none, one, `leastRows`, a full table, `2^h − 1`, random, so every coset pattern
+  of F1b), **a count out of range** (`badcount`), mutated, truncated, extended streams.
+* **The review's honest proofs** (20, `tests/review_honest.rs`'s `lean_honest_vectors`, adapted there to
+  iteration 2: the counts announced, the rows at their fixed cosets, padding counters nonzero; real VM runs of 15
+  to 31 cycles over all six tables, Flock omitted, memory and bytecode of `2^4`, `2^5`, both claim modes; three
+  mutations of each point-claim proof). The real prover's `prove_tiny` writes the same streams byte for byte
+  (prover2 `0dd319b`).
+* **The real prover's proofs** (16, `lean_real_vectors`): the four real 1,000-signature proofs of
+  `leanvm-univariate-prover2`'s `tests/vectors` (`e96e777`: main line, extension B, leanVM's skip, Flock omitted),
+  three mutations each (anywhere, a row count, the last scalar).
+* On every vector, the Lean and the Rust agree on **every value**: the result (and its error), every challenge,
+  every value required zero (the counts' range checks first), the verdict, the number of relations, each stack's
+  variables, every opening handed to `PCS_OPEN` (point claims: point and value; weighted and bit-slice claims:
+  points, terms in order, value, relations), Flock's `A0`/`B0` claims; the row counts the stream announces; the
+  five layout words and the contract's IV (`contractIv` of the program's IV at the reference roots); the run's
+  three layouts are `layoutsOf` the shape; every shape is valid (`Shape.validate`). On the real proofs, **every
+  `PCS_OPEN` input the contract calls with** (root, layout word, claims), word for word (`pcsCalls`).
+* On the honest proofs with their committed stacks: the stream announces the execution's counts, which fit
+  (`RowsFit`); the Lean verifier's point claims are **true of the committed `C1`, `C2` and setup stacks**; `C1`
+  read as Lv42's columns (`lv42Column`, what `lv42Stack` stacks, the rows through `rowPosition`) satisfies
+  **`ConstraintsVanish`, `Balanced`, `CountsNonzero` and `PublicLinesHold`** of Lv42's instance (its own flushes,
+  constraints, counts, boundary blocks, public lines and Flock slots; `aux` is not checked: the prover omits
+  Flock), with controls (another public input fails the lines, one changed `C1` coefficient fails the bus);
+  `setupStack` is the honest setup (the addresses word for word, every run instruction's slots read back). The
+  clauses are evaluated on the columns, not through `M3Instance.column`, which reads each cell of the
+  `2^15`-word stack through the layout's lift, more than the interpreter affords.
+* The Rust's unit tests on the Lean definitions: `domain.rs`'s and `heap.rs`'s (iteration 2's
+  `fixed_cosets_from_the_bits`, `prefix_vanishing_from_the_bits` included), `ring_tower.rs`'s (the leaves are
+  `x^i`'s coordinates, 1,938 slice terms; the coefficients, the target `Σ_i x^i Φ(s_i)` and the weight at a
+  point are the map's; leanVM's order gives another target, a control), `rowPosition` (a bijection, the executed
+  rows onto the cosets), the mapping's transform pair, and **the bridge to Lv42's instance** (for each opcode
+  table, on random rows, the multisets of pull and push tuples of `layout.rs`'s forms are Lv42's flushes, with a
+  control; the counter columns, the widths and the constraints agree).
+
+**Results** (h1, this branch): **150/150 vectors agree on every value; 69 accepted by both, 81 rejected by both**
+(accept 22/0, counts 16/0, badcount 0/8, random 3/19, mutate 13/17, truncate 0/8, extend 0/8, honest 8/0,
+honest-mutate 0/12, real 4/0, real-mutate 3/9); the 40 checks on the four honest proofs with stacks and the 42
+self-tests (18 of the domain, heap, tower and mapping, 24 of the bridge) all hold. About 9 minutes. The random and
+mutated acceptances are the configurations with no check in the contract but the counts' range (weighted mode
+with the bit-slice end or no Flock, and extension B under the point ABI, lever 5a: its batch terminal is the
+bit-slice claim), and mutations after the last check (weighted mode).
+
+The vector writer (`tests/lean_format`) now reads the counts (`Logging::next_integer`: at `ad49e74` it had
+none, the trait's default `unimplemented!`, so `lean_vectors` and `lean_honest_vectors` panicked at the stream's
+first read there) and writes the setup lines (`PROGRAMIV`, `CONTRACTIV`, `LAYOUTWORDS`) and the counts
+(`COUNTS`); `accepting` streams announce counts that fit (the shape's, or given).
+
+**Defined, not tested**: `PCS_OPEN`'s WHIR (the Rust has only a mock), the setup's commitments, the stacking of
+`lv42Stack` into the `2^15`-word vector (Lv42's own `Blocks.stackColumn`), the extractor, the experiments, the
+Props; `verifyWith`'s run and calls are the tested `run` and `pcsCalls`'s claims.
 
 ## Open points
 

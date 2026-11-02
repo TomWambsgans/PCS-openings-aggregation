@@ -12,9 +12,14 @@ compiled evaluation, not the kernel) on every vector's calldata, compared with t
 **every value it states**: the verdict (stream error or not, and which), every challenge drawn, every value
 it requires to be zero, the accept bit, the number of relations, each stack's variables, every opening
 handed to `PCS_OPEN` (point claims with their points and values, or weighted claims with their points,
-terms and values, and the bit-slice claim) and Flock's claims on `A0`, `B0`. First the self-tests: the
-defining properties of the domain's constants and the heap (the Rust's unit tests), the mapping's transform
-pair, and the bridge to Lv42's instance (`lv42Bridge`). It prints one line per test and per vector and a
+terms and values, and the bit-slice claim) and Flock's claims on `A0`, `B0`; and (iteration 2) the setup's
+constants (the five layout words, the contract's IV from the program's), the row counts the stream announces,
+the run's layouts against the shape's (`layoutsOf`), and on the real prover's proofs every `PCS_OPEN` input
+the contract calls with, word for word (`pcsCalls`). First the self-tests: the defining properties of the
+domain's constants and the heap (the Rust's unit tests), iteration 2's (the fixed cosets, the tower,
+`rowPosition`), the mapping's transform pair, and the bridge to Lv42's instance (`lv42Bridge`). On the honest
+proofs that carry their stacks, the witness read back as Lv42's (`honestChecks`). It prints one line per test and
+per vector and a
 summary, and throws (so `lean` exits with an error) on any failure, disagreement or unreadable vector. The
 interpreter runs the compiled definitions' IR (`#eval`); no kernel reduction of the verifier.
 -/
