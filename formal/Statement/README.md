@@ -32,9 +32,9 @@ behaves as a random permutation is the assumption. The adversary is classical, i
 is sampled.
 
 **The sources.** Each definition cites the Rust it transcribes (`protocol.rs`, `opening.rs`,
-`circuit.rs:N`, …) of `crates/quotient` at the merge of `daa157f` (the hidden layouts of
-`crates/quotient/HIDING.md`, the sizes `2^17` to `2^22` rows), and each file names what it takes from
-leanerVM in its first lines.
+`circuit.rs:N`, …) of `crates/quotient` at `keccak-quotient` `fafeab7` (the hidden layouts of
+`crates/quotient/HIDING.md`, the sizes `2^17` to `2^22` rows, the opening transcript of version `2`), and each
+file names what it takes from leanerVM in its first lines.
 
 ## Reading order
 
