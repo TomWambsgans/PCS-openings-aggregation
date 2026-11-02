@@ -137,3 +137,12 @@ name = "UniStatement"
 srcDir = "../UniStatement"
 globs = ["UniStatement", "UniStatement.+"]
 leanOptions = { warningAsError = true }
+
+# Knowledge soundness of the univariate PIOP for leanVM 42422001, end to end (`formal/UniSound`):
+# `UniStatement.UniKnowledgeSoundness` from `Compose`'s `k`-round chain, `Heap`'s bus and the
+# Flock interface (`UniSound/FlockInterface.lean`, the one hypothesis about BLAKE2s by Flock).
+[[lean_lib]]
+name = "UniSound"
+srcDir = "../UniSound"
+globs = ["UniSound", "UniSound.+"]
+leanOptions = { warningAsError = true }
