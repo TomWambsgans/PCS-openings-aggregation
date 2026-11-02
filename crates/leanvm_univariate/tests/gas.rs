@@ -4,7 +4,7 @@
 //! `cargo test --release -p leanvm_univariate --test gas -- --ignored --nocapture gas_report`
 
 use leanvm_flock_gas::shapes::{PROGRAM_IV, WORKLOADS};
-use leanvm_univariate::{Blake2s, Shape};
+use leanvm_univariate::{Blake2s, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, Shape};
 use leanvm_univariate::contract::{GasReport, measure, rust_verifier, record_verifier, sample_stream};
 
 /// Run `f` on a thread with a deep stack: the code generator recurses along the graph.
@@ -84,31 +84,36 @@ fn print_report(name: &str, report: &GasReport) {
 #[ignore]
 fn gas_report() {
     deep(|| {
+        let variants = [
+            ("(a') Flock skip 3, slices sent, ring weight as 64 twisted terms (E-linear claims)", Blake2s::Flock(FLOCK_MAIN)),
+            ("(a) Flock skip 4, one bit-slice combination claim (precompile extension)", Blake2s::Flock(FLOCK_BIT_SLICE)),
+            ("Flock leanVM's skip 6, slices sent, ring weight as 64 twisted terms", Blake2s::Flock(FLOCK_LEANVM_SKIP)),
+            ("no BLAKE2s argument (everything but Flock)", Blake2s::Omitted),
+        ];
         let mut rows = Vec::new();
         for workload in &WORKLOADS {
             let shape = Shape::of(&workload.shape);
-            let report = measure(&shape, &PROGRAM_IV, Blake2s::Flock);
-            if workload.xmss == 1000 || workload.xmss == 1290 {
-                print_report(workload.name, &report);
+            for (name, blake2s) in variants {
+                let report = measure(&shape, &PROGRAM_IV, blake2s);
+                if workload.xmss == 1000 {
+                    print_report(&format!("{}, {name}", workload.name), &report);
+                }
+                rows.push((workload, name, report));
             }
-            if workload.xmss == 1000 {
-                let alone = measure(&shape, &PROGRAM_IV, Blake2s::Omitted);
-                print_report("xmss1000, without BLAKE2s's argument (everything but Flock)", &alone);
-            }
-            rows.push((workload, report));
         }
         println!("\n### Over the shapes (transaction gas without the 21,000 base)");
         println!(
-            "| signatures | cycles | calldata bytes | execution (c = 0) | claims / calls | tx EIP-7623, c = 0 / 2,000 / \
-             5,000 / 20,000 | tx EIP-7976, c = 0 / 20,000 |"
+            "| signatures | cycles | variant | calldata bytes | execution (c = 0) | claims / calls | tx EIP-7623, c = 0 / \
+             2,000 / 5,000 / 20,000 | tx EIP-7976, c = 0 / 20,000 |"
         );
-        println!("|---:|---:|---:|---:|---:|---|---|");
-        for (workload, report) in &rows {
+        println!("|---:|---:|---|---:|---:|---:|---|---|");
+        for (workload, name, report) in &rows {
             let tx = |c, floor| grouped(report.transaction(c, floor));
             println!(
-                "| {} | {} | {} | {} | {} / {} | {} / {} / {} / {} | {} / {} |",
+                "| {} | {} | {} | {} | {} | {} / {} | {} / {} / {} / {} | {} / {} |",
                 grouped(workload.xmss as u64),
                 grouped(workload.cycles),
+                name,
                 grouped(report.calldata_bytes as u64),
                 grouped(report.execution),
                 report.claims,
@@ -130,10 +135,10 @@ fn rust_verifier_reads_the_recorded_stream() {
     deep(|| {
         for workload in &WORKLOADS {
             let shape = Shape::of(&workload.shape);
-            let recorded = record_verifier(&shape, Blake2s::Flock);
+            let recorded = record_verifier(&shape, Blake2s::Flock(FLOCK_MAIN));
             let stream = sample_stream(recorded.stream_len, 7);
-            let (reduced, _, _) =
-                rust_verifier(&shape, &PROGRAM_IV, &[3; 32], &stream, Blake2s::Flock).expect("the stream's length");
+            let (reduced, _, _) = rust_verifier(&shape, &PROGRAM_IV, &[3; 32], &stream, Blake2s::Flock(FLOCK_MAIN))
+                .expect("the stream's length");
             assert_eq!(reduced.claims.len(), recorded.reduced.claims.len());
             for ((_, a), (_, b)) in reduced.claims.iter().zip(&recorded.reduced.claims) {
                 assert_eq!(a.terms.len(), b.terms.len(), "{}", workload.name);
@@ -150,7 +155,7 @@ fn contract_is_the_rust_verifier() {
     deep(|| {
         let workload = leanvm_flock_gas::shapes::reference();
         let shape = Shape::of(&workload.shape);
-        for blake2s in [Blake2s::Flock, Blake2s::Omitted] {
+        for blake2s in [Blake2s::Flock(FLOCK_MAIN), Blake2s::Flock(FLOCK_BIT_SLICE), Blake2s::Omitted] {
             let recorded = record_verifier(&shape, blake2s);
             for seed in [1u64, 2] {
                 let stream = sample_stream(recorded.stream_len, seed);

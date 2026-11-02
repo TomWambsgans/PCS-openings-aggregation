@@ -37,6 +37,9 @@ pub enum Column {
     QflockSlot(usize),
     /// `C1`: `q_flock` (values), whole.
     Qflock,
+    /// `C1`: `q_flock`'s bit-slice `i` (the term's twist field), an `E`-valued multilinear of its word coordinates:
+    /// a term of the bit-slice claim type (SPEC-FLOCK.md, lever (a)), which `PCS_OPEN` ring-switches.
+    QflockBits,
     /// `C2`: the product heap.
     Heap,
     /// `C2`: the tree quotient's chunk.
@@ -59,7 +62,8 @@ impl Column {
             | Column::Memory(_)
             | Column::BytecodeFinal
             | Column::QflockSlot(_)
-            | Column::Qflock => Commitment::C1,
+            | Column::Qflock
+            | Column::QflockBits => Commitment::C1,
             Column::Heap | Column::TreeQuotient(_) | Column::LeafQuotient { .. } | Column::ConstraintQuotient(_) => {
                 Commitment::C2
             }
@@ -76,6 +80,7 @@ impl Column {
             Column::BytecodeFinal => 0x1200,
             Column::QflockSlot(j) => 0x1300 | j as u64,
             Column::Qflock => 0x1400,
+            Column::QflockBits => 0x1500,
             Column::Heap => 0x2000,
             Column::TreeQuotient(c) => 0x2100 | c as u64,
             Column::LeafQuotient { block, chunk } => 0x2200 | (block as u64) << 4 | chunk as u64,

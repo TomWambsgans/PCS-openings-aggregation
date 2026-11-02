@@ -33,9 +33,9 @@ fn phi(value: usize) -> E {
 }
 
 const MEDIUM_GENERATOR: E = E::new(0x243F6A8885A308D3, 0x13198A2E03707344, 0xA4093822299F31D0);
-const N_FIXED_CHALLENGES: usize = 7;
+pub(crate) const N_FIXED_CHALLENGES: usize = 7;
 
-fn fixed_challenges() -> [E; N_FIXED_CHALLENGES] {
+pub(crate) fn fixed_challenges() -> [E; N_FIXED_CHALLENGES] {
     let medium = |power: u32| {
         let value = MEDIUM_GENERATOR.pow(1 << power);
         value * (ONE + value).inv()
@@ -72,7 +72,7 @@ pub fn lagrange_weights<S: Scalar>(count: usize, point: S) -> Vec<S> {
     (0..count).map(|i| prefix[i] * suffix[i + 1] * denominator).collect()
 }
 
-fn lagrange_interpolate<S: Scalar>(count: usize, values: &[S], point: S) -> S {
+pub(crate) fn lagrange_interpolate<S: Scalar>(count: usize, values: &[S], point: S) -> S {
     dot(&lagrange_weights(count, point), values)
 }
 
@@ -399,10 +399,10 @@ pub fn verify_flock<S: Scalar>(
 }
 
 // The Frobenius shifts of the six stages composing Phi, one challenge each.
-const RING_MAP_SHIFTS: [usize; 6] = [32, 16, 8, 4, 2, 1];
+pub(crate) const RING_MAP_SHIFTS: [usize; 6] = [32, 16, 8, 4, 2, 1];
 
 /// The drawn map, stage by stage: `a_p+1 = a_p + f_p a_p^(2^shift)`.
-fn ring_map<S: Scalar>(mut value: S, challenges: &[S]) -> S {
+pub(crate) fn ring_map<S: Scalar>(mut value: S, challenges: &[S]) -> S {
     for (&challenge, shift) in challenges.iter().zip(RING_MAP_SHIFTS) {
         value += challenge * value.pow(1 << shift);
     }
@@ -434,7 +434,15 @@ fn ring_weight<S: Scalar>(r: &[S], r_prime: &[S], coefficients: &[S]) -> S {
 pub fn ring_switch<S: Scalar>(point: Vec<S>, s: &[S], transcript: &mut impl Channel<S>) -> (S, RingWeight<S>) {
     let _phase = enter("ring switch: map, coefficients, target");
     let challenges = transcript.samples(RING_MAP_SHIFTS.len());
-    // The same map as a Frobenius sum, `Phi(a) = sum_k c_k a^(2^k)` for k < 64.
+    let weight = ring_switch_weight(point, &challenges);
+    let images: Vec<S> = s.iter().map(|&value| ring_map(value, &challenges)).collect();
+    let target = poly_eval(&images, S::constant(GEN));
+    (target, weight)
+}
+
+/// The weight of the map drawn as `challenges`: the same map as a Frobenius sum, `Phi(a) = sum_k c_k a^(2^k)` for
+/// k < 64.
+pub fn ring_switch_weight<S: Scalar>(point: Vec<S>, challenges: &[S]) -> RingWeight<S> {
     let coefficient = |k: usize| {
         let stages = challenges
             .iter()
@@ -443,9 +451,7 @@ pub fn ring_switch<S: Scalar>(point: Vec<S>, s: &[S], transcript: &mut impl Chan
         stages.fold(S::one(), |acc, (&f, shift)| acc * f.pow(1 << (k % shift)))
     };
     let coefficients: Vec<S> = (0..K_BITS).map(coefficient).collect();
-    let images: Vec<S> = s.iter().map(|&value| ring_map(value, &challenges)).collect();
-    let target = poly_eval(&images, S::constant(GEN));
-    (target, RingWeight { point, coefficients })
+    RingWeight { point, coefficients }
 }
 
 /// The ring switch's weight `W` (leanVM returns it as a closure).

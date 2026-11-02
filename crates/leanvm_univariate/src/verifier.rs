@@ -5,7 +5,8 @@
 //! messages, the values at `t`) to one weighted claim per commitment.
 
 use leanvm_flock_gas::field::E;
-use leanvm_flock_gas::flock::ring_switch;
+use leanvm_flock_gas::flock::ring_switch_weight;
+use leanvm_flock_gas::flock_min::{self, End, Slices, Variant};
 use leanvm_flock_gas::layout::{
     BLAKE2S_R1CS_LOG_SIZE, BLAKE2S_SLOTS, Form, N_TABLES, OP_BLAKE2S, OP_DEREF, OP_JUMP, OP_MUL, SEP_MEM,
     SEP_STATE, Table, gpow, tables,
@@ -14,7 +15,7 @@ use leanvm_flock_gas::matrices::MatrixClaim;
 use leanvm_flock_gas::multilinear::{eq_kernel, log2_ceil};
 use leanvm_flock_gas::scalar::{Scalar, enter};
 use leanvm_flock_gas::transcript::Channel;
-use leanvm_flock_gas::{LincheckTerminal, VerifierError, verify_flock};
+use leanvm_flock_gas::VerifierError;
 
 use crate::claims::{COMMITMENTS, Column, Combined, Commitment, Relations, Term, term};
 use crate::domain::{
@@ -264,11 +265,27 @@ pub struct Reduced<S> {
     pub relations: usize,
 }
 
+/// Flock's variants measured end to end (SPEC-FLOCK.md): (a′) the main line, `PCS_OPEN`'s claims `E`-linear; (a) a
+/// bit-slice claim type (a precompile extension); leanVM's own skip with (a′)'s weighted claim.
+pub const FLOCK_MAIN: Variant = Variant {
+    skip: 3,
+    slices: Slices::Weighted,
+};
+pub const FLOCK_BIT_SLICE: Variant = Variant {
+    skip: 4,
+    slices: Slices::Claim,
+};
+pub const FLOCK_LEANVM_SKIP: Variant = Variant {
+    skip: 6,
+    slices: Slices::Weighted,
+};
+
 /// Which BLAKE2s argument the verifier runs (SPEC.md §7).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Blake2s {
-    /// leanVM's Flock (zerocheck, lincheck, matrices' reduction), its ring switch as one weighted claim.
-    Flock,
+    /// Flock (`leanvm_flock_gas::flock_min`, SPEC-FLOCK.md) as `Variant` has it: its claims on `q_flock` joined
+    /// into `C1`'s claim (the ring switch's 64 twisted terms, or one bit-slice combination), and on `A0`, `B0`.
+    Flock(Variant),
     /// None: the rest of the verifier alone, to measure it apart.
     Omitted,
 }
@@ -300,11 +317,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     // weighted claim of 64 twisted terms (SPEC.md §7).
     let flock_log_n = BLAKE2S_R1CS_LOG_SIZE + heights[OP_BLAKE2S];
     let flock = match blake2s {
-        Blake2s::Flock => {
-            let flock = verify_flock(flock_log_n, channel, LincheckTerminal::Matrices)?;
-            let (target, weight) = ring_switch(flock.point(), &flock.s, channel);
-            Some((flock, target, weight))
-        }
+        Blake2s::Flock(variant) => Some(flock_min::verify(flock_log_n, variant, channel)?),
         Blake2s::Omitted => None,
     };
 
@@ -520,24 +533,45 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
         relations.push(terms, constraint_value);
     }
 
-    // 7. Flock's claim on q_flock: the ring switch's 64 twisted terms.
+    // 7. Flock's claim on q_flock: the ring switch's 64 twisted terms (E-linear), or one bit-slice combination.
     let mut matrices = None;
-    if let Some((flock, ring_target, ring_weight)) = flock {
-        relations.push(
-            ring_weight
-                .coefficients
-                .iter()
-                .enumerate()
-                .map(|(k, &coefficient)| Term {
-                    column: Column::Qflock,
-                    point: ring_weight.point.clone(),
-                    twist: k as u8,
-                    coefficient,
-                })
-                .collect(),
-            ring_target,
-        );
-        matrices = flock.matrices;
+    if let Some(flock) = flock {
+        match flock.end {
+            End::Ring { map, target, .. } => {
+                let weight = {
+                    let _phase = enter("ring switch: map, coefficients, target");
+                    ring_switch_weight(flock.point.clone(), &map)
+                };
+                relations.push(
+                    weight
+                        .coefficients
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &coefficient)| Term {
+                            column: Column::Qflock,
+                            point: weight.point.clone(),
+                            twist: k as u8,
+                            coefficient,
+                        })
+                        .collect(),
+                    target,
+                );
+            }
+            End::Combination { weights, value } => relations.push(
+                weights
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &coefficient)| Term {
+                        column: Column::QflockBits,
+                        point: flock.point.clone(),
+                        twist: i as u8,
+                        coefficient,
+                    })
+                    .collect(),
+                value,
+            ),
+        }
+        matrices = Some(flock.matrices);
     }
 
     // 8. One claim per commitment.

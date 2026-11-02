@@ -12,4 +12,4 @@ pub mod domain;
 pub mod heap;
 pub mod verifier;
 
-pub use verifier::{Blake2s, Reduced, Shape, reduce};
+pub use verifier::{Blake2s, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, Reduced, Shape, reduce};
