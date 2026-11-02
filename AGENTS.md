@@ -19,9 +19,10 @@ implementation adds to the design note in [`README.md`](README.md), and where th
 - **The forward-compatibility upgrade by one Schwartz–Zippel point** needs the new commitment to bind one table: an
   OOD answer at commit time, or a root anyone recomputes from the public circuit.
 - **ZK without changing the verifier**: true (`crates/quotient/HIDING.md`), but at these sizes it is not leanVM's 4×
-  padding (which would exceed WHIR's 2^28 words): a random first piece per lane, 7 random lanes, and a share lane that
-  hides the reduction's masks. The padding must cover the masks' lane: the unpadded version let anyone solve the masks
-  from the opening and find the Merkle path.
+  padding (which would exceed WHIR's 2^28 words): a random first piece per lane, 7 random lanes, and a *gadget* (a
+  fixed weight on nine first-piece entries, cancelled by the values there, batched as a claim of value zero) that makes
+  WHIR's lane rounds uniform for every challenge outside a set below 2^-188. The padding must cover the masks' lane:
+  the unpadded version let anyone solve the masks from the opening and find the Merkle path.
 
 ## Implementation (`crates/`)
 

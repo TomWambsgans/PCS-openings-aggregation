@@ -7,6 +7,8 @@ import QuotientSecurity.Hiding.SpanStrong
 import QuotientSecurity.Hiding.Layout
 import QuotientSecurity.Hiding.Merkle
 import QuotientSecurity.Hiding.Interp
+import QuotientSecurity.Hiding.Sumcheck
+import QuotientSecurity.Hiding.Gadget
 
 /-!
 # Hiding WHIR openings of `K`-valued tables (`crates/quotient/HIDING.md`)
@@ -24,6 +26,11 @@ import QuotientSecurity.Hiding.Interp
 * `Hiding.Merkle`: an unopened row keeps `|K|^(L-3)` of min-entropy given the view.
 * `Hiding.Interp`: condition (Q) for a code whose basis polynomial `y` has degree `y` (WHIR's novel
   basis), by Lagrange interpolation, and the vector an unopened row's entropy uses.
+* `Hiding.Sumcheck`, `Hiding.Gadget`: condition (R) for the gadget of the hidden layouts (`HIDING.md`,
+  "Condition (R) for every challenge"): one entry's rounds (solvers, the last round on each half,
+  two weights reach every message), the deployed patterns (`deployed_reach_all`), and
+  `column_reach`: through the gadget's entries, `ker lastMap` is in the `K`-span of its moves for
+  every `Φ` with no coordinate in `{0, 1}` (and `2 Φ₀ ≠ 1`), given the solvers' span.
 -/
 
 /-- info: 'QuotientSecurity.Hiding.hiding_of_mem_range' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -93,3 +100,19 @@ import QuotientSecurity.Hiding.Interp
 /-- info: 'QuotientSecurity.Hiding.exists_unopened_vector' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms QuotientSecurity.Hiding.exists_unopened_vector
+
+/-- info: 'QuotientSecurity.Hiding.reach_all' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.reach_all
+
+/-- info: 'QuotientSecurity.Hiding.deployed_reach_all' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.deployed_reach_all
+
+/-- info: 'QuotientSecurity.Hiding.column_reach' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.column_reach
+
+/-- info: 'QuotientSecurity.Hiding.rounds_lower_upper' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.rounds_lower_upper
