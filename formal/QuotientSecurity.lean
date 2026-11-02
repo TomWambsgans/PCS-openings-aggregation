@@ -20,6 +20,8 @@ import QuotientSecurity.Joint
 import QuotientSecurity.Statement
 import QuotientSecurity.CircuitLayout
 import QuotientSecurity.Pinning
+import QuotientSecurity.Deployed
+import QuotientSecurity.DeployedConcrete
 import QuotientSecurity.Hiding
 
 /-- info: 'QuotientSecurity.verifier_rbrKnowledgeSoundness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -413,3 +415,35 @@ import QuotientSecurity.Hiding
 /-- info: 'QuotientSecurity.exists_perm_classes' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms QuotientSecurity.exists_perm_classes
+
+/-- info: 'QuotientSecurity.Instance.soundness_membership_deployed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Instance.soundness_membership_deployed
+
+/-- info: 'QuotientSecurity.Instance.soundness_membership_deployed_concrete' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Instance.soundness_membership_deployed_concrete
+
+/-- info: 'QuotientSecurity.Instance.soundness_deployedInstance' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Instance.soundness_deployedInstance
+
+/-- info: 'QuotientSecurity.bitWeightsIndependent_G_Y' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.bitWeightsIndependent_G_Y
+
+/-- info: 'QuotientSecurity.rustBitWeight_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.rustBitWeight_eq
+
+/-- info: 'QuotientSecurity.rustCoordinateWeight_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.rustCoordinateWeight_eq
+
+/-- info: 'QuotientSecurity.statementWords_G_Y' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.statementWords_G_Y
+
+/-- info: 'QuotientSecurity.nonempty_cantorBasis' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.nonempty_cantorBasis

@@ -1,0 +1,56 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+# The membership circuit of `crates/quotient` (`quotient::circuit::membership`) in Lean, and the proof
+# that its computation is Keccak-256 Merkle membership (Circuit.lean and the files it imports). Keccak is leanerVM's
+# (https://github.com/Verified-zkEVM/leanerVM, branch `mumbai`, commit 6175f1a0, `Statement/Keccak.lean`,
+# MIT OR Apache-2.0), imported from its `Statement/` package (`statement`). Toolchain and dependency
+# revisions are mumbai's, the ones `formal/lakefile.toml` uses.
+name = "pcs-quotient-circuit"
+version = "0.1.0"
+defaultTargets = ["Circuit"]
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+pp.unicode.fun = true
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "d13f23b723b8a846827a245b89c10fc7d3f11612"
+
+[[require]]
+name = "PolyFun"
+git = "https://github.com/Verified-zkEVM/PolyFun"
+rev = "41d3b21dcc99817fe4f9f24ca7b2b58f0578083d"
+
+[[require]]
+name = "VCVio"
+git = "https://github.com/Verified-zkEVM/VCVio"
+rev = "afa6593f15e1e79ecb3cf22fc56191cecb452bb0"
+
+[[require]]
+name = "CompPoly"
+git = "https://github.com/Verified-zkEVM/CompPoly"
+rev = "572f997390aa4fc131ef30b1186fa1dcf292ca10"
+
+# leanerVM's `Statement/` package (`statement`), at the commit the formal/ port pins.
+[[require]]
+name = "statement"
+git = "https://github.com/Verified-zkEVM/leanerVM"
+rev = "6175f1a07f0dc33bd3d640de0063d1006143ee91"
+subDir = "Statement"
+
+# The circuit and the proofs.
+[[lean_lib]]
+name = "Circuit"
+globs = ["Circuit", "Circuit.+"]
+
+# The differential test against the Rust circuit (`CircuitTest/Dump.lean`): not part of the proofs.
+[[lean_lib]]
+name = "CircuitTest"
+globs = ["CircuitTest.+"]
+
+[[lean_exe]]
+name = "dump-circuit"
+root = "CircuitTest.Dump"

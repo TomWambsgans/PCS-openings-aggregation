@@ -212,8 +212,11 @@ fn open_no_claims() {
         lane.iter_mut().for_each(|w| *w = F64(l as u64 + 3))
     });
     let (old_root, old_proof) = old_open(&table, &[]);
-    // The old opening of no claims is a proof the verifier accepts.
-    assert_eq!(verify(&table.layout, &old_root, &[], &wire_proof(&old_proof)), Ok(()));
+    // The old opening of no claims proves nothing; the verifier rejects any opening of no claims.
+    assert_eq!(
+        verify(&table.layout, &old_root, &[], &wire_proof(&old_proof)),
+        Err(verifier::VerifierError::WhirShape)
+    );
     let committed = commit(&table);
     let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| open(&table, &committed, &[])));
     match got {
