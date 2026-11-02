@@ -184,9 +184,8 @@ fn end_to_end(blake2s: Blake2s) {
         roots: SetupRoots::REFERENCE,
     };
     let started = std::time::Instant::now();
-    let (proof, report) = prove(&trace, flock.as_ref(), &PROGRAM_IV, config).expect("a proof");
+    let (proof, report) = prove(&trace, flock, &PROGRAM_IV, config).expect("a proof");
     let total = started.elapsed().as_secs_f64();
-    drop(flock);
     println!("  {placing:8.3} s  placement: the rows (and Flock's instances) at the verifier's positions");
     for (phase, secs) in &report.phases {
         println!("  {secs:8.3} s  {phase}");

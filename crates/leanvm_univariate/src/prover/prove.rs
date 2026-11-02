@@ -174,7 +174,7 @@ pub struct Config {
 /// Prove `trace`'s execution (its rows placed: [`Trace::place`]) for the contract of the program's IV `iv` (the
 /// contract's own binds the setup roots and the shape: `contract::contract_iv`); with Flock, from leanVM's Flock
 /// inputs `flock`, placed likewise.
-pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config: Config) -> Result<(Proof, Report), String> {
+pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: Config) -> Result<(Proof, Report), String> {
     let mut report = Report::default();
     let mut clock = Clock { last: Instant::now() };
     if !trace.placed {
@@ -239,7 +239,9 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
         let witness = flock.ok_or("Flock needs leanVM's Flock inputs (flock.bin)")?;
         let log_n = leanvm_flock_gas::layout::BLAKE2S_R1CS_LOG_SIZE + trace.heights[OP_BLAKE2S];
         let deferred = config.claims == Claims::Point;
-        let out = super::flock::prove(&mut writer, witness, variant, log_n, deferred)?;
+        let out = super::flock::prove(&mut writer, &witness, variant, log_n, deferred)?;
+        // leanVM's Flock buffers (2 GB at 1,000 signatures) are not needed past here.
+        drop(witness);
         slices_end = Some(out.slices_end);
         if variant.slices == leanvm_flock_gas::flock_min::Slices::Claim {
             flock_slices = Some(out.slices.clone());
