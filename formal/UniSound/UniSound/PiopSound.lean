@@ -63,7 +63,7 @@ theorem uniPre_pre_post (s : USt) (p : Op Stk) (m : Option Stk × List E) (c : L
     obtain ⟨c1, c2, h1, -, hP, hEnd, hPend, hDone⟩ := h
     refine ⟨c1, h1, ?_⟩
     rw [ite_eq_left (le_of_eq hq), hq, Nat.add_sub_cancel, List.take_length]
-    exact ⟨I.main_of_polys _ _ _ _ hP, hDone, Fl.finish _ _ hDone hEnd hPend⟩
+    exact ⟨I.main_of_polys _ _ _ _ _ hP, hDone, Fl.finish _ _ hDone hEnd hPend⟩
   · rw [ite_eq_right hq] at h
     exact h
 
@@ -141,7 +141,7 @@ theorem uniSound_c2 (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.lengt
     Pr{let c ← Compose.draws E 1}[¬ uniPre Fl I s p m ∧ uniPost Fl I s p m c] ≤
       (I.degSum : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
   have hpre : uniPre Fl I s p m = ∃ c1 c2, (rd p 0).1.1 = some c1 ∧ m.1 = some c2 ∧
-      (∀ P ∈ I.polys s c1 (rd p 0).2 c2, P = 0) ∧
+      (∀ P ∈ I.polys s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2, P = 0) ∧
       FlockEndHolds (I.qf c1) (Fl.prog.out (fdOf Fl.prog.rounds.length p) []) ∧
       PendingHolds (Fl.prog.out (fdOf Fl.prog.rounds.length p) []).2.2 ∧
       FlockDone Fl (fdOf Fl.prog.rounds.length p) := by
@@ -165,10 +165,12 @@ theorem uniSound_c2 (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.lengt
     obtain ⟨c2', hc2, -⟩ := hpost
     rw [hx, hm] at hc2
     cases hc2
-  have hb : Pr{let c ← Compose.draws E 1}[∃ P ∈ I.polys s c1 (rd p 0).2 c2, P ≠ 0 ∧
-      P.eval (c.headD 0) = 0] ≤ (I.degSum : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) :=
-    (prEvent_root_le (I.polys s c1 (rd p 0).2 c2)).trans
-      (ENNReal.div_le_div_right (Nat.cast_le.mpr (I.deg_le s c1 (rd p 0).2 c2)) _)
+  have hb : Pr{let c ← Compose.draws E 1}[∃ P ∈ I.polys s c1 (rd p 0).2
+      (fdOf Fl.prog.rounds.length p) c2, P ≠ 0 ∧ P.eval (c.headD 0) = 0] ≤
+      (I.degSum : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) :=
+    (prEvent_root_le (I.polys s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2)).trans
+      (ENNReal.div_le_div_right (Nat.cast_le.mpr
+        (I.deg_le s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2)) _)
   refine (prEvent_mono _ _ _ ?_).trans hb
   rintro c ⟨hn, hpost⟩
   obtain ⟨c1', hc1, hpost⟩ := hpost

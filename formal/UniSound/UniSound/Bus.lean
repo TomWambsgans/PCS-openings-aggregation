@@ -49,10 +49,11 @@ structure BusModel (D : Deployment) (κ : ℕ) where
   /-- With the copies, the heap realizes Lv42's bus of `C1`'s Lv42 stack. -/
   realizes : ∀ (s : USt) (c : Stk), Copies s c →
     Heap.Realizes (I := D.inst s.2) (lv42Stack D.prog (D.sizes s.2) D.shape c) (hd s c)
-  /-- A bound on both sides' tuple counts. -/
+  /-- A bound on both sides' tuple counts, where the copies hold (a row count is unbounded, so
+  the bound can only hold where the counts are the range-checked ones: `Copies` carries that). -/
   N : ℕ
-  hpush : ∀ rows, Heap.busCount (D.inst rows) .push ≤ N
-  hpull : ∀ rows, Heap.busCount (D.inst rows) .pull ≤ N
+  hpush : ∀ (s : USt) (c : Stk), Copies s c → Heap.busCount (D.inst s.2) .push ≤ N
+  hpull : ∀ (s : USt) (c : Stk), Copies s c → Heap.busCount (D.inst s.2) .pull ≤ N
   /-- The rows the constraints are checked on, and each row's constraint vector. -/
   nrows : ℕ
   cvec : USt → Stk → ℕ → List E
@@ -152,7 +153,8 @@ theorem mainSound (s : USt) (c : Stk) :
     refine (prEvent_mono _ _ _ hev).trans (hb.trans ?_)
     rw [prEvent_eq_zero_of_forall_not _ _ (fun _ h => h), add_zero]
     refine le_trans ?_ le_self_add
-    have hc := Heap.card_sat_not_balanced_le (I := D.inst s.2) (B.wf s c) hR (B.hpush s.2) (B.hpull s.2)
+    have hc := Heap.card_sat_not_balanced_le (I := D.inst s.2) (B.wf s c) hR (B.hpush s c hcp)
+      (B.hpull s c hcp)
     refine (prEvent_draws_le_of_card 4 _ (4 * B.N) ?_).trans (le_of_eq rfl)
     have h5 := card_fin_five (fun a b => (B.hd s c).Sat a b ∧
       ¬ (D.inst s.2).Balanced (lv42Stack D.prog (D.sizes s.2) D.shape c))
@@ -195,16 +197,16 @@ end BusModel
 structure UniIdsRest (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (B : BusModel D κ) where
   nV : ℕ
   V : ℕ
-  polys : USt → Stk → List E → Stk → List (Polynomial E)
+  polys : USt → Stk → List E → Done → Stk → List (Polynomial E)
   degSum : ℕ
-  deg_le : ∀ s c1 ch c2, ((polys s c1 ch c2).map Polynomial.natDegree).sum ≤ degSum
-  main_of_polys : ∀ s c1 ch c2, (∀ P ∈ polys s c1 ch c2, P = 0) → B.MainOK s c1 ch
+  deg_le : ∀ s c1 ch fd c2, ((polys s c1 ch fd c2).map Polynomial.natDegree).sum ≤ degSum
+  main_of_polys : ∀ s c1 ch fd c2, (∀ P ∈ polys s c1 ch fd c2, P = 0) → B.MainOK s c1 ch
   diffs : USt → Stk → List E → Done → Stk → E → List E → List (List E)
   nRel : ℕ
   diffs_len : ∀ s c1 ch fd c2 t vals, ∀ d ∈ diffs s c1 ch fd c2 t vals, d.length ≤ nRel
   diffs_count : ∀ s c1 ch fd c2 t vals, (diffs s c1 ch fd c2 t vals).length ≤ 4
   diffs_eval : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
-    ∀ P ∈ polys s c1 ch c2, P.eval t = 0
+    ∀ P ∈ polys s c1 ch fd c2, P.eval t = 0
   diffs_flock : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
     FlockEndHolds (B.qf c1) (Fl.prog.out fd [])
   diffs_pending : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
