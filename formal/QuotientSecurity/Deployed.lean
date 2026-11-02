@@ -1,6 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import QuotientSecurity.Statement
-import Circuit.Final
+import Circuit.Sigma
 
 /-!
 # The deployed circuit in the end theorems
@@ -157,6 +157,107 @@ theorem toChi_public (hI : InputRows c) (hO : Ordered c) (hsize : c.rows.size = 
   · rw [if_pos h2, if_pos h2]
   · rw [if_neg h2, if_neg h2]
 
+/-! ### The wiring -/
+
+/-- Which cell `cellOf n` is: `n`. -/
+noncomputable def cellNum (z : Fin (22 + 2) → Bool) : ℕ := (exists_cellOf z).choose
+
+theorem cellNum_lt (z : Fin (22 + 2) → Bool) : cellNum z < 2 ^ (22 + 2) := (exists_cellOf z).choose_spec.1
+
+theorem cellOf_cellNum (z : Fin (22 + 2) → Bool) : cellOf (cellNum z) = z := (exists_cellOf z).choose_spec.2
+
+theorem cellNum_cellOf {n : ℕ} (hn : n < 2 ^ (22 + 2)) : cellNum (cellOf n) = n :=
+  cellOf_inj (cellNum_lt _) hn (cellOf_cellNum _)
+
+theorem four_mul_rows : 4 * 2 ^ logRows = 2 ^ (22 + 2) := by norm_num [logRows]
+
+/-- σ maps the cells among themselves (`membership_sigma_lt`). -/
+def SigmaLt (c : PcsCircuit.Circuit) : Prop :=
+  ∀ n, n < 4 * 2 ^ logRows → c.sigma.getD n 0 < 4 * 2 ^ logRows
+
+/-- σ is injective on the cells (`membership_sigma_inj`). -/
+def SigmaInj (c : PcsCircuit.Circuit) : Prop :=
+  ∀ n m, n < 4 * 2 ^ logRows → m < 4 * 2 ^ logRows → c.sigma.getD n 0 = c.sigma.getD m 0 → n = m
+
+/-- **The circuit's σ as a permutation of the cells**: `cellOf n ↦ cellOf σ[n]`. -/
+noncomputable def sigmaPerm (c : PcsCircuit.Circuit) (hlt : SigmaLt c) (hinj : SigmaInj c) :
+    Equiv.Perm (Fin (22 + 2) → Bool) :=
+  Equiv.ofBijective (fun z => cellOf (c.sigma.getD (cellNum z) 0)) (Finite.injective_iff_bijective.mp
+    fun z z' h => by
+      have h1 := hlt _ (four_mul_rows ▸ cellNum_lt z)
+      have h2 := hlt _ (four_mul_rows ▸ cellNum_lt z')
+      rw [four_mul_rows] at h1 h2
+      have := hinj _ _ (four_mul_rows ▸ cellNum_lt z) (four_mul_rows ▸ cellNum_lt z') (cellOf_inj h1 h2 h)
+      rw [← cellOf_cellNum z, ← cellOf_cellNum z', this])
+
+theorem sigmaPerm_cellOf (hlt : SigmaLt c) (hinj : SigmaInj c) {n : ℕ} (hn : n < 2 ^ (22 + 2)) :
+    sigmaPerm c hlt hinj (cellOf n) = cellOf (c.sigma.getD n 0) := by
+  show cellOf (c.sigma.getD (cellNum (cellOf n)) 0) = _
+  rw [cellNum_cellOf hn]
+
+theorem sigmaPerm_pow (hlt : SigmaLt c) (hinj : SigmaInj c) :
+    ∀ (k n : ℕ), n < 2 ^ (22 + 2) →
+      (sigmaPerm c hlt hinj ^ k) (cellOf n) = cellOf (PcsCircuit.iter (fun x => c.sigma.getD x 0) k n)
+  | 0, n, _ => rfl
+  | k + 1, n, hn => by
+    rw [pow_succ, Equiv.Perm.mul_apply, sigmaPerm_cellOf hlt hinj hn,
+      sigmaPerm_pow hlt hinj k _ (four_mul_rows ▸ hlt n (four_mul_rows ▸ hn))]
+    rfl
+
+/-- What cell `4 r + k` (`k < 3`) reads. -/
+def srcK (c : PcsCircuit.Circuit) (r k : ℕ) : PcsCircuit.Src :=
+  if k = 0 then (c.rows.getD r .idle).x else if k = 1 then (c.rows.getD r .idle).y else (c.rows.getD r .idle).c
+
+/-- Every reading cell is on the cycle of what it reads (`membership_sigma_reads`). -/
+def SigmaReads (c : PcsCircuit.Circuit) : Prop :=
+  ∀ r k, r < 2 ^ logRows → k < 3 → ∃ m, PcsCircuit.iter (fun x => c.sigma.getD x 0) m (4 * r + k) =
+    PcsCircuit.anchorN (if k = 0 then (c.rows.getD r .idle).x else if k = 1 then (c.rows.getD r .idle).y
+      else (c.rows.getD r .idle).c)
+
+/-- The rows read are rows of the circuit (`membership_hsrc`). -/
+def SrcLt (c : PcsCircuit.Circuit) : Prop :=
+  ∀ r, r < c.rows.size →
+    PcsCircuit.slot (c.rows.getD r .idle).x < c.rows.size + 2 ∧
+    PcsCircuit.slot (c.rows.getD r .idle).y < c.rows.size + 2 ∧
+    PcsCircuit.slot (c.rows.getD r .idle).c < c.rows.size + 2
+
+theorem anchor_ofSrc (s : PcsCircuit.Src) (hs : PcsCircuit.slot s < 2 ^ logRows + 2) :
+    anchor (ofSrc s) = cellOf (PcsCircuit.anchorN s) := by
+  cases s with
+  | zero => show pubCell 5 0 = cellOf (4 * 320); rw [pubCell_eq_cellOf]; rfl
+  | one => show pubCell 4 0 = cellOf (4 * 256); rw [pubCell_eq_cellOf]; rfl
+  | row r' =>
+    have hr : r' < 2 ^ 22 := by have : 2 + r' < 2 ^ logRows + 2 := hs; unfold logRows at this; omega
+    show anchor (if h : r' < 2 ^ 22 then Src.row ⟨r', h⟩ else Src.zero) = cellOf (4 * r' + 3)
+    rw [dif_pos hr]
+    show rowCell ⟨r', hr⟩ 3 = _
+    rw [rowCell_eq_cellOf]
+    rfl
+
+/-- **The circuit's own σ lays it.** -/
+theorem laid_sigmaPerm (hI : InputRows c) (hO : Ordered c) (hlt : SigmaLt c) (hinj : SigmaInj c)
+    (hsize : c.rows.size = 2 ^ logRows) (hsrc : SrcLt c) (hreads : SigmaReads c)
+    (h5 : ∀ j : Fin 128, (toChi c hI hO).pubSrc 5 j = .zero) (h4one : (toChi c hI hO).pubSrc 4 0 = .one)
+    (h4 : ∀ j : Fin 128, j ≠ 0 → (toChi c hI hO).pubSrc 4 j = .zero) :
+    Laid (sigmaPerm c hlt hinj) (toChi c hI hO) := by
+  refine ⟨fun r => ?_, h5, h4one, h4⟩
+  have hr : (r : ℕ) < 2 ^ logRows := r.isLt
+  have hs := hsrc r (by rw [hsize]; exact hr)
+  rw [hsize] at hs
+  have one : ∀ k : Fin 4, (k : ℕ) < 3 → Reads (sigmaPerm c hlt hinj) (rowCell r k)
+      (ofSrc (if (k : ℕ) = 0 then (c.rows.getD r .idle).x else if (k : ℕ) = 1 then (c.rows.getD r .idle).y
+        else (c.rows.getD r .idle).c)) := by
+    intro k hk
+    obtain ⟨m, hm⟩ := hreads r k hr hk
+    refine ⟨m, ?_⟩
+    rw [rowCell_eq_cellOf, sigmaPerm_pow hlt hinj m _ (by have := k.isLt; omega), hm, anchor_ofSrc]
+    split
+    · exact hs.1
+    · split
+      · exact hs.2.1
+      · exact hs.2.2
+  exact ⟨one 0 (by decide), one 1 (by decide), one 2 (by decide)⟩
+
 end Generic
 
 /-! ## The deployed circuit -/
@@ -191,6 +292,20 @@ theorem deployed_word6 (j : Fin 128) : deployed.pubSrc 6 j = .zero := by
 
 theorem deployed_word7 (j : Fin 128) : deployed.pubSrc 7 j = .zero := by
   rw [deployed_pubSrc]; exact congrArg ofSrc (PcsCircuit.membership_high 7 j (by decide) (by decide) j.isLt)
+
+/-- **The deployed σ** (`membership.sigma`, the Rust's, `CircuitTest/Dump.lean`) as a
+permutation of the cells: cell `n` goes to cell `σ[n]`. -/
+noncomputable def deployedSigma : Equiv.Perm (Fin (22 + 2) → Bool) :=
+  sigmaPerm membership PcsCircuit.membership_sigma_lt PcsCircuit.membership_sigma_inj
+
+theorem deployedSigma_cellOf {n : ℕ} (hn : n < 2 ^ (22 + 2)) :
+    deployedSigma (cellOf n) = cellOf (membership.sigma.getD n 0) := sigmaPerm_cellOf _ _ hn
+
+/-- **The deployed σ lays the deployed circuit** (`Laid`): every `X`, `Y`, `C` cell is on the
+cycle of what it reads, and the constants' anchors are words 4 and 5. -/
+theorem deployed_laid_sigma : Laid deployedSigma deployed :=
+  laid_sigmaPerm _ _ _ _ PcsCircuit.membership_rows_size PcsCircuit.membership_hsrc
+    PcsCircuit.membership_sigma_reads deployed_word5 deployed_word4_one deployed_word4
 
 /-- **`wiringOf deployed` lays the deployed circuit.** -/
 theorem deployed_laid : Laid (wiringOf deployed) deployed :=
@@ -280,6 +395,17 @@ theorem soundness_membership (hq : Fintype.card F = 2 ^ 192) {x Y : F}
     obtain ⟨y, root, hs, hn⟩ := hr.2
     exact ⟨hr.1, y, root, hs, fun h => hn (ProvesBits.membership h)⟩)
     (I.soundness_circuit_bits hq deployed hind hc hC adv Q hQ)
+
+/-- **Knowledge soundness of the deployed membership proof, with the deployed wiring**: the
+instance's σ is `membership`'s (the Rust's), `deployedSigma`. -/
+theorem soundness_membership_deployed (hq : Fintype.card F = 2 ^ 192) {x Y : F}
+    (hind : BitWeightsIndependent x Y) (hc : I.c = coordWeight x Y) (hw : I.wiring = deployedSigma)
+    (adv : I.Adversary) (Q : ℕ) (hQ : IsTotalQueryBound adv Q) :
+    Pr{let r ← (simulateQ randomOracle (experiment adv)).run' ∅}[
+        r.2 = true ∧ ∃ y root, r.1.stmt = statementWords x Y y root ∧
+          ¬ ProvesMembership (I.cellsOf r.1.g.1) y root]
+      ≤ (Q + 3 : ENNReal) / 2 ^ 128 :=
+  I.soundness_membership hq hind hc (hw ▸ deployed_laid_sigma) adv Q hQ
 
 end Instance
 

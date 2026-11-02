@@ -9,3 +9,5 @@ import Circuit.KeccakGadget
 import Circuit.Bytes
 import Circuit.Membership
 import Circuit.Final
+import Circuit.Wiring
+import Circuit.Sigma

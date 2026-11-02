@@ -292,12 +292,15 @@ def wiring (rows : Array Row) : Array Nat :=
     join (join (join st (slot row.x) (4 * r)) (slot row.y) (4 * r + 1)) (slot row.c) (4 * r + 2)) st
   st.sigma
 
-/-- `Builder::finish`: the public rows written, the rows padded with idle ones to `2^logRows`,
-and σ. (The Rust asserts that the rows fit; `membership_rows_le` proves it for `membership`.) -/
-def Builder.finish (b : Builder) (logRows : Nat) (pub : Nat → Nat → Src) : Circuit :=
-  let n := 2 ^ logRows
-  let rows := ((List.range n).map fun r =>
+/-- `finish`'s rows: the public rows written, the rows padded with idle ones to `2^logRows`. -/
+def Builder.finishRows (b : Builder) (logRows : Nat) (pub : Nat → Nat → Src) : Array Row :=
+  ((List.range (2 ^ logRows)).map fun r =>
     if r < publicRows then publicRow pub r else b.rows.getD r .idle).toArray
+
+/-- `Builder::finish`: the rows (`finishRows`) and σ. (The Rust asserts that the rows fit;
+`buildRows_lt` proves it for `membership`.) -/
+def Builder.finish (b : Builder) (logRows : Nat) (pub : Nat → Nat → Src) : Circuit :=
+  let rows := b.finishRows logRows pub
   { logRows, usedRows := b.rows.size, rows, inputs := b.inputs, sigma := wiring rows }
 
 /-- Run a builder program from a builder: its result and the grown builder. -/

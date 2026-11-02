@@ -7,7 +7,7 @@
 //! sources (`0` zero, `1` one, `2 + r` row `r`); the input rows; σ. It then prints the public words the circuit
 //! computes for a fixed secret, next to the statement's.
 
-use quotient::circuit::{PUBLIC_ROWS, Src, WORD_BITS, membership, membership_inputs, read};
+use quotient::circuit::{Src, WORD_BITS, membership, membership_inputs, read};
 use quotient::statement::Secret;
 
 fn code(src: Src) -> u32 {
@@ -28,7 +28,8 @@ fn main() {
         circuit.inputs.len(),
         circuit.sigma.len()
     );
-    let mut out: Vec<u8> = Vec::with_capacity(4 * (3 + 3 * circuit.rows.len() + circuit.inputs.len() + circuit.sigma.len()));
+    let mut out: Vec<u8> =
+        Vec::with_capacity(4 * (3 + 3 * circuit.rows.len() + circuit.inputs.len() + circuit.sigma.len()));
     let mut push = |x: u32| out.extend_from_slice(&x.to_le_bytes());
     push(circuit.rows.len() as u32);
     push(circuit.used_rows as u32);
@@ -58,11 +59,14 @@ fn main() {
         let mut w: u128 = 0;
         for j in 0..WORD_BITS {
             let r = word * (WORD_BITS / 2) + j / 2;
-            let src = if j % 2 == 0 { circuit.rows[r].x } else { circuit.rows[r].y };
+            let src = if j % 2 == 0 {
+                circuit.rows[r].x
+            } else {
+                circuit.rows[r].y
+            };
             w |= (read(&v, src) as u128) << j;
         }
         let expected = (half.c0 as u128) | ((half.c1 as u128) << 64);
         println!("word {word}: circuit {w:032x} statement {expected:032x}");
     }
-    let _ = PUBLIC_ROWS;
 }

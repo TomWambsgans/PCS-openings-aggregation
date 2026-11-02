@@ -1,6 +1,6 @@
 # Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 # The membership circuit of `crates/quotient` (`quotient::circuit::membership`) in Lean, and the proof
-# that its computation is Keccak-256 Merkle membership (README.md here). Keccak is leanerVM's
+# that its computation is Keccak-256 Merkle membership (Circuit.lean and the files it imports). Keccak is leanerVM's
 # (https://github.com/Verified-zkEVM/leanerVM, branch `mumbai`, commit 6175f1a0, `Statement/Keccak.lean`,
 # MIT OR Apache-2.0), imported from its `Statement/` package (`statement`). Toolchain and dependency
 # revisions are mumbai's, the ones `formal/lakefile.toml` uses.

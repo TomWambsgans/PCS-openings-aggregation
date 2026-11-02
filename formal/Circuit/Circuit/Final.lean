@@ -49,12 +49,12 @@ def pubSrcN (c : Circuit) (J j : Nat) : Src :=
 
 theorem finish_rows_size (b : Builder) (pub : Nat → Nat → Src) :
     (b.finish logRows pub).rows.size = 2 ^ logRows := by
-  simp [Builder.finish]
+  simp [Builder.finish, Builder.finishRows]
 
 theorem finish_rows_getD (b : Builder) (pub : Nat → Nat → Src) (r : Nat) (hr : r < 2 ^ logRows) :
     (b.finish logRows pub).rows.getD r .idle =
       if r < publicRows then publicRow pub r else b.rows.getD r .idle := by
-  simp only [Builder.finish]
+  simp only [Builder.finish, Builder.finishRows]
   rw [map_range_getD _ _ _ _ hr]
 
 theorem finish_inputs (b : Builder) (pub : Nat → Nat → Src) : (b.finish logRows pub).inputs = b.inputs := rfl
