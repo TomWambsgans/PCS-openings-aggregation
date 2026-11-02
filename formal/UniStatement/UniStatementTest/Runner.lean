@@ -1,0 +1,297 @@
+-- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+import UniStatement
+
+/-!
+# The differential runner
+
+`lake env lean ../UniStatement/UniStatementTest/Runner.lean` (from `formal/EndToEnd`), with the vectors of
+`crates/leanvm_univariate/tests/lean_vectors.rs` at `$UNI_VECTORS`: the Lean verifier (`UniStatement.run`,
+compiled evaluation, not the kernel) on every vector's calldata, compared with the Rust verifier's on
+**every value it states**: the verdict (stream error or not, and which), every challenge drawn, every value
+it requires to be zero, the accept bit, the number of relations, each stack's variables, every opening
+handed to `PCS_OPEN` (point claims with their points and values, or weighted claims with their points,
+terms and values, and the bit-slice claim) and Flock's claims on `A0`, `B0`. It prints one line per vector
+and a summary, and fails (`IO.Process.exit 1` is not available under `#eval`, so it throws) on any
+disagreement or unreadable vector.
+-/
+
+open LeanVM.Parameters UniStatement
+
+namespace UniStatementTest
+
+/-- A parser of a line's tokens. -/
+abbrev Parse := StateT (List String) (Except String)
+
+def token : Parse String := do
+  match ← get with
+  | [] => throw "the line ended early"
+  | t :: ts => set ts; pure t
+
+def expect (s : String) : Parse Unit := do
+  let t ← token
+  if t ≠ s then throw s!"expected {s}, got {t}"
+
+def hexDigit (c : Char) : Option ℕ :=
+  if '0' ≤ c ∧ c ≤ '9' then some (c.toNat - '0'.toNat)
+  else if 'a' ≤ c ∧ c ≤ 'f' then some (c.toNat - 'a'.toNat + 10)
+  else none
+
+def hexNat (s : String) : Except String ℕ :=
+  s.toList.foldlM (fun acc c ↦ match hexDigit c with
+    | some d => pure (16 * acc + d)
+    | none => throw s!"not hex: {s}") 0
+
+def nat : Parse ℕ := do
+  let t ← token
+  match t.toNat? with
+  | some n => pure n
+  | none => throw s!"not a number: {t}"
+
+def eElem : Parse E := do
+  match (← token).splitOn ":" with
+  | [a, b, c] =>
+    let limb (s : String) : Except String UInt64 := UInt64.ofNat <$> hexNat s
+    pure (eNew (← limb a) (← limb b) (← limb c))
+  | _ => throw "not an element of E"
+
+def many {α : Type} (p : Parse α) : Parse (List α) := do
+  let n ← nat
+  (List.range n).mapM fun _ ↦ p
+
+/-- Bytes from hex. -/
+def hexBytes (s : String) : Except String (Array UInt8) := do
+  let cs := s.toList.toArray
+  if cs.size % 2 ≠ 0 then throw "odd hex"
+  let mut out : Array UInt8 := Array.mkEmpty (cs.size / 2)
+  for i in [0:cs.size / 2] do
+    match hexDigit (cs.getD (2 * i) '0'), hexDigit (cs.getD (2 * i + 1) '0') with
+    | some a, some b => out := out.push (UInt8.ofNat (16 * a + b))
+    | _, _ => throw "not hex"
+  return out
+
+def eHex (x : E) : String :=
+  s!"{String.ofList (Nat.toDigits 16 (x.limb 0).lane.toNat)}:{String.ofList (Nat.toDigits 16 (x.limb 1).lane.toNat)}:{String.ofList (Nat.toDigits 16 (x.limb 2).lane.toNat)}"
+
+/-- A combined claim as the Rust writes it: its points, its terms (column id, point, twist, coefficient),
+its value, its relations. -/
+structure RustCombined where
+  points : List (List E)
+  terms : List (ℕ × ℕ × ℕ × E)
+  value : E
+  relations : ℕ
+
+def combinedP : Parse RustCombined := do
+  expect "P"
+  let points ← many (many eElem)
+  expect "T"
+  let terms ← many do
+    let id ← hexNat (← token)
+    let p ← nat
+    let twist ← nat
+    let c ← eElem
+    pure (id, p, twist, c)
+  expect "V"
+  let value ← eElem
+  expect "R"
+  let relations ← nat
+  pure ⟨points, terms, value, relations⟩
+
+inductive RustOpening where
+  | point (commitment : String) (pt : List E) (value : E) (bitSlice : Option RustCombined)
+  | weighted (commitment : String) (claim : RustCombined)
+
+def openingP : Parse RustOpening := do
+  expect "OPENING"
+  let c ← token
+  match ← token with
+  | "POINT" =>
+    let pt ← many eElem
+    expect "VALUE"
+    let v ← eElem
+    expect "BITSLICE"
+    let bs ← match ← token with
+      | "0" => pure none
+      | "1" => some <$> combinedP
+      | t => throw s!"BITSLICE {t}"
+    pure (.point c pt v bs)
+  | "WEIGHTED" => .weighted c <$> combinedP
+  | t => throw s!"opening kind {t}"
+
+/-- A vector: its configuration, its calldata, and the Rust's outcome. -/
+structure Vector' where
+  id : String
+  shape : String
+  flock : String
+  claims : String
+  kind : String
+  iv : Array UInt8
+  publicInput : Array UInt8
+  stream : Array UInt8
+  error : Option String
+  challenges : List E
+  zeros : List E
+  nonzeros : List E
+  accept : Bool
+  relations : Option ℕ
+  stackVars : List (String × ℕ)
+  openings : List RustOpening
+  matrices : Option (List E × E × E)
+
+/-- The tokens of a line. -/
+def tokens (line : String) : List String := (line.splitOn " ").filter (· ≠ "")
+
+/-- Parse one vector from its lines (`VECTOR` to `END`). -/
+def parseVector (lines : List String) : Except String Vector' := do
+  let byKey (k : String) : Option (List String) :=
+    (lines.map tokens).find? (fun ts ↦ ts.head? == some k) |>.map (·.drop 1)
+  let req (k : String) : Except String (List String) :=
+    match byKey k with
+    | some ts => pure ts
+    | none => throw s!"no {k} line"
+  let header ← req "VECTOR"
+  let (id, shape, flock, claims, kind) ← match header with
+    | [a, b, c, d, e] => pure (a, b, c, d, e)
+    | _ => throw "bad VECTOR line"
+  let iv ← hexBytes ((← req "IV").headD "")
+  let publicInput ← hexBytes ((← req "PUBLIC").headD "")
+  let stream ← hexBytes (((← req "STREAM").drop 1).headD "")
+  let error := match byKey "RESULT" with
+    | some ["ERR", e] => some e
+    | _ => none
+  let (challenges, _) ← (many eElem).run (← req "CHALLENGES")
+  let (zeros, _) ← (many eElem).run (← req "ZEROS")
+  let (nonzeros, _) ← (many eElem).run (← req "NONZEROS")
+  let accept := byKey "ACCEPT" == some ["1"]
+  let relations := (byKey "RELATIONS").bind (·.head?) |>.bind String.toNat?
+  let stackVars ← match byKey "STACKVARS" with
+    | some ts => (do
+        let n ← nat
+        (List.range n).mapM fun _ ↦ do
+          let c ← token
+          let v ← nat
+          pure (c, v) : Parse _).run' ts
+    | none => pure []
+  let openings ← (lines.filter (·.startsWith "OPENING ")).mapM fun l ↦ openingP.run' (tokens l)
+  let matrices ← match byKey "MATRICES" with
+    | some ("1" :: rest) => (do
+        let pt ← many eElem
+        expect "A"
+        let a ← eElem
+        expect "B"
+        let b ← eElem
+        pure (some (pt, a, b)) : Parse _).run' (("" :: rest).drop 1)
+    | _ => pure none
+  pure ⟨id, shape, flock, claims, kind, iv, publicInput, stream, error, challenges, zeros, nonzeros,
+    accept, relations, stackVars, openings, matrices⟩
+
+/-- The configuration a vector names. -/
+def blake2sNamed : String → Option Blake2s
+  | "main" => some (.flock flockMain)
+  | "bitslice" => some (.flock flockBitSlice)
+  | "leanvm" => some (.flock flockLeanvmSkip)
+  | "omitted" => some .omitted
+  | _ => none
+
+def modeNamed : String → Option ClaimsMode
+  | "point" => some .point
+  | "weighted" => some .weighted
+  | _ => none
+
+/-- Lean's combined claim against the Rust's: the same points, terms (in order), value, relations. -/
+def sameCombined (lean : Combined) (rust : RustCombined) : Bool :=
+  lean.points == rust.points &&
+    lean.terms.map (fun (c, p, k, v) ↦ (c.id, p, k, v)) == rust.terms &&
+    lean.value == rust.value && lean.relations == rust.relations
+
+def sameOpening (lean : Commitment × Opening) (rust : RustOpening) : Bool :=
+  match lean.2, rust with
+  | .point pt v bs, .point c pt' v' bs' =>
+    lean.1.name == c && pt == pt' && v == v' &&
+      (match bs, bs' with
+        | none, none => true
+        | some a, some b => sameCombined a b
+        | _, _ => false)
+  | .weighted claim, .weighted c claim' => lean.1.name == c && sameCombined claim claim'
+  | _, _ => false
+
+/-- The first disagreement between the Lean run and the Rust's outcome, if any. -/
+def compare (v : Vector') : Except String (Option String) := do
+  let some shape := shapeNamed v.shape | throw s!"unknown shape {v.shape}"
+  let some blake2s := blake2sNamed v.flock | throw s!"unknown flock {v.flock}"
+  let some mode := modeNamed v.claims | throw s!"unknown claims {v.claims}"
+  let o := run shape v.iv.toList v.publicInput.toList v.stream blake2s mode
+  let leanError := match o.result with
+    | .ok _ => none
+    | .error e => some e.name
+  if leanError != v.error then return some s!"result: Lean {leanError}, Rust {v.error}"
+  if o.chan.challenges.toList.length != v.challenges.length then
+    return some s!"challenges: Lean {o.chan.challenges.size}, Rust {v.challenges.length}"
+  for (i, (a, b)) in (List.range v.challenges.length).zip (o.chan.challenges.toList.zip v.challenges) do
+    if a != b then return some s!"challenge {i}: Lean {eHex a}, Rust {eHex b}"
+  if o.chan.zeros.toList != v.zeros then
+    return some s!"zeros: Lean {o.chan.zeros.toList.map eHex}, Rust {v.zeros.map eHex}"
+  if !v.nonzeros.isEmpty then return some "the Rust checked a nonzero value; this verifier has none"
+  if o.accepts != v.accept then return some s!"accept: Lean {o.accepts}, Rust {v.accept}"
+  match o.result with
+  | .error _ => return none
+  | .ok r =>
+    if some r.relations != v.relations then return some s!"relations: Lean {r.relations}, Rust {v.relations}"
+    if r.stackVars.map (fun (c, n) ↦ (c.name, n)) != v.stackVars then
+      return some s!"stack vars: Lean {r.stackVars.map fun (c, n) ↦ (c.name, n)}, Rust {v.stackVars}"
+    if r.openings.length != v.openings.length then
+      return some s!"openings: Lean {r.openings.length}, Rust {v.openings.length}"
+    for (i, (a, b)) in (List.range r.openings.length).zip (r.openings.zip v.openings) do
+      if !sameOpening a b then return some s!"opening {i} ({a.1.name}) differs"
+    let sameMatrices := match r.matrices, v.matrices with
+      | none, none => true
+      | some m, some (pt, a, b) => m.point == pt && m.a == a && m.b == b
+      | _, _ => false
+    if !sameMatrices then return some "matrices differ"
+    return none
+
+/-- Split the file into vectors. -/
+def vectorsOf (text : String) : List (List String) :=
+  let lines := (text.splitOn "\n").filter fun l ↦ !l.startsWith "#" && l ≠ ""
+  let (done, current) := lines.foldl (fun (acc : List (List String) × List String) l ↦
+    if l.startsWith "VECTOR " then (if acc.2.isEmpty then acc.1 else acc.1 ++ [acc.2], [l])
+    else if l == "END" then (acc.1 ++ [acc.2], []) else (acc.1, acc.2 ++ [l])) ([], [])
+  if current.isEmpty then done else done ++ [current]
+
+def main : IO Unit := do
+  let path := (← IO.getEnv "UNI_VECTORS").getD "uni_vectors.txt"
+  let text ← IO.FS.readFile path
+  let vectors := vectorsOf text
+  let mut agree := 0
+  let mut failures : List String := []
+  let mut accepted := 0
+  let mut rejected := 0
+  let mut tally : List (String × ℕ × ℕ) := []
+  let start ← IO.monoMsNow
+  for lines in vectors do
+    match parseVector lines with
+    | .error e =>
+      failures := failures ++ [s!"unreadable vector: {e}"]
+      IO.println s!"UNREADABLE {e}"
+    | .ok v =>
+      match compare v with
+      | .ok none =>
+        agree := agree + 1
+        if v.accept then accepted := accepted + 1 else rejected := rejected + 1
+        let key := v.kind
+        let (a, r) := ((tally.find? (·.1 == key)).map (·.2)).getD (0, 0)
+        tally := (tally.filter (·.1 != key)) ++ [(key, if v.accept then (a + 1, r) else (a, r + 1))]
+        IO.println s!"AGREE {v.id} {v.shape} {v.flock} {v.claims} {v.kind}: {if v.accept then "accept" else
+          s!"reject{(v.error.map (" " ++ ·)).getD ""}"}, {v.challenges.length} challenges, {v.zeros.length} checks, {v.openings.length} openings"
+      | .ok (some d) =>
+        failures := failures ++ [s!"{v.id}: {d}"]
+        IO.println s!"DISAGREE {v.id} {v.shape} {v.flock} {v.claims} {v.kind}: {d}"
+      | .error e =>
+        failures := failures ++ [s!"{v.id}: {e}"]
+        IO.println s!"ERROR {v.id}: {e}"
+  let stop ← IO.monoMsNow
+  IO.println s!"SUMMARY {agree}/{vectors.length} vectors agree on every value; accepted by both {accepted}, rejected by both {rejected}; by kind (accept, reject): {tally}; {(stop - start) / 1000} s"
+  if !failures.isEmpty then throw (IO.userError s!"{failures.length} disagreements: {failures}")
+
+end UniStatementTest
+
+#eval UniStatementTest.main
