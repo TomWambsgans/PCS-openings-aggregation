@@ -300,9 +300,12 @@ def Builder.finish (b : Builder) (logRows : Nat) (pub : Nat → Nat → Src) : C
     if r < publicRows then publicRow pub r else b.rows.getD r .idle).toArray
   { logRows, usedRows := b.rows.size, rows, inputs := b.inputs, sigma := wiring rows }
 
+/-- Run a builder program from a builder: its result and the grown builder. -/
+def runBuild {α : Type} (m : BuildM α) (b : Builder) : α × Builder := (m.run b).run
+
 /-- **The membership circuit** (`circuit::membership`). -/
 def membership : Circuit :=
-  let r := (membershipBuild.run Builder.new).run
+  let r := runBuild membershipBuild Builder.new
   r.2.finish logRows (publicWords r.1.1 r.1.2)
 
 /-! ## The computation -/

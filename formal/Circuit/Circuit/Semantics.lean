@@ -164,7 +164,9 @@ theorem Computes.congr {b : Builder} {a : Src} {f g : (Nat → Bool) → Bool} (
 /-! ## Runs -/
 
 /-- Run a gadget from a builder. -/
-def runB {α : Type} (m : BuildM α) (b : Builder) : α × Builder := (m.run b).run
+def runB {α : Type} (m : BuildM α) (b : Builder) : α × Builder := runBuild m b
+
+theorem runB_eq {α : Type} (m : BuildM α) (b : Builder) : runB m b = runBuild m b := rfl
 
 /-- `b` grows to `b'` by at most `k` rows, keeping its rows and inputs, well-formed. -/
 structure Grows (b b' : Builder) (k : Nat) : Prop where
