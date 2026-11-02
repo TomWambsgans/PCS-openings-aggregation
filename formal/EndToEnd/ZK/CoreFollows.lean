@@ -249,4 +249,210 @@ theorem followsK_sampleQueriesAux (depth : ℕ) (hd : 1 ≤ depth) (hd' : depth 
       (followsK_sampleQueriesAux depth hd hd' fuel _ _ (by omega))
     rwa [List.append_nil] at h
 
+/-! ## The levels -/
+
+/-- A query phase's events: grinding, the position draws, the batching draw, the opened rows of
+commitment `idx` (depth `depth`), the intro message. -/
+def queryEvW (idx q depth : ℕ) : List Render.Ev :=
+  .grind :: (List.replicate (nDraws depth q q) .posDraw ++ [.draw, .opened idx q depth, .send 2])
+
+/-- **The events of `whirLevels`** from the level `idx`, `f` variables folded before it. -/
+def whirEv (logN : ℕ) : ℕ → ℕ → List Whir.Level → List Render.Ev
+  | _, _, [] => []
+  | f, idx, level :: rest =>
+    roundsEv level.fold ++
+      ((match rest with
+        | [] => [Render.Ev.send (2 ^ (logN - (f + level.fold)))]
+        | next :: _ => Render.Ev.commit (logN - (f + level.fold) - next.fold + next.logInvRate) ::
+            oodEv (logN - (f + level.fold))) ++
+      (queryEvW idx level.queries (logN - (f + level.fold) + level.logInvRate) ++
+      (match rest with
+        | [] => roundsEv (logN - (f + level.fold) - 1) ++ [.draw]
+        | _ :: _ => whirEv logN (f + level.fold) (idx + 1) rest)))
+
+/-- The ladder's levels query depths in `1 … 192` and its last level keeps a variable. -/
+def cfgOK (logN : ℕ) : ℕ → List Whir.Level → Bool
+  | _, [] => false
+  | f, level :: rest =>
+    decide (1 ≤ logN - (f + level.fold) + level.logInvRate) &&
+      decide (logN - (f + level.fold) + level.logInvRate ≤ 192) &&
+      match rest with
+      | [] => decide (1 ≤ logN - (f + level.fold))
+      | _ :: _ => cfgOK logN (f + level.fold) rest
+
+/-- `glue`'s step. -/
+def glueStep (lam : E) (acc : WhirState × E) (iw : List E × (List E → E)) : WhirState × E :=
+  let scalar := acc.2 * lam
+  let s := acc.1
+  ({ s with quad := List.zipWith (fun q i ↦ q + scalar * i) s.quad iw.1,
+            glued := s.glued ++ [⟨scalar, s.folds.length, iw.2⟩] }, scalar)
+
+theorem glue_eq (lam : E) (s : WhirState) (pending : List (List E × (List E → E))) :
+    glue lam s pending = (pending.foldl (glueStep lam) (s, 1)).1 := rfl
+
+theorem foldl_glueStep_folds (lam : E) :
+    ∀ (l : List (List E × (List E → E))) (acc : WhirState × E),
+      (l.foldl (glueStep lam) acc).1.folds = acc.1.folds
+  | [], _ => rfl
+  | a :: l, acc => by rw [List.foldl_cons, foldl_glueStep_folds lam l]; rfl
+
+theorem glue_folds (lam : E) (s : WhirState) (pending : List (List E × (List E → E))) :
+    (glue lam s pending).folds = s.folds := by
+  rw [glue_eq, foldl_glueStep_folds]
+
+/-- **A query phase on commitment `idx`**, then a program following the rest. -/
+theorem follows_queryPhase {β : Type} (idx q depth : ℕ) (hd : 1 ≤ depth) (hd' : depth ≤ 192)
+    (tail : List Render.Ev) (claimOf : List ℕ → E → List (List K) → E)
+    (cont : List ℕ → E → List (List K) → List E → Prog β)
+    (hcont : ∀ qs lam words intro, Follows tail (cont qs lam words intro) []) :
+    Follows (queryEvW idx q depth ++ tail)
+      ((Prog.grindProofOfWork 17).bind fun _ ↦ (sampleQueries depth q).bind fun queries ↦
+        Prog.sampleChallenge.bind fun lam ↦ (Prog.queryOpenings idx queries).bind fun words ↦
+          (sumcheckRoundPoly 3 (claimOf queries lam words) none).bind fun intro ↦
+            cont queries lam words intro) [] := by
+  refine ⟨_, rfl, ?_⟩
+  have e : (List.replicate (nDraws depth q q) Render.Ev.posDraw ++
+      [Render.Ev.draw, .opened idx q depth, .send 2]).append tail =
+      List.replicate (nDraws depth q q) Render.Ev.posDraw ++
+        ([.draw] ++ ([.opened idx q depth] ++ ([.send 2] ++ tail))) := by simp
+  rw [e, Prog.ret_bind]
+  refine follows_bind _ _ _ (fun queries pl' hq ↦ ?_) _ _ []
+    (followsK_sampleQueriesAux depth hd hd' q q [] le_rfl)
+  obtain ⟨new, hpl, rfl⟩ := hq
+  rw [List.nil_append] at hpl
+  subst hpl
+  have hp : posOf pl' depth q = List.take q (pl'.flatMap (positionsOf depth)) := by
+    rw [posOf, max_eq_left hd]
+  refine ⟨_, rfl, fun lam ↦ ⟨fun words ↦ (sumcheckRoundPoly 3
+      (claimOf (List.take q (pl'.flatMap (positionsOf depth))) lam words) none).bind fun intro ↦
+        cont (List.take q (pl'.flatMap (positionsOf depth))) lam words intro, ?_, fun words ↦ ?_⟩⟩
+  · rw [hp]
+    rfl
+  · show FollowsReads 2 ((sumcheckRoundPoly 3 _ none).bind _) _
+    exact followsReads_bind _ (fun R ⟨a, hR, _⟩ ↦ by subst hR; exact hcont _ _ _ _) 2 _
+      (followsK_sumcheckRoundPoly _ [])
+
+/-- **The next commitment and its out-of-domain sample**: a commitment, `ml` draws, three reads; then
+a program following the rest. -/
+theorem follows_ood {β : Type} (ml h w : ℕ) (tail : List Render.Ev)
+    (cont : List E → List E → Prog β) (hcont : ∀ pt intro, Follows tail (cont pt intro) []) :
+    Follows (.commit h :: (oodEv ml ++ tail))
+      ((Prog.readCommitment h w).bind fun _ ↦ (Prog.sampleChallenges ml).bind fun pt ↦
+        Prog.readScalar.bind fun v ↦ (sumcheckRoundPoly 3 v none).bind fun intro ↦ cont pt intro)
+      [] := by
+  refine ⟨w, _, rfl, ?_⟩
+  rw [Prog.ret_bind, oodEv, List.append_assoc]
+  refine follows_bind _ _ (fun _ q2 ↦ q2 = []) (fun pt q2 hq ↦ ?_) _ _ []
+    (followsK_sampleChallenges ml [])
+  subst hq
+  show FollowsReads (1 + 2) _ fun R ↦ Follows tail R []
+  refine followsReads_add (fun R ↦ Follows tail R []) 1 2 _ ⟨_, rfl, fun v ↦ ?_⟩
+  show FollowsReads 2 ((sumcheckRoundPoly 3 v none).bind _) _
+  exact followsReads_bind (K := fun R ↦ FollowsK [] R [] fun _ q2 ↦ q2 = []) _
+    (fun R ⟨a, hR, _⟩ ↦ by subst hR; exact hcont _ _) 2 _ (followsK_sumcheckRoundPoly v [])
+
+theorem require_follows (c : Prop) [Decidable c] (pl : List QuotientRpm.Limbs) :
+    Follows [] (Prog.require c) pl := by
+  unfold Prog.require
+  split
+  · exact Or.inl ⟨_, rfl⟩
+  · exact Or.inr rfl
+
+/-- **`whirLevels` follows `whirEv`**, from any state whose folds are the `f` before the level. -/
+theorem follows_whirLevels (logN lf : ℕ) (eb : List E → E) :
+    ∀ (cfg : List Whir.Level) (f idx : ℕ) (s : WhirState), s.folds.length = f →
+      cfgOK logN f cfg = true → Follows (whirEv logN f idx cfg) (whirLevels logN lf eb idx cfg s) []
+  | [], _, _, _, _, h => by simp [cfgOK] at h
+  | level :: rest, f, idx, s, hs, hok => by
+    have hok' := hok
+    simp only [cfgOK, Bool.and_eq_true, decide_eq_true_eq] at hok'
+    obtain ⟨⟨hd1, hd2⟩, hrest⟩ := hok'
+    rw [whirLevels]
+    simp only [whirEv]
+    refine follows_bind _ _ (fun r pl' ↦ pl' = [] ∧ r.1.folds.length = f + level.fold)
+      (fun r pl' hr ↦ ?_) _ _ [] (by have h := followsK_foldRounds level.fold s [] []; rwa [hs] at h)
+    obtain ⟨rfl, hs'⟩ := hr
+    obtain ⟨s', lf'⟩ := r
+    simp only at hs'
+    cases rest with
+    | nil =>
+      simp only [decide_eq_true_eq] at hrest
+      obtain ⟨m, hm⟩ : ∃ m, logN - (f + level.fold) = m + 1 := ⟨logN - (f + level.fold) - 1, by omega⟩
+      simp only [hs', Prog.bind_eq, Prog.pure_eq, Prog.ret_bind]
+      refine follows_bind _ _ (fun _ q2 ↦ q2 = []) (fun y q2 hy ↦ ?_) [.send _] _ []
+        (followsK_readScalars _ [])
+      subst hy
+      refine follows_queryPhase idx level.queries _ hd1 hd2 _ _ _ fun qs lam words intro ↦ ?_
+      simp only [hm, Nat.add_sub_cancel]
+      rw [← List.append_nil (roundsEv m ++ [Render.Ev.draw])]
+      exact follows_bind _ [] (fun _ q3 ↦ q3 = []) (fun _ _ _ ↦ by exact require_follows _ _) _ _ []
+        (followsK_tailRounds m _ [])
+    | cons next rest' =>
+      simp only [hs', Prog.bind_eq, Prog.pure_eq, Prog.ret_bind]
+      refine follows_ood _ _ _ _ _ fun pt intro ↦ ?_
+      refine follows_queryPhase idx level.queries _ hd1 hd2 _ _ _ fun qs lam words intro ↦ ?_
+      exact follows_whirLevels logN lf eb (next :: rest') (f + level.fold) (idx + 1) _
+        (by rw [glue_folds, hs']) hrest
+
+/-- **The opening's program follows its events** (`verifyStackedOpening` at rate `1/2`, for a ladder
+the parameters give): the batching draw, the first round message, then `whirEv`. -/
+theorem follows_verifyStackedOpening (logN : ℕ) (claims : List StackClaim) (cfg : List Whir.Level)
+    (hl : Whir.ladder logN 1 = some cfg) (hok : cfgOK logN 0 cfg = true) :
+    Follows ([.draw, .send 2] ++ whirEv logN 0 0 cfg) (verifyStackedOpening logN 1 claims) [] := by
+  refine ⟨_, rfl, fun c ↦ ?_⟩
+  show Follows ([.send 2] ++ whirEv logN 0 0 cfg) (verifyWhir logN 1 _ _) []
+  simp only [verifyWhir, hl, LeanVM.Protocol.Verifier.liftOption, Prog.bind_eq, Prog.ret_bind]
+  exact follows_bind _ _ (fun _ q ↦ q = []) (fun quad q hq ↦ by
+      subst hq
+      exact follows_whirLevels logN _ _ cfg 0 0 _ (by rfl) hok) _ _ [] (followsK_sumcheckRoundPoly _ [])
+
+/-! ## The deployed ladders -/
+
+/-- The witness and wiring tables' ladder (`log_n = 25`, `24`): five levels. -/
+def cfgW : List Whir.Level := [⟨6, 1, 224⟩, ⟨4, 4, 56⟩, ⟨4, 7, 32⟩, ⟨4, 10, 23⟩, ⟨4, 13, 17⟩]
+
+/-- The quotient table's ladder (`log_n = 28`): six levels. -/
+def cfgQ : List Whir.Level :=
+  [⟨6, 1, 225⟩, ⟨4, 4, 56⟩, ⟨4, 7, 32⟩, ⟨4, 10, 23⟩, ⟨4, 13, 18⟩, ⟨4, 16, 14⟩]
+
+theorem ladder_W : Whir.ladder 25 1 = some cfgW := by decide +kernel
+theorem ladder_σ : Whir.ladder 24 1 = some cfgW := by decide +kernel
+theorem ladder_Q : Whir.ladder 28 1 = some cfgQ := by decide +kernel
+
+theorem cfgOK_W : cfgOK 25 0 cfgW = true := by decide +kernel
+theorem cfgOK_σ : cfgOK 24 0 cfgW = true := by decide +kernel
+theorem cfgOK_Q : cfgOK 28 0 cfgQ = true := by decide +kernel
+
+deriving instance DecidableEq for Render.Ev
+
+/-- **The skeleton's events are the program's**, at the three deployed openings. -/
+theorem openingEv_W0 :
+    Render.openingEv (QuotientZk.Deployed.witnessShape default) =
+      [.draw, .send 2] ++ whirEv 25 0 0 cfgW := by
+  decide +kernel
+
+theorem openingEv_σ0 :
+    Render.openingEv (QuotientZk.Deployed.wiringShape default []) =
+      [.draw, .send 2] ++ whirEv 24 0 0 cfgW := by
+  decide +kernel
+
+theorem openingEv_Q0 :
+    Render.openingEv (QuotientZk.Deployed.quotientShape default) =
+      [.draw, .send 2] ++ whirEv 28 0 0 cfgQ := by
+  decide +kernel
+
+theorem openingEv_W (id : QuotientRpm.Bytes32) :
+    Render.openingEv (QuotientZk.Deployed.witnessShape id) = [.draw, .send 2] ++ whirEv 25 0 0 cfgW :=
+  openingEv_W0
+
+theorem openingEv_σ (id : QuotientRpm.Bytes32) (rows : List (List UInt8)) :
+    Render.openingEv (QuotientZk.Deployed.wiringShape id rows) =
+      [.draw, .send 2] ++ whirEv 24 0 0 cfgW :=
+  openingEv_σ0
+
+theorem openingEv_Q (id : QuotientRpm.Bytes32) :
+    Render.openingEv (QuotientZk.Deployed.quotientShape id) =
+      [.draw, .send 2] ++ whirEv 28 0 0 cfgQ :=
+  openingEv_Q0
+
 end PcsQuotient.EndToEnd.Core
