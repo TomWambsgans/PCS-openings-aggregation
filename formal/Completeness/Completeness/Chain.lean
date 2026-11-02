@@ -51,7 +51,7 @@ noncomputable def keccakTranscript (H : Bytes → Digest) (limbs : E ≃ Quotien
 chain over `H` itself, the circuit's commitment the setup's honest wiring root. -/
 theorem completeness_keccak (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) (M : MembershipCircuit) {x Y : E}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (limbs : E ≃ QuotientRpm.Limbs)
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (limbs : E ≃ QuotientRpm.Limbs)
     (H : Bytes → Digest) (F : KeccakState → KeccakState) (fuel : ℕ) (s : Secret)
     (m : Fin 4 → Fin 3 → K) (padW padQ : ℕ → ℕ → K) (π : DeployedProof)
     (hπ : honestProve I x Y BK M (keccakTranscript H limbs (wiringOpening.root H (wiringStack I BK)))

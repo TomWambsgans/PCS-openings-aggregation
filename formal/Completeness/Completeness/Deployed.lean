@@ -203,7 +203,7 @@ challenges: F1's completeness (`Reduction.honest_accepts`), passed to the tables
 numbers (`mle_eq_tableEvalN`). -/
 theorem honest_claims (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) (M : MembershipCircuit) {x Y : E}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (tr : Transcript)
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (tr : Transcript)
     (Wi Qo : OpeningSystem) (H : Bytes → Digest) (s : Secret) (m : Fin 4 → Fin 3 → K)
     (padW padQ : ℕ → ℕ → K)
     (hab : ¬ Reduction.BadAB I (honestRun I BK M tr Wi Qo H s m padW padQ).g
@@ -278,7 +278,7 @@ openings `Wi`, `Qo` holding their chunks (`HiddenOpening.toSystem` for the redes
 the wiring opening is proven). -/
 theorem completeness_deployed (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) (M : MembershipCircuit) {x Y : E}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (tr : Transcript)
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (tr : Transcript)
     (Wi Qo : OpeningSystem) (hWv : Wi.vars = 25) (hQv : Qo.vars = 30)
     (hWheld : ∀ t, InChunks (WhirBridge.cellVars WhirBridge.logRows)
       [(0, 2 ^ WhirBridge.cellVars WhirBridge.logRows), (1, 16)] t → Wi.Held t)
