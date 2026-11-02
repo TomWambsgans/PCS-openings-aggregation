@@ -8,9 +8,11 @@ import Compose.Final
 
 `Openings.lean`'s composition, with the experiment of `TwoOracle.lean`: the adversary and every
 part of the verifier ask leanerVM `mumbai`'s `KeccakCalls` (Keccak-256 and Keccak-f[1600],
-independent random oracles), the model in which F2's `family_sound` bounds each opening. The
-openings' verifier `openings` is any computation of both oracles of at most `QV` queries (for the
-deployed verifier: the three `verifierFam (famSeeds L pre) (famProgram L R)` runs, `QV ≤ 3 · 10122`).
+independent random oracles), F2's oracle model. The openings' doomed events are events in that
+model, **still to be reduced to F2's `ours_sound`** here (`Deployed.lean` does it for the deployed
+openings, `ourVerifier`): the openings' verifier `openings` is any computation of both oracles of
+at most `QV` queries. The extractor reads every Keccak-256 query of the run (`AdversaryLog.lean`:
+the adversary's only).
 
 **`knowledgeSoundness_composed_kc`** and, with the Merkle extractor at the sizes of
 `quotient::protocol`, **`knowledgeSoundness_merkle_kc`**.

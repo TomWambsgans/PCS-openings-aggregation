@@ -26,8 +26,7 @@ use primitives::test_rng::Rng;
 use quotient::circuit::{Builder, Circuit, Src, membership, membership_inputs, public_words};
 use quotient::opening::{self, Claim, Layout, commit, wire_proof};
 use quotient::protocol::{
-    Claims, Index, Openings, Randomness, open, prove_with_randomness, quotient_layout, verify, wiring_layout,
-    witness_layout,
+    Claims, Index, Openings, Randomness, open, prove_with_seed, quotient_layout, verify, wiring_layout, witness_layout,
 };
 use quotient::statement::{DEPTH, Secret, Statement};
 use quotient::transcript::Proof;
@@ -326,10 +325,6 @@ fn index_line(name: &str, circuit: &Circuit) -> String {
     )
 }
 
-fn masks(rng: &mut Rng) -> [[F64; 3]; 4] {
-    std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())))
-}
-
 /// A `Q` line: the honest prover's inputs (the circuit by name, its input bits as bytes, the tables' seed, the
 /// masks) and the reduction's stream it sends, which the Lean prover must reproduce.
 fn prover_line(name: &str, inputs: &[bool], seed: &[u8; 32], masks: &[[F64; 3]; 4], stream: &[F192]) -> String {
@@ -359,12 +354,18 @@ fn proofs(lines: &mut Vec<String>, rng: &mut Rng, name: &str, circuit: &Circuit,
     let index_committed = commit(&index.table);
     for (statement, inputs) in cases {
         let cells = circuit.cells(inputs);
-        let masks = masks(rng);
+        // The proof's seed; the masks and the tables' padding seed are derived from it (`Randomness::derive`).
         let seed = random_hash(rng);
-        let randomness = Randomness { masks, padding: seed };
-        let proved = prove_with_randomness(circuit, &index, &index_committed.root, statement, &cells, &randomness);
+        let randomness = Randomness::derive(&seed, &index_committed.root, statement, &cells);
+        let proved = prove_with_seed(circuit, &index, &index_committed.root, statement, &cells, &seed);
         assert!(proved.fits);
-        lines.push(prover_line(name, inputs, &seed, &masks, &proved.proof.stream));
+        lines.push(prover_line(
+            name,
+            inputs,
+            &randomness.padding,
+            &randomness.masks,
+            &proved.proof.stream,
+        ));
         let (stream, roots, claims) = (proved.proof.stream.clone(), proved.roots, proved.claims.clone());
         let openings = open(proved.tables, &claims, &index, &index_committed);
         let honest = Whole::of(

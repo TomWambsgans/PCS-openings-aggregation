@@ -8,10 +8,12 @@ its `leanvm-rev` is leanVM `c445e3d5`, the commit our `crates/verifier` is vendo
 verifier knowledge sound. This package transcribes `opening::verify` into mumbai's verifier language,
 **its transcript included**, and proves its Fiat–Shamir soundness in the random-oracle model for the
 three openings the protocol makes (the wiring table's, public; the witness and quotient tables',
-hidden), at every supported size, in table terms. Everything here is sorry-free and depends on
-`propext`, `Classical.choice` and `Quot.sound` only (`#guard_msgs` checks in `WhirBridge.lean`; the
-review's sweep `formal/Review/WhirBridgeAxioms.lean`: 556 declarations, no other axiom, no `opaque`,
-no `implemented_by`). No `native_decide`: the facts about our layouts are `decide +kernel`.
+hidden, in the layout redesigned for condition (R) of `crates/quotient/HIDING.md`: the overflow lane
+`32`, seven random lanes after it, and the **gadget**), at every supported size, in table terms.
+Everything here is sorry-free and depends on `propext`, `Classical.choice` and `Quot.sound` only
+(`#guard_msgs` checks in `WhirBridge.lean`; the review's sweep `formal/Review/WhirBridgeAxioms.lean`:
+589 declarations, no other axiom, no `opaque`, no `implemented_by`). No `native_decide`: the facts
+about our layouts are `decide +kernel`.
 
 ## What is proved
 
@@ -46,21 +48,39 @@ openingBound QA = (QA + 10122) * ((2⁻¹)^128 + 5 * (QA + 10122) / 2^256)
 ```
 
 `ourVerifier L R w` is `openingVerifyWithHash callKeccak256 callKeccakF1600 L R root claims π`, the
-Lean `opening::verify`; `extract` is mumbai's straight-line extraction of the word a root commits to
-from the oracle's answers; `Candidates` the stacks within level 0's Johnson radius of it (at most
-`9952`, `7908`, `3564` at our three shapes); `L.tableEval q p` the multilinear extension at `p` of the
-table `Table::read` reads back from the stack `q`. It is `opening_sound` (every valid layout at an
-admissible shape) at our layouts. The pieces:
+Lean `opening::verify` (which, like the Rust, rejects an empty claim list before anything else);
+`extract` is mumbai's straight-line extraction of the word a root commits to from the oracle's
+answers; `Candidates` the stacks within level 0's Johnson radius of it (at most `9952`, `7908`, `3564`
+at our three shapes); `L.tableEval q p` the multilinear extension at `p` of the table `Table::read`
+reads back from the stack `q`. It is `opening_sound` (every valid layout at an admissible shape) at
+our layouts.
+
+**The gadget and the event.** A hidden layout's opening batches one more claim after the `m` claims,
+with the power `λ^m`: the gadget, of value zero, a fixed weight on nine entries of the random first
+pieces (`opening.rs:827-838`, `873-879`). In mumbai's terms it is one more stack claim
+(`Layout.extra`), so the doom mumbai's specification starts from is "every candidate violates **a
+claim or the gadget**" (`Layout.openingDoom_iff`). `OpeningDoomed` is still about the claims only:
+every candidate's table violates a claim, which implies that doom (the proof of `family_sound`), so the
+statement of `ours_sound` is unchanged by the redesign. What the gadget claim says of a stack is
+`gadget_holds_iff`: `Σ_{g,i} β_i · Σ_{l ∈ pattern g} q[l][2^s − 9 + 3g + i] = 0`, patterns `{0, 31}`,
+`{1, 30}`, `{32}`, `β = 1, t, t²` (a condition on the random first pieces, not on the table); an opening
+that is not doomed has a candidate whose table satisfies every claim **and** which satisfies the gadget
+(`Layout.joint_of_not_doom`). The batch has `m + 1` stack claims, so the lead `eBatch` is that of
+`m + 1` (below; still under `2^-128`, statements carry at most `2^46 + 1` stack claims, the gadget
+counted).
+
+The pieces:
 
 | Theorem | File | What |
 |---|---|---|
-| `Layout.check_eq` | `Opening.lean` | `Layout.check` (`opening::verify` past its transcript's start, both branches of the weight closure transcribed line by line) **is** mumbai's `verifyStackedOpening` of the claims' stack claims, after the length check. |
-| `isMultiaffine_layoutClaimWeight` | `Opening.lean` | Each claim's weight, public or hidden, is multiaffine on the stack's `log_n` coordinates (`stackedSpec`'s hypothesis). |
-| `holds_iff_hidden`, `Layout.holds_iff` | `Hidden.lean` | A stack satisfies a claim's stack weight **iff the table read back from it** (`Layout.readHidden` = `Table::read`: the overflow and share lanes summed at the held pieces, the odd lanes' pieces swapped, the first pieces left out; for a public layout its blocks) has the claimed multilinear value, for every `Layout.Valid` layout. |
-| `layouts_ok`, `layouts_valid`, `layouts_shape` | `Layouts.lean` | Our 18 layouts are admissible at rate `1/2` and valid (`HiddenOK 8` for witness and quotient, a valid public stacking for wiring); `40`, `64`, `63` lanes, overflow/share `38, 39` and `61, 62`, `33` and `167` pieces. Decided (`decide +kernel`, 30 s). |
-| `family_sound` | `Family.lean` | The theorem for mumbai's transcript shape and claims chosen by the adversary: the seeding `famSeed pre` (IV `H(pre ‖ claims)`, zero public digest, any fixed `pre`), the program `variantProg` reading the root from the proof, the event in stack terms at the proof's root (`FamDoomed`), for any stacking (a claim weight that is multiaffine). |
+| `Layout.check_eq` | `Opening.lean` | `Layout.check` (`opening::verify` past its transcript's start, both branches of the weight closure transcribed line by line, the gadget's term with the power `λ^m` after the claims') **is** mumbai's `verifyStackedOpening` of the claims' stack claims then the gadget's (`Layout.stacking`: claim weights `Layout.claimWeight`, extra stack claims `Layout.extra`), after the length check. |
+| `isMultiaffine_layoutClaimWeight`, `isMultiaffine_gadgetWeight` | `Opening.lean` | Each claim's weight, public or hidden, and the gadget's are multiaffine on the stack's `log_n` coordinates (`stackedSpec`'s hypothesis). |
+| `holds_iff_hidden`, `Layout.holds_iff` | `Hidden.lean` | A stack satisfies a claim's stack weight **iff the table read back from it** (`Layout.readHidden` = `Table::read`: the overflow lane's piece `k + 1` for the table's piece `pieces[k]`, the blocks' first pieces and the tails; a block's other pieces on its lane; for a public layout its blocks) has the claimed multilinear value, for every `Layout.Valid` layout. |
+| `gadget_holds_iff`, `Layout.openingDoom_iff`, `Layout.joint_of_not_doom` | `Hidden.lean` | The gadget's stack claim holds iff its `β`-combination of the pattern lanes at its entries is zero; the doom in table terms (a claim or the gadget violated); joint extraction (every claim and the gadget). |
+| `layouts_ok`, `layouts_valid`, `layouts_shape` | `Layouts.lean` | Our 18 layouts are admissible at rate `1/2` and valid (`HiddenOK 8` for witness and quotient, the gadget's entries in the first piece and its lanes among the layout's; a valid public stacking for wiring); `40`, `64`, `63` lanes, the overflow lane `32`, the random lanes `33..39`, the gadget's pair lanes `0, 31, 1, 30` blocks, `33` and `167` overflow pieces. Decided (`decide +kernel`). |
+| `family_sound` | `Family.lean` | The theorem for mumbai's transcript shape and claims chosen by the adversary: the seeding `famSeed pre` (IV `H(pre ‖ claims)`, zero public digest, any fixed `pre`), the program `variantProg` reading the root from the proof, the event in stack terms at the proof's root (`FamDoomed`, the claims), for any stacking (claim weights and extra stack claims that are multiaffine). |
 | `extracted_root_word` | `Variant.lean` | In an accepted run, the extracted history starts with the commitment of the root the proof's first two scalars encode, holding `extract` of it. |
-| `openingVerify_imp` | `Verifier.lean` | **Acceptance by ours implies acceptance by the proven program**: if `opening::verify` accepts, the proof's first two scalars encode the expected root and `variantProg` from `famSeed (openingPrefix L R)` accepts. The root check only rejects more. |
+| `openingVerify_imp` | `Verifier.lean` | **Acceptance by ours implies acceptance by the proven program**: if `opening::verify` accepts, the proof's first two scalars encode the expected root and `variantProg` from `famSeed (openingPrefix L R)` accepts. The empty-claims and root checks only reject more. |
 | `romExperiment_le_of_reject` | `Verifier.lean` | So in the random-oracle experiment, ours accepting with the event is at most as likely as the proven verifier accepting with its event. |
 | `opening_sound`, `opening_bound_le`, `ours_sound` | `Verifier.lean` | The theorem above, and the numbers. |
 | `openingSpec`, `whirEps_le`, `eBatch_*`, `listMax_ours`, `candidates_ours` | `Sound.lean`, `Table.lean` | Round-by-round soundness of a stacking's opening from mumbai's `stackedSpec` with the deployed codes; the numbers. |
@@ -68,24 +88,26 @@ admissible shape) at our layouts. The pieces:
 
 ## The transcript
 
-`opening::verify` (`opening.rs:728-819`), version 2 of the opening (`VERSION`, `opening.rs:45`):
+`opening::verify` (`opening.rs:782-892`), version 2 of the opening (`VERSION`, `opening.rs:48`):
 
-* the IV is `keccak256(prefix ‖ claims)` (`iv`, `opening.rs:592-602`), `prefix` (`opening.rs:573-584`)
+* no claim, or a point of the wrong length, is rejected first (`opening.rs:792-794`);
+* the IV is `keccak256(prefix ‖ claims)` (`iv`, `opening.rs:635-645`), `prefix` (`opening.rs:616-626`)
   76 bytes: `LABEL` `"pcs-quotient-opening"` (20), `VERSION = 2` (u64 LE), the layout's id
-  (`layout_id`, Keccak-256 of every field of the layout, `encode_layout`, 32 bytes), `log_n` (u64 LE),
-  `LOG_INV_RATE = 1` (u64 LE); the claims each point's coordinates then its value, three 8-byte limbs
-  per scalar, no lengths (under one layout every claim is `24 (vars + 1)` bytes, the verifier checks the
-  points' lengths first);
+  (`layout_id`, Keccak-256 of every field of the layout and of the gadget, `encode_layout`, 32 bytes),
+  `log_n` (u64 LE), `LOG_INV_RATE = 1` (u64 LE); the claims each point's coordinates then its value,
+  three 8-byte limbs per scalar, no lengths (under one layout every claim is `24 (vars + 1)` bytes, the
+  verifier checks the points' lengths first);
 * the public digest is zero (`PUBLIC_DIGEST`): not a hash answer, as mumbai's `Seeds.refs` requires;
 * the root is the proof's first two scalars, read (absorbed) and checked against the expected root
-  before `λ` is sampled (`opening.rs:742-745`).
+  before `λ` is sampled (`opening.rs:797-800`).
 
-The Lean mirror (`openingPrefix`, `encodeLayout`, `layoutId`, `claimsBytes`, `openingVerifyWithHash`)
-transcribes these. `famSeed pre` with `pre = openingPrefix L 1` is exactly this IV and public digest, and
-mumbai's `commitStack` reads the root as the Rust does; the Rust's extra comparison with the expected
-root is `openingVerify_imp`. The layout's id is a constant of the verifier (Keccak-256 with the deployed
-function, not an oracle answer), so the theorem is about the verifier with its 76-byte prefix fixed. The
-18 prefixes are distinct (Check.lean; not needed by the theorem, which is per layout).
+The Lean mirror (`openingPrefix`, `encodeLayout`, `gadgetBytes`, `layoutId`, `claimsBytes`,
+`openingVerifyWithHash`) transcribes these. `famSeed pre` with `pre = openingPrefix L 1` is exactly this
+IV and public digest, and mumbai's `commitStack` reads the root as the Rust does; the Rust's extra
+comparison with the expected root is `openingVerify_imp`. The layout's id is a constant of the verifier
+(Keccak-256 with the deployed function, not an oracle answer), so the theorem is about the verifier with
+its 76-byte prefix fixed. The 18 prefixes are distinct (Check.lean; not needed by the theorem, which is
+per layout).
 
 ## Building
 
@@ -100,11 +122,11 @@ cd ../../WhirBridge && lake build                                # about a minut
 ```
 
 **The test vectors, one command each** (from the repository root; run again after any change of
-`opening.rs` or of the layouts, e.g. the hidden layout's redesign for condition (R)):
+`opening.rs` or of the layouts):
 
 ```sh
 cargo test -p quotient --release --test whir_bridge_vector -- --ignored   # writes target/whir_bridge_vector.txt (5 s)
-(cd formal/WhirBridge && lake env lean --run Test/Check.lean ../../target/whir_bridge_vector.txt)   # 33 s
+(cd formal/WhirBridge && lake env lean --run Test/Check.lean ../../target/whir_bridge_vector.txt)   # 1-2 min
 ```
 
 `whir_bridge_vector.rs` writes three openings, each naming its layout by the constructor's arguments:
@@ -113,19 +135,21 @@ a public layout (two claims, lanes out of order and a gap, `placed` short of the
 76-byte prefix of each of the 18 layouts the protocol opens. `Test/Check.lean` rebuilds each layout with
 the Lean `Layout.new` / `Layout.hidden`, recomputes its prefix with mumbai's Keccak-256 and compares it
 with the Rust's, accepts the honest proof, and rejects a wrong claimed value, a wrong expected root, a
-changed stream scalar and a changed leaf word (and, on the public layout, a wrong prefix: the same layout
-with one more overflow piece, which only its id reads); it recomputes the 18 prefixes from the Lean
-`witnessLayout`, `wiringLayout`, `quotientLayout` and checks they are distinct. It prints
-`all checks: true` and exits `0`. If the Rust layouts change, the Lean `Layout.hidden` and
-`Layouts.lean` must be transcribed again (Check.lean fails until they are); the theorems are stated for
-every `Layout.Valid` layout, so `layouts_valid` re-decides and nothing else changes unless the weight's
-shape does.
+changed stream scalar, a changed leaf word and an empty claim list; on the public layout also a wrong
+prefix (the same layout with one more overflow piece, which only its id reads), and on the hidden ones
+the honest proof against the weight **without the gadget's term** (so the gadget's transcription is what
+WHIR's final check reads; on the public layout, which has no gadget, the same verifier accepts, the
+control). It recomputes the 18 prefixes from the Lean `witnessLayout`, `wiringLayout`, `quotientLayout`
+and checks they are distinct. It prints `all checks: true` and exits `0`. If the Rust layouts change, the
+Lean `Layout.hidden` and `Layouts.lean` must be transcribed again (Check.lean fails until they are); the
+theorems are stated for every `Layout.Valid` layout, so `layouts_valid` re-decides and nothing else
+changes unless the weight's shape does (as it did for the gadget: one more stack claim).
 
-On `h1` the bridge lives at `/root/pcs-quotient-fv/whir-bridge-seed` (this version; `whir-bridge` holds
-the previous one) next to `/root/pcs-quotient-fv/leanervm`. It needs only `lean_vm`'s protocol modules:
-`python3 -I ../lake-build.py . LeanVM.Protocol.Whir.Sound.Spec LeanVM.Protocol.Whir.Params.Deployed
-LeanVM.Protocol.EndToEnd.Sound.Assemble LeanVM.Protocol.LeanVMSound` builds them in about 6.5 minutes from
-mumbai's Mathlib cache.
+On `h1` the bridge lives at `/root/pcs-quotient-fv/whir-bridge-gadget` (this version;
+`whir-bridge-seed` holds the previous one, before the redesign) next to `/root/pcs-quotient-fv/leanervm`.
+It needs only `lean_vm`'s protocol modules: `python3 -I ../lake-build.py . LeanVM.Protocol.Whir.Sound.Spec
+LeanVM.Protocol.Whir.Params.Deployed LeanVM.Protocol.EndToEnd.Sound.Assemble LeanVM.Protocol.LeanVMSound`
+builds them in about 6.5 minutes from mumbai's Mathlib cache.
 
 ## The Rust against mumbai's model
 
@@ -149,21 +173,29 @@ Rust verifier holds of ours.
   - **A final level with no tail round** (`message_log = 0`): no ladder reaches it.
   - The Rust `eq_eval`/`dot` assert equal lengths where mumbai's truncate; every call site passes equal
     lengths.
-* **The layout** (`opening.rs:61-243` / `Layout`, `Lane`): every field (`vars`, `log_n`, the lanes as
-  `Block(b)` / `Overflow` / `Random`, `log_piece`, `pieces`, `share`); `Layout::new` and `Layout::hidden_with`
-  transcribed step by step (`Layout.new`, `Layout.hidden`: the whole blocks, the tails, the random lanes'
-  slots, the blocks filling the free lanes, the given-up pieces).
-* **The opening** (`opening.rs:728-819` / `openingVerifyWithHash`, `Layout.check`): the length check, the
-  transcript's start, the root, `λ`, `λ_i = λ^i` (the Rust builds one power for no claim, never read:
-  `dot_lambdas`), the target, and the weight closure, **both branches**: the public one,
-  `eq(p[..ℓ], low) · (on(0) + on(1))`, and the hidden one, `below · (even · on(0) + odd · on(1) + pieces ·
-  on_overflow)` with the first-piece cancellation, the odd lanes' flip of coordinate `s` and the overflow
-  and share lanes' pieces (`Layout.term`, `opening.rs:777-807`). Its `F192` scales lifted by `ext` are the
-  verifier's `E`: both fields are `K[y]/(y^3+y+1)`, `K = GF(2)[x]/(x^64+x^4+x^3+x+1)`.
+* **The layout** (`opening.rs:51-301` / `Layout`, `Lane`): every field (`vars`, `log_n`, the lanes as
+  `Block(b)` / `Overflow` / `Random`, `log_piece`, `pieces`; no share lane since the redesign), the
+  gadget's constants (`GADGET`, `OVERFLOW_LANE`, `gadget_lanes`, `gadget_beta`, `gadget_entry`);
+  `Layout::new` and `Layout::hidden_with` transcribed step by step (`Layout.new`, `Layout.hidden`: the
+  whole blocks, the tails, the first `min(32, |blocks|)` blocks on lanes `0..32` and random lanes up to
+  `32`, the overflow lane, the random lanes, the other blocks; the overflow pieces each block lane's first
+  piece in lane order, then the tails). The Rust's assertions (`GADGET < 2^log_piece`, `random ≥ 7`, at
+  most `64` lanes, fewer pieces than a lane's) are not transcribed: what the theorems need of them is
+  `HiddenOK`, decided for our layouts.
+* **The opening** (`opening.rs:782-892` / `openingVerifyWithHash`, `Layout.check`): the empty-claims and
+  length check, the transcript's start, the root, `λ`, `λ_i = λ^i` for `i ≤ m` (`lambdas`, one power more
+  than the claims, the gadget's), the target (`dot_lambdas`: the last power is not read by it), and the
+  weight closure, **both branches**: the public one, `eq(p[..ℓ], low) · on_blocks`, and the hidden one,
+  `below · ((above + first_above · first_piece) · on_blocks + pieces · on_overflow)` with the first-piece
+  cancellation and the overflow lane's pieces (`Layout.term`, `opening.rs:850-872`), and the **gadget's
+  term** `λ^m Σ_{g,i} β_i eq_index(low, D + 3g + i) Σ_{l ∈ pattern g} lane_eq[l]` (`gadgetSum`,
+  `Layout.gadgetParts`, `opening.rs:873-879`). Its `F192` scales lifted by `ext` are the verifier's `E`:
+  both fields are `K[y]/(y^3+y+1)`, `K = GF(2)[x]/(x^64+x^4+x^3+x+1)` (`β_i` the limbs `E.ofLimbs`).
 * **Executed**: the Lean mirror with the deployed Keccak accepts proofs of the Rust prover on a public
-  layout and on the deployed witness and quotient layouts, and recomputes the prefixes (so `LABEL`, the
-  layout encoding and id, `Layout.hidden`, the seed, `λ`, the target, both branches of the weight closure
-  and mumbai's `verifyWhir` agree with the Rust on them); test evidence, as mumbai's for leanVM.
+  layout and on the deployed witness and quotient layouts, rejects the hidden ones without the gadget's
+  term, and recomputes the prefixes (so `LABEL`, the layout encoding and id with the gadget,
+  `Layout.hidden`, the seed, `λ`, the target, both branches of the weight closure, the gadget and
+  mumbai's `verifyWhir` agree with the Rust on them); test evidence, as mumbai's for leanVM.
 
 ## What covers us
 
@@ -175,8 +207,8 @@ they are met:
 |---|---|
 | `Whir.ladder μ R = some (level :: rest)`, `level.fold = 6`, `6 ≤ μ` | admissible `(μ, R)`: `15 ≤ μ ≤ 28`, `1 ≤ R ≤ 4`; ours `μ = log_rows + 2, +3, +6` (`19..24`, `20..25`, `23..28`), `R = 1`, for every `17 ≤ log_rows ≤ 22` (`layouts_ok`) |
 | `(codes 0).κ = μ − 6`, `(codes 0).R = R`, `LadderArith`, `whirEps ≤ εmax` | the deployed codes, certified for all 56 shapes by kernel evaluation (`Params/Deployed.lean:179`, `shapeOK_all`) |
-| every claim's weight multiaffine on `μ` coordinates | `isMultiaffine_layoutClaimWeight`, both branches |
-| the doom `StackedPre`: the level-0 commitment has the stack's shape and every candidate of its word violates a claim | `Layout.openingDoom_iff`: every candidate's **table** (`Table::read`) violates a claim (`Layout.holds_iff`) |
+| every stack claim's weight multiaffine on `μ` coordinates | `isMultiaffine_layoutClaimWeight` (both branches), `isMultiaffine_gadgetWeight` (the gadget) |
+| the doom `StackedPre`: the level-0 commitment has the stack's shape and every candidate of its word violates a stack claim | `Layout.openingDoom_iff`: every candidate's **table** (`Table::read`) violates a claim (`Layout.holds_iff`) or the candidate violates the gadget (`gadget_holds_iff`); the event of `ours_sound` (a claim violated) implies it |
 
 `openingSpec` packages it for a stacking's opening; `family_sound` composes it into mumbai's `romSound`
 (`Compile/Rom/Sound.lean:196`) for claims the adversary chooses; `opening_sound` moves it to
@@ -189,11 +221,13 @@ they are met:
 | table variables / `log_n` / lanes (at `LOG_ROWS = 22`) | 25 / 25 / 40 (hidden) | 24 / 24 / 64 (public) | 30 / 28 / 63 (hidden) |
 | WHIR levels, queries | 5: 224, 56, 32, 23, 17 | 5: 224, 56, 32, 23, 17 | 6: 225, 56, 32, 23, 18, 14 |
 | per-group escape `εmax` (every group after `λ`, discounted by its proof of work) | `2^-128` | `2^-128` | `2^-128` |
-| batching challenge `λ` (the lead, `(J−1)·L₀/2^192`) | `0` (one claim) | `0` (one claim) | `≤ 2^-174` (two claims; `≤ 3564/2^192 ≈ 2^-180.2` with the shape's own list bound) |
+| stack claims batched (`J`) | 2 (one claim, the gadget) | 1 (one claim) | 3 (two claims, the gadget) |
+| batching challenge `λ` (the lead, `(J−1)·L₀/2^192`) | `≤ 2^-174` (`eBatch_two`; `≤ 7908/2^192 ≈ 2^-179.0` with the shape's own list bound) | `0` (`eBatch_one`) | `≤ 2^-173` (`eBatch_three`; `≤ 2·3564/2^192 ≈ 2^-179.2`) |
 | level-0 Johnson list `L₀` (candidates per root, `candidates_ours`) | `≤ 7908` | `≤ 9952` | `≤ 3564` |
 | weakest group, bits (leanerVM's certificate, evaluated in `Float`) | 128.96 (level 0, queries) | 128.97 (level 0, queries) | 128.98 (level 1, queries) |
 
-The WHIR numbers depend on `log_n` only, so hiding the witness and quotient tables changed none of them.
+The WHIR numbers depend on `log_n` only, so hiding the witness and quotient tables changed none of them;
+the gadget adds one stack claim to their batches, which moves the lead (below `2^-173`) and nothing else.
 The `2^-128` is mumbai's certificate (`whirEps (deployedCodes μ R) config ≤ 2^-128`): at our three shapes
 it certifies at `2^-128` and not at `2^-129` (`shapeOK 129 μ 1 = false`, evaluated), the query counts
 being tuned to it. **These are leanerVM's certified codes, not `whir_config.rs`'s**: the level-0 slack is
@@ -224,35 +258,38 @@ admissible shape (the IV's hash, the seed's permutation, mumbai's `whirBound`), 
   admissible shape, and mumbai's global bound is `2^18`. A reduction drawing challenges before any claim
   pins a list member union-bounds over these.
 * **One opening per root**: the guarantee is joint only within one opening. An opening that is not doomed
-  has **one** candidate whose table satisfies **all** its claims (`Layout.joint_of_not_doom`); claims on one
-  root split over two openings would get one list member each, possibly different (a split opening of the
-  quotient table's two claims is forgeable, about `2^111` by the review's count). So every statement here
-  is about one opening holding all the claims on its root, as `protocol::verify_openings` does.
+  has **one** candidate whose table satisfies **all** its claims (and which satisfies the gadget,
+  `Layout.joint_of_not_doom`); claims on one root split over two openings would get one list member each,
+  possibly different (a split opening of the quotient table's two claims is forgeable, about `2^111` by
+  the review's count). So every statement here is about one opening holding all the claims on its root, as
+  `protocol::verify_openings` does.
 * **Table terms**: the candidates are tables as `Table::read` reads them back (the hidden layouts: the
-  overflow and share lanes summed at the held pieces, the odd lanes' pieces swapped, the random first
-  pieces left out), so the composition's claims are on the tables the protocol commits to.
+  overflow lane at the held pieces, the blocks' other pieces on their lanes, the random first pieces left
+  out), so the composition's claims are on the tables the protocol commits to.
 
 ## Assumptions
 
 Keccak-256 and Keccak-f[1600] are independent random oracles (mumbai's two-oracle model; leanVM's own
 theorem then moves to one random permutation). The adversary is classical and its code is fixed before
 the oracles are sampled. The layout's id inside the prefix is computed with the deployed Keccak-256 (a
-constant of the verifier). Statements carry at most `2^46 + 1` claims (`Stmt.short`; the protocol opens
-one or two per root). The Rust verifier is the Lean mirror (test evidence, not proof), and the pruned paths
-expand as `expand` says (not formalised). Extraction is mumbai's straight-line `extract` (the word a root
-commits to, read off the oracle's answers) and Guruswami–Sudan list decoding of the level-0 word
-(`Statement/Extractor.lean`): the extractor returns the list, its running time read off its loops.
+constant of the verifier). Statements carry at most `2^46 + 1` stack claims, a hidden layout's gadget
+counted (`Stmt.short`; the protocol opens one or two claims per root). The Rust verifier is the Lean
+mirror (test evidence, not proof), and the pruned paths expand as `expand` says (not formalised).
+Extraction is mumbai's straight-line `extract` (the word a root commits to, read off the oracle's
+answers) and Guruswami–Sudan list decoding of the level-0 word (`Statement/Extractor.lean`): the
+extractor returns the list, its running time read off its loops.
 
 ## Gaps
 
 What mumbai's proofs and this package do not cover of our openings (`Gaps.lean`):
 
 1. **The model**: two random oracles, not leanVM's one random permutation (mumbai's `LeanVMRpm.lean`, at
-   `q²/2^508`); the prefix's layout id a constant; at most `2^46 + 1` claims.
+   `q²/2^508`); the prefix's layout id a constant; at most `2^46 + 1` stack claims.
 2. **The Rust is the model**: the transcriptions of `opening.rs` (`Layout`, `Layout::new`,
-   `Layout::hidden_with`, `prefix`, `encode_layout`, `verify`), of `protocol.rs`'s layouts and mumbai's of
-   the Python verifier are checked by execution (`Test/Check.lean`), not proved equal to the Rust. A
-   redesign of the hidden layout must be transcribed again; the theorems need only `Layout.Valid`.
+   `Layout::hidden_with`, `Table::read`, `prefix`, `encode_layout`, `verify` with its gadget), of
+   `protocol.rs`'s layouts and mumbai's of the Python verifier are checked by execution
+   (`Test/Check.lean`), not proved equal to the Rust. A further redesign of the hidden layout must be
+   transcribed again; the theorems need only `Layout.Valid` and multiaffine weights.
 3. **Pruned paths and `placed`**, not formalised (they only restrict what is accepted).
 4. **List decoding, no out-of-domain sample at level 0**: an accepted opening yields a candidate among
    the up to `L₀` tables of the root's Johnson list satisfying all its claims jointly, not a unique table:
@@ -270,6 +307,7 @@ What mumbai's proofs and this package do not cover of our openings (`Gaps.lean`)
 leanerVM `6175f1a0` cloned at `/root/pcs-quotient-fv/leanervm`, built with `run-build.sh` there (10 jobs within
 36 GB, the machine shared): `lake exe cache get` (1 min 26 s), then `lake-build.py` of the WHIR and soundness
 modules, **931 modules in 6 min 30 s** (0.97 CPU-hours), then the whole `LeanVM` target, **3920 modules in
-1 h 52 min** (14.66 CPU-hours). The bridge (`/root/pcs-quotient-fv/whir-bridge-seed`, 10 modules) builds from
-a clean `.lake` in 57 s, of which `Layouts.lean`'s kernel decisions of the 18 layouts take 30 s; the
-vectors are written in 5 s and `Test/Check.lean` runs in 33 s (`all checks: true`).
+1 h 52 min** (14.66 CPU-hours). The bridge (`/root/pcs-quotient-fv/whir-bridge-gadget`, 10 modules) builds from
+a clean `.lake` in 1 min 19 s on the shared machine (`Layouts.lean`'s kernel decisions of the 18 layouts
+28 s of it); the vectors are written in 5 s and `Test/Check.lean` runs in 1 min 54 s (`all checks: true`;
+it now also runs every opening against the weight without the gadget's term).

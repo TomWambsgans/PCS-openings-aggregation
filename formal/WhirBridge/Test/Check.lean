@@ -7,10 +7,12 @@ prefixes of the protocol's layouts. `crates/quotient/tests/whir_bridge_vector.rs
 public layout, the deployed witness and quotient layouts at `2^17` rows, and the 76-byte prefix of each
 of the 18 layouts the protocol opens. For each opening: the layout is rebuilt from its constructor's
 arguments by the Lean `Layout.new` / `Layout.hidden`, its prefix recomputed and compared with the
-Rust's, the honest proof accepted, and a wrong value, a wrong expected root, a changed stream scalar
-and a changed leaf word rejected (and, on the public layout, a wrong prefix: the same layout with one
-more overflow piece, which only its id reads). For each of the 18 layouts: the Lean `witnessLayout`,
-`wiringLayout`, `quotientLayout` give the Rust's prefix, and the 18 prefixes are distinct.
+Rust's, the honest proof accepted, and a wrong value, a wrong expected root, a changed stream scalar,
+a changed leaf word and no claim at all rejected (and, on the public layout, a wrong prefix: the same
+layout with one more overflow piece, which only its id reads; on the hidden layouts, the honest proof
+against the weight without the gadget's term, so the gadget's transcription is exercised). For each
+of the 18 layouts: the Lean `witnessLayout`, `wiringLayout`, `quotientLayout` give the Rust's
+prefix, and the 18 prefixes are distinct.
 
   cargo test -p quotient --release --test whir_bridge_vector -- --ignored   # from the repository root
   lake env lean --run Test/Check.lean ../../target/whir_bridge_vector.txt
@@ -46,6 +48,24 @@ def pairs : List ℕ → List (ℕ × ℕ)
 /-- `opening::verify` in Lean, with the deployed Keccak. -/
 def verifyId (L : Layout) (root : Digest) (claims : List Claim) (π : Proof) : Bool :=
   Id.run (openingVerifyWithHash (m := Id) keccak256 keccakF1600 L logInvRate root claims π)
+
+/-- `opening::verify` in Lean with the gadget's term left out of the weight (a hidden layout's
+honest proof must fail it: the gadget's term is read). -/
+def verifyNoGadget (L : Layout) (root : Digest) (claims : List Claim) (π : Proof) : Bool :=
+  let prog : Prog Bool := do
+    LeanVM.Protocol.Verifier.commitStack L.logN logInvRate
+    Prog.require (∀ c ∈ claims, c.point.length = L.vars)
+    let lam ← Prog.sampleChallenge
+    let ls := lambdas lam claims.length
+    LeanVM.Protocol.Verifier.verifyWhir L.logN logInvRate (target ls claims) fun x ↦
+      L.weight ls claims x - gadgetSum (L.gadgetParts (ls.getD claims.length 0))
+        (laneEqs L.lanes.length (x.drop L.logLane)) (x.take L.logLane)
+    return true
+  Id.run do
+    let iv ← keccak256 (openingPrefix L logInvRate ++ claimsBytes claims)
+    let seed ← keccakF1600 (seedInput iv publicDigest)
+    if rootOf π = some root then runProofWithHash (m := Id) keccak256 keccakF1600 prog seed π
+    else pure false
 
 def bytesNat (b : Bytes) : List ℕ := b.map (·.toNat)
 
@@ -97,15 +117,25 @@ def checkVector (name : String) (lines : List String) : IO Bool := do
     { openings[0]! with leaf := openings[0]!.leaf.set 63 (openings[0]!.leaf[63]! + 1) }⟩
   let rejectPath := !verifyId L root claims pathTampered
   IO.println s!"  tampered leaf rejected: {rejectPath}"
+  let rejectEmpty := !verifyId L root [] π
+  IO.println s!"  no claim rejected: {rejectEmpty}"
   let rejectPrefix ← if L.logPiece.isNone then do
       -- the same public layout with one more overflow piece: only its id (the prefix) reads it
       let L' := { L with pieces := L.pieces ++ [12345] }
       let r := openingPrefix L' logInvRate != openingPrefix L logInvRate &&
         !verifyId L' root claims π
       IO.println s!"  wrong prefix rejected: {r}"
+      -- control: a public layout has no gadget, so the verifier without its term accepts
+      let c := verifyNoGadget L root claims π
+      IO.println s!"  (control) accepted without the gadget's term, which it has none of: {c}"
+      pure (r && c)
+    else do
+      -- the honest proof against the weight without the gadget's term
+      let r := !verifyNoGadget L root claims π
+      IO.println s!"  without the gadget's term rejected: {r}"
       pure r
-    else pure true
-  return preOk && honest && rejectWrong && rejectRoot && rejectTampered && rejectPath && rejectPrefix
+  return preOk && honest && rejectWrong && rejectRoot && rejectTampered && rejectPath &&
+    rejectEmpty && rejectPrefix
 
 def main (args : List String) : IO UInt32 := do
   let text ← IO.FS.readFile (args.getD 0 "whir_bridge_vector.txt")
