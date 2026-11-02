@@ -196,6 +196,83 @@ fn deployable_is_the_rust_verifier() {
     });
 }
 
+/// The straight contract's instructions by phase: how many of each kind, and the gas per `FIELD_MUL` (the code
+/// generator's overhead). `cargo test --release -p leanvm_univariate --test gas -- --ignored --nocapture op_report`
+#[test]
+#[ignore]
+fn op_report() {
+    use leanvm_flock_gas::evm::codegen::MEASURE;
+    use leanvm_univariate::contract::compile_verifier;
+    deep(|| {
+        let shape = Shape::of(&leanvm_flock_gas::shapes::reference().shape);
+        for (name, blake2s, mode) in [
+            ("ABI point claims, Flock (a')", Blake2s::Flock(FLOCK_MAIN), Claims::Point),
+            ("weighted claims [ext. W], Flock (a) [ext. B]", Blake2s::Flock(FLOCK_BIT_SLICE), Claims::Weighted),
+        ] {
+            let recorded = record_verifier(&shape, blake2s, mode);
+            let contract = compile_verifier(&recorded, &PROGRAM_IV, true);
+            // Kinds: FIELD_MUL, XOR, MLOAD, MSTORE, PUSH, DUP, SWAP, CALLDATALOAD, other.
+            let mut by_phase: Vec<(&'static str, [u64; 9])> = Vec::new();
+            let mut pc = 0;
+            while pc < contract.code.len() {
+                let op = contract.code[pc];
+                let phase = contract.phase_of[pc];
+                let kind = match op {
+                    0x0c => 0,
+                    0x18 => 1,
+                    0x51 => 2,
+                    0x52 => 3,
+                    0x5f..=0x7f => 4,
+                    0x80..=0x8f => 5,
+                    0x90..=0x9f => 6,
+                    0x35 => 7,
+                    _ => 8,
+                };
+                match by_phase.iter_mut().find(|(p, _)| *p == phase) {
+                    Some((_, counts)) => counts[kind] += 1,
+                    None => {
+                        let mut counts = [0; 9];
+                        counts[kind] = 1;
+                        by_phase.push((phase, counts));
+                    }
+                }
+                pc += 1 + if (0x60..=0x7f).contains(&op) { (op - 0x5f) as usize } else { 0 };
+            }
+            by_phase.retain(|(p, _)| *p != MEASURE);
+            by_phase.sort_by_key(|(_, c)| std::cmp::Reverse(c[0] * 10 + c[1..].iter().sum::<u64>() * 3));
+            println!("\n### {name}: instructions by phase (straight contract)");
+            println!("| phase | FIELD_MUL | XOR | MLOAD | MSTORE | PUSH | DUP | SWAP | CALLDATALOAD | other | gas/FIELD_MUL (approx.) |");
+            println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|");
+            let mut total = [0u64; 9];
+            for (phase, c) in &by_phase {
+                for k in 0..9 {
+                    total[k] += c[k];
+                }
+                let approx = 10 * c[0] + 3 * c[1..8].iter().sum::<u64>() + 3 * c[8];
+                let per = if c[0] > 0 { format!("{:.1}", approx as f64 / c[0] as f64) } else { "-".into() };
+                println!(
+                    "| {phase} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {per} |",
+                    c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8]
+                );
+            }
+            let approx = 10 * total[0] + 3 * total[1..].iter().sum::<u64>();
+            println!(
+                "| **total** | {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.1} |",
+                total[0],
+                total[1],
+                total[2],
+                total[3],
+                total[4],
+                total[5],
+                total[6],
+                total[7],
+                total[8],
+                approx as f64 / total[0] as f64
+            );
+        }
+    });
+}
+
 /// `cargo test --release -p leanvm_univariate --test gas -- --ignored --nocapture deployable_report`
 #[test]
 #[ignore]
