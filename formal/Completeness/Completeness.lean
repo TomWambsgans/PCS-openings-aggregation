@@ -9,15 +9,41 @@ import Completeness.Opening
 import Completeness.Wiring
 import Completeness.Deployed
 import Completeness.Final
+import Completeness.HiddenOpenings
 
 /-!
 # End-to-end completeness of the membership proof
 
-See `README.md` (the completeness section of `formal/README.md`). The end theorems are
-`completeness_deployed`, `completeness_hidden` and `completeness_bad_set` (`Final.lean`); every
+See the completeness section of `formal/README.md`. The end theorems are `completeness_end` and
+`completeness_end_bad_set` (`HiddenOpenings.lean`, every opening proven), from the general
+`completeness_deployed` (`Deployed.lean`, any openings that are complete); every
 declaration below depends on `propext`, `Classical.choice` and `Quot.sound` only (the kernel's
 decision of the layouts' shape on `propext` and `Quot.sound`).
 -/
+
+/-- info: 'Completeness.completeness_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.completeness_end
+
+/-- info: 'Completeness.completeness_end_bad_set' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.completeness_end_bad_set
+
+/-- info: 'Completeness.witnessOpening' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.witnessOpening
+
+/-- info: 'Completeness.quotientOpening' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.quotientOpening
+
+/-- info: 'Completeness.hidden_complete' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.hidden_complete
+
+/-- info: 'Completeness.gadgetValue_fillNew' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.gadgetValue_fillNew
 
 /-- info: 'Completeness.completeness_deployed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
