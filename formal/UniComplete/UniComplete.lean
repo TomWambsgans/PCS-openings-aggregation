@@ -5,3 +5,4 @@ import UniComplete.Bus
 import UniComplete.Quotients
 import UniComplete.Batch
 import UniComplete.Prover
+import UniComplete.Whir
