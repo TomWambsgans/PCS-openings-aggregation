@@ -15,6 +15,7 @@ import Implementation.Leaves
 import Implementation.Verifier
 import Implementation.Frobenius
 import Implementation.Model
+import Implementation.Field192
 
 /-!
 # The implementation is the model (layer F5)
@@ -43,10 +44,19 @@ Proved here, for any field `F` with `F192`'s limb representation (`IsF192`: `XOR
   those claims true of the tables is exactly the model's `Wire.verifyWith` (deployed `Wire`,
   `wire`) accepting, but for the challenges where some `1 + w_k(t)` vanishes.
 
+On the concrete field (`Field192.lean`): `isF192_primitives`, F0c's `Primitives.F192` (CompPoly's
+`BF64.Ext3`) with its Rust limbs `(c0, c1, c2)` (`limbsEquiv`) is `IsF192`: `mulE` is its product,
+the core being `mul64_eq` (Rust's shift-fold `reduce` of `clmul`, on all 64-bit inputs, is
+CompPoly's `reduce (carryLessMul a b)`: both are the remainder of the same polynomial modulo
+`x^64 + x^4 + x^3 + x + 1`, `clmul_eq_carryLessMul`, `reduce64_eq_reduce`). So
+`graph_is_verifier_F192`, `graph_words_F192`, `graph_reaches_iff_F192`: the end theorems on that
+field, no field hypothesis left.
+
 Tested, not proved: the bytecode computes the graph (`crates/evm`'s parity tests against the Rust
-verifier and `Implementation/Diff.lean` against this interpreter), and that `F192`'s Rust
-arithmetic is `mulE` (the differential test; F0c's `formal/Field` proves the field's laws for
-CompPoly's arithmetic, not yet tied to `mulE`).
+verifier and `Implementation/Diff.lean` against this interpreter), and that the Rust's `F192`
+arithmetic is `mulE` (`mulE` transcribes its software `clmul` and `reduce`; the transcription and
+the Karatsuba and PMULL paths are checked by the differential test and by F0c's kernel-checked
+vectors, `Field/Test.lean`).
 -/
 
 /-- info: 'Implementation.Program.reduceIds_eq' depends on axioms: [propext] -/
@@ -88,3 +98,23 @@ CompPoly's arithmetic, not yet tied to `mulE`).
 /-- info: 'Implementation.graph_is_verifier' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms Implementation.graph_is_verifier
+
+/-- info: 'Implementation.mul64_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Implementation.mul64_eq
+
+/-- info: 'Implementation.isF192_primitives' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Implementation.isF192_primitives
+
+/-- info: 'Implementation.graph_is_verifier_F192' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Implementation.graph_is_verifier_F192
+
+/-- info: 'Implementation.graph_words_F192' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Implementation.graph_words_F192
+
+/-- info: 'Implementation.graph_reaches_iff_F192' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Implementation.graph_reaches_iff_F192
