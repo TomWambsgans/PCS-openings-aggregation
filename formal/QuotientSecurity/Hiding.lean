@@ -9,6 +9,7 @@ import QuotientSecurity.Hiding.Merkle
 import QuotientSecurity.Hiding.Interp
 import QuotientSecurity.Hiding.Sumcheck
 import QuotientSecurity.Hiding.Gadget
+import QuotientSecurity.Hiding.GadgetLayout
 
 /-!
 # Hiding WHIR openings of `K`-valued tables (`crates/quotient/HIDING.md`)
@@ -116,3 +117,7 @@ import QuotientSecurity.Hiding.Gadget
 /-- info: 'QuotientSecurity.Hiding.rounds_lower_upper' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms QuotientSecurity.Hiding.rounds_lower_upper
+
+/-- info: 'QuotientSecurity.Hiding.GadgetLayout.roundsReached' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.GadgetLayout.roundsReached

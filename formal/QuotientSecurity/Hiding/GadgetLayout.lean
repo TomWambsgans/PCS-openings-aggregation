@@ -140,4 +140,153 @@ def RoundsReached {m : ℕ} (pos : ι → (Fin 6 → Bool)) (Wc : Fin m → ι �
 
 end GadgetLayout
 
+/-! ### Condition (R), discharged -/
+
+theorem sum_pos_eq {pos : ι → (Fin 6 → Bool)} (hpos : Function.Injective pos) {M : Type}
+    [AddCommMonoid M] (g : (Fin 6 → Bool) → M) (hg : ∀ b, b ∉ Set.range pos → g b = 0) :
+    ∑ l, g (pos l) = ∑ b, g b := by
+  classical
+  rw [← sum_image (fun a _ b _ h => hpos h)]
+  refine sum_subset (subset_univ _) fun b _ hb => hg b ?_
+  rintro ⟨l, rfl⟩
+  exact hb (mem_image_of_mem _ (mem_univ l))
+
+theorem lift_column {pos : ι → (Fin 6 → Bool)} (hpos : Function.Injective pos) (f : (Fin 6 → Bool) → K)
+    (hf : ∀ b, b ∉ Set.range pos → f b = 0) (y : Y) (b : Fin 6 → Bool) :
+    lift (E := E) pos (fun l y' => if y' = y then f (pos l) else 0) b y = algebraMap K E (f b) := by
+  simp only [lift, ite_true]
+  by_cases hb : b ∈ Set.range pos
+  · obtain ⟨l₀, rfl⟩ := hb
+    rw [sum_eq_single l₀]
+    · simp
+    · intro l _ hl
+      simp [hpos.ne hl]
+    · simp
+  · rw [hf b hb, map_zero]
+    refine sum_eq_zero fun l _ => ?_
+    have : pos l ≠ b := fun h => hb ⟨l, h⟩
+    simp [this]
+
+theorem colIp_unit_left {k : ℕ} (a : Fin k → Bool) (t : Col E k) : colIp (unitCol a) t = t a := by
+  simp only [colIp, unitCol, ite_mul, one_mul, zero_mul]
+  rw [sum_ite_eq']
+  simp
+
+namespace GadgetLayout
+
+variable (L : GadgetLayout ι Y)
+
+theorem atPat_gent {p q : Fin 3} {i : Fin 3} (h : L.AtPat q (L.gent p i)) : q = p := by
+  obtain ⟨i', hi'⟩ := h
+  exact (L.gent_inj q i' p i hi').1
+
+theorem atGadget_gent (p i : Fin 3) : L.AtGadget (L.gent p i) := ⟨p, i, rfl⟩
+
+/-- **Condition (R) holds** for a layout with the gadget, for every challenge with no coordinate in
+`{0, 1}` and `2 φ₀ ≠ 1`, every nonzero scale `μ` of the gadget, every basis `β` of `E` over `K`,
+whatever the claims (`hWg`: the combined weight at the gadget's entries is the gadget's), given the
+lanes the argument uses and the solvers' span (`hsolve`). `K` has characteristic 2. -/
+theorem roundsReached {m : ℕ} (h2K : (2 : K) = 0) (pos : ι → (Fin 6 → Bool))
+    (hpos : Function.Injective pos) (Wc : Fin m → ι → Y → E) (lam : Fin m → E) (φ : Fin 6 → E)
+    (μ : E) (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E)
+    (hWg : ∀ p i b, HiddenLayout.combinedW pos Wc lam b (L.gent p i) = μ * β i * patE p b)
+    (hA0 : pos (L.pairA 0) = lane 0) (hB0 : pos (L.pairB 0) = lane 31)
+    (hA1 : pos (L.pairA 1) = lane 1) (hB1 : pos (L.pairB 1) = lane 30) (hov : pos L.ov = lane 32)
+    (hlow : ∀ b : Fin 6 → Bool, b (Fin.last 5) = false → b ∈ Set.range pos)
+    (h33 : lane 33 ∈ Set.range pos) (hφ : ∀ i, φ i ≠ 0 ∧ φ i ≠ 1) (h2 : 2 * φ 0 ≠ 1)
+    (hsolve : ∀ (p : Fin 3) (e : E), ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK (E := E) s) ∧
+      (∀ b, b ∉ Set.range pos → s b = 0) ∧ (∑ b, eqW φ b * algebraMap K E (s b)) = e) :
+    L.RoundsReached (K := K) pos Wc lam φ := by
+  refine (column_reach φ hφ h2 μ hμ β (Set.range pos) hlow h33 hsolve).trans (Submodule.span_mono ?_)
+  rintro x ⟨p, i, c, s, hcs, hc, hs, hip, hf, rfl⟩
+  set f : (Fin 6 → Bool) → K := c + s
+  have hfS : ∀ b, b ∉ Set.range pos → f b = 0 := fun b hb => by
+    simp [f, (hcs b hb).1, (hcs b hb).2]
+  set y := L.gent p i
+  set T : ι → Y → K := fun l y' => if y' = y then f (pos l) else 0
+  -- What the pattern's claim and the halves give: the pair's lanes agree, the overflow lane is zero.
+  have hsep : (Lower (patE (E := E) p) ∧ Upper (ofK (E := E) s)) ∨
+      (Upper (patE (E := E) p) ∧ Lower (ofK (E := E) s)) := sep_of p hs
+  have hs0 : ∀ b, patE (E := E) p b ≠ 0 → s b = 0 := by
+    intro b hb
+    rcases hsep with ⟨hw, ht⟩ | ⟨hw, ht⟩ <;> cases hlast : b (Fin.last 5)
+    · exact (algebraMap K E).injective (by simpa [ofK] using ht b hlast)
+    · exact absurd (hw b hlast) hb
+    · exact absurd (hw b hlast) hb
+    · exact (algebraMap K E).injective (by simpa [ofK] using ht b hlast)
+  have hf0 : p = 0 → f (lane 0) = f (lane 31) := by
+    rintro rfl
+    have h := hip
+    simp only [patE, pattern0, pairCol, colIp_add_left, colIp_smul_left, colIp_unit_left, one_mul,
+      flipC_lane0, ofK, ← map_add] at h
+    have hc' : c (lane 31) = c (lane 0) := by
+      have h' := (algebraMap K E).injective (h.trans (map_zero _).symm)
+      linear_combination h' - c (lane 0) * h2K
+    have h0 : s (lane 0) = 0 := hs0 _ (by
+      simp [patE, pattern0, pairCol, unitCol, flipC_lane0, show lane 0 ≠ lane 31 by decide])
+    have h31 : s (lane 31) = 0 := hs0 _ (by
+      simp [patE, pattern0, pairCol, unitCol, flipC_lane0, show lane 31 ≠ lane 0 by decide])
+    simp [f, hc', h0, h31]
+  have hf1 : p = 1 → f (lane 1) = f (lane 30) := by
+    rintro rfl
+    have h := hip
+    simp only [patE, pattern1, pairCol, colIp_add_left, colIp_smul_left, colIp_unit_left, one_mul,
+      flipC_lane1, ofK, ← map_add] at h
+    have hc' : c (lane 30) = c (lane 1) := by
+      have h' := (algebraMap K E).injective (h.trans (map_zero _).symm)
+      linear_combination h' - c (lane 1) * h2K
+    have h1 : s (lane 1) = 0 := hs0 _ (by
+      simp [patE, pattern1, pairCol, unitCol, flipC_lane1, show lane 1 ≠ lane 30 by decide])
+    have h30 : s (lane 30) = 0 := hs0 _ (by
+      simp [patE, pattern1, pairCol, unitCol, flipC_lane1, show lane 30 ≠ lane 1 by decide])
+    simp [f, hc', h1, h30]
+  have hf2 : p = 2 → f (lane 32) = 0 := by
+    rintro rfl
+    have h := hip
+    simp only [patE, pattern2, colIp_unit_left, ofK] at h
+    have hc' : c (lane 32) = 0 := (algebraMap K E).injective (h.trans (map_zero _).symm)
+    have h32 : s (lane 32) = 0 := hs0 _ (by simp [patE, pattern2, unitCol])
+    simp [f, hc', h32]
+  refine ⟨T, ⟨⟨T, ?_⟩, y, L.gent_first p i, fun l y' hy' => by simp [T, hy'], ?_⟩, ?_⟩
+  · -- `T` is a change of the randomness: it keeps the pairs' copies and the overflow lane's zeros.
+    funext l y'
+    show (if L.randPos l y' ∧ ¬ L.ZeroAt l y' then T (L.copyOf y' l) y' else 0) = T l y'
+    by_cases hy : y' = y
+    · subst hy
+      have hr : L.randPos l y := Or.inr (Or.inl (L.atGadget_gent p i))
+      by_cases hz : L.ZeroAt l y
+      · have hp := L.atPat_gent hz.1
+        have hl : l = L.ov := hz.2
+        have hnz : ¬ (L.randPos l y ∧ ¬ L.ZeroAt l y) := fun h => h.2 hz
+        rw [if_neg hnz]
+        simp only [T, ite_true, hl, hov, hf2 hp.symm]
+      · simp only [hr, hz, not_false_eq_true, and_self, ite_true, T]
+        unfold copyOf
+        split_ifs with h0 h1
+        · obtain ⟨hp, rfl⟩ := h0
+          rw [hA0, hB0, hf0 (L.atPat_gent hp).symm]
+        · obtain ⟨hp, rfl⟩ := h1
+          rw [hA1, hB1, hf1 (L.atPat_gent hp).symm]
+        · rfl
+    · simp [T, hy]
+  · -- `T` keeps `f¹` at its entry.
+    show ∑ l, HiddenLayout.foldW pos φ l * algebraMap K E (T l y) = 0
+    simp only [T, ite_true, HiddenLayout.foldW]
+    rw [sum_pos_eq hpos (fun b => eqW φ b * algebraMap K E (f b)) (fun b hb => by simp [hfS b hb])]
+    simpa [f] using hf
+  · -- Its rounds are the move's.
+    show laneRounds 6 φ (HiddenLayout.combinedW pos Wc lam) (lift pos T) = _
+    rw [laneRounds_column 6 φ _ (lift pos T) y (fun b y' hy' => by simp [lift, T, hy'])]
+    have hw : (fun b (_ : Unit) => HiddenLayout.combinedW pos Wc lam b y) = (μ * β i) • toT (patE p) := by
+      funext b u
+      simp [hWg, toT, y, mul_assoc]
+    have ht : (fun b (_ : Unit) => lift (E := E) pos T b y) = toT (ofK f) := by
+      funext b u
+      simp only [toT, ofK, T]
+      exact lift_column hpos f hfS y b
+    rw [hw, ht, laneRounds_smul_left]
+    rfl
+
+end GadgetLayout
+
 end QuotientSecurity.Hiding
