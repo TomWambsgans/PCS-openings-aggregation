@@ -212,4 +212,161 @@ theorem natDegree_witnessOfTable_le (f : (Fin (22 + 2) → Bool) → K) (m : Fin
   rw [witnessOfTable_apply]
   exact key _ _
 
+/-! ## The wiring table -/
+
+/-- **The setup's wiring table** over `K`: its polynomial sends each cell's point to its
+successor's (`Index::new`). -/
+noncomputable def wiringTableK (σ : Equiv.Perm (Fin (22 + 2) → Bool)) : (Fin (22 + 2) → Bool) → K :=
+  tableOf BK le_rfl fun x => BK.point (σ x)
+
+include hB in
+/-- **The wiring polynomial is the setup's table's.** -/
+theorem sigmaPoly_eq_wiringTableK :
+    I.params.sigmaPoly = tablePoly fun b => ι (wiringTableK BK I.wiring b) := by
+  rw [Instance'.sigmaPoly_eq]
+  refine I.basis.tablePoly_ext le24 _ _ fun x => ?_
+  rw [wiringTable_eval, wiringTableK, tableOf_eval_map ι BK I.basis hB, point_map ι BK I.basis hB]
+
+/-! ## The second message's degrees -/
+
+/-- **The honest quotients' degrees**: for a first message of degree at most `2^22 + 2`, `h`
+below `2^24`, `q` at most `3 · 2^24 + 9249`, the gate's at most `7 · 2^22 + 22` (the
+computation of `Instance.honest_legal`, with its exact numbers). -/
+theorem honest_degrees (g : Fin 4 → F[X]) (hg : ∀ j, (g j).natDegree ≤ 2 ^ 22 + 2) (α β γ : F) :
+    (Params.honest I.params g α β γ).h₀.natDegree < 2 ^ 24 ∧
+      (Params.honest I.params g α β γ).q.natDegree ≤ 3 * 2 ^ 24 + 9249 ∧
+      (Params.honest I.params g α β γ).qGate.natDegree ≤ 7 * 2 ^ 22 + 22 := by
+  classical
+  let B' : I.params.Bounds := { I.bounds with witness := 2 ^ 22 + 2 }
+  let gm : B'.Msg₁ := ⟨g, hg⟩
+  have hcell : ∀ c, (Params.cellPoly I.params g c).natDegree ≤ 16777227 := fun c =>
+    (Params.natDegree_cellPoly_le B' gm c).trans (by
+      show 3 + (2 ^ 22 + 2) * 4 ≤ 16777227
+      norm_num)
+  have hgate : (Params.gatePoly I.params g).natDegree ≤ 33554454 :=
+    (Params.natDegree_gatePoly_le B' gm).trans (by
+      show 2 * (3 + (2 ^ 22 + 2) * 4) ≤ 33554454
+      norm_num)
+  have hσ : I.params.sigmaPoly.natDegree ≤ 16777216 := I.bounds.hSigma.trans (by
+    show 2 ^ (22 + 2) ≤ 16777216
+    norm_num)
+  have hpub : (I.params.pub γ).natDegree ≤ 16786432 := (I.bounds.hPub γ).trans (by
+    show 2 ^ 24 + 9 * 2 ^ 10 ≤ 16786432
+    norm_num)
+  have hE := I.exact
+  have hcmon : I.params.vCells.Monic := (digitPoly_monic_natDegree (22 + 2)).1
+  have hcdeg : I.params.vCells.natDegree = 16777216 :=
+    (digitPoly_monic_natDegree (F := F) (22 + 2)).2.trans (by norm_num)
+  have hrmon : I.params.vRows.Monic := by
+    rw [hE.rows]; exact monic_prod_of_monic _ _ fun i _ => monic_X_sub_C _
+  have hrdeg : I.params.vRows.natDegree = 4194304 := by
+    rw [hE.rows, natDegree_prod_of_monic _ _ fun i _ => monic_X_sub_C _]
+    simp only [natDegree_X_sub_C, Finset.sum_const, Finset.card_univ, smul_eq_mul, mul_one]
+    exact (card_cantorT (n := 22) I.basis le24).trans (by norm_num)
+  have hdl : (Lagrange.interpolate Finset.univ I.params.pt
+      (Params.sumValue I.params g α β γ)).degree < 16777216 := by
+    refine lt_of_lt_of_eq (Lagrange.degree_interpolate_lt _ I.params.pt_injective.injOn) ?_
+    rw [Finset.card_univ]
+    exact_mod_cast I.nCells.trans (by norm_num)
+  have hh : (Lagrange.interpolate Finset.univ I.params.pt
+      (Params.sumValue I.params g α β γ)).natDegree ≤ 16777216 :=
+    natDegree_le_of_degree_le hdl.le
+  have hall := Params.natDegree_honest_le I.params g α β γ 16777227 16786432 16777216 hcell hσ
+    hpub hcmon hcdeg (by norm_num) (by norm_num) hh
+  refine ⟨?_, hall.1.trans (by norm_num), ?_⟩
+  · show (Lagrange.interpolate Finset.univ I.params.pt
+      (Params.sumValue I.params g α β γ)).natDegree < 2 ^ 24
+    by_cases h0 : Lagrange.interpolate Finset.univ I.params.pt
+        (Params.sumValue I.params g α β γ) = 0
+    · rw [h0, natDegree_zero]; positivity
+    · rw [natDegree_lt_iff_degree_lt h0]
+      exact lt_of_lt_of_eq hdl (by norm_num)
+  · refine (Params.natDegree_honest_qGate_le I.params g α β γ hrmon).trans ?_
+    rw [hrdeg]
+    exact (Nat.sub_le_sub_right hgate _).trans (by norm_num)
+
+/-! ## The gate's quotient is over `K` -/
+
+theorem lifts_comp {p q : F[X]} (hp : p ∈ lifts ι) (hq : q ∈ lifts ι) : p.comp q ∈ lifts ι := by
+  obtain ⟨pK, rfl⟩ := (lifts_iff_set_range p).mp hp
+  obtain ⟨qK, rfl⟩ := (lifts_iff_set_range q).mp hq
+  exact (lifts_iff_set_range _).mpr ⟨pK.comp qK, Polynomial.map_comp ι pK qK⟩
+
+theorem digit_mem_lifts (j : Fin 4) : (digit j : F[X]) ∈ lifts ι := by
+  have hX : (X : F[X]) ∈ lifts ι := X_mem_lifts ι
+  fin_cases j
+  · exact Subsemiring.one_mem _
+  · exact hX
+  · exact Subsemiring.add_mem _ (Subsemiring.pow_mem _ hX 2) hX
+  · exact Subsemiring.mul_mem _ (Subsemiring.add_mem _ (Subsemiring.pow_mem _ hX 2) hX) hX
+
+theorem rowPoly_mem_lifts : (rowPoly : F[X]) ∈ lifts ι :=
+  Subsemiring.add_mem _ (Subsemiring.pow_mem _ (X_mem_lifts ι) 4) (X_mem_lifts ι)
+
+include hB in
+theorem shift_mem_range (c : Fin 4) : shift I.params.θ c ∈ Set.range ι := by
+  rw [Instance'.θ_eq, hB]
+  fin_cases c
+  · exact ⟨0, map_zero ι⟩
+  · exact ⟨1, map_one ι⟩
+  · exact ⟨BK.β 1, rfl⟩
+  · exact ⟨BK.β 1 + 1, by simp [shift]⟩
+
+include hB in
+theorem cellPoly_mem_lifts (g : Fin 4 → F[X]) (hg : ∀ j, g j ∈ lifts ι) (c : Fin 4) :
+    Params.cellPoly I.params g c ∈ lifts ι := by
+  unfold Params.cellPoly
+  refine Subsemiring.sum_mem _ fun j _ => Subsemiring.mul_mem _ ?_ ?_
+  · refine lifts_comp ι (digit_mem_lifts ι j) (Subsemiring.add_mem _ (X_mem_lifts ι) ?_)
+    obtain ⟨a, ha⟩ := shift_mem_range ι I BK hB c
+    rw [← ha]
+    exact C_mem_lifts ι a
+  · exact lifts_comp ι (hg j) (rowPoly_mem_lifts ι)
+
+include hB in
+theorem vRows_mem_lifts : I.params.vRows ∈ lifts ι := by
+  rw [Instance'.vRows_eq]
+  refine Subsemiring.prod_mem _ fun x _ => ?_
+  obtain ⟨y, -, hy⟩ := Finset.mem_image.mp x.2
+  rw [← hy, point_map ι BK I.basis hB]
+  exact (lifts_iff_set_range _).mpr ⟨X - C (BK.point (cellBits (y, 0))), by simp⟩
+
+theorem honest_qGate (g : Fin 4 → F[X]) (α β γ : F) :
+    (Params.honest I.params g α β γ).qGate = Params.gatePoly I.params g / I.params.vRows := rfl
+
+include hB in
+/-- **The honest gate quotient is over `K`**: the gate's polynomial and the rows' vanishing
+polynomial are, and so is their quotient. -/
+theorem qGate_mem_lifts (g : Fin 4 → F[X]) (hg : ∀ j, g j ∈ lifts ι) (α β γ : F) :
+    (Params.honest I.params g α β γ).qGate ∈ lifts ι := by
+  rw [honest_qGate]
+  have hgate : Params.gatePoly I.params g ∈ lifts ι := by
+    unfold Params.gatePoly gate
+    have h := fun c => cellPoly_mem_lifts ι I BK hB g hg c
+    exact Subsemiring.add_mem _ (Subsemiring.add_mem _ (Subsemiring.add_mem _ (h 3) (h 0)) (h 2))
+      (Subsemiring.mul_mem _ (h 1) (h 2))
+  obtain ⟨gK, hgK⟩ := (lifts_iff_set_range _).mp hgate
+  obtain ⟨vK, hvK⟩ := (lifts_iff_set_range _).mp (vRows_mem_lifts ι I BK hB)
+  rw [← hgK, ← hvK, ← Polynomial.map_div]
+  exact (lifts_iff_set_range _).mpr ⟨gK / vK, rfl⟩
+
+include hB in
+/-- The honest first message is over `K`. -/
+theorem witnessOfTable_mem_lifts {k : ℕ} (c : (Fin (k + 1 + 1) → Bool) → K) (j : Fin 4) :
+    witnessOfTable (fun b => ι (c b)) j ∈ lifts ι := by
+  rw [witnessOfTable_apply, tablePoly_map]
+  exact (lifts_iff_set_range _).mpr ⟨_, rfl⟩
+
+/-! ## The second message as a table -/
+
+/-- `Accepts` reads the second message only through `h`, `q`, the gate's quotient, `junk` at `t`
+and the sum over the cells. -/
+theorem accepts_congr (P : Params F) {stmt : Fin P.words → F} {g : Params.Witness F}
+    {R R' : Params.Quotients F} {α β γ t ρ s : F} {a : Fin 4 → F}
+    (hh : R.h P = R'.h P) (hq : R.q = R'.q) (hg : R.qGate = R'.qGate) (hj : R.junk = R'.junk)
+    (ht : R.top P = R'.top P) :
+    P.Accepts stmt g R α β γ t a s ρ ↔ P.Accepts stmt g R' α β γ t a s ρ := by
+  unfold Params.Accepts
+  rw [hh, hq, hg, hj, ht]
+
 end Completeness
