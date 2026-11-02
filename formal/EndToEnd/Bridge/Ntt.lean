@@ -426,6 +426,250 @@ theorem coefficients_values_E (m : ℕ) (offset : K) (c : Array E) (hc : c.size 
       (fun i hi ↦ values_getD_E' m offset c hc i hi) p hp]
   exact congrFun (coefficientsF_valuesF _ m _) p
 
+/-! ## The points, the digits, the Cantor basis -/
+
+/-- The basis of the statement as F1's `CantorBasis` (`IsCantorBasis`, the statement's decidable
+property: `β₀ = 1`, `S(β_{k+1}) = β_k`). -/
+def cantorOf (hB : IsCantorBasis) : CantorBasis K basisSize where
+  β := betaAt
+  zero := hB.1
+  succ k hk := hB.2 ⟨k, by unfold basisSize at hk ⊢; omega⟩
+
+theorem S_eq_sq : (S : K → K) = QuotientSecurity.sq := rfl
+
+theorem foldl_point (n : ℕ) : ∀ N : ℕ,
+    (List.range N).foldl (fun acc k ↦ if n.testBit k then acc + betaAt k else acc) 0 =
+      ∑ t ∈ range N, if n.testBit t then betaAt t else 0
+  | 0 => by simp
+  | N + 1 => by
+    rw [List.range_succ, List.foldl_append, foldl_point n N, Finset.sum_range_succ]
+    simp only [List.foldl_cons, List.foldl_nil]
+    split_ifs <;> simp
+
+/-- `B(n)` as a sum over the basis. -/
+theorem point_eq_sum (n : ℕ) :
+    point n = ∑ t ∈ range basisSize, if n.testBit t then betaAt t else 0 :=
+  foldl_point n basisSize
+
+theorem getLastD_append_singleton {α : Type} (a : α) :
+    ∀ (l : List α) (d : α), (l ++ [a]).getLastD d = a
+  | [], _ => rfl
+  | b :: l, _ => by
+    rw [List.cons_append, List.getLastD_cons, getLastD_append_singleton a l b]
+
+theorem chain_foldl (x : K) : ∀ n : ℕ,
+    (List.range n).foldl (fun ws _ ↦ ws ++ [S (ws.getLastD x)]) [x] =
+      (List.range (n + 1)).map fun i ↦ S^[i] x
+  | 0 => by simp
+  | n + 1 => by
+    rw [List.range_succ (n := n), List.foldl_append, chain_foldl x n, List.foldl_cons,
+      List.foldl_nil, List.range_succ (n := n + 1), List.map_append, List.map_singleton]
+    have hl : ((List.range (n + 1)).map fun i ↦ S^[i] x).getLastD x = S^[n] x := by
+      rw [List.range_succ (n := n), List.map_append, List.map_singleton,
+        getLastD_append_singleton]
+    rw [hl, ← Function.iterate_succ_apply' S n x]
+
+/-- **The offset's digits**: entry `k < count` of `chain x count` is `w_k(x) = S^k(x)`. -/
+theorem chain_getD (x : K) {count k : ℕ} (hk : k < count) :
+    (chain x count).getD k 0 = S^[k] x := by
+  rw [chain, chain_foldl, List.getD_eq_getElem?_getD, List.getElem?_take, if_pos hk,
+    List.getElem?_map, List.getElem?_range (by omega : k < count + 1)]
+  rfl
+
+theorem iterate_betaAt (hB : IsCantorBasis) {i : ℕ} (hi : i < basisSize) (k : ℕ) :
+    S^[k] (betaAt i) = if k ≤ i then betaAt (i - k) else 0 := by
+  rw [S_eq_sq]
+  exact (cantorOf hB).iterate k i hi
+
+/-- **`w_k` on the span**: `S^k(B(n)) = B(n / 2^k)` (the Cantor basis' digits shift). -/
+theorem iterate_point (hB : IsCantorBasis) {n : ℕ} (hn : n < 2 ^ basisSize) {k : ℕ}
+    (hk : k ≤ basisSize) : S^[k] (point n) = point (n / 2 ^ k) := by
+  rw [point_eq_sum, point_eq_sum, S_eq_sq, sq_iterate_sum]
+  have hterm : ∀ t ∈ range basisSize, QuotientSecurity.sq^[k] (if n.testBit t then betaAt t else 0) =
+      if n.testBit t then (if k ≤ t then betaAt (t - k) else 0) else 0 := by
+    intro t ht
+    split_ifs with h1
+    · rw [← S_eq_sq, iterate_betaAt hB (Finset.mem_range.mp ht), if_pos (by assumption)]
+    · rw [← S_eq_sq, iterate_betaAt hB (Finset.mem_range.mp ht), if_neg (by assumption)]
+    · exact sq_iterate_zero k
+  rw [Finset.sum_congr rfl hterm]
+  have e1 : basisSize = k + (basisSize - k) := by omega
+  have e2 : basisSize = (basisSize - k) + k := by omega
+  conv_lhs => rw [e1, Finset.sum_range_add]
+  conv_rhs => rw [e2, Finset.sum_range_add]
+  have z1 : ∑ x ∈ range k, (if n.testBit x then (if k ≤ x then betaAt (x - k) else 0) else 0) =
+      0 :=
+    Finset.sum_eq_zero fun t ht ↦ by
+      have : ¬ k ≤ t := by have := Finset.mem_range.mp ht; omega
+      simp [this]
+  have z2 : ∑ x ∈ range k, (if (n / 2 ^ k).testBit (basisSize - k + x) then
+      betaAt (basisSize - k + x) else 0) = 0 :=
+    Finset.sum_eq_zero fun t _ ↦ by
+      rw [Nat.testBit_div_two_pow, Nat.testBit_eq_false_of_lt]
+      · simp
+      · calc n < 2 ^ basisSize := hn
+          _ ≤ 2 ^ (basisSize - k + t + k) := Nat.pow_le_pow_right (by norm_num) (by omega)
+  rw [z1, z2, zero_add, add_zero]
+  refine Finset.sum_congr rfl fun u _ ↦ ?_
+  rw [Nat.testBit_div_two_pow, if_pos (by omega : k ≤ k + u), Nat.add_sub_cancel_left,
+    add_comm u k]
+
+/-- `B(2H + 1) = B(2H) + 1`. -/
+theorem point_two_mul_add_one (hB : IsCantorBasis) (H : ℕ) :
+    point (2 * H + 1) = point (2 * H) + 1 := by
+  rw [point_eq_sum, point_eq_sum, show basisSize = 27 + 1 from rfl]
+  conv_lhs => rw [Finset.sum_range_succ']
+  conv_rhs => rw [Finset.sum_range_succ']
+  have hs : ∀ i ∈ range 27, (if (2 * H + 1).testBit (i + 1) then betaAt (i + 1) else 0) =
+      (if (2 * H).testBit (i + 1) then betaAt (i + 1) else 0) := by
+    intro i _
+    rw [Nat.testBit_succ, Nat.testBit_succ, show (2 * H + 1) / 2 = (2 * H) / 2 by omega]
+  rw [Finset.sum_congr rfl hs]
+  have h0 : (2 * H + 1).testBit 0 = true := by simp [Nat.testBit_zero]
+  have h0' : (2 * H).testBit 0 = false := by simp [Nat.testBit_zero]
+  rw [h0, h0', if_pos rfl, hB.1]
+  simp
+
+/-! ## The novel basis -/
+
+/-- `X_j(x) = ∏_{bit t of j, t < n} w_t(x)`, the novel basis on `n` digits. -/
+def X (n j : ℕ) (x : K) : K := ∏ t ∈ range n, if j.testBit t then S^[t] x else 1
+
+theorem X_zero (j : ℕ) (x : K) : X 0 j x = 1 := by simp [X]
+
+theorem X_succ_low {k lo : ℕ} (hlo : lo < 2 ^ k) (x : K) : X (k + 1) lo x = X k lo x := by
+  rw [X, Finset.prod_range_succ, Nat.testBit_eq_false_of_lt hlo]
+  simp [X]
+
+theorem X_succ_high {k lo : ℕ} (hlo : lo < 2 ^ k) (x : K) :
+    X (k + 1) (2 ^ k + lo) x = X k lo x * S^[k] x := by
+  rw [X, Finset.prod_range_succ, Nat.testBit_two_pow_add_eq, Nat.testBit_eq_false_of_lt hlo]
+  simp only [Bool.not_false, if_true]
+  congr 1
+  refine Finset.prod_congr rfl fun t ht ↦ ?_
+  rw [Nat.testBit_two_pow_add_gt (Finset.mem_range.mp ht)]
+
+section Eval
+
+variable {M : Type} [CommRing M] [Algebra K M] [CharP M 2]
+
+/-- **The novel-basis polynomial of `2^m` coefficients at `x`**: `Σ_j X_j(x) c_j`. -/
+def nov (m : ℕ) (c : ℕ → M) (x : K) : M := ∑ j ∈ range (2 ^ m), algebraMap K M (X m j x) * c j
+
+/-- The stages `m − 1, …, k`. -/
+def after (lamOf : ℕ → ℕ → K) (m k : ℕ) (c : ℕ → M) : ℕ → M :=
+  (List.range' k (m - k)).foldr (fun t a ↦ stageF true (lamOf t) t a) c
+
+theorem after_self (lamOf : ℕ → ℕ → K) (m : ℕ) (c : ℕ → M) : after lamOf m m c = c := by
+  simp [after]
+
+theorem after_succ (lamOf : ℕ → ℕ → K) {m k : ℕ} (hk : k < m) (c : ℕ → M) :
+    after lamOf m k c = stageF true (lamOf k) k (after lamOf m (k + 1) c) := by
+  rw [after, show m - k = (m - (k + 1)) + 1 by omega, List.range'_succ]
+  rfl
+
+theorem valuesF_eq_after (lamOf : ℕ → ℕ → K) (m : ℕ) (c : ℕ → M) :
+    valuesF lamOf m c = after lamOf m 0 c := by
+  rw [valuesF, after, List.range_eq_range', Nat.sub_zero]
+
+/-- The invariant: after the stages `m − 1, …, k`, block `hi` of `2^k` entries holds the
+coefficients (on `k` digits) of a polynomial equal to the whole one on the block's points. -/
+def Inv (offset : K) (m k : ℕ) (c : ℕ → M) : Prop :=
+  ∀ hi i', hi < 2 ^ (m - k) → i' < 2 ^ k →
+    ∑ lo ∈ range (2 ^ k), algebraMap K M (X k lo (offset + point (hi * 2 ^ k + i'))) *
+        after (lamAt (chain offset m)) m k c (hi * 2 ^ k + lo) =
+      nov m c (offset + point (hi * 2 ^ k + i'))
+
+theorem inv_top (offset : K) (m : ℕ) (c : ℕ → M) : Inv offset m m c := by
+  intro hi i' hhi _
+  have : hi = 0 := by simpa using hhi
+  subst this
+  simp [after_self, nov]
+
+/-- On a block's coset, `w_k` is the stage's twiddle plus the block's half. -/
+theorem iterate_at (hB : IsCantorBasis) (offset : K) {m k hi i' : ℕ} (hm : m ≤ basisSize)
+    (hk : k < m) (hhi : hi < 2 ^ (m - k)) (hi' : i' < 2 ^ k) :
+    S^[k] (offset + point (hi * 2 ^ k + i')) =
+      lamAt (chain offset m) k (hi / 2) + if hi % 2 = 1 then 1 else 0 := by
+  have hn : hi * 2 ^ k + i' < 2 ^ basisSize := by
+    calc hi * 2 ^ k + i' < hi * 2 ^ k + 2 ^ k := by omega
+      _ = (hi + 1) * 2 ^ k := by ring
+      _ ≤ 2 ^ (m - k) * 2 ^ k := Nat.mul_le_mul_right _ hhi
+      _ = 2 ^ m := by rw [← pow_add]; congr 1; omega
+      _ ≤ 2 ^ basisSize := Nat.pow_le_pow_right (by norm_num) hm
+  rw [S_eq_sq, sq_iterate_add, ← S_eq_sq, iterate_point hB hn (by omega), lamAt,
+    chain_getD offset hk]
+  have hdiv : (hi * 2 ^ k + i') / 2 ^ k = hi := by
+    rw [mul_comm, Nat.mul_add_div (by positivity), Nat.div_eq_of_lt hi', add_zero]
+  rw [hdiv, add_assoc]
+  congr 1
+  rcases Nat.mod_two_eq_zero_or_one hi with h | h
+  · rw [if_neg (by omega), add_zero]
+    congr 1; omega
+  · rw [if_pos h, ← point_two_mul_add_one hB]
+    congr 1; omega
+
+/-- **The step**: stage `k` takes the invariant at `k + 1` to the invariant at `k`. -/
+theorem inv_step (hB : IsCantorBasis) (offset : K) {m k : ℕ} (hm : m ≤ basisSize) (hk : k < m)
+    (c : ℕ → M) (ih : Inv offset m (k + 1) c) : Inv offset m k c := by
+  intro hi i' hhi hi'
+  have hdec : hi = 2 * (hi / 2) + hi % 2 := (Nat.div_add_mod hi 2).symm
+  have hs : hi % 2 < 2 := Nat.mod_lt _ (by norm_num)
+  have hP : 2 ^ (m - k) = 2 * 2 ^ (m - (k + 1)) := by
+    rw [← pow_succ']; congr 1; omega
+  have hH : hi / 2 < 2 ^ (m - (k + 1)) := by omega
+  have hsk : hi % 2 * 2 ^ k ≤ 2 ^ k := by
+    calc hi % 2 * 2 ^ k ≤ 1 * 2 ^ k := Nat.mul_le_mul_right _ (by omega)
+      _ = 2 ^ k := one_mul _
+  have hi'' : hi % 2 * 2 ^ k + i' < 2 ^ (k + 1) := by rw [pow_succ]; omega
+  have hnum : hi / 2 * 2 ^ (k + 1) + (hi % 2 * 2 ^ k + i') = hi * 2 ^ k + i' := by
+    conv_rhs => rw [hdec]
+    ring
+  have IH := ih (hi / 2) (hi % 2 * 2 ^ k + i') hH hi''
+  rw [hnum] at IH
+  rw [← IH]
+  have hR : range (2 ^ (k + 1)) = range (2 ^ k + 2 ^ k) := by rw [pow_succ, mul_two]
+  rw [hR, Finset.sum_range_add, ← Finset.sum_add_distrib]
+  refine Finset.sum_congr rfl fun lo hlo ↦ ?_
+  have hlo' : lo < 2 ^ k := Finset.mem_range.mp hlo
+  rw [X_succ_low hlo', X_succ_high hlo', map_mul, after_succ _ hk]
+  have hpos : hi * 2 ^ k + lo = 2 * 2 ^ k * (hi / 2) + (hi % 2 * 2 ^ k + lo) := by
+    conv_lhs => rw [hdec]
+    ring
+  have hr : hi % 2 * 2 ^ k + lo < 2 * 2 ^ k := by omega
+  have hmod : (hi % 2 * 2 ^ k + lo) % 2 ^ k = lo := by
+    rw [add_comm, Nat.add_mul_mod_self_right, Nat.mod_eq_of_lt hlo']
+  have hb : 2 * 2 ^ k * (hi / 2) + lo = hi / 2 * 2 ^ (k + 1) + lo := by ring
+  have hb' : 2 * 2 ^ k * (hi / 2) + lo + 2 ^ k = hi / 2 * 2 ^ (k + 1) + (2 ^ k + lo) := by ring
+  rw [hpos, stageF_at true _ k _ (hi / 2) _ hr, hmod, hb', hb,
+    iterate_at hB offset hm hk hhi hi', if_pos rfl]
+  rcases Nat.mod_two_eq_zero_or_one hi with h | h
+  · rw [if_pos (by rw [h]; omega), if_neg (by omega)]
+    simp only [add_zero]
+    ring
+  · rw [if_neg (by rw [h]; omega), if_pos h, map_add, map_one]
+    ring
+
+theorem inv_all (hB : IsCantorBasis) (offset : K) {m : ℕ} (hm : m ≤ basisSize) (c : ℕ → M) :
+    ∀ d ≤ m, Inv offset m (m - d) c
+  | 0, _ => by simpa using inv_top offset m c
+  | d + 1, hd => by
+    have := inv_all hB offset hm c d (by omega)
+    rw [show m - d = m - (d + 1) + 1 by omega] at this
+    exact inv_step hB offset hm (by omega) c this
+
+/-- **The transform evaluates the novel-basis polynomial**: entry `p < 2^m` of `valuesF` is the
+polynomial of `c` at `offset + B(p)`. -/
+theorem valuesF_eval (hB : IsCantorBasis) (offset : K) {m : ℕ} (hm : m ≤ basisSize) (c : ℕ → M)
+    {p : ℕ} (hp : p < 2 ^ m) :
+    valuesF (lamAt (chain offset m)) m c p = nov m c (offset + point p) := by
+  have h := inv_all hB offset hm c m le_rfl p 0 (by simpa using hp) (by simp)
+  simp only [Nat.sub_self, pow_zero, mul_one, add_zero, Finset.range_one,
+    Finset.sum_singleton, X_zero, map_one, one_mul] at h
+  rw [valuesF_eq_after, h]
+
+end Eval
+
 end Ntt
 
 end Bridge
