@@ -5,12 +5,12 @@
 -- `stackWordFast_eq` (`Ntt.lean`), and uses `runFrom_eq_proveFromM`, `runFrom_corr` (`Refine.lean`,
 -- `Corr.lean`), `proveM_id` (`Protocol/Compile/Rom/Prover.lean`), `runI_openingProgram`
 -- (`Protocol/Whir/Complete/Opening.lean`), `runProof_prove`, `prove_ne_none`, `findNonce_eq_none_iff`
--- (`Protocol/Compile/Prover.lean`). The layout translation (`laneTr`, `layoutTr`, `stackWeight_eq`,
--- `gadgetWeight_eq`, `runWithHash_bind`) is copied from this repository's
+-- (`Protocol/Compile/Prover.lean`), `movesOK_commitStack`, `movesOK_verifyStackedOpening`
+-- (`Protocol/EndToEnd/Sound/Moves.lean`). The layout translation (`laneTr`, `layoutTr`,
+-- `stackWeight_eq`, `runWithHash_bind`) is copied from this repository's
 -- `formal/EndToEnd/Bridge/Opening.lean` (Bridge-Defs).
 import E2ECompleteness.ProverDefs
 import WhirBridge
-import Completeness.Opening
 import LeanVM.Prover.Whir
 import LeanVM.Prover.Refine
 import LeanVM.Protocol.Whir.Complete.Opening
@@ -36,11 +36,10 @@ the verifier's program. Here:
 * **`openingWithH_proveOpeningWithH`**: the Statement's opening check accepts every proof the
   Statement's opening prover produces, for claims of the table's length that hold of the stack.
   Through `openingWithH_eq_runProof` (the check is the compiled verifier of `openingProgram`) and
-  mumbai's `runProof_prove`, `runI_openingProgram`; the stack claims' weights are multilinear for
-  such layouts (`isMultilinearFn_stackClaims`, via F2's multiaffinity), so
-  `openingWithH_proveOpeningWithH'` drops that hypothesis. The only fact about the opening's sponge
-  used is that it starts with nothing pending (`openingSpongeWithH_eta`), so the proofs do not
-  depend on how the seed is computed.
+  mumbai's `runProof_prove`, `runI_openingProgram`; the stack claims' multilinearity stays a
+  hypothesis. `openingAccepts_layouts`: the same at the three layouts of `log_rows = 22`. The only
+  fact about the opening's sponge used is that it starts with nothing pending
+  (`openingSpongeWithH_eta`), so the proofs do not depend on how the seed is computed.
 * **`exists_failed_pow_opening`**: the prover fails only at a `17`-bit proof of work at a sponge
   where every nonce below `fuel` fails.
 * **`admissible_layouts`**: the three layouts at `log_rows = 22` are admissible at rate `1/2`.
@@ -170,31 +169,6 @@ theorem overflow_tr {L : PcsQuotient.Layout} (hov : L.lanes[L.overflowLane]? = s
     rw [findIdx_laneTr]
     exact List.findIdx_lt_length_of_exists ⟨_, hmem, by simp⟩
   exact ⟨(overflowLane_eq L.lanes h).symm, hlt⟩
-
-theorem kOfLane_one : K.ofLane 1 = 1 := rfl
-
-theorem kOfLane_zero : K.ofLane 0 = 0 := rfl
-
-theorem gadgetBeta_eq (i : ℕ) : PcsQuotient.gadgetBeta i = WhirBridge.gadgetBeta i := by
-  unfold PcsQuotient.gadgetBeta WhirBridge.gadgetBeta
-  split_ifs <;> simp_all [kOfLane_one, kOfLane_zero]
-
-/-- **The gadget's weight on the stack is F2's**, for a hidden layout of at least `33` lanes (the
-gadget's lanes `0, 1, 30, 31, 32` all lanes of the stack). -/
-theorem gadgetWeight_eq (L : PcsQuotient.Layout) {s : ℕ} (hs : L.logPiece = some s)
-    (hn : 33 ≤ L.lanes.length) (x : List E) :
-    PcsQuotient.gadgetWeight L x = (layoutTr L).gadgetWeight x := by
-  have h0 : 0 < L.lanes.length := by omega
-  have h1 : 1 < L.lanes.length := by omega
-  have h30 : 30 < L.lanes.length := by omega
-  have h31 : 31 < L.lanes.length := by omega
-  have h32 : 32 < L.lanes.length := by omega
-  simp [PcsQuotient.gadgetWeight, WhirBridge.Layout.gadgetWeight, WhirBridge.gadgetSum,
-    WhirBridge.Layout.gadgetParts, hs, List.range_succ, WhirBridge.laneEqs,
-    List.getD_eq_getElem?_getD, h0, h1, h30, h31, h32, eqBits_eq, PcsQuotient.gadgetLanes,
-    WhirBridge.gadgetLanes, WhirBridge.overflowLane, PcsQuotient.overflowLaneIndex,
-    PcsQuotient.Layout.gadgetEntry, WhirBridge.gadgetEntry, PcsQuotient.gadgetSize,
-    WhirBridge.gadget, gadgetBeta_eq]
 
 end OpeningTr
 
@@ -840,53 +814,28 @@ theorem exists_failed_pow_opening (H : Bytes → Digest) (F : KeccakState → Ke
   obtain rfl := ((movesOK_openingProgram _ _ _).after hg).1
   exact ⟨hist, k, sp, hg, ((findNonce_eq_none_iff F _ sp fuel).1 hn).2⟩
 
-/-! ## The stack claims' weights are multilinear -/
+/-! ## The three layouts at `log_rows = 22` -/
 
-/-- **Every stack claim of a layout of the shape `WeightShape` has a multilinear weight** (F2's
-`isMultiaffine_layoutClaimWeight`, `isMultiaffine_gadgetWeight` through the translation), so the
-hypothesis `hml` of `openingWithH_proveOpeningWithH` holds. -/
-theorem isMultilinearFn_stackClaims (L : PcsQuotient.Layout) (hL : WeightShape L)
-    (claims : List PcsQuotient.Claim) :
-    ∀ sc ∈ stackClaims L claims, EndToEnd.IsMultilinearFn L.logN sc.1 := by
-  obtain ⟨-, -, -, -, hhid⟩ := hL
-  have hov : L.logPiece.isSome → (layoutTr L).overflow < L.lanes.length := by
-    intro h
-    obtain ⟨s, hs⟩ := Option.isSome_iff_exists.1 h
-    obtain ⟨-, -, -, -, hov, -⟩ := hhid s hs
-    obtain ⟨hovtr, hovlt⟩ := overflow_tr hov
-    rw [hovtr]
-    exact hovlt
-  intro sc hsc
-  simp only [stackClaims, List.mem_append, List.mem_map] at hsc
-  rcases hsc with ⟨c, -, rfl⟩ | hg
-  · rw [show PcsQuotient.stackWeight L c = (layoutTr L).claimWeight (claimTr c) from
-      funext (stackWeight_eq L hov c)]
-    exact Completeness.isMultilinearFn_of_isMultiaffine
-      (WhirBridge.isMultiaffine_layoutClaimWeight (layoutTr L) (claimTr c))
-  · rcases hs : L.logPiece with _ | s
-    · simp [hs] at hg
-    · obtain ⟨-, -, -, h33, -⟩ := hhid s hs
-      simp only [hs, Option.isSome_some, ↓reduceIte, List.mem_singleton] at hg
-      subst hg
-      rw [show PcsQuotient.gadgetWeight L = (layoutTr L).gadgetWeight from
-        funext (gadgetWeight_eq L hs h33)]
-      exact Completeness.isMultilinearFn_of_isMultiaffine
-        (WhirBridge.isMultiaffine_gadgetWeight (layoutTr L))
-
-/-- **Acceptance without the multilinearity hypothesis**: `openingWithH_proveOpeningWithH` with
-`isMultilinearFn_stackClaims`. -/
-theorem openingWithH_proveOpeningWithH' (H : Bytes → Digest) (F : KeccakState → KeccakState)
-    (fuel : ℕ) (L : PcsQuotient.Layout) (hL : WeightShape L)
-    (hw : Whir.Admissible L.logN PcsQuotient.logInvRate) (stack : Array K)
-    (claims : List PcsQuotient.Claim) (hne : claims ≠ [])
-    (hlen : ∀ c ∈ claims, c.point.length = L.vars)
-    (hholds : ∀ sc ∈ stackClaims L claims, EndToEnd.StackClaim.Holds L.logN sc (colOf L.logN stack))
-    {π : Compile.Proof}
-    (hπ : proveOpeningWithH (m := Id) H F fuel L (commitWithH (m := Id) H L.logN stack) stack
-      claims = some π) :
-    openingWithH (m := Id) H F L (commitWithH (m := Id) H L.logN stack).root claims π = true :=
-  openingWithH_proveOpeningWithH H F fuel L hL hw stack claims hne hlen hholds
-    (isMultilinearFn_stackClaims L hL claims) hπ
+/-- **Acceptance at the three layouts of `log_rows = 22`** (`WeightShape` and admissibility
+discharged, `weightShape_layouts`, `admissible_layouts`): `openingWithH_proveOpeningWithH`. -/
+theorem openingAccepts_layouts (H : Bytes → Digest) (F : KeccakState → KeccakState) (fuel : ℕ)
+    (L : PcsQuotient.Layout)
+    (hL : L = witnessLayout 22 ∨ L = wiringLayout 22 ∨ L = quotientLayout 22) :
+    ∀ (stack : Array K) (claims : List PcsQuotient.Claim), claims ≠ [] →
+      (∀ c ∈ claims, c.point.length = L.vars) →
+      (∀ sc ∈ stackClaims L claims, EndToEnd.StackClaim.Holds L.logN sc (colOf L.logN stack)) →
+      (∀ sc ∈ stackClaims L claims, EndToEnd.IsMultilinearFn L.logN sc.1) →
+      ∀ π, proveOpeningWithH (m := Id) H F fuel L (commitWithH (m := Id) H L.logN stack) stack
+          claims = some π →
+        openingWithH (m := Id) H F L (commitWithH (m := Id) H L.logN stack).root claims π =
+          true := by
+  have hs : WeightShape L ∧ Whir.Admissible L.logN PcsQuotient.logInvRate := by
+    rcases hL with rfl | rfl | rfl
+    exacts [⟨weightShape_layouts.1, admissible_layouts.1⟩,
+      ⟨weightShape_layouts.2.1, admissible_layouts.2.1⟩,
+      ⟨weightShape_layouts.2.2, admissible_layouts.2.2⟩]
+  intro stack claims hne hlen hholds hml π hπ
+  exact openingWithH_proveOpeningWithH H F fuel L hs.1 hs.2 stack claims hne hlen hholds hml hπ
 
 /-! ## Axioms -/
 
@@ -936,18 +885,13 @@ info: 'E2ECompleteness.openingWithH_proveOpeningWithH' depends on axioms: [prope
 #guard_msgs in #print axioms openingWithH_proveOpeningWithH
 
 /--
-info: 'E2ECompleteness.openingWithH_proveOpeningWithH'' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in #print axioms openingWithH_proveOpeningWithH'
-
-/--
-info: 'E2ECompleteness.isMultilinearFn_stackClaims' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs in #print axioms isMultilinearFn_stackClaims
-
-/--
 info: 'E2ECompleteness.exists_failed_pow_opening' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
 #guard_msgs in #print axioms exists_failed_pow_opening
+
+/--
+info: 'E2ECompleteness.openingAccepts_layouts' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms openingAccepts_layouts
 
 end E2ECompleteness
