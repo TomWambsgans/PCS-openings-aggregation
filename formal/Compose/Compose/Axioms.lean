@@ -3,6 +3,7 @@ import Compose.Final
 import Compose.ComposedKC
 import Compose.Extract
 import Compose.AdversaryLog
+import Compose.Deployed
 
 /-! The axioms of the composition's theorems (printed when the module is built). -/
 
@@ -36,3 +37,11 @@ import Compose.AdversaryLog
 #print axioms Compose.knowledgeSoundness_list_adv
 #print axioms Compose.knowledgeSoundness_composed_adv
 #print axioms Compose.knowledgeSoundness_merkle_adv
+#print axioms Compose.map_run_loggedKC
+#print axioms Compose.consistent_run_loggedKC
+#print axioms Compose.prEvent_loggedPrefix
+#print axioms Compose.prEvent_EW_le
+#print axioms Compose.prEvent_EQ_le
+#print axioms Compose.trace_deployed
+#print axioms Compose.knowledgeSoundness_deployed
+#print axioms Compose.knowledgeSoundness_deployed_setup
