@@ -111,9 +111,10 @@ def lv42Stack (prog : Program) (s : Sizes) (shape : UniStatement.Shape) (stack :
 def publicInputOf (bytes : List UInt8) : PublicInput :=
   ⟨fun k ↦ K.ofLane (beWordAt bytes.toArray (8 * k.val))⟩
 
-/-- The sizes a shape announces, as Lv42's `Sizes` (the memory's log-size must be positive). -/
-def sizesOf (shape : UniStatement.Shape) (h : 0 < shape.logMemory) : Sizes :=
-  ⟨shape.logMemory, h, fun j ↦ shape.tableRows.getD j.val 0⟩
+/-- The sizes of a proof, as Lv42's `Sizes`: the shape's memory (its log-size must be positive) and the proof's
+row counts. -/
+def sizesOf (shape : UniStatement.Shape) (h : 0 < shape.logMemory) (rows : List ℕ) : Sizes :=
+  ⟨shape.logMemory, h, fun j ↦ rows.getD j.val 0⟩
 
 /-! ### The setup's tables -/
 

@@ -139,6 +139,11 @@ structure Vector' where
   stackVars : List (String × ℕ)
   openings : List RustOpening
   matrices : Option (List E × E × E)
+  /-- `SHAPE <log_memory> <log_bytecode> <rows…>`: the shape, as the Rust's `Shape`. -/
+  shapeLine : Option (ℕ × ℕ × List ℕ)
+  /-- An honest proof's committed stacks (`STACK <commitment> <n> <words>`) and the bytecode's tuples. -/
+  committed : List (String × Array K)
+  bytecode : Option (Array K)
 
 /-- The tokens of a line. -/
 def tokens (line : String) : List String := (line.splitOn " ").filter (· ≠ "")
@@ -184,8 +189,24 @@ def parseVector (lines : List String) : Except String Vector' := do
         let b ← eElem
         pure (some (pt, a, b)) : Parse _).run' (("" :: rest).drop 1)
     | _ => pure none
+  let shapeLine := match byKey "SHAPE" with
+    | some (lm :: lb :: rows) =>
+      match lm.toNat?, lb.toNat?, rows.mapM String.toNat? with
+      | some lm, some lb, some rows => some (lm, lb, rows)
+      | _, _, _ => none
+    | _ => none
+  let words (ts : List String) : Except String (Array K) := do
+    let n := (ts.headD "0").toNat?.getD 0
+    let ws ← (ts.drop 1).mapM fun t ↦ (fun x ↦ K.ofLane (UInt64.ofNat x)) <$> hexNat t
+    if ws.length ≠ n then throw "a word list's length"
+    pure ws.toArray
+  let committed ← ((lines.map tokens).filter (·.head? == some "STACK")).mapM fun ts ↦ do
+    pure ((ts.drop 1).headD "", ← words (ts.drop 2))
+  let bytecode ← match byKey "BYTECODE" with
+    | some ts => some <$> words ts
+    | none => pure none
   pure ⟨id, shape, flock, claims, kind, iv, publicInput, stream, error, challenges, zeros, nonzeros,
-    accept, relations, stackVars, openings, matrices⟩
+    accept, relations, stackVars, openings, matrices, shapeLine, committed, bytecode⟩
 
 /-- The configuration a vector names. -/
 def blake2sNamed : String → Option Blake2s
@@ -219,10 +240,13 @@ def sameOpening (lean : Commitment × Opening) (rust : RustOpening) : Bool :=
 
 /-- The first disagreement between the Lean run and the Rust's outcome, if any. -/
 def compare (v : Vector') : Except String (Option String) := do
-  let some shape := shapeNamed v.shape | throw s!"unknown shape {v.shape}"
+  let some (shape, rows) := (v.shapeLine.map fun (lm, lb, rows) ↦ (shapeWith lm lb rows, rows)) <|>
+    shapeNamed v.shape | throw s!"unknown shape {v.shape}"
+  if !decide shape.Valid then return some s!"the shape is not valid (REVIEW-M1 F5): {repr shape}"
+  if !decide (shape.RowsFit rows) then return some "the rows do not fit the shape"
   let some blake2s := blake2sNamed v.flock | throw s!"unknown flock {v.flock}"
   let some mode := modeNamed v.claims | throw s!"unknown claims {v.claims}"
-  let o := run shape v.iv.toList v.publicInput.toList v.stream blake2s mode
+  let o := run shape rows v.iv.toList v.publicInput.toList v.stream blake2s mode
   let leanError := match o.result with
     | .ok _ => none
     | .error e => some e.name
@@ -251,6 +275,134 @@ def compare (v : Vector') : Except String (Option String) := do
       | _, _ => false
     if !sameMatrices then return some "matrices differ"
     return none
+
+/-! ### Honest proofs: the witness read back as Lv42's stack -/
+
+/-- The instruction a bytecode tuple spells (`Lv42.Arithmetization.entry` inverted: the opcode's code at slot
+3, its operands after it); a tuple that spells none (the never-run last slot) is read as `xor 0 0 0`. -/
+def decodeInstr (slots : Array K) : Lv42.Semantics.Instr :=
+  let s (i : ℕ) : K := slots.getD i 0
+  let op := s 3
+  if op == Lv42.Parameters.Opcode.xor.code then .xor (s 4) (s 5) (s 6)
+  else if op == Lv42.Parameters.Opcode.mulNative.code then .mulNative (s 4) (s 5) (s 6)
+  else if op == Lv42.Parameters.Opcode.setConstant.code then .setConstant (s 4) (E.ofLimbs (s 5) (s 6) (s 7))
+  else if op == Lv42.Parameters.Opcode.deref.code then
+    .deref (s 4) (s 5) (s 6) (if s 7 == 1 then .pc else if s 8 == 1 then .fp else .cell)
+  else if op == Lv42.Parameters.Opcode.jump.code then .jump (s 4) (s 5) (s 6)
+  else if op == Lv42.Parameters.Opcode.blake2s.code then .blake2s ![s 4, s 5, s 6, s 7] (s 8) (s 9) (s 10)
+  else .xor 0 0 0
+
+/-- The program of `2^lb` instructions the tuples spell. -/
+def programOf (lb : ℕ) (tuples : Array K) : Option Lv42.Semantics.Program :=
+  if h : lb ≤ Lv42.Parameters.maxLogBytecode then
+    some ⟨lb, h, fun i ↦ decodeInstr (tuples.extract (16 * i.val) (16 * i.val + 16))⟩
+  else none
+
+/-- A boundary coordinate's value at row `x`: a constant, a column both parties know, or a committed column
+read off `colValues` (`M3Instance.coordCell`). -/
+def coordValue {S : Lv42.Protocol.Shape} {κ : ℕ} (colValues : S.ColumnId → Array K)
+    (co : Lv42.Protocol.Coord S κ) (x : ℕ) : K :=
+  match co with
+  | .const c => c
+  | .known col => (Vector.toArray col.values).getD x 0
+  | .committed c _ => (colValues c).getD x 0
+
+/-- **`M3Holds`'s first four clauses for Lv42's leanISA instance, on the columns `lv42Stack` stacks**: the
+instance's own constraints, flushes, counter columns, boundary blocks and public lines
+(`LeanIsa.constraints`, `flushes`, `counts`, `boundary`, `publicLines`, the `BLAKE2S` limbs at `QFLOCK`'s
+slots `blake2sFlockSpec.slot`), each column read as `lv42Column` gives it rather than through
+`M3Instance.column` (which reads every cell of the `2^15`-word stack through the layout's lift, more than
+the interpreter affords); `Blocks.stackAt_getElem_of_inWindow` is the reading's law. -/
+def lv42Clauses (prog : Lv42.Semantics.Program) (s : Lv42.Protocol.LeanIsa.Sizes) (shape : Shape)
+    (c1 : ℕ → K) (input : Lv42.Semantics.PublicInput) : List (String × Bool) :=
+  let cols := Lv42.Protocol.LeanIsa.columns
+  let flock := (lv42Column prog s shape c1 Lv42.Protocol.LeanIsa.flockCol).toArray
+  let table : Array (Array K) := cols.toArray.map fun c ↦
+    if h : c.1 = Lv42.Protocol.LeanIsa.opIdx 5 ∧ 9 ≤ c.2.val ∧ c.2.val < 27 then
+      let slot := (Lv42.Protocol.Blake2sFlock.slots ⟨c.2.val - 9, by have := h.2.2; omega⟩).val
+      Array.ofFn (n := 2 ^ s.τ 5) fun x ↦ flock.getD (slot + 256 * x.val) 0
+    else (lv42Column prog s shape c1 c).toArray
+  let colValues (c : Lv42.Protocol.LeanIsa.Col) : Array K := table.getD (cols.idxOf c) #[]
+  let rowOf (j : Fin 9) (x : ℕ) : Fin (Lv42.Protocol.LeanIsa.width j) → K := fun i ↦ (colValues ⟨j, i⟩).getD x 0
+  let executed (j : Fin 9) : List ℕ := List.range (Lv42.Protocol.LeanIsa.rows prog s j)
+  let constraints := (List.finRange 9).all fun j ↦
+    (Lv42.Protocol.LeanIsa.constraints j).all fun C ↦
+      (List.range (2 ^ Lv42.Protocol.LeanIsa.height prog s j)).all fun x ↦ C.eval (rowOf j x) == 0
+  let flushTuples (side : Lv42.Protocol.Side) : List (List K) := (List.finRange 9).flatMap fun j ↦
+    ((Lv42.Protocol.LeanIsa.flushes j).filter (·.1 == side)).flatMap fun f ↦
+      (executed j).map fun x ↦ f.2.toList.map fun P ↦ P.eval (rowOf j x)
+  let boundaryTuples (side : Lv42.Protocol.Side) : List (List K) :=
+    ((Lv42.Protocol.LeanIsa.boundary prog s).filter (·.side == side)).flatMap fun b ↦
+      (List.range (2 ^ b.κ)).map fun x ↦ b.coords.toList.map fun co ↦ coordValue colValues co x
+  let pushes := flushTuples .push ++ boundaryTuples .push
+  let pulls := flushTuples .pull ++ boundaryTuples .pull
+  let balanced := pushes.isPerm pulls
+  let counts := (List.finRange 9).all fun j ↦
+    (Lv42.Protocol.LeanIsa.counts j).all fun i ↦ (executed j).all fun x ↦ (colValues ⟨j, i⟩).getD x 0 != 0
+  let lines := (Lv42.Protocol.LeanIsa.publicLines prog s input).toList.all fun l ↦
+    (colValues l.col).getD 0 0 == l.cell0 && (colValues l.col).getD 1 0 == l.cell1
+  [("Lv42: ConstraintsVanish on the lv42Stack columns", constraints),
+    (s!"Lv42: Balanced on the lv42Stack columns ({pushes.length} tuples a side)",
+      balanced && pushes.length == pulls.length),
+    ("Lv42: CountsNonzero on the lv42Stack columns", counts),
+    ("Lv42: PublicLinesHold on the lv42Stack columns", lines),
+    -- a control: a wrong public input fails the public lines
+    ("Lv42 control: another public input fails PublicLinesHold",
+      !(Lv42.Protocol.LeanIsa.publicLines prog s ⟨fun k ↦ input.lanes k + 1⟩).toList.all fun l ↦
+        (colValues l.col).getD 0 0 == l.cell0 && (colValues l.col).getD 1 0 == l.cell1)]
+
+/-- **An honest proof's witness against Lv42**: the point claims the Lean verifier hands `PCS_OPEN` are true of
+the committed stacks; the committed `C1`, read as Lv42's columns (`lv42Column`, what `lv42Stack` stacks),
+satisfies `M3Holds`'s first four clauses for `leanIsaInstance blake2sFlockSpec prog s` (`lv42Clauses`; the
+fifth, Flock's R1CS on `q_flock`, is not checked: the review's prover omits Flock); and the setup's stack is
+`Mapping.lean`'s (`setupStack`: the addresses word for word, every run instruction's tuple slots read back
+from the basis-`B` coefficients). -/
+def honestChecks (v : Vector') (shape : Shape) (rows : List ℕ) (r : Reduced) : List (String × Bool) :=
+  let stackOf (c : String) : Array K := ((v.committed.find? (·.1 == c)).map (·.2)).getD #[]
+  let claimsHold := r.openings.all fun (c, o) ↦ match o with
+    | .point pt value _ => multilinearEval ((stackOf c.name).toList.map ofK) pt == value
+    | _ => false
+  let claims := ("the point claims are true of the committed stacks", claimsHold)
+  match v.bytecode.bind (programOf shape.logBytecode) with
+  | none => [claims, ("the bytecode spells a program", false)]
+  | some prog =>
+    if h : 0 < shape.logMemory then
+      let s := sizesOf shape h rows
+      let c1 := stackOf "C1"
+      let input := publicInputOf v.publicInput.toList
+      let setupR := stackOf "Setup"
+      let setupL := setupStack prog shape
+      let layout := setupLayout shape
+      let (_, _, tupleOffset) := (layout.limbs .bytecodeTuple).headD (0, 0, 0)
+      let (_, _, addressOffset) := (layout.limbs .address).headD (0, 0, 0)
+      let addresses := (List.range (2 ^ shape.logMemory)).all fun k ↦
+        setupR.getD (addressOffset + k) 0 == setupL.getD (addressOffset + k) 0
+      let tuples := (List.range 16).all fun slot ↦
+        let coeffs := Array.ofFn (n := 2 ^ shape.logBytecode) fun k ↦
+          setupR.getD (tupleOffset + slot + 16 * k.val) 0
+        (List.range (2 ^ shape.logBytecode - 1)).all fun i ↦
+          if hi : i < 2 ^ prog.logSize then basisValue coeffs shape.logBytecode i == tupleSlot prog ⟨i, hi⟩ slot
+          else false
+      -- a control: one coefficient of XOR's `va_0` changed, every XOR row's value moves, and the bus breaks
+      let off := match (c1Layout shape).limbs (.table 0 5) with
+        | (_, _, o) :: _ => o
+        | [] => 0
+      let perturbed (i : ℕ) : K := if i = off then c1.getD i 0 + 1 else c1.getD i 0
+      let controlBalanced := ((lv42Clauses prog s shape perturbed input).getD 1 ("", true)).2
+      [claims] ++ lv42Clauses prog s shape (fun i ↦ c1.getD i 0) input ++
+        [("Lv42 control: one coefficient of a C1 column changed fails Balanced", !controlBalanced)] ++
+        [("setupStack: the addresses", addresses), ("setupStack: the run instructions' tuples", tuples)]
+    else [claims, ("a memory of two cells or more", false)]
+
+/-- `honestChecks` on a vector that carries its witness, after the Lean run on it. -/
+def honestReport (v : Vector') : Except String (List (String × Bool)) := do
+  let some (shape, rows) := v.shapeLine.map fun (lm, lb, rows) ↦ (shapeWith lm lb rows, rows)
+    | throw "an honest vector names its shape"
+  let some blake2s := blake2sNamed v.flock | throw s!"unknown flock {v.flock}"
+  let some mode := modeNamed v.claims | throw s!"unknown claims {v.claims}"
+  match (run shape rows v.iv.toList v.publicInput.toList v.stream blake2s mode).result with
+  | .ok r => pure (honestChecks v shape rows r)
+  | .error e => throw s!"the honest proof's run: {e.name}"
 
 /-- Split the file into vectors. -/
 def vectorsOf (text : String) : List (List String) :=
@@ -409,6 +561,13 @@ def main : IO Unit := do
         tally := (tally.filter (·.1 != key)) ++ [(key, if v.accept then (a + 1, r) else (a, r + 1))]
         IO.println s!"AGREE {v.id} {v.shape} {v.flock} {v.claims} {v.kind}: {if v.accept then "accept" else
           s!"reject{(v.error.map (" " ++ ·)).getD ""}"}, {v.challenges.length} challenges, {v.zeros.length} checks, {v.openings.length} openings"
+        if !v.committed.isEmpty then
+          match honestReport v with
+          | .ok checks =>
+            for (n, ok) in checks do
+              IO.println s!"  HONEST {if ok then "OK" else "FAILED"} {v.id}: {n}"
+              if !ok then failures := failures ++ [s!"{v.id}: {n}"]
+          | .error e => failures := failures ++ [s!"{v.id}: {e}"]
       | .ok (some d) =>
         failures := failures ++ [s!"{v.id}: {d}"]
         IO.println s!"DISAGREE {v.id} {v.shape} {v.flock} {v.claims} {v.kind}: {d}"

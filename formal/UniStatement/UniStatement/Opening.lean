@@ -18,8 +18,9 @@ words (`plainLayout`: lane `l` holds block `l`, so a claim's weight on the stack
 claim on the stack's multilinear extension). The Rust has only a mock (`PcsOpen::attesting_all`): which
 WHIR instance the precompile runs is not specified there; this is the choice the statements are made under.
 
-**The whole verifier** (`verifyWith`, the main line: Flock (a′), `PCS_OPEN`'s point-claim ABI): the run on
-the stream (`runWith`), its verdict, then **five calls**, in the contract's order: `C1`, `C2`, the setup
+**The whole verifier** (`verifyWith`, the main line: Flock (a′), `PCS_OPEN`'s point-claim ABI): the proof's
+row counts (REVIEW-M1 F1: announced, absorbed in the seed; the encoding `rowsBytes` is provisional until the
+Rust fixes it), the run on the stream (`runWith`), its verdict, then **five calls**, in the contract's order: `C1`, `C2`, the setup
 (each its one point claim, on its root: `C1`'s and `C2`'s the stream's, the setup's a constant), then
 Flock's `A0` and `B0` (one point claim each, `2^28` words). The extensions (weighted claims, the bit-slice
 claim type) are precompile changes with no opening defined here; `verifyWith` rejects them.
@@ -46,9 +47,11 @@ structure SetupRoots where
   a0 : Digest
   b0 : Digest
 
-/-- **A proof**: the stream (calldata after the selector and the public input), and the opening proof the
-block holds for each of the five `PCS_OPEN` calls (mumbai's format, `Compile.Proof`). -/
+/-- **A proof**: its row counts (REVIEW-M1 F1: announced, absorbed in the seed), the stream (calldata after
+the selector and the public input), and the opening proof the block holds for each of the five `PCS_OPEN`
+calls (mumbai's format, `Compile.Proof`). -/
 structure UniProof where
+  rows : List ℕ
   stream : Array UInt8
   c1 : Compile.Proof
   c2 : Compile.Proof
@@ -69,10 +72,13 @@ def pcsOpenWith (vars : ℕ) (root : Digest) (claims : List PcsQuotient.Claim) (
     m Bool :=
   PcsQuotient.openingWith F (plainLayout vars) root claims proof
 
-/-- **The verifier** over `F` (the main line): the run, its verdict, the five `PCS_OPEN` calls. -/
+/-- **The verifier** over `F` (the main line): the proof's row counts fit the shape, the run at them (the seed
+absorbing them after the public input, `rowsBytes`), its verdict, the five `PCS_OPEN` calls. -/
 def verifyWith (shape : Shape) (iv : List UInt8) (roots : SetupRoots) (publicInput : Vector UInt8 32)
     (proof : UniProof) : m Bool := do
-  let o ← runWith F shape iv publicInput.toList proof.stream (.flock flockMain) .point
+  if !decide (shape.RowsFit proof.rows) then return false
+  let o ← runWith F shape proof.rows iv publicInput.toList (rowsBytes proof.rows) proof.stream
+    (.flock flockMain) .point
   if !o.accepts then return false
   match o.result with
   | .error _ => return false

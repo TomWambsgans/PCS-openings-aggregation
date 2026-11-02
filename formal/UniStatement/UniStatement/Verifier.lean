@@ -43,16 +43,39 @@ namespace UniStatement
 
 open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol
 
-/-- **The sizes a contract is built for** (`Shape`): one shape per contract, so the proof announces none. -/
+/-- **The sizes a contract is built for** (`Shape`, the setup's part): the memory's and the bytecode's
+log-sizes, each table's log-height (XOR, MUL, SET, DEREF, JUMP, BLAKE2S), and the row counts each quotient is
+sized for (`capacityRows`). The heap, the stacks and every quotient's size depend on these only.
+
+**The row counts are the proof's** (`Rows`, REVIEW-M1 F1): `Z_act` and `Z_pad` are computed from them. At
+`cee6363`/`b948bfc` the contract fixes them too (`Shape::table_rows`, the `capacityRows` here and the rows a
+run is given are the same constants, `shapeOf`); REVIEW-M1's F1 announces them in calldata, absorbed in the
+seed, the quotients sized for the smallest count of each height (`capacityRows = 2^(h−1) + 1`). -/
 structure Shape where
   logMemory : ℕ
   logBytecode : ℕ
-  /-- Rows of XOR, MUL, SET, DEREF, JUMP, BLAKE2S. -/
-  tableRows : List ℕ
+  heights : List ℕ
+  capacityRows : List ℕ
   deriving Inhabited, Repr
 
-/-- `Shape::heights`: each table's log-height, `⌈log₂ rows⌉`. -/
-def Shape.heights (s : Shape) : List ℕ := s.tableRows.map log2Ceil
+/-- **A valid shape** (REVIEW-M1 F5: smaller sizes make the Rust's `u64` degrees wrap and `reduce` panic):
+six tables, the memory and the bytecode of at least `4` cells, and each table either empty (height `0`, no
+row; XOR, MUL, SET or DEREF only: JUMP's and BLAKE2S's degrees wrap at height `0`) or of height at least `2`
+with its capacity a row count of its height (`2^(h−1) < capacity ≤ 2^h`). -/
+def Shape.Valid (s : Shape) : Prop :=
+  s.heights.length = 6 ∧ s.capacityRows.length = 6 ∧ 2 ≤ s.logMemory ∧ 2 ≤ s.logBytecode ∧
+    ∀ t < 6, (s.heights.getD t 0 = 0 ∧ s.capacityRows.getD t 0 = 0 ∧ t < 4) ∨
+      (2 ≤ s.heights.getD t 0 ∧ 2 ^ (s.heights.getD t 0 - 1) < s.capacityRows.getD t 0 ∧
+        s.capacityRows.getD t 0 ≤ 2 ^ s.heights.getD t 0)
+
+instance (s : Shape) : Decidable s.Valid := inferInstanceAs (Decidable (_ ∧ _))
+
+/-- **The row counts a proof is for** fit the shape: six, each at least its table's capacity and at most
+its height (so `⌈log₂ rows⌉` is the height, and every honest quotient fits its chunks). -/
+def Shape.RowsFit (s : Shape) (rows : List ℕ) : Prop :=
+  rows.length = 6 ∧ ∀ t < 6, s.capacityRows.getD t 0 ≤ rows.getD t 0 ∧ rows.getD t 0 ≤ 2 ^ s.heights.getD t 0
+
+instance (s : Shape) (rows : List ℕ) : Decidable (s.RowsFit rows) := inferInstanceAs (Decidable (_ ∧ _))
 
 /-- `Shape::constraint_vars`: the domain of the constraint quotient, the largest table or the memory. -/
 def Shape.constraintVars (s : Shape) : ℕ := (s.heights ++ [s.logMemory]).foldl max 0
@@ -233,8 +256,8 @@ def tablePart (t : Table) (logHeight : ℕ) (weights : Array E) (beta : E) (w : 
 
 /-- **The constraint quotient's identity** (step 5): its relation on `C1` (but for `Q_W(t)`, sent) and the
 quotient's degree. -/
-def constraintRelation (shape : Shape) (parts : List TablePart) (publicWords : List E) (gamma t
-    constraintValue : E) (w : List E) : Relation × ℕ := Id.run do
+def constraintRelation (shape : Shape) (rowCounts : List ℕ) (parts : List TablePart) (publicWords : List E)
+    (gamma t constraintValue : E) (w : List E) : Relation × ℕ := Id.run do
   let heights := shape.heights
   let rW := shape.constraintVars
   let mut known : E := 0
@@ -244,7 +267,8 @@ def constraintRelation (shape : Shape) (parts : List TablePart) (publicWords : L
   for (table, part) in tables.zip parts do
     let r := heights.getD table.opcode 0
     let n := 2 ^ r
-    let rows := shape.tableRows.getD table.opcode 0
+    let rows := rowCounts.getD table.opcode 0
+    let capacity := shape.capacityRows.getD table.opcode 0
     let lift := vanishingRatio w r rW
     let padding := suffixVanishing w rows r
     -- JUMP: b + v_cond w, v_cond (b + 1).
@@ -266,7 +290,7 @@ def constraintRelation (shape : Shape) (parts : List TablePart) (publicWords : L
     terms := terms.push (term (.inverse table.opcode) (w.take r) (g * counters))
     known := known + g
     let counts := table.countColumns.length
-    degree := max degree ((n - 1) * (1 + counts) + (n - rows) - n)
+    degree := max degree ((n - 1) * (1 + counts) + (n - capacity) - n)
     -- BLAKE2S's limb copies equal q_flock's limbs: copy_j − ℓ_j, ℓ_j read through y(t).
     if table.opcode = opBlake2s then
       let y := coordinatesAt t (coordinateFunctionals r)
@@ -293,7 +317,7 @@ def constraintRelation (shape : Shape) (parts : List TablePart) (publicWords : L
 /-- **The heap's relations** (step 6) on `C2`, and the leaf quotients' columns: `T(t)`, the tree, the root,
 each block's leaf identity (`R_b(o_b + t) P_pull + w_r(t) Q_b(t) = P_push`, `R_u(o_u + t) = 1` on an unused
 block), the constraint quotient's chunks. -/
-def heapRelations (shape : Shape) (parts : List TablePart) (weights : Array E) (beta heapValue
+def heapRelations (shape : Shape) (rowCounts : List ℕ) (parts : List TablePart) (weights : Array E) (beta heapValue
     constraintValue memoryPull memoryPush bytecodePull bytecodePush : E) (w : List E)
     (constraintChunks : List ℕ) : List Relation × List (Column × ℕ × Bool) := Id.run do
   let heap := shape.heap
@@ -328,10 +352,11 @@ def heapRelations (shape : Shape) (parts : List TablePart) (weights : Array E) (
       | .table t =>
         -- Padding rows' leaves are 1, whatever they hold: (R P_pull + P_push) Z_pad + (R + 1) Z_act.
         let part := parts.getD t default
-        let rows := shape.tableRows.getD t 0
+        let rows := rowCounts.getD t 0
+        let capacity := shape.capacityRows.getD t 0
         let active := prefixVanishing w rows
         let padding := suffixVanishing w rows block.r
-        let d := (max part.pullDegree part.pushDegree) * (n - 1) + (n - rows) - n
+        let d := (max part.pullDegree part.pushDegree) * (n - 1) + (n - capacity) - n
         some (part.pull * padding + active, part.push * padding + active, d)
     match leaf with
     | none => relations := relations.push ⟨[term .heap mixed 1], 1⟩
@@ -344,10 +369,10 @@ def heapRelations (shape : Shape) (parts : List TablePart) (weights : Array E) (
   relations := relations.push ⟨quotientTerms .constraintQuotient constraintChunks w 1, constraintValue⟩
   return (relations.toList, columns.toList)
 
-/-- **The verifier** over the permutation `F` (`reduce`, SPEC.md §4–§8): `publicWords` are the public
-input's four 64-bit words, low first. -/
-def reduceWith (shape : Shape) (publicWords : List E) (blake2s : Blake2s) (mode : ClaimsMode) :
-    ChanM m Reduced := do
+/-- **The verifier** over the permutation `F` (`reduce`, SPEC.md §4–§8), at the shape `shape` and the row
+counts `rows`: `publicWords` are the public input's four 64-bit words, low first. -/
+def reduceWith (shape : Shape) (rows : List ℕ) (publicWords : List E) (blake2s : Blake2s)
+    (mode : ClaimsMode) : ChanM m Reduced := do
   let heights := shape.heights
   let heap := shape.heap
   let rW := shape.constraintVars
@@ -396,7 +421,7 @@ def reduceWith (shape : Shape) (publicWords : List E) (blake2s : Blake2s) (mode 
   let constraintValue ← nextScalar (m := m)
   -- 5. The constraint quotient's identity, on C1 but for Q_W(t), which is sent.
   let (constraint, quotientDegree) :=
-    constraintRelation shape parts.toList publicWords gamma t constraintValue w
+    constraintRelation shape rows parts.toList publicWords gamma t constraintValue w
   relations := relations.push constraint
   let constraintChunks := chunks (quotientDegree + 1)
   let c2Columns : List (Column × ℕ × Bool) :=
@@ -404,7 +429,7 @@ def reduceWith (shape : Shape) (publicWords : List E) (blake2s : Blake2s) (mode 
       (constraintChunks.zip (List.range constraintChunks.length)).map fun (e, c) ↦
         (Column.constraintQuotient c, e, true)
   -- 6. C2: the heap's tree, root and leaves, and Q_W's value.
-  let (heapRels, leafColumns) := heapRelations shape parts.toList weights beta heapValue constraintValue
+  let (heapRels, leafColumns) := heapRelations shape rows parts.toList weights beta heapValue constraintValue
     memoryPull memoryPush bytecodePull bytecodePush w constraintChunks
   relations := relations ++ heapRels.toArray
   let c2Columns := c2Columns ++ leafColumns

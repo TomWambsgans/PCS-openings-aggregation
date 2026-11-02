@@ -49,13 +49,14 @@ section With
 
 variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
 
-/-- **The verifier on calldata** over `F` (`rust_verifier`): the seed of the IV and the public input, the
-walk, nothing of the stream left. -/
-def runWith (shape : Shape) (iv publicInput : List UInt8) (stream : Array UInt8) (blake2s : Blake2s)
-    (mode : ClaimsMode) : m Outcome := do
-  let seed ← seedWith F iv publicInput
+/-- **The verifier on calldata** over `F` (`rust_verifier`): the seed of the IV, the public input and the
+`announced` bytes (none at `cee6363`/`b948bfc`; the row counts under REVIEW-M1 F1, `rowsBytes`), the walk at
+the row counts `rows`, nothing of the stream left. -/
+def runWith (shape : Shape) (rows : List ℕ) (iv publicInput announced : List UInt8) (stream : Array UInt8)
+    (blake2s : Blake2s) (mode : ClaimsMode) : m Outcome := do
+  let seed ← seedWith F iv (publicInput ++ announced)
   let walk : ChanM m Reduced := do
-    let r ← reduceWith F shape (publicWordsOf publicInput) blake2s mode
+    let r ← reduceWith F shape rows (publicWordsOf publicInput) blake2s mode
     finish (m := m)
     return r
   let (result, chan) ← (walk.run).run (Chan.start seed stream)
@@ -64,9 +65,9 @@ def runWith (shape : Shape) (iv publicInput : List UInt8) (stream : Array UInt8)
 end With
 
 /-- The run over Keccak-f[1600]: the deployed contract's computation. -/
-def run (shape : Shape) (iv publicInput : List UInt8) (stream : Array UInt8) (blake2s : Blake2s)
-    (mode : ClaimsMode) : Outcome :=
-  Id.run (runWith (m := Id) (fun s ↦ pure (keccakF1600 s)) shape iv publicInput stream blake2s mode)
+def run (shape : Shape) (rows : List ℕ) (iv publicInput : List UInt8) (stream : Array UInt8)
+    (blake2s : Blake2s) (mode : ClaimsMode) : Outcome :=
+  Id.run (runWith (m := Id) (fun s ↦ pure (keccakF1600 s)) shape rows iv publicInput [] stream blake2s mode)
 
 /-! ### The setup constants -/
 
@@ -82,8 +83,18 @@ def programIv : List UInt8 :=
   [0xb5, 0x41, 0x04, 0x5c, 0x98, 0x65, 0x5d, 0xb5, 0xa8, 0xaa, 0xc6, 0x1e, 0xfd, 0xb0, 0xad, 0xea, 0x1e, 0xaf,
     0xab, 0x5f, 0x51, 0x02, 0xa4, 0xe3, 0xf9, 0x3d, 0xf9, 0xc7, 0x53, 0x27, 0x1e, 0x1e]
 
-/-- `Shape::of`: the measured shape's memory, the bytecode's instructions (`log₂ len − BUS_BITS`), the rows. -/
-def shapeOf (logMemory : ℕ) (tableRows : List ℕ) : Shape := ⟨logMemory, bytecodeLogLen - busBits, tableRows⟩
+/-- `Shape::of` at `cee6363`: the memory, the bytecode's instructions (`log₂ len − BUS_BITS`), the heights
+`⌈log₂ rows⌉`, the quotients sized for the rows themselves (the contract's constants). -/
+def shapeWith (logMemory logBytecode : ℕ) (tableRows : List ℕ) : Shape :=
+  ⟨logMemory, logBytecode, tableRows.map log2Ceil, tableRows⟩
+
+/-- A measured shape (the aggregation guest's `2^19` instructions). -/
+def shapeOf (logMemory : ℕ) (tableRows : List ℕ) : Shape := shapeWith logMemory (bytecodeLogLen - busBits) tableRows
+
+/-- The row counts as the seed absorbs them under REVIEW-M1 F1 (**provisional**: the Rust has not fixed the
+encoding): each an 8-byte big-endian word, XOR to BLAKE2S. -/
+def rowsBytes (rows : List ℕ) : List UInt8 :=
+  rows.flatMap fun n ↦ (List.range 8).map fun k ↦ (n >>> (8 * (7 - k))).toUInt8
 
 /-- **The measured shapes** (`WORKLOADS`, `shapes.rs`): name, signatures, shape (rows in leanVM's order XOR,
 MUL, SET, DEREF, JUMP, BLAKE2S). -/
@@ -95,8 +106,9 @@ def workloads : List (String × ℕ × Shape) :=
     ("xmss1290", 1290, shapeOf 22 [236343, 252019, 287373, 177391, 104394, 260605]),
     ("xmss2000", 2000, shapeOf 22 [366327, 390501, 442955, 274831, 161790, 404025])]
 
-/-- The shape of a workload by name. -/
-def shapeNamed (n : String) : Option Shape := (workloads.find? (·.1 == n)).map (·.2.2)
+/-- The shape of a workload by name, and its row counts. -/
+def shapeNamed (n : String) : Option (Shape × List ℕ) :=
+  (workloads.find? (·.1 == n)).map fun (_, _, s) ↦ (s, s.capacityRows)
 
 /-- **The reference shape** (`shapes::reference`): 1,000 signatures, 1,023,109 cycles. -/
 def reference : Shape := shapeOf 21 [183266, 195439, 223851, 137591, 80937, 202025]
