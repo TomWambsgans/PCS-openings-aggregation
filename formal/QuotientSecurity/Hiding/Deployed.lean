@@ -23,6 +23,11 @@ from the opening's view up to the first fold) that differ on any event by at mos
 (`< 2^-188` at `|K| = 2^64`, `|E| = 2^192`). **`deployed_prEvent_le`**: the same for the witness and the
 quotient table at every supported size; `queries_card_le`: the positions WHIR's level 0 samples
 (`whirQueries0 log_n` of them) qualify.
+
+What ties the model to the Rust: `hiddenWord_eq` (the stack `Table::hidden` writes is
+`stackD (place t) + stackR rnd`), `weight_combinedW` (the combined weight is `opening::verify`'s closure
+on the Boolean cube), `novel_mle` (the code is the one `induced_weight` states). Assumed: `K` a field of
+characteristic 2 represented by 64-bit words (`Words`), `[E : K] = 3`, the NTT computing that code.
 -/
 
 namespace QuotientSecurity.Hiding
