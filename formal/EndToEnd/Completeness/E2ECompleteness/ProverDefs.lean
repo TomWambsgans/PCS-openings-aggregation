@@ -36,6 +36,16 @@ namespace E2ECompleteness
 commitment reads the stack with `getD`, `stackWordFast`). -/
 def colOf (μ : ℕ) (a : Array K) : Column μ := ⟨Vector.ofFn fun x ↦ a.getD x.val 0⟩
 
+/-- **The Statement's computed constants have their defining properties** (`Domain.lean`):
+`beta()` is a Cantor basis (`IsCantorBasis`, its `28` vectors), `coordinates(11)` reads the
+region's coordinates (`CoordinatesRead 11`) and `row_vanishing(24)` vanishes exactly on the `X`
+cells (`RowVanishingProperty 24`). Each is decidable; `PcsQuotientTest/Constants.lean` checks them
+by compiled evaluation. -/
+structure Constants : Prop where
+  cantor : IsCantorBasis
+  coords : CoordinatesRead 11
+  rows : RowVanishingProperty 24
+
 /-! ## The witness table -/
 
 /-- **The witness table's entry `i`** (`witnessStack`, `Prover.lean`): the cells' coefficients
