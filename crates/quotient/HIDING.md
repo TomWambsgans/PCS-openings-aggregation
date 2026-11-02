@@ -320,8 +320,8 @@ layouts (not hiding, `2e2d17d`), the hidden ones cost about +9% of prover time a
 ## What remains open
 
 - The theorem's conditions now hold outside `B`, by the argument above, checked in its parts exactly; its Lean
-  formalization proves the argument's core for every challenge (below), and what is left is plumbing and the
-  solvers' span.
+  formalization proves the argument's core and the solvers' span for every challenge (below), and what is left
+  is plumbing.
 - The Fiat–Shamir transfer (programmable random oracle) and the reduction's own hiding are taken from
   `membership-zk.md` and the protocol's analysis, not redone.
 - The exact test of the whole view is on scaled-down layouts; at full size the argument rests on the steps above
@@ -367,12 +367,17 @@ What the end theorem (`hidden_prEvent_le_bound`, `Layout.lean`) still needs to u
 2. **The bridge** from stacks to entries: a stack change supported on one entry `y` has
    `roundsMap pos Φ W T = colRounds 6 Φ (W(·, y)) (T(·, y))` (the lane rounds decompose over entries), so
    `gadgetMoves Φ μ β ⊆ roundsMap '' kerMoves` and `column_reach` gives `RoundsReached`.
-3. **The solvers' span** `hsolve`: the fold weights of a cube of lanes in each half (`32 .. 40`, `0 .. 8`) span
-   `E` over `K` unless two of `φ_0, φ_1, φ_2` lie in `K` (the cube lemma above, which needs `[E : K] = 3`: no
-   quadratic subfield); or, with the existing `card_not_span_four_le`, four lanes of each cube in its pattern,
-   e.g. `(35, 34, 33, 39)` and `(3, 2, 1, 7)` with `a, b, c = 0, 1, 2`, at its bound `2^-127 + 13·2^-192` each.
+3. **The solvers' span** `hsolve`: proven (`Solve.lean`). `span_one_x_y_xy` is the cube lemma above
+   (`[E : K] = 3`, so the minimal polynomial of an `x` with `x² ∈ K + Kx` has degree 1), `span_face` its face of
+   the lane cube, and `hsolve_of_cube` gives `hsolve` for every `φ` with no coordinate in `{0, 1}` and at most one
+   of `φ_0, φ_1, φ_2` in `K` (`¬ TwoInK φ`), given lanes `32 .. 40` in the stack (`cube_true_subset`);
+   `prob_twoInK_le`: `Pr[TwoInK] ≤ 3·|K|²/|E|² = 3·2^-256`, and `prob_not_solvable_le` with the coordinates in
+   `{0, 1}`, `(12·|E| + 3·|K|²)/|E|²`. `Hiding.lean` checks the plug-in into `roundsReached`. Also, without the
+   cube lemma, `hsolve_of_four` from `(35, 34, 33, 39)` and `(3, 2, 1, 7)` and `prob_not_span_four_le` through
+   `card_not_span_four_le`: `2·((13 + |K|)·|E| + |K|⁴)/|E|²`, about `2^-126`.
 4. **(S)** for the random lanes `33 .. 40` (`witness_lane_pattern` and `quotient_lane_pattern` name the previous
-   design's lanes, which are now blocks): the same cube lemma, or `card_not_span_four_le` on `(35, 34, 33, 39)`.
+   design's lanes, which are now blocks): `span_cube_erase` (`Solve.lean`) is their span outside the same set;
+   what is left is a `FoldSpans` for `GadgetLayout`.
 5. Unchanged gaps: (Q) for WHIR's novel basis at `|Q| ≤ 225 < D` (`Interp.lean` proves it for a degree-graded
    basis), and the instantiation with the deployed layouts' constants.
 
