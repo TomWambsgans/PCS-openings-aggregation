@@ -19,17 +19,19 @@ F192 = F64[y] / (y^3 + y + 1),  2^192 elements  gf2_64x3.rs   CompPoly's BF64.Ex
 ```
 
 An `F64` is a 64-bit word whose bit `i` is the coefficient of `x^i` (Rust's `F64(u64)`); `+` is
-`xor` and `*` the carry-less product reduced modulo the pentanomial (`BF64.toBitVec_mul`). An `F192`
-is three `F64` limbs `c0, c1, c2`, the element `c0 + c1 y + c2 y^2` (Rust's
-`F192 { c0, c1, c2 }`); `+` is limbwise `xor` (`new_add_new`) and `*` the schoolbook product folded
-by `y^3 = y + 1` (`ofLimbs_mul_ofLimbs`). Both moduli are irreducible (`BF64.basePoly_irreducible`,
-Rabin's test checked by the kernel; `BF64.ext3Poly_irreducible`), so both are fields
-(`inferInstance : Field F192`), and `Fintype.card F192 = 2 ^ 192` (`card`).
+`xor` (`F64.toU64_add`) and `*` the carry-less product of the words reduced modulo the pentanomial
+(`F64.mul_def`; as polynomials over `GF(2)`, `F64.toPolyBF64_mul`). An `F192` is three `F64` limbs
+`c0, c1, c2`, the element `c0 + c1 y + c2 y^2` (Rust's `F192 { c0, c1, c2 }`); `+` is limbwise
+`xor` (`new_add_new`) and `*` the nine limb products folded by `y^3 = y + 1`, `y^4 = y^2 + y`
+(`ofLimbs_mul_ofLimbs`), the Rust's `software::mul` formula. Both moduli are irreducible
+(`BF64.basePoly_irreducible`, Rabin's test with its chains checked by the kernel, no
+`native_decide`; `BF64.ext3Poly_irreducible`), so both are fields (`inferInstance : Field F192`),
+and `Fintype.card F192 = 2 ^ 192` (`card`).
 
-Since a field's arithmetic is fixed by its modulus and its basis, `F192`'s arithmetic is the Rust's
-on every input (the Rust reduces carry-less products to the same canonical remainders); the test
-vectors in `formal/Field/Test.lean` check products and inverses computed by
-`crates/quotient/tests/lean_field_vectors.rs`.
+That the Rust computes these operations (its `reduce` folding `x^64 = 0x1B`, its Karatsuba and
+PMULL paths) is tested, not proved: `formal/Field/Test.lean` checks, in the kernel, products the Rust
+computes in `crates/quotient/tests/lean_field_vectors.rs` (and the Python reference vectors of
+`gf2_64x3.rs`), and inverses and a Frobenius by compiled evaluation.
 
 ## API
 
@@ -44,8 +46,10 @@ vectors in `formal/Field/Test.lean` check products and inverses computed by
   independent over `GF(2)`).
 
 The type is CompPoly's, so its `Field`, `DecidableEq` and `CharP _ 2` instances are; this file adds
-`Fintype F64` (hence `Fintype F192`). Ground terms evaluate in the kernel (`decide +kernel`) except
-inverses (an exponentiation to `2^192 - 2`); `#eval` and `#guard` run them all.
+`Fintype F64` (hence `Fintype F192`), defined as mumbai's `instFintypeK` is (`Fintype.ofFinite`, so
+the two agree by unfolding), and `Field/Sampleable.lean` the samplers, mumbai's. Ground terms
+evaluate in the kernel (`decide +kernel`, about a second a product) except inverses (an
+exponentiation to `2^192 - 2`); `#eval` and `#guard` run them all.
 -/
 
 open CompPoly.Extension Polynomial BinaryField
@@ -60,8 +64,8 @@ abbrev F64 : Type := BF64
 `BF64.Ext3`: three limbs, limb `i` the coefficient of `y^i`. -/
 abbrev F192 : Type := BF64.Ext3
 
-/-- An enumeration of `F64`, through its words. -/
-instance instFintypeF64 : Fintype F64 := Fintype.ofEquiv (Fin (2 ^ 64)) BF64.equivFin.symm
+/-- A proof-only enumeration of `F64`, as mumbai's `LeanVM.Parameters.instFintypeK`. -/
+noncomputable instance instFintypeF64 : Fintype F64 := Fintype.ofFinite F64
 
 /-! ## `F64` -/
 
@@ -120,6 +124,18 @@ theorem mul_def (a b : F64) :
 /-- The polynomial of an element determines it. -/
 theorem toPolyBF64_injective : Function.Injective BF64.toPolyBF64 := fun _ _ h =>
   BF64.toQuot_injective (congrArg (AdjoinRoot.mk BF64.basePoly) h)
+
+/-- **`*` is the product of the polynomials modulo `x^64 + x^4 + x^3 + x + 1`** (CompPoly's
+`toPoly_reduce`, `toPoly_carryLessMul`). -/
+theorem toPolyBF64_mul (a b : F64) :
+    BF64.toPolyBF64 (a * b) = BF64.toPolyBF64 a * BF64.toPolyBF64 b % BF64.basePoly := by
+  show toPoly (BF64.reduce (carryLessMul (w := 128) a.toBitVec b.toBitVec)) = _
+  rw [BF64.toPoly_reduce, toPoly_carryLessMul _ _ (by omega)]
+  rfl
+
+/-- `+` is the sum of the polynomials. -/
+theorem toPolyBF64_add (a b : F64) :
+    BF64.toPolyBF64 (a + b) = BF64.toPolyBF64 a + BF64.toPolyBF64 b := BF64.toPolyBF64_add a b
 
 /-- The polynomial of an element, as an additive map. -/
 noncomputable def toPolyHom : F64 →+ (ZMod 2)[X] where

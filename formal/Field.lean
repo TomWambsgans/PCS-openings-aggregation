@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Field.F192
+import Field.Sampleable
 import Field.Test
 
 /-- info: 'BF64.basePoly_irreducible' depends on axioms: [propext, Classical.choice, Quot.sound] -/

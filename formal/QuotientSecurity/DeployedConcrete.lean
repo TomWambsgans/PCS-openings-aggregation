@@ -2,6 +2,7 @@
 import QuotientSecurity.Deployed
 import QuotientSecurity.CantorExists
 import Field.F192
+import Field.Sampleable
 
 /-!
 # The deployed end theorem over `F192`
@@ -29,9 +30,6 @@ import Field.F192
 namespace QuotientSecurity
 
 open Primitives Finset
-
-/-- Uniform sampling of `F192`, by its enumeration. -/
-noncomputable instance instSampleableTypeF192 : SampleableType F192 := SampleableType.ofFintype F192
 
 /-- A Cantor basis of 24 vectors of `F192` exists (through `F64`, `exists_cantorBasis_big`). -/
 theorem nonempty_cantorBasis : Nonempty (CantorBasis F192 (22 + 2)) :=
