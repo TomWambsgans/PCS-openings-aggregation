@@ -139,17 +139,17 @@ theorem prEvent_and_eq_tsum {B U : Type} (mb : ProbComp B) (g : B → U) (P : U 
         refine tsum_congr fun u => ?_
         split_ifs <;> simp
 
-/-- **A table's row keeps its entropy given the joint view.** -/
-theorem prEvent_factor_le {A B V U Y : Type} [SampleableType A] [SampleableType B]
-    (Φ : A → U → V) (g : A → B → U) (h : A → B → Y) (δ : ℝ≥0∞)
-    (hδ : ∀ a u y, Pr{let b ← $ᵗ B}[g a b = u ∧ h a b = y] ≤ δ * Pr{let b ← $ᵗ B}[g a b = u])
-    (w : A → Y) (v : V) :
-    Pr{let s ← $ᵗ (A × B)}[Φ s.1 (g s.1 s.2) = v ∧ h s.1 s.2 = w s.1] ≤
+/-- **An event that keeps its entropy given a table's view keeps it given the joint view**: the
+secret is `(a, b)`, the view a function of `a` and of `g a b`. -/
+theorem prEvent_factor_le {A B V U : Type} [SampleableType A] [SampleableType B]
+    (Φ : A → U → V) (g : A → B → U) (E : A → B → Prop) (δ : ℝ≥0∞)
+    (hδ : ∀ a u, Pr{let b ← $ᵗ B}[g a b = u ∧ E a b] ≤ δ * Pr{let b ← $ᵗ B}[g a b = u])
+    (v : V) :
+    Pr{let s ← $ᵗ (A × B)}[Φ s.1 (g s.1 s.2) = v ∧ E s.1 s.2] ≤
       δ * Pr{let s ← $ᵗ (A × B)}[Φ s.1 (g s.1 s.2) = v] := by
   classical
-  have hprod : ($ᵗ (A × B) : ProbComp (A × B)) =
-      (do let a ← $ᵗ A; let b ← $ᵗ B; return (a, b)) := SampleableType.uniformSample_prod_eq_bind A B
-  rw [hprod, prEvent_bind_eq_tsum, prEvent_bind_eq_tsum, ← ENNReal.tsum_mul_left]
+  rw [SampleableType.uniformSample_prod_eq_bind A B, prEvent_bind_eq_tsum, prEvent_bind_eq_tsum,
+    ← ENNReal.tsum_mul_left]
   refine ENNReal.tsum_le_tsum fun a => ?_
   rw [mul_left_comm]
   refine mul_le_mul_right ?_ _
@@ -159,7 +159,7 @@ theorem prEvent_factor_le {A B V U Y : Type} [SampleableType A] [SampleableType 
     rw [show (($ᵗ B : ProbComp B) >>= fun b => (pure (a, b) : ProbComp (A × B))) =
         (fun b => (a, b)) <$> ($ᵗ B) by simp [map_eq_bind_pure_comp], prEvent_map]
   rw [hm, hm]
-  rw [prEvent_and_eq_tsum ($ᵗ B) (g a) (fun u => Φ a u = v) (fun b => h a b = w a)]
+  rw [prEvent_and_eq_tsum ($ᵗ B) (g a) (fun u => Φ a u = v) (fun b => E a b)]
   have hv : Pr{let b ← $ᵗ B}[Φ a (g a b) = v] =
       ∑' u, (if Φ a u = v then Pr{let b ← $ᵗ B}[g a b = u] else 0) := by
     have := prEvent_and_eq_tsum ($ᵗ B) (g a) (fun u => Φ a u = v) (fun _ => True)
@@ -167,7 +167,7 @@ theorem prEvent_factor_le {A B V U Y : Type} [SampleableType A] [SampleableType 
   rw [hv, ← ENNReal.tsum_mul_left]
   refine ENNReal.tsum_le_tsum fun u => ?_
   split_ifs
-  · exact hδ a u (w a)
+  · exact hδ a u
   · simp
 
 end Factor

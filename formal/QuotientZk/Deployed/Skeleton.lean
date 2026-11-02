@@ -75,8 +75,11 @@ abbrev Msg := List Item
 /-- The secret tables: `0` the witness table `R1`, `1` the quotient table `R2`. -/
 abbrev Tbl := Fin 2
 
+/-- A leaf position: at most `2^23` leaves (the quotient table's level 0, `2^(28 - 6 + 1)`). -/
+abbrev Pos := Fin (2 ^ 23)
+
 /-- The operations of the deployed prover. -/
-abbrev DSpec := OpSpec Inp Out Msg Tbl ℕ
+abbrev DSpec := OpSpec Inp Out Msg Tbl Pos
 
 /-- Keccak-256. -/
 def hashH (m : List UInt8) : OracleComp DSpec Bytes32 := do
@@ -100,7 +103,7 @@ def chalF (x : KSt) : OracleComp DSpec KSt := do
 
 /-- The digest of a secret table's level-0 leaf. -/
 def leafH (k : Tbl) (x : ℕ) : OracleComp DSpec Bytes32 := do
-  let a ← liftM (DSpec.query (.leaf k x))
+  let a ← liftM (DSpec.query (.leaf k ⟨x % 2 ^ 23, Nat.mod_lt _ (by positivity)⟩))
   return a.1
 
 /-- The next message. -/
