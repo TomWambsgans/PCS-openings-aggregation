@@ -96,8 +96,13 @@ noncomputable def tableEvalN (V : ℕ) (T : ℕ → K) (p : List E) : E :=
   ∑ t ∈ range (2 ^ V), ofK (T t) * eqEval (boolPoint V t) p
 
 theorem boolPoint_succ (m k : ℕ) :
-    boolPoint (m + 1) k = (if k.testBit 0 then 1 else 0) :: boolPoint m (k / 2) :=
-  WhirBridge.boolPoint_succ' m k
+    boolPoint (m + 1) k = (if k.testBit 0 then 1 else 0) :: boolPoint m (k / 2) := by
+  apply List.ext_getElem
+  · simp [boolPoint]
+  · intro i h1 h2
+    cases i with
+    | zero => simp [boolPoint]
+    | succ i => simp [boolPoint, Nat.testBit_succ]
 
 /-- `eq` of a number's bits and a point is the product of `mle`'s factors. -/
 theorem eqEval_boolPoint : ∀ (V n : ℕ) (u : Fin V → E),

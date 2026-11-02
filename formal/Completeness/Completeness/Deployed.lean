@@ -303,7 +303,7 @@ theorem completeness_deployed (I : Instance E) (BK : CantorBasis K (22 + 2))
   obtain ⟨πQ, hQ, rfl⟩ := Option.map_eq_some_iff.mp hπ
   refine ⟨?_, ?_, ?_, ?_⟩
   · exact (Reduction.rustCheck_honest I run.g run.α run.β run.t).mpr ht
-  · refine Wi.complete H F (natTable run.cW) padW _ fuel πW
+  · refine Wi.complete H F (natTable run.cW) padW _ fuel πW rfl
       (fun t ht' => witness_inChunks BK (cellBitsK M s) m t fun hin => ht' (hWheld t hin))
       (fun c hc' => ?_) hW
     rw [List.mem_singleton] at hc'
@@ -311,7 +311,7 @@ theorem completeness_deployed (I : Instance E) (BK : CantorBasis K (22 + 2))
     refine ⟨?_, hWv ▸ c1⟩
     rw [hWv]
     simp [witnessClaim]
-  · refine wiringOpening.complete H F (natTable (wiringTableK BK I.wiring)) (fun _ _ => 0) _ fuel πσ
+  · refine wiringOpening.complete H F (natTable (wiringTableK BK I.wiring)) (fun _ _ => 0) _ fuel πσ rfl
       (fun t ht' => by
         unfold natTable
         exact if_neg (show ¬ t < 2 ^ (22 + 2) from ht'))
@@ -319,7 +319,7 @@ theorem completeness_deployed (I : Instance E) (BK : CantorBasis K (22 + 2))
     rw [List.mem_singleton] at hc'
     subst hc'
     exact ⟨by simp [wiringClaim, wiringOpening], c2⟩
-  · refine Qo.complete H F (natTable run.cQ) padQ _ fuel πQ
+  · refine Qo.complete H F (natTable run.cQ) padQ _ fuel πQ rfl
       (fun t ht' => quotient_inChunks run.R (qGateKOf run.R) t fun hin => ht' (hQheld t hin))
       (fun c hc' => ?_) hQ
     rw [hQv]

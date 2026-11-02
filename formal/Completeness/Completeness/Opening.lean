@@ -140,14 +140,17 @@ the claims have the table's length and hold of the stack. -/
 theorem runI_variantProg {S : Stacking} {R : ℕ} (hw : Whir.Admissible S.logN R)
     (q : Column S.logN) (claims : List Claim) (hlen : ∀ c ∈ claims, c.point.length = S.vars)
     (hholds : ∀ c ∈ claims, StackClaim.Holds S.logN (S.weight c, c.value) q)
+    (hextra : ∀ sc ∈ S.extra, StackClaim.Holds S.logN sc q)
     (chal : List Ev → E) :
     runI (variantProg S R claims) (honestProver S R q claims) chal = some true ∧
       shapedI (variantProg S R claims) (honestProver S R q claims) chal := by
   rw [variantProg_eq_openingProgram S R claims hlen]
   refine Whir.Complete.runI_openingProgram hw q (S.claims claims) (fun c hc ↦ ?_)
     (fun c hc ↦ isMultilinearFn_of_isMultiaffine (S.isMultiaffine_claims claims c hc)) chal
-  obtain ⟨c', hc', rfl⟩ := List.mem_map.1 hc
-  exact hholds c' hc'
+  rcases List.mem_append.1 hc with hc | hc
+  · obtain ⟨c', hc', rfl⟩ := List.mem_map.1 hc
+    exact hholds c' hc'
+  · exact hextra c hc
 
 /-- The word the honest prover commits first: the stack's. -/
 theorem honestProver_word_nil (S : Stacking) (R : ℕ) (q : Column S.logN) (claims : List Claim) :
@@ -170,14 +173,15 @@ transcript's start. -/
 theorem honestOpen_accepts (H : Bytes → Digest) (F : KeccakState → KeccakState) {S : Stacking}
     {R : ℕ} (hw : Whir.Admissible S.logN R) (pre : Bytes) (q : Column S.logN)
     (claims : List Claim) (hlen : ∀ c ∈ claims, c.point.length = S.vars)
-    (hholds : ∀ c ∈ claims, StackClaim.Holds S.logN (S.weight c, c.value) q) (fuel : ℕ)
+    (hholds : ∀ c ∈ claims, StackClaim.Holds S.logN (S.weight c, c.value) q)
+    (hextra : ∀ sc ∈ S.extra, StackClaim.Holds S.logN sc q) (fuel : ℕ)
     {π : Proof} (hπ : honestOpen H F S R pre q claims fuel = some π) :
     rootOf π = some (honestRoot H S R q) ∧
       runProofWithHash (m := Id) H F (variantProg S R claims) (honestSeed H F pre claims) π =
         true := by
   refine ⟨?_, runProof_prove H F _ _ _ fuel
-    (fun chal ↦ (runI_variantProg hw q claims hlen hholds chal).1)
-    (fun chal ↦ (runI_variantProg hw q claims hlen hholds chal).2) hπ⟩
+    (fun chal ↦ (runI_variantProg hw q claims hlen hholds hextra chal).1)
+    (fun chal ↦ (runI_variantProg hw q claims hlen hholds hextra chal).2) hπ⟩
   unfold honestOpen at hπ
   rw [WhirBridge.variantProg_eq hw] at hπ
   exact rootOf_prove_commit H F hπ
@@ -239,7 +243,8 @@ it starts with the honest root, and the program accepts it. -/
 theorem exists_honestOpen_accepts (H : Bytes → Digest) (F : KeccakState → KeccakState)
     {S : Stacking} {R : ℕ} (hw : Whir.Admissible S.logN R) (pre : Bytes) (q : Column S.logN)
     (claims : List Claim) (hlen : ∀ c ∈ claims, c.point.length = S.vars)
-    (hholds : ∀ c ∈ claims, StackClaim.Holds S.logN (S.weight c, c.value) q) (fuel : ℕ)
+    (hholds : ∀ c ∈ claims, StackClaim.Holds S.logN (S.weight c, c.value) q)
+    (hextra : ∀ sc ∈ S.extra, StackClaim.Holds S.logN sc q) (fuel : ℕ)
     (hpow : ∀ sp, findNonce F Whir.queryGrindingBits sp fuel ≠ none) :
     ∃ π, honestOpen H F S R pre q claims fuel = some π ∧
       rootOf π = some (honestRoot H S R q) ∧
@@ -247,7 +252,7 @@ theorem exists_honestOpen_accepts (H : Bytes → Digest) (F : KeccakState → Ke
         true := by
   obtain ⟨π, hπ⟩ := Option.ne_none_iff_exists'.mp
     (honestOpen_ne_none H F S R pre q claims fuel hpow)
-  exact ⟨π, hπ, honestOpen_accepts H F hw pre q claims hlen hholds fuel hπ⟩
+  exact ⟨π, hπ, honestOpen_accepts H F hw pre q claims hlen hholds hextra fuel hπ⟩
 
 /-! ## `opening::verify` -/
 
@@ -257,15 +262,17 @@ weight `Layout.claimWeight` paired with the stack is its value), the verifier ac
 the honest prover produces, from the layout's prefix, against the honest root. -/
 theorem openingVerify_honest (H : Bytes → Digest) (F : KeccakState → KeccakState)
     (L : WhirBridge.Layout) {R : ℕ} (hw : Whir.Admissible L.logN R) (q : Column L.logN)
-    (claims : List Claim) (hlen : ∀ c ∈ claims, c.point.length = L.vars)
-    (hholds : ∀ c ∈ claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q) (fuel : ℕ)
+    (claims : List Claim) (hne : claims.isEmpty = false)
+    (hlen : ∀ c ∈ claims, c.point.length = L.vars)
+    (hholds : ∀ c ∈ claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q)
+    (hextra : ∀ sc ∈ L.extra, StackClaim.Holds L.logN sc q) (fuel : ℕ)
     {π : Proof}
     (hπ : honestOpen H F L.stacking R (openingPrefix L R) q claims fuel = some π) :
     openingVerifyWithHash (m := Id) H F L R (honestRoot H L.stacking R q) claims π = true := by
   obtain ⟨hroot, hacc⟩ :=
-    honestOpen_accepts H F (S := L.stacking) hw (openingPrefix L R) q claims hlen hholds fuel hπ
+    honestOpen_accepts H F (S := L.stacking) hw (openingPrefix L R) q claims hlen hholds hextra fuel hπ
   unfold openingVerifyWithHash
-  rw [ite_eq_left hlen]
+  rw [ite_eq_left ⟨hne, hlen⟩]
   show (if rootOf π = some (honestRoot H L.stacking R q) then
     runProofWithHash (m := Id) H F (WhirBridge.ourProg L R claims)
       (honestSeed H F (openingPrefix L R) claims) π else pure false) = true
@@ -277,14 +284,16 @@ search finds a nonce below `fuel` from every sponge, the honest prover produces 
 verifier accepts it against the honest root. -/
 theorem exists_openingVerify_honest (H : Bytes → Digest) (F : KeccakState → KeccakState)
     (L : WhirBridge.Layout) {R : ℕ} (hw : Whir.Admissible L.logN R) (q : Column L.logN)
-    (claims : List Claim) (hlen : ∀ c ∈ claims, c.point.length = L.vars)
-    (hholds : ∀ c ∈ claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q) (fuel : ℕ)
+    (claims : List Claim) (hne : claims.isEmpty = false)
+    (hlen : ∀ c ∈ claims, c.point.length = L.vars)
+    (hholds : ∀ c ∈ claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q)
+    (hextra : ∀ sc ∈ L.extra, StackClaim.Holds L.logN sc q) (fuel : ℕ)
     (hpow : ∀ sp, findNonce F Whir.queryGrindingBits sp fuel ≠ none) :
     ∃ π, honestOpen H F L.stacking R (openingPrefix L R) q claims fuel = some π ∧
       openingVerifyWithHash (m := Id) H F L R (honestRoot H L.stacking R q) claims π = true := by
   obtain ⟨π, hπ⟩ := Option.ne_none_iff_exists'.mp
     (honestOpen_ne_none H F L.stacking R (openingPrefix L R) q claims fuel hpow)
-  exact ⟨π, hπ, openingVerify_honest H F L hw q claims hlen hholds fuel hπ⟩
+  exact ⟨π, hπ, openingVerify_honest H F L hw q claims hne hlen hholds hextra fuel hπ⟩
 
 /-- **Completeness of the protocol's three openings**, for every supported size
 `17 ≤ log_rows ≤ 22`, at rate `1/2`: the witness, wiring and quotient layouts. -/
@@ -292,8 +301,10 @@ theorem ours_complete (H : Bytes → Digest) (F : KeccakState → KeccakState) (
     (h1 : WhirBridge.minLogRows ≤ r) (h2 : r ≤ WhirBridge.maxLogRows) (L : WhirBridge.Layout)
     (hLr : L = WhirBridge.witnessLayout r ∨ L = WhirBridge.wiringLayout r ∨
       L = WhirBridge.quotientLayout r)
-    (q : Column L.logN) (claims : List Claim) (hlen : ∀ c ∈ claims, c.point.length = L.vars)
-    (hholds : ∀ c ∈ claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q) (fuel : ℕ)
+    (q : Column L.logN) (claims : List Claim) (hne : claims.isEmpty = false)
+    (hlen : ∀ c ∈ claims, c.point.length = L.vars)
+    (hholds : ∀ c ∈ claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q)
+    (hextra : ∀ sc ∈ L.extra, StackClaim.Holds L.logN sc q) (fuel : ℕ)
     {π : Proof}
     (hπ : honestOpen H F L.stacking WhirBridge.logInvRate (openingPrefix L WhirBridge.logInvRate)
       q claims fuel = some π) :
@@ -303,21 +314,23 @@ theorem ours_complete (H : Bytes → Digest) (F : KeccakState → KeccakState) (
   have hw : Whir.Admissible L.logN WhirBridge.logInvRate := by
     rcases hLr with rfl | rfl | rfl
     exacts [hok.1, hok.2.1, hok.2.2]
-  exact openingVerify_honest H F L hw q claims hlen hholds fuel hπ
+  exact openingVerify_honest H F L hw q claims hne hlen hholds hextra fuel hπ
 
 /-- **The deployed size**, `log_rows = 22`. -/
 theorem ours_complete_22 (H : Bytes → Digest) (F : KeccakState → KeccakState)
     (L : WhirBridge.Layout)
     (hLr : L = WhirBridge.witnessLayout 22 ∨ L = WhirBridge.wiringLayout 22 ∨
       L = WhirBridge.quotientLayout 22)
-    (q : Column L.logN) (claims : List Claim) (hlen : ∀ c ∈ claims, c.point.length = L.vars)
-    (hholds : ∀ c ∈ claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q) (fuel : ℕ)
+    (q : Column L.logN) (claims : List Claim) (hne : claims.isEmpty = false)
+    (hlen : ∀ c ∈ claims, c.point.length = L.vars)
+    (hholds : ∀ c ∈ claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q)
+    (hextra : ∀ sc ∈ L.extra, StackClaim.Holds L.logN sc q) (fuel : ℕ)
     {π : Proof}
     (hπ : honestOpen H F L.stacking WhirBridge.logInvRate (openingPrefix L WhirBridge.logInvRate)
       q claims fuel = some π) :
     openingVerifyWithHash (m := Id) H F L WhirBridge.logInvRate
       (honestRoot H L.stacking WhirBridge.logInvRate q) claims π = true :=
-  ours_complete H F 22 (by decide) (by decide) L hLr q claims hlen hholds fuel hπ
+  ours_complete H F 22 (by decide) (by decide) L hLr q claims hne hlen hholds hextra fuel hπ
 
 /-! ## Against the random oracles -/
 
@@ -348,7 +361,8 @@ with prefix `pre`), makes the seeded verifier reject with probability at most
 `openingError fuel`. -/
 theorem romComplete_opening {S : Stacking} {R : ℕ} (hw : Whir.Admissible S.logN R)
     (pre : Bytes) (x : WhirBridge.Stmt S) (q : Column S.logN)
-    (hholds : ∀ c ∈ x.claims, StackClaim.Holds S.logN (S.weight c, c.value) q) {fuel : ℕ}
+    (hholds : ∀ c ∈ x.claims, StackClaim.Holds S.logN (S.weight c, c.value) q)
+    (hextra : ∀ sc ∈ S.extra, StackClaim.Holds S.logN sc q) {fuel : ℕ}
     (hfuel : fuel ≤ 2 ^ 64) :
     Pr{let z ← romExperiment
         (honestComp (WhirBridge.famSeed pre x) (variantProg S R x.claims)
@@ -358,8 +372,8 @@ theorem romComplete_opening {S : Stacking} {R : ℕ} (hw : Whir.Admissible S.log
   have h := romComplete (variantProg S R x.claims) (honestProver S R q x.claims)
     (WhirBridge.famSeed pre x) (bits := Whir.queryGrindingBits) (by decide) (by decide) hfuel
     (fun _ _ _ hg ↦ grind_bits_variantProg hg)
-    (fun chal ↦ (runI_variantProg hw q x.claims x.wide hholds chal).1)
-    (fun chal ↦ (runI_variantProg hw q x.claims x.wide hholds chal).2)
+    (fun chal ↦ (runI_variantProg hw q x.claims x.wide hholds hextra chal).1)
+    (fun chal ↦ (runI_variantProg hw q x.claims x.wide hholds hextra chal).2)
     (WhirBridge.costLE_variant S R x.claims)
   exact h.trans (le_of_eq rfl)
 
@@ -367,7 +381,8 @@ theorem romComplete_opening {S : Stacking} {R : ℕ} (hw : Whir.Admissible S.log
 stacking and prefix. -/
 theorem romComplete_layout (L : WhirBridge.Layout) {R : ℕ} (hw : Whir.Admissible L.logN R)
     (x : WhirBridge.Stmt L.stacking) (q : Column L.logN)
-    (hholds : ∀ c ∈ x.claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q) {fuel : ℕ}
+    (hholds : ∀ c ∈ x.claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q)
+    (hextra : ∀ sc ∈ L.extra, StackClaim.Holds L.logN sc q) {fuel : ℕ}
     (hfuel : fuel ≤ 2 ^ 64) :
     Pr{let z ← romExperiment
         (honestComp (WhirBridge.famSeed (openingPrefix L R) x) (variantProg L.stacking R x.claims)
@@ -375,7 +390,7 @@ theorem romComplete_layout (L : WhirBridge.Layout) {R : ℕ} (hw : Whir.Admissib
         (verifierComp (WhirBridge.famSeed (openingPrefix L R) x)
           (variantProg L.stacking R x.claims))}[z.1.2 = false] ≤
       openingError fuel :=
-  romComplete_opening (S := L.stacking) hw (openingPrefix L R) x q hholds hfuel
+  romComplete_opening (S := L.stacking) hw (openingPrefix L R) x q hholds hextra hfuel
 
 /-- **The numbers**: at a fuel of `2^25` nonces per proof of work, the completeness error is
 below `2^-277`: at most `2^43` queries, each missing with probability
@@ -413,12 +428,13 @@ theorem runProofWithHash_commit_of_rootOf_none {m : Type → Type} [Monad m] [La
 the proof's first two scalars encode (any root if they encode none), `opening::verify` as an
 oracle computation is the verifier of `romComplete_opening` from the layout's seeding. -/
 theorem ourVerifier_rootOf (L : WhirBridge.Layout) {R : ℕ} (hw : Whir.Admissible L.logN R)
-    (x : WhirBridge.Stmt L.stacking) (π : Proof) :
+    (x : WhirBridge.Stmt L.stacking) (hne : x.claims.isEmpty = false) (π : Proof) :
     WhirBridge.ourVerifier L R (((rootOf π).getD default, x), π) =
       verifierComp (WhirBridge.famSeed (openingPrefix L R) x)
         (variantProg L.stacking R x.claims) π := by
   rw [← WhirBridge.verifierFam_fam (openingPrefix L R) (x, π),
     WhirBridge.verifierFam_eq L R (((rootOf π).getD default, x), π), WhirBridge.ourVerifier_eq]
+  rw [if_pos hne]
   refine bind_congr fun seed ↦ ?_
   rcases hr : rootOf π with _ | r
   · rw [ite_eq_right (by simp), WhirBridge.variantProg_eq hw,
@@ -441,8 +457,9 @@ admissible shape, a statement whose claims hold of the stack `q` and a fuel of a
 nonces: in the experiment of `opening_sound` with the honest prover as the adversary,
 `opening::verify` rejects with probability at most `openingError fuel`. -/
 theorem romComplete_ours (L : WhirBridge.Layout) {R : ℕ} (hw : Whir.Admissible L.logN R)
-    (x : WhirBridge.Stmt L.stacking) (q : Column L.logN)
-    (hholds : ∀ c ∈ x.claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q) {fuel : ℕ}
+    (x : WhirBridge.Stmt L.stacking) (q : Column L.logN) (hne : x.claims.isEmpty = false)
+    (hholds : ∀ c ∈ x.claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q)
+    (hextra : ∀ sc ∈ L.extra, StackClaim.Holds L.logN sc q) {fuel : ℕ}
     (hfuel : fuel ≤ 2 ^ 64) :
     Pr{let z ← romExperiment (honestOurs L R x q fuel) (WhirBridge.ourVerifier L R)}[
         z.1.2 = false] ≤ openingError fuel := by
@@ -451,9 +468,9 @@ theorem romComplete_ours (L : WhirBridge.Layout) {R : ℕ} (hw : Whir.Admissible
   have hV : (fun π ↦ WhirBridge.ourVerifier L R (((rootOf π).getD default, x), π)) =
       verifierComp (WhirBridge.famSeed (openingPrefix L R) x)
         (variantProg L.stacking R x.claims) :=
-    funext fun π ↦ ourVerifier_rootOf L hw x π
+    funext fun π ↦ ourVerifier_rootOf L hw x hne π
   rw [hV]
-  exact romComplete_layout L hw x q hholds hfuel
+  exact romComplete_layout L hw x q hholds hextra hfuel
 
 /-- **The protocol's three openings in the random-oracle model**, for every supported size
 `17 ≤ log_rows ≤ 22` at rate `1/2`: at a fuel of `2^25` nonces, `opening::verify` rejects the
@@ -462,8 +479,9 @@ theorem ours_romComplete (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r)
     (h2 : r ≤ WhirBridge.maxLogRows) (L : WhirBridge.Layout)
     (hLr : L = WhirBridge.witnessLayout r ∨ L = WhirBridge.wiringLayout r ∨
       L = WhirBridge.quotientLayout r)
-    (x : WhirBridge.Stmt L.stacking) (q : Column L.logN)
-    (hholds : ∀ c ∈ x.claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q) :
+    (x : WhirBridge.Stmt L.stacking) (q : Column L.logN) (hne : x.claims.isEmpty = false)
+    (hholds : ∀ c ∈ x.claims, StackClaim.Holds L.logN (L.claimWeight c, c.value) q)
+    (hextra : ∀ sc ∈ L.extra, StackClaim.Holds L.logN sc q) :
     Pr{let z ← romExperiment (honestOurs L WhirBridge.logInvRate x q (2 ^ 25))
         (WhirBridge.ourVerifier L WhirBridge.logInvRate)}[z.1.2 = false] ≤
       (2 : ℝ≥0∞)⁻¹ ^ 277 := by
@@ -471,7 +489,7 @@ theorem ours_romComplete (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r)
   have hw : Whir.Admissible L.logN WhirBridge.logInvRate := by
     rcases hLr with rfl | rfl | rfl
     exacts [hok.1, hok.2.1, hok.2.2]
-  exact (romComplete_ours L hw x q hholds (by norm_num)).trans openingError_le
+  exact (romComplete_ours L hw x q hne hholds hextra (by norm_num)).trans openingError_le
 
 end Rom
 

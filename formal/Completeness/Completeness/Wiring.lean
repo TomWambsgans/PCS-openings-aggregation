@@ -51,7 +51,7 @@ structure OpeningSystem where
   /-- **Completeness**: true claims on a table the layout holds open. -/
   complete : ∀ (H : Bytes → Digest) (F : KeccakState → KeccakState) (T : ℕ → K)
     (pad : ℕ → ℕ → K) (cs : List WhirBridge.Claim) (fuel : ℕ) (π : Proof),
-    (∀ t, ¬ Held t → T t = 0) →
+    cs.isEmpty = false → (∀ t, ¬ Held t → T t = 0) →
     (∀ c ∈ cs, c.point.length = vars ∧ tableEvalN vars T c.point = c.value) →
     prove H F (stack T pad) cs fuel = some π → verify H F (root H (stack T pad)) cs π = true
 
@@ -130,12 +130,15 @@ noncomputable def wiringOpening : OpeningSystem where
   prove H F q cs fuel := honestOpen H F wL.stacking WhirBridge.logInvRate
     (WhirBridge.openingPrefix wL WhirBridge.logInvRate) q cs fuel
   verify H F r cs π := WhirBridge.openingVerifyWithHash (m := Id) H F wL WhirBridge.logInvRate r cs π
-  complete H F T pad cs fuel π _ hcs hπ := by
+  complete H F T pad cs fuel π hne _ hcs hπ := by
     have hok := WhirBridge.layouts_ok WhirBridge.logRows (by decide) (by decide)
     have hw : Whir.Admissible wL.logN WhirBridge.logInvRate := hok.2.1
     have hval := (WhirBridge.layouts_valid WhirBridge.logRows (by decide) (by decide)).2.1
-    refine openingVerify_honest H F wL hw (fillPublic wL T) cs
-      (fun c hc ↦ by rw [wL_shape.2.1]; exact (hcs c hc).1) (fun c hc ↦ ?_) fuel hπ
+    refine openingVerify_honest H F wL hw (fillPublic wL T) cs hne
+      (fun c hc ↦ by rw [wL_shape.2.1]; exact (hcs c hc).1) (fun c hc ↦ ?_)
+      (fun sc hsc ↦ by
+        rw [WhirBridge.Layout.extra_of_none wL_shape.2.2.2.2] at hsc
+        exact absurd hsc List.not_mem_nil) fuel hπ
     rw [wL.holds_iff hval c (by rw [wL_shape.2.1]; exact (hcs c hc).1), wiring_tableEval]
     exact (hcs c hc).2
 

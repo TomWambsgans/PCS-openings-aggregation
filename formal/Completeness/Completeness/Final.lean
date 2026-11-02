@@ -49,7 +49,7 @@ structure HiddenOpening (L : WhirBridge.Layout) (s : ℕ) (Held : ℕ → Prop) 
   `Held`, whatever the padding. -/
   complete : ∀ (H : Bytes → Digest) (F : KeccakState → KeccakState) (T : ℕ → K)
     (pad : ℕ → ℕ → K) (cs : List WhirBridge.Claim) (fuel : ℕ) (π : Proof),
-    (∀ t, ¬ Held t → T t = 0) →
+    cs.isEmpty = false → (∀ t, ¬ Held t → T t = 0) →
     (∀ c ∈ cs, c.point.length = L.vars ∧ tableEvalN L.vars T c.point = c.value) →
     prove H F (L.fillNew s T pad) cs fuel = some π →
       verify H F (root H (L.fillNew s T pad)) cs π = true

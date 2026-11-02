@@ -12,7 +12,8 @@ The redesigned hidden layout of `crates/quotient/src/opening.rs` (commit `cbb527
   there if there are fewer, the overflow lane `OVERFLOW_LANE = 32`, `random` random lanes, then the
   other blocks (`opening.rs:178-184`); the overflow lane's pieces are each block lane's block's
   **first** piece `b << (log_lane − log_piece)`, in lane order, then the tails (`opening.rs:186-190`).
-  There is no share lane (`share := none`).
+  There is no share lane. (F2's `Layout.hidden` and `Layout.readHidden` are the same transcriptions,
+  `hiddenNew_eq`, `readNew_eq`; the constants are suffixed `N` here.)
 * `Layout.fillNew L s T pad` is `Table::hidden_in` (`opening.rs:479-521`), the table's entries `T`
   (what `entries` writes) and the random words an arbitrary `pad l y` (lane `l`, entry `y`), so that
   everything below holds for every padding: every lane's first piece is random; a block lane `b`
@@ -61,24 +62,24 @@ open WhirBridge LeanVM.Parameters LeanVM.Protocol Finset
 
 /-- `GADGET` (`opening.rs:60`): the gadget's entries, three patterns of three, the last of every
 lane's first piece. -/
-def gadget : ℕ := 9
+def gadgetN : ℕ := 9
 
 /-- `OVERFLOW_LANE` (`opening.rs:64`): the hidden layouts' overflow lane. -/
-def overflowLane : ℕ := 32
+def overflowLaneN : ℕ := 32
 
 /-- `MIN_RANDOM_LANES` (`opening.rs:67`). -/
 def minRandomLanes : ℕ := 7
 
 /-- `gadget_lanes(g)` (`opening.rs:71-74`): `0` and `31`, `1` and `30`, then the overflow lane
 alone. (The Rust panics for `g ≥ 3`; here that reads as pattern `2`.) -/
-def gadgetLanes : ℕ → List ℕ
+def gadgetLanesN : ℕ → List ℕ
   | 0 => [0, 31]
   | 1 => [1, 30]
-  | _ => [overflowLane]
+  | _ => [overflowLaneN]
 
 /-- `Layout::gadget_entry(g, i)` (`opening.rs:247-250`), for pieces of `2^s` entries:
 `2^s − GADGET + 3g + i`. -/
-def gadgetEntry (s g i : ℕ) : ℕ := 2 ^ s - gadget + 3 * g + i
+def gadgetEntryN (s g i : ℕ) : ℕ := 2 ^ s - gadgetN + 3 * g + i
 
 /-! ## The layout (`Layout::hidden_with`, `opening.rs:153-203`) -/
 
@@ -100,9 +101,9 @@ def chunkTails (logChunk logLane logPiece : ℕ) (chunks : List (ℕ × ℕ)) : 
 
 /-- The lanes (`opening.rs:178-184`): the first `lower = min(blocks, 32)` blocks, random lanes up to
 `OVERFLOW_LANE`, the overflow lane, `random` random lanes, then the other blocks. -/
-def hiddenLanes (blocks : List ℕ) (random : ℕ) : List Lane :=
-  let lower := min blocks.length overflowLane
-  (blocks.take lower).map .block ++ List.replicate (overflowLane - lower) .random ++ [.overflow] ++
+def hiddenLanesN (blocks : List ℕ) (random : ℕ) : List Lane :=
+  let lower := min blocks.length overflowLaneN
+  (blocks.take lower).map .block ++ List.replicate (overflowLaneN - lower) .random ++ [.overflow] ++
     List.replicate random .random ++ (blocks.drop lower).map .block
 
 /-- The blocks the lanes hold, in lane order. -/
@@ -112,20 +113,19 @@ def laneBlocks (lanes : List Lane) : List ℕ :=
     | _ => none
 
 /-- **`Layout::hidden_with`** (`opening.rs:153-203`; `Layout::hidden` is `log_piece = LOG_PIECE`):
-the lanes of `hiddenLanes`, the overflow lane's pieces the first piece each block lane gives up
+the lanes of `hiddenLanesN`, the overflow lane's pieces the first piece each block lane gives up
 (`given_up`, in lane order), then the chunks' tails. The Rust's assertions are not checked here:
 `NewHiddenOK` is decided of the layouts used. -/
 def _root_.WhirBridge.Layout.hiddenNew (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ))
     (random logPiece : ℕ) : Layout :=
   let logLane := logN - laneFold
-  let lanes := hiddenLanes (chunkBlocks logChunk logLane chunks) random
+  let lanes := hiddenLanesN (chunkBlocks logChunk logLane chunks) random
   { vars := vars
     logN := logN
     lanes := lanes
     logPiece := some logPiece
     pieces := (laneBlocks lanes).map (· <<< (logLane - logPiece)) ++
-      chunkTails logChunk logLane logPiece chunks
-    share := none }
+      chunkTails logChunk logLane logPiece chunks }
 
 /-! ## The honest stack (`Table::hidden_in`, `opening.rs:479-521`) -/
 
@@ -154,8 +154,8 @@ a lone lane `[a]` zero (`some none`); `none` where nothing is written. The lanes
 the overflow lane) are never read (`0`, `1`), so the Rust's writes in sequence are these. -/
 def gadgetFix (s l y : ℕ) : Option (Option ℕ) :=
   (List.range 3).findSome? fun g ↦ (List.range 3).findSome? fun i ↦
-    if y = gadgetEntry s g i then
-      match gadgetLanes g with
+    if y = gadgetEntryN s g i then
+      match gadgetLanesN g with
       | [a, b] => if l = b then some (some a) else none
       | [a] => if l = a then some none else none
       | _ => none
@@ -218,10 +218,10 @@ structure NewHiddenOK (L : Layout) (s : ℕ) : Prop where
   s_lt : s < L.logLane
   lane_le : L.logLane ≤ L.vars
   lanes_le : L.lanes.length ≤ 2 ^ laneFold
-  overflow_eq : L.overflow = overflowLane
-  overflow_lane : L.lanes[overflowLane]? = some .overflow
+  overflow_eq : L.overflow = overflowLaneN
+  overflow_lane : L.lanes[overflowLaneN]? = some .overflow
   held_lt : L.pieces.length < 2 ^ (L.logLane - s)
-  gadget_lt : gadget < 2 ^ s
+  gadget_lt : gadgetN < 2 ^ s
   nodup : L.pieces.Nodup
   piece_lt : ∀ p ∈ L.pieces, p < 2 ^ (L.vars - s)
   blocks_nodup : (laneBlocks L.lanes).Nodup
@@ -233,9 +233,9 @@ structure NewHiddenOK (L : Layout) (s : ℕ) : Prop where
 /-- `NewHiddenOK` as one conjunction, whose decision the kernel evaluates. -/
 def NewHiddenOKc (L : Layout) (s : ℕ) : Prop :=
   L.logPiece = some s ∧ laneFold ≤ L.logN ∧ s < L.logLane ∧ L.logLane ≤ L.vars ∧
-    L.lanes.length ≤ 2 ^ laneFold ∧ L.overflow = overflowLane ∧
-    L.lanes[overflowLane]? = some .overflow ∧ L.pieces.length < 2 ^ (L.logLane - s) ∧
-    gadget < 2 ^ s ∧ L.pieces.Nodup ∧ (∀ p ∈ L.pieces, p < 2 ^ (L.vars - s)) ∧
+    L.lanes.length ≤ 2 ^ laneFold ∧ L.overflow = overflowLaneN ∧
+    L.lanes[overflowLaneN]? = some .overflow ∧ L.pieces.length < 2 ^ (L.logLane - s) ∧
+    gadgetN < 2 ^ s ∧ L.pieces.Nodup ∧ (∀ p ∈ L.pieces, p < 2 ^ (L.vars - s)) ∧
     (laneBlocks L.lanes).Nodup ∧ (∀ b ∈ laneBlocks L.lanes, b < 2 ^ (L.vars - L.logLane)) ∧
     (∀ b ∈ laneBlocks L.lanes, b <<< (L.logLane - s) ∈ L.pieces) ∧
     ∀ b ∈ laneBlocks L.lanes, ∀ p ∈ L.pieces,
@@ -337,12 +337,12 @@ theorem laneWord_fillNew {L : Layout} (hN : L.logN = L.logLane + laneFold)
   rw [getD_ofFn _ hx]
   simp only [hdiv, hmod, if_pos hl]
 
-theorem gadgetEntry_lt {s g i : ℕ} (hs : gadget < 2 ^ s) (hg : g < 3) (hi : i < 3) :
-    gadgetEntry s g i < 2 ^ s := by
-  unfold gadgetEntry gadget at *
+theorem gadgetEntry_lt {s g i : ℕ} (hs : gadgetN < 2 ^ s) (hg : g < 3) (hi : i < 3) :
+    gadgetEntryN s g i < 2 ^ s := by
+  unfold gadgetEntryN gadgetN at *
   omega
 
-theorem gadgetFix_of_le {s l y : ℕ} (hs : gadget < 2 ^ s) (hy : 2 ^ s ≤ y) :
+theorem gadgetFix_of_le {s l y : ℕ} (hs : gadgetN < 2 ^ s) (hy : 2 ^ s ≤ y) :
     gadgetFix s l y = none := by
   unfold gadgetFix
   rw [List.findSome?_eq_none_iff]
@@ -353,7 +353,7 @@ theorem gadgetFix_of_le {s l y : ℕ} (hs : gadget < 2 ^ s) (hy : 2 ^ s ≤ y) :
   rw [if_neg (by omega)]
 
 /-- Past the first piece, the gadget writes nothing. -/
-theorem wordNew_of_le {L : Layout} {s : ℕ} (hs : gadget < 2 ^ s) (T : ℕ → K) (pad : ℕ → ℕ → K)
+theorem wordNew_of_le {L : Layout} {s : ℕ} (hs : gadgetN < 2 ^ s) (T : ℕ → K) (pad : ℕ → ℕ → K)
     {l y : ℕ} (hy : 2 ^ s ≤ y) : L.wordNew s T pad l y = L.laneFill s T pad l y := by
   unfold Layout.wordNew
   rw [gadgetFix_of_le hs hy]
@@ -471,9 +471,9 @@ theorem mem_chunkTails {logChunk logLane logPiece : ℕ} {chunks : List (ℕ × 
   exact ⟨(c, len), hmem, k, hk, rfl⟩
 
 theorem block_mem_hiddenLanes {blocks : List ℕ} {random b : ℕ} (hb : b ∈ blocks) :
-    Lane.block b ∈ hiddenLanes blocks random := by
-  unfold hiddenLanes
-  rw [← List.take_append_drop (min blocks.length overflowLane) blocks] at hb
+    Lane.block b ∈ hiddenLanesN blocks random := by
+  unfold hiddenLanesN
+  rw [← List.take_append_drop (min blocks.length overflowLaneN) blocks] at hb
   rcases List.mem_append.1 hb with h | h
   · apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
     apply List.mem_append_left
@@ -495,10 +495,10 @@ theorem coveredNew_hiddenNew {vars logChunk logN random s : ℕ} {chunks : List 
     calc c * 2 ^ logChunk + j < (c + 1) * 2 ^ logChunk := by rw [add_mul, one_mul]; omega
       _ ≤ 2 ^ (vars - logChunk) * 2 ^ logChunk := Nat.mul_le_mul_right _ hc
       _ = 2 ^ vars := by rw [← pow_add, Nat.sub_add_cancel hv]
-  · show (c * 2 ^ logChunk + j) >>> s ∈ (laneBlocks (hiddenLanes (chunkBlocks logChunk ℓ chunks) random)).map
+  · show (c * 2 ^ logChunk + j) >>> s ∈ (laneBlocks (hiddenLanesN (chunkBlocks logChunk ℓ chunks) random)).map
         (· <<< (ℓ - s)) ++ chunkTails logChunk ℓ s chunks ∨
       Lane.block ((c * 2 ^ logChunk + j) >>> s >>> (ℓ - s)) ∈
-        hiddenLanes (chunkBlocks logChunk ℓ chunks) random
+        hiddenLanesN (chunkBlocks logChunk ℓ chunks) random
     have e1 : 2 ^ logChunk = 2 ^ (logChunk - ℓ) * 2 ^ ℓ := by rw [← pow_add, Nat.sub_add_cancel hl]
     have e2 : 2 ^ ℓ = 2 ^ (ℓ - s) * 2 ^ s := by rw [← pow_add, Nat.sub_add_cancel hs]
     have hw : len >>> ℓ = len / 2 ^ ℓ := Nat.shiftRight_eq_div_pow _ _
@@ -551,8 +551,8 @@ theorem readNew_fillNew_hiddenNew {vars logChunk logN random s : ℕ} {chunks : 
 /-! ## The gadget -/
 
 theorem gadgetEntry_inj {s g i g' i' : ℕ} :
-    gadgetEntry s g i = gadgetEntry s g' i' ↔ 3 * g + i = 3 * g' + i' := by
-  unfold gadgetEntry
+    gadgetEntryN s g i = gadgetEntryN s g' i' ↔ 3 * g + i = 3 * g' + i' := by
+  unfold gadgetEntryN
   omega
 
 theorem range_three : List.range 3 = [0, 1, 2] := rfl
@@ -566,37 +566,37 @@ theorem gadgetFix_src {s l y : ℕ} (hl : l = 0 ∨ l = 1) : gadgetFix s l y = n
   intro i _
   have hg3 := List.mem_range.1 hg
   split_ifs
-  · interval_cases g <;> simp only [gadgetLanes, overflowLane] <;> rcases hl with rfl | rfl <;> simp
+  · interval_cases g <;> simp only [gadgetLanesN, overflowLaneN] <;> rcases hl with rfl | rfl <;> simp
   · rfl
 
-theorem gadgetFix_pair0 {s i : ℕ} (hi : i < 3) : gadgetFix s 31 (gadgetEntry s 0 i) = some (some 0) := by
-  interval_cases i <;> simp [gadgetFix, range_three, gadgetEntry_inj, gadgetLanes]
+theorem gadgetFix_pair0 {s i : ℕ} (hi : i < 3) : gadgetFix s 31 (gadgetEntryN s 0 i) = some (some 0) := by
+  interval_cases i <;> simp [gadgetFix, range_three, gadgetEntry_inj, gadgetLanesN]
 
-theorem gadgetFix_pair1 {s i : ℕ} (hi : i < 3) : gadgetFix s 30 (gadgetEntry s 1 i) = some (some 1) := by
-  interval_cases i <;> simp [gadgetFix, range_three, gadgetEntry_inj, gadgetLanes]
+theorem gadgetFix_pair1 {s i : ℕ} (hi : i < 3) : gadgetFix s 30 (gadgetEntryN s 1 i) = some (some 1) := by
+  interval_cases i <;> simp [gadgetFix, range_three, gadgetEntry_inj, gadgetLanesN]
 
 theorem gadgetFix_overflow {s i : ℕ} (hi : i < 3) :
-    gadgetFix s overflowLane (gadgetEntry s 2 i) = some none := by
-  interval_cases i <;> simp [gadgetFix, range_three, gadgetEntry_inj, gadgetLanes, overflowLane]
+    gadgetFix s overflowLaneN (gadgetEntryN s 2 i) = some none := by
+  interval_cases i <;> simp [gadgetFix, range_three, gadgetEntry_inj, gadgetLanesN, overflowLaneN]
 
-section gadget
+section gadgetN
 
 variable {L : Layout} {s : ℕ} (hL : NewHiddenOK L s) (T : ℕ → K) (pad : ℕ → ℕ → K)
 include hL
 
-theorem gadgetEntry_lt_lane {g i : ℕ} (hg : g < 3) (hi : i < 3) : gadgetEntry s g i < 2 ^ L.logLane :=
+theorem gadgetEntry_lt_lane {g i : ℕ} (hg : g < 3) (hi : i < 3) : gadgetEntryN s g i < 2 ^ L.logLane :=
   lt_trans (gadgetEntry_lt hL.gadget_lt hg hi) (Nat.pow_lt_pow_right (by norm_num) hL.s_lt)
 
-theorem lanes_gt : overflowLane < L.lanes.length := by
+theorem lanes_gt : overflowLaneN < L.lanes.length := by
   have := hL.ov_lt
   rwa [hL.overflow_eq] at this
 
 /-- **The gadget's first pair**: at its pattern's entries, lane `31` holds lane `0`'s word. -/
 theorem gadget_pair0 {i : ℕ} (hi : i < 3) :
-    laneWord (L.fillNew s T pad) L.logLane 31 (gadgetEntry s 0 i) =
-      laneWord (L.fillNew s T pad) L.logLane 0 (gadgetEntry s 0 i) := by
+    laneWord (L.fillNew s T pad) L.logLane 31 (gadgetEntryN s 0 i) =
+      laneWord (L.fillNew s T pad) L.logLane 0 (gadgetEntryN s 0 i) := by
   have hlen := lanes_gt hL
-  unfold overflowLane at hlen
+  unfold overflowLaneN at hlen
   have hy := gadgetEntry_lt_lane hL (by norm_num : 0 < 3) hi
   rw [laneWord_fillNew hL.logN_eq hL.lanes_le s T pad (by omega) hy,
     laneWord_fillNew hL.logN_eq hL.lanes_le s T pad (by omega) hy]
@@ -605,10 +605,10 @@ theorem gadget_pair0 {i : ℕ} (hi : i < 3) :
 
 /-- **The gadget's second pair**: at its pattern's entries, lane `30` holds lane `1`'s word. -/
 theorem gadget_pair1 {i : ℕ} (hi : i < 3) :
-    laneWord (L.fillNew s T pad) L.logLane 30 (gadgetEntry s 1 i) =
-      laneWord (L.fillNew s T pad) L.logLane 1 (gadgetEntry s 1 i) := by
+    laneWord (L.fillNew s T pad) L.logLane 30 (gadgetEntryN s 1 i) =
+      laneWord (L.fillNew s T pad) L.logLane 1 (gadgetEntryN s 1 i) := by
   have hlen := lanes_gt hL
-  unfold overflowLane at hlen
+  unfold overflowLaneN at hlen
   have hy := gadgetEntry_lt_lane hL (by norm_num : 1 < 3) hi
   rw [laneWord_fillNew hL.logN_eq hL.lanes_le s T pad (by omega) hy,
     laneWord_fillNew hL.logN_eq hL.lanes_le s T pad (by omega) hy]
@@ -617,7 +617,7 @@ theorem gadget_pair1 {i : ℕ} (hi : i < 3) :
 
 /-- **The gadget's lone lane**: at its pattern's entries, the overflow lane holds zero. -/
 theorem gadget_overflow {i : ℕ} (hi : i < 3) :
-    laneWord (L.fillNew s T pad) L.logLane overflowLane (gadgetEntry s 2 i) = 0 := by
+    laneWord (L.fillNew s T pad) L.logLane overflowLaneN (gadgetEntryN s 2 i) = 0 := by
   have hy := gadgetEntry_lt_lane hL (by norm_num : 2 < 3) hi
   rw [laneWord_fillNew hL.logN_eq hL.lanes_le s T pad (lanes_gt hL) hy]
   unfold Layout.wordNew
@@ -626,28 +626,28 @@ theorem gadget_overflow {i : ℕ} (hi : i < 3) :
 /-- **Each pattern cancels at each of its entries**: the sum over the pattern's lanes of the honest
 stack's words there is zero in `E` (two equal words in characteristic two, or one zero). -/
 theorem gadget_cancel {g i : ℕ} (hg : g < 3) (hi : i < 3) :
-    ((gadgetLanes g).map fun l ↦
-      ofK (laneWord (L.fillNew s T pad) L.logLane l (gadgetEntry s g i))).sum = 0 := by
+    ((gadgetLanesN g).map fun l ↦
+      ofK (laneWord (L.fillNew s T pad) L.logLane l (gadgetEntryN s g i))).sum = 0 := by
   interval_cases g
-  · simp only [gadgetLanes, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
+  · simp only [gadgetLanesN, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
     rw [gadget_pair0 hL T pad hi]
     exact CharTwo.add_self_eq_zero _
-  · simp only [gadgetLanes, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
+  · simp only [gadgetLanesN, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
     rw [gadget_pair1 hL T pad hi]
     exact CharTwo.add_self_eq_zero _
-  · simp only [gadgetLanes, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
+  · simp only [gadgetLanesN, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
     rw [gadget_overflow hL T pad hi]
     exact map_zero (algebraMap K E)
 
 /-- **The honest stack cancels the gadget**: for every `β`, `Σ_{g<3} Σ_{i<3} β_i ·
 Σ_{l ∈ gadget_lanes(g)} stack(l, gadget_entry(g, i)) = 0`. -/
 theorem gadget_sum_zero (β : Fin 3 → E) :
-    ∑ g ∈ range 3, ∑ i : Fin 3, β i * ((gadgetLanes g).map fun l ↦
-      ofK (laneWord (L.fillNew s T pad) L.logLane l (gadgetEntry s g i))).sum = 0 := by
+    ∑ g ∈ range 3, ∑ i : Fin 3, β i * ((gadgetLanesN g).map fun l ↦
+      ofK (laneWord (L.fillNew s T pad) L.logLane l (gadgetEntryN s g i))).sum = 0 := by
   refine Finset.sum_eq_zero fun g hg ↦ Finset.sum_eq_zero fun i _ ↦ ?_
   rw [gadget_cancel hL T pad (Finset.mem_range.1 hg) i.2, mul_zero]
 
-end gadget
+end gadgetN
 
 /-! ## The gadget's weight on the cube -/
 
@@ -656,15 +656,15 @@ end gadget
 (`opening.rs:786-806`: `on = Σ_{l ∈ pattern} lane_eq[l]` times `Σ_i β_i eq_index(low, y_i)`) at a
 cube point, unscaled. -/
 def gadgetWeight (β : Fin 3 → E) (s l y : ℕ) : E :=
-  ∑ g ∈ range 3, (if l ∈ gadgetLanes g then 1 else 0) *
-    ∑ i : Fin 3, β i * (if y = gadgetEntry s g i then 1 else 0)
+  ∑ g ∈ range 3, (if l ∈ gadgetLanesN g then 1 else 0) *
+    ∑ i : Fin 3, β i * (if y = gadgetEntryN s g i then 1 else 0)
 
 /-- `Layout::gadget_at(l, y)` (`opening.rs:253-261`) for weights `β` (the Rust's `gadget_beta`): `β_{k
 mod 3}` if `k = y − (2^s − GADGET)` is below `GADGET` and `l` is in pattern `k / 3`, else zero. -/
 def gadgetAt (β : Fin 3 → E) (s l y : ℕ) : E :=
-  if h : 2 ^ s - gadget ≤ y ∧ y - (2 ^ s - gadget) < gadget ∧
-      l ∈ gadgetLanes ((y - (2 ^ s - gadget)) / 3) then
-    β ⟨(y - (2 ^ s - gadget)) % 3, Nat.mod_lt _ (by norm_num)⟩
+  if h : 2 ^ s - gadgetN ≤ y ∧ y - (2 ^ s - gadgetN) < gadgetN ∧
+      l ∈ gadgetLanesN ((y - (2 ^ s - gadgetN)) / 3) then
+    β ⟨(y - (2 ^ s - gadgetN)) % 3, Nat.mod_lt _ (by norm_num)⟩
   else 0
 
 /-- `gadget_at` is the verifier's gadget weight on the cube. -/
@@ -672,20 +672,20 @@ theorem gadgetAt_eq (β : Fin 3 → E) (s l y : ℕ) : gadgetAt β s l y = gadge
   unfold gadgetAt gadgetWeight
   split_ifs with h
   · obtain ⟨h1, h2, h3⟩ := h
-    have hg : (y - (2 ^ s - gadget)) / 3 < 3 := by unfold gadget at *; omega
-    rw [Finset.sum_eq_single_of_mem ((y - (2 ^ s - gadget)) / 3) (Finset.mem_range.2 hg)]
+    have hg : (y - (2 ^ s - gadgetN)) / 3 < 3 := by unfold gadgetN at *; omega
+    rw [Finset.sum_eq_single_of_mem ((y - (2 ^ s - gadgetN)) / 3) (Finset.mem_range.2 hg)]
     · rw [if_pos h3, one_mul,
-        Finset.sum_eq_single_of_mem (⟨(y - (2 ^ s - gadget)) % 3, Nat.mod_lt _ (by norm_num)⟩ : Fin 3)
+        Finset.sum_eq_single_of_mem (⟨(y - (2 ^ s - gadgetN)) % 3, Nat.mod_lt _ (by norm_num)⟩ : Fin 3)
           (Finset.mem_univ _)]
-      · rw [if_pos (by dsimp only; unfold gadgetEntry; unfold gadget at *; omega), mul_one]
+      · rw [if_pos (by dsimp only; unfold gadgetEntryN; unfold gadgetN at *; omega), mul_one]
       · intro i _ hi
         rw [if_neg, mul_zero]
         intro he
         apply hi
         ext
         simp only
-        unfold gadgetEntry at he
-        unfold gadget at *
+        unfold gadgetEntryN at he
+        unfold gadgetN at *
         omega
     · intro g _ hg'
       rw [Finset.sum_eq_zero, mul_zero]
@@ -693,8 +693,8 @@ theorem gadgetAt_eq (β : Fin 3 → E) (s l y : ℕ) : gadgetAt β s l y = gadge
       rw [if_neg, mul_zero]
       intro he
       apply hg'
-      unfold gadgetEntry at he
-      unfold gadget at *
+      unfold gadgetEntryN at he
+      unfold gadgetN at *
       have := i.2
       omega
   · symm
@@ -707,21 +707,21 @@ theorem gadgetAt_eq (β : Fin 3 → E) (s l y : ℕ) : gadgetAt β s l y = gadge
       intro he
       apply h
       have hi := i.2
-      have hq : (y - (2 ^ s - gadget)) / 3 = g := by
-        unfold gadgetEntry at he; unfold gadget at *; omega
-      refine ⟨by unfold gadgetEntry at he; unfold gadget at *; omega,
-        by unfold gadgetEntry at he; unfold gadget at *; omega, ?_⟩
+      have hq : (y - (2 ^ s - gadgetN)) / 3 = g := by
+        unfold gadgetEntryN at he; unfold gadgetN at *; omega
+      refine ⟨by unfold gadgetEntryN at he; unfold gadgetN at *; omega,
+        by unfold gadgetEntryN at he; unfold gadgetN at *; omega, ?_⟩
       rw [hq]
       exact hl
     · rw [zero_mul]
 
-theorem gadgetLanes_nodup (g : ℕ) : (gadgetLanes g).Nodup := by
-  unfold gadgetLanes
-  split <;> simp [overflowLane]
+theorem gadgetLanes_nodup (g : ℕ) : (gadgetLanesN g).Nodup := by
+  unfold gadgetLanesN
+  split <;> simp [overflowLaneN]
 
-theorem gadgetLanes_lt {g l : ℕ} (hl : l ∈ gadgetLanes g) : l ≤ overflowLane := by
-  unfold gadgetLanes at hl
-  split at hl <;> simp [overflowLane] at hl ⊢ <;> omega
+theorem gadgetLanes_lt {g l : ℕ} (hl : l ∈ gadgetLanesN g) : l ≤ overflowLaneN := by
+  unfold gadgetLanesN at hl
+  split at hl <;> simp [overflowLaneN] at hl ⊢ <;> omega
 
 /-- **The gadget's weight pairs to zero with the honest stack**: summed over the placed lanes and
 their entries, `Σ_l Σ_y gadget(l, y) · stack(l, y) = 0` for every `β`. -/
@@ -730,8 +730,8 @@ theorem gadgetWeight_sum_zero {L : Layout} {s : ℕ} (hL : NewHiddenOK L s) (T :
     ∑ l ∈ range L.lanes.length, ∑ y ∈ range (2 ^ L.logLane),
       gadgetWeight β s l y * ofK (laneWord (L.fillNew s T pad) L.logLane l y) = 0 := by
   have hexp : ∀ l y, gadgetWeight β s l y * ofK (laneWord (L.fillNew s T pad) L.logLane l y) =
-      ∑ g ∈ range 3, ∑ i : Fin 3, if y = gadgetEntry s g i then
-        (if l ∈ gadgetLanes g then β i * ofK (laneWord (L.fillNew s T pad) L.logLane l y) else 0)
+      ∑ g ∈ range 3, ∑ i : Fin 3, if y = gadgetEntryN s g i then
+        (if l ∈ gadgetLanesN g then β i * ofK (laneWord (L.fillNew s T pad) L.logLane l y) else 0)
       else 0 := by
     intro l y
     unfold gadgetWeight
@@ -742,8 +742,8 @@ theorem gadgetWeight_sum_zero {L : Layout} {s : ℕ} (hL : NewHiddenOK L s) (T :
     split_ifs <;> ring
   have step1 : ∀ l ∈ range L.lanes.length, ∑ y ∈ range (2 ^ L.logLane),
       gadgetWeight β s l y * ofK (laneWord (L.fillNew s T pad) L.logLane l y) =
-      ∑ g ∈ range 3, ∑ i : Fin 3, if l ∈ gadgetLanes g then
-        β i * ofK (laneWord (L.fillNew s T pad) L.logLane l (gadgetEntry s g i)) else 0 := by
+      ∑ g ∈ range 3, ∑ i : Fin 3, if l ∈ gadgetLanesN g then
+        β i * ofK (laneWord (L.fillNew s T pad) L.logLane l (gadgetEntryN s g i)) else 0 := by
     intro l _
     simp_rw [hexp]
     rw [Finset.sum_comm]
@@ -757,7 +757,7 @@ theorem gadgetWeight_sum_zero {L : Layout} {s : ℕ} (hL : NewHiddenOK L s) (T :
   rw [Finset.sum_comm]
   refine Finset.sum_eq_zero fun i _ ↦ ?_
   rw [← Finset.sum_filter]
-  have hfilter : (range L.lanes.length).filter (· ∈ gadgetLanes g) = (gadgetLanes g).toFinset := by
+  have hfilter : (range L.lanes.length).filter (· ∈ gadgetLanesN g) = (gadgetLanesN g).toFinset := by
     ext l
     simp only [Finset.mem_filter, Finset.mem_range, List.mem_toFinset]
     exact ⟨fun h ↦ h.2, fun h ↦ ⟨lt_of_le_of_lt (gadgetLanes_lt h) (lanes_gt hL), h⟩⟩
