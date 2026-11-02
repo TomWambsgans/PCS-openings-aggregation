@@ -41,8 +41,7 @@ theorem rowPolyAt_words (x : K) :
     rowPolyAt (22 + 2) x = ((List.range (22 + 1)).map fun k ↦
       K.ofLane (Bridge.tauWords.getD k 0) * S^[k] x).sum := by
   rw [rowPolyAt_eq_sum, Bridge.sum_range_eq_list]
-  congr 1
-  refine List.map_congr_left fun k hk ↦ ?_
+  refine congrArg List.sum (List.map_congr_left fun k hk ↦ ?_)
   rw [Bridge.getD_of_words Bridge.rowVanishing_24_words,
     Bridge.Ntt.chain_getD _ (by simp at hk; omega)]
 
@@ -69,7 +68,7 @@ theorem rowVanishingProperty : RowVanishingProperty 24 := by
     · rw [List.getElem?_eq_none_iff] at he
       omega
     · rw [he, Option.getD_some] at h
-      rw [show 22 + 1 - 1 = 22 from rfl, he, h]
+      rw [h]
       rfl
   · show rowPolyAt (22 + 2) (betaAt j) = 0
     rw [rowPolyAt_eq_sum, Bridge.sum_range_eq_list]
