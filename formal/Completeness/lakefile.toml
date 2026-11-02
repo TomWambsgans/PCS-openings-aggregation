@@ -32,6 +32,17 @@ srcDir = ".."
 name = "QuotientRpm"
 srcDir = ".."
 
+# The deployed circuit (F0b), from `formal/Circuit`, which `QuotientSecurity/Deployed.lean` reads.
+[[lean_lib]]
+name = "Circuit"
+srcDir = "../Circuit"
+globs = ["Circuit", "Circuit.+"]
+
+# `F192` of `crates/primitives` (F0c), from `formal/Field`.
+[[lean_lib]]
+name = "Field"
+srcDir = ".."
+
 # The WHIR openings (F2), from `formal/WhirBridge`.
 [[lean_lib]]
 name = "WhirBridge"
