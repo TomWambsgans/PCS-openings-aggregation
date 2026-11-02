@@ -166,15 +166,33 @@ public input (`(mem_k - I_k) · w_21 / w_1`, `I_k` the line through the two publ
 copies (`copy_j - ℓ_j`, `ℓ_j` the composition of `q_flock`'s limb slot `j`, §2). `Σ_i γ^i M_i W_i = Q_W · w_21`,
 `deg Q_W ≈ 10.3 · 2^18` (BLAKE2S's counters).
 
-## 7. BLAKE2s: Flock (owned by the Flock agent)
+## 7. BLAKE2s: Flock (owned by the Flock agent; details and measurements in `SPEC-FLOCK.md`)
 
-Interface fixed here: Flock runs after `C1` and before `C2` (it reads only `C1`'s `q_flock` and the setup), draws its
-own challenges in the transcript between `γ` and the `C2` root, and leaves (i) claims on `q_flock` — any number of
-weighted terms, joined into `C1`'s one claim — and (ii) claims on `A0`, `B0`. The prototype uses leanVM's zerocheck,
-lincheck and the matrices' reduction (variant A of the baseline) unchanged, and **replaces ring switching** by one
-weighted claim: `Σ_k c_k q̃(φ^k(P)) = Σ_i g^i Φ(s_i)` (leanVM's weight `Φ(eq(P, ·))` written as its 64 Frobenius-twisted
-eq terms, `φ(x) = x^2`), passed to `PCS_OPEN` as 64 terms on one point with a twist each (§8): no batching sumcheck
-and no weight evaluation in the contract.
+Interface fixed here:
+- Flock runs after `C1` and before `C2`: it reads only `C1`'s `q_flock` and the setup.
+- It draws its own challenges in the transcript between `γ` and the `C2` root.
+- It leaves (i) claims on `q_flock`, any number of weighted terms, joined into `C1`'s one claim, and (ii) claims on
+  `A0` and `B0`.
+
+What Flock reads and leaves (`crates/leanvm_flock_gas/src/flock_min.rs`, measured on revm at `log_n = 32`):
+- **The skip (lever c).** leanVM's zerocheck has a univariate skip over the 6 packing bits. Here it is over
+  `k ≤ 6` bits: `2^k` coset values, then `32 - k` rounds of 2 scalars, then `v_a` and `v_b`. The lincheck has 8
+  rounds. The matrices' reduction has `k + 6` rounds, then `a` and `b`, as claims on `A0`, `B0`.
+- **The slices (lever a).** The lincheck's 64 slices are not sent. The verifier needs only one combination
+  `Σ_i μ_i ẑ(i, p) = κ` of them, with `μ` and `κ` known: the matrices' sumcheck carries their part of its claim
+  linearly. That combination is `GF(2)`-linear in `q_flock`'s words, not `E`-linear. So it is a **bit-slice term**
+  on `C1`, `(q_flock, p ∈ E^26, μ ∈ E^64)`, and `PCS_OPEN` ring-switches it inside the opening, as leanVM's
+  `ring_switch_open` does.
+- **Cost.** With `k = 4`, Flock reads 112 scalars (2,688 B) for 22,726 gas of execution. leanVM's verifier reads
+  224 scalars for 193,108.
+- **If `PCS_OPEN`'s terms must stay `E`-linear (lever a′).** Then the 64 slices are sent and the contract computes
+  `T = Σ_i g^i Φ(s_i)`, which costs 66,288. The weight `Φ(eq(P, ·))` goes as 64 twisted terms, as first written
+  here: 168 scalars at `k = 3`, 87,516 of execution.
+
+**Floor.** Any sumcheck Flock reads at least `2 (log_n + 14) + 4 = 96` scalars, 2.3 KB, about 92,000 gas at
+EIP-7623's floor. The < 100K target for the whole PIOP therefore needs BLAKE2s out of the contract. Option B (no
+sumcheck) cannot do it: it does not fit WHIR, `SPEC-B.md`. What could is an R1CS-validity claim type that the
+block's builder proves.
 
 ## 8. The final check: values, relations, claims
 

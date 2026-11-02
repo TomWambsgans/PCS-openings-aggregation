@@ -258,3 +258,31 @@ and no calldata. That widens `PCS_OPEN` from openings to one fixed relation, a d
 **Recommendation for option A.** Take (a) with `k = 4`: 112 scalars, 22,700 of execution, and a bit-slice claim
 type, about 2.7 KB of calldata. If `PCS_OPEN` must stay `E`-linear, take (a′) with `k = 3`: 168 scalars, 87,500
 of execution, and a weighted claim type.
+
+## BLAKE2s's share: baseline, option A, option B
+
+The table is at about 1M cycles. The spec's reference workload (1,000 signatures, 202,025 compressions) and the
+1,290-signature proof both have `2^18` compressions and `log_n = 32`, so the numbers are the same.
+- **Flock's own part**, from the measured table above:
+  - calldata;
+  - execution, plus `A0`'s and `B0`'s two calls. The calls are not measured here: about 1,500 each with the roots
+    in code, as `SPEC.md` has them, or 6,300 for both with the baseline's `SLOAD`s.
+- **Claims:** Flock's claims on `q_flock` join `C1`'s one claim (`SPEC.md` §8), so Flock adds `A0` and `B0`: `2c`
+  in every row.
+- **The transaction's share** is shown both ways, the floor at 40 a byte and 16 a byte plus execution. The PIOP
+  pays the larger of its totals, not of its parts.
+
+| | calldata | execution | claims / calls added | share at 40 B | 16 B + execution | `+ c` per claim (0 / 2K / 5K / 20K) | committed for BLAKE2s | prover |
+|---|---:|---:|---|---:|---:|---|---|---|
+| baseline (leanVM's Flock, ring switch in the contract) | 5,376 B | 193,108 + calls; the stack batch's 1,320 B are not counted | 2 / 2 | 215,040 | 279,124 | +0 / 4K / 10K / 40K | `q_flock` `2^26`; `A0`, `B0` `2^28` each (setup) | leanVM's (2.59 s for the whole proof, measured on h1) |
+| A, (a′) `k = 6` (`SPEC.md` §7 as written) | 5,376 B | 101,835 + calls | 2 / 2 | 215,040 | 187,851 | 〃 | 〃 | leanVM's |
+| A, (a) `k = 6` | 3,840 B | 34,666 + calls | 2 / 2, and a bit-slice term on `C1` | 153,600 | 96,106 | 〃 | 〃 | leanVM's; the ring switch moves to the block's builder |
+| **A, (a) `k = 4`** | **2,688 B** | **22,726** + calls | 〃 | **107,520** | **65,734** | 〃 | 〃 | plus one pass over the packed bits (modelled, a few %) |
+| A, (a) `k = 0` | 2,304 B | 20,033 + calls | 〃 | 92,160 | 56,897 | 〃 | 〃 | 6 rounds on packed bits (modelled, about 2×+ the zerocheck) |
+| B-word (`SPEC-B.md`), if it fitted | ≈ 850 B | ≈ 12,000 | 3–4 / 1 | ≈ 34,000 | ≈ 26,000 | +0 / 6–8K / 15–20K / 60–80K | `2^33.6 + 2^33.1` words: **does not fit `2^28`** | ≥ 100× the baseline's committed words |
+| B-plonk, if it fitted | ≈ 100 B | ≈ 10,000 | 4 / 1 | ≈ 4,000 | ≈ 11,600 | 〃 | `2^35.4 + 2^39.0`: **does not fit** | infeasible |
+
+At 32 signatures (`2^13` compressions, `log_n = 27`):
+- option A's (a) with `k = 4` reads 2,448 B for 21,288 of execution;
+- the baseline reads 5,136 B for 174,907;
+- B fits there only as the unreachable B-ideal bound (`SPEC-B.md`).
