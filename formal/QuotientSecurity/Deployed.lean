@@ -12,12 +12,16 @@ compute. This file reads it as a `ChiCircuit` and plugs it into `soundness_circu
 * `deployed`: the circuit, row `r` reading what row `r` of `membership` reads, ranked as the Rust
   test ranks it (`PcsCircuit.rank`: the public rows last), its inputs `membership`'s
   (`membership_input_row`, `membership_order`);
-* `deployed_laid`: the anchors of the constants (words 4 and 5), so `wiringOf deployed` lays it
-  (`laid_wiringOf`);
+* `deployedSigma`: the deployed σ (`membership.sigma`, the Rust's: `cellOf n ↦ cellOf σ[n]`);
+  `deployed_laid_sigma : Laid deployedSigma deployed` (every `X`, `Y`, `C` cell on the cycle of what
+  it reads, `membership_sigma_reads`; the constants' anchors, words 4 and 5); also
+  `deployed_laid : Laid (wiringOf deployed) deployed`;
 * `deployed_public`: for every computation `v` of `deployed`, its public bits are the bits of
   `y = H(x ‖ 0x11^32)` and of the root of the path, `x`, the siblings and the directions being
   `v`'s input bits (`secretOf v`), `H` leanerVM's Keccak-256;
-* `Instance.soundness_membership`: the end theorem for the deployed circuit.
+* `Instance.soundness_membership` (any wiring laying `deployed`) and
+  `Instance.soundness_membership_deployed` (`I.wiring = deployedSigma`): the end theorem for the
+  deployed circuit.
 
 `membership` is a closed term of `2^22` rows that neither the elaborator nor the kernel may
 unfold: everything is proved for a circuit `c` meeting the facts `formal/Circuit/Final.lean`
