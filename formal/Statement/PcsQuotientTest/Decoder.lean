@@ -15,11 +15,13 @@ Compiled evaluation (`#guard`), at small sizes, of what `PcsQuotient/Decoder.lea
   patterns each, and at `κ = 6`, `R = 1` (`n = 128`, `k = 64`, radius `32`) at `0`, `1`, `17` and `32`
   wrong columns;
 * **the unique-decoding stage recovers a stack** with errors in the first columns, where the fast path
-  (mumbai's `fastStacks`) finds none, on all `64` lanes of a small stack (`μ = 9`, `16` columns, radius
-  `4`).
+  (mumbai's `fastStacks`) finds none, on all `64` lanes: of a small stack (`μ = 9`, `16` columns, radius
+  `4`), and of the smallest stack the extractor takes (`μ = 15`, `2^10` columns, radius `256`, at its
+  Johnson threshold `724`), with a lane at the radius at that size (`256` wrong columns of `2^10`).
 
-The sizes are small because `#guard` runs in Lean's interpreter, where a product in `K` (`BF64`'s
-carry-less product, about `200` big-number operations) takes about a millisecond.
+`#guard` runs in Lean's interpreter, where a product in `K` (`BF64`'s carry-less product, about `200`
+big-number operations) takes about `35` microseconds: the file takes about five minutes, the `μ = 15`
+checks nearly all of it.
 * the replay with hash maps gives mumbai's evaluations of the lengths it keeps, and the inversion through
   the index reads back every leaf of a small tree committed through a transcript.
 
@@ -137,3 +139,15 @@ def inversionTest : Bool :=
 end PcsQuotientTest.Decoder
 
 #guard inversionTest
+
+/-! ## The smallest stack the extractor takes -/
+
+-- a lane at the radius at `n = 1024`, `k = 512`: `256` wrong columns
+#guard laneTest 9 1 4 256
+
+-- `μ = 15` (`κ = 9`, `2^10` columns, the Johnson threshold `724`), all `64` lanes, three wrong columns
+-- among the first `2^9`: no fast candidate, and the unique decoder's one stack is the word's
+#guard
+  let w := columns 9 1 77 64 [0, 5, 300]
+  (fastStacks 15 1 (colAt w)).isEmpty &&
+    uniqueStacks 15 1 (colAt w) == [stackOf 15 ((List.range 64).map fun u ↦ message 9 77 u)]
