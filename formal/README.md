@@ -146,6 +146,59 @@ in that PRG).
   and the IV prefixes with the real layout ids). `skel` itself is not run at `2^22`: its trees' `levelUp` nests
   one bind a pair, quadratic to run (`2^17` rows: 6 minutes).
 
+## Zero knowledge end to end (`EndToEnd/ZK`)
+
+The Statement states zero knowledge for a simulator given as a parameter, `PcsQuotient.ZeroKnowledgeWith s₀ sim
+simOracle ζ` (`Statement/PcsQuotient/Security.lean`); `ZeroKnowledge ζ` is that at the Statement's own
+`simulator`, a tested heuristic that no theorem covers. **`zeroKnowledge_end`** (`EndToEnd/ZK/Main.lean`,
+library `ZK`; `propext`, `Classical.choice`, `Quot.sound`, guarded in `ZK/Axioms.lean`) proves
+`ZeroKnowledgeWith s₀ (zkSimulator pp simV skelOf fmt) rpmSimOracle ζ`: the simulator the theorem covers is in
+its statement.
+
+**The simulator** (`zkSimulator`, `ZK/With.lean`; `rpmSimulator`, `rpmSimOracle`, `ZK/Simulator.lean`; compiled
+definitions). It reads the statement and public data, never the witness: `pp stmt`, the skeleton model's public
+part (the number `n` of Fiat–Shamir challenges, when each secret table is committed, which positions are opened:
+functions of the challenges), `simV stmt`, the joint honest-verifier simulator (`jointSim`: the four values
+uniform in `K` or `E` and the wiring value `σ(t)`, the two secret tables built from them with the verifier's
+claims, opened by the honest WHIR algorithm with fresh paddings, the wiring table's opening), and the skeleton
+`skelOf stmt` (`skelSetup`: the circuit's commitment, then `Deployed.skel`). Its state is the indifferentiability
+simulator's (the permutation's edges it has answered, the rooted sponge states) and a random oracle's cache of
+Keccak-256 and of the permutation.
+
+1. Draw the `n` challenges uniformly; compute the view `simV σ` (messages and opened rows).
+2. Run the skeleton (`QuotientZk.sim` on `skelRec`): every hash a lazily sampled random-oracle query, the `c`-th
+   Fiat–Shamir query answered by the `c`-th challenge and written into the cache (programming), the messages
+   and opened rows from the view, a fresh private digest at every unopened leaf of a secret table (so the trees'
+   nodes and roots hash fresh values), grinding run as the prover runs it; record the duplex's permutation calls.
+3. Set the state to that record and the cache; read the Statement's proof from the skeleton's (`fmt`: the full
+   Merkle paths from the pruned ones, by calls of `π` answered as below).
+4. Answer every query of the distinguisher: coins forwarded; `π` and `π⁻¹` on lanes, read as bytes, by
+   `common`'s two-oracle simulator `S₂` (`simulator2`): a recorded edge from the record (so the duplex the
+   distinguisher recomputes from the proof meets the programmed challenges), a fresh forward query that ends a
+   sponge path padding a message `m` by the cache's Keccak-256 of `m` completed by uniform bits, any other fresh
+   forward query by the cache's permutation answer, a fresh inverse query by a uniform state.
+
+**Its cost**: no call of a real `π`; step 1, `n` uniform draws and `jointSim` (four samples, two table builds,
+two WHIR openings with fresh paddings, the wiring opening: the honest prover's opening work); step 2, the
+skeleton's at most `2^24 + 2^70` operations (`skelSetup_queryBound`; worst-case grinding counted, `2^17`
+expected tries a grind), each a cache lookup, a programmed answer or a uniform digest; step 3, `fmt`'s calls;
+step 4, per query one step of `S₂` (lookups in its edges and rooted states, the unpadding of one path, at most
+one cache lookup or uniform answer and one uniform state).
+
+**The theorem** (`zeroKnowledge_end`): `ζ Q = εR Q + εFS + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q) 2^-2368 +
+2^48 2^-2368 + (Qp + Qfmt + Q)² / 2^508` for a distinguisher of `Q` calls of `π` and `π⁻¹` (coins free), at most
+`εR Q + εFS + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`). Proved: the
+distinguisher's coins removed (`ZK/Coins.lean`, a tape drawn first), the ideal experiment of `zkSimulator`
+equal to `QuotientZk`'s simulated game (`rpmIdeal_eq`), `QuotientZk`'s closeness from the joint model
+(`coreClose_of_joint`: `zk_rpm_skel`, `jointHVZK_of_link`, `factors_single`, `factors_pair`), `skelSetup`'s
+operations and duplex discipline, the real experiment's coins drawn outside the model (`realExperiment_coins`).
+**Named**: the joint model's instance (`JointData.Valid`, its public part `pp`, its view simulator `simV`);
+`skelSetup`'s Fiat–Shamir freshness (`εFS`, expected `≈ 2^-113` from `fsFresh_deployed` with the setup's tree
+as `c₀`); the prover's and `fmt`'s permutation budgets `Qp`, `Qfmt`; `CoinsMatch` (the Statement's coins are
+the skeleton model's uniform randomness); `ProverBridge` (`εR`: the Statement's prover at fixed coins against the
+skeleton's, then `fmt`: the proof-of-work fuel, the replayed chain, the order of public queries, the proof's
+format).
+
 ## End-to-end completeness (`Completeness/`)
 
 `Completeness/` (package `pcs-quotient-completeness`, built like `Compose/` against leanerVM `mumbai`'s
