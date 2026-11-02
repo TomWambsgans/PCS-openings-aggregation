@@ -122,12 +122,28 @@ in that PRG).
   `2^-54 + 2^-165 + 2^-2200`, and in the random-permutation model **`zk_rpm_deployed_joint_fs`**,
   **`zk_rpm_deployed_joint_fs'`** (`QuotientZk/FreshJoint.lean`; the latter also without `hrow`, `hduplex`):
   `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`.
-- **What stays a hypothesis**: `JointHVZK` (the interactive protocol's honest-verifier zero knowledge, F1 with F3
-  and the gadget's (R)); `FSFresh`'s conditions on the prover above (long rows, the first witness row's entropy,
-  claims reading a challenge, structural); `Factors` for the deployed prover (structural: the masks and the two
-  paddings are independent and WHIR's messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed; equal by
-  test, not by proof: see the next item). The lift to leanerVM's random-permutation model is separate
-  (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
+- **The joint model instantiated** (`QuotientZk/Instance/`). The deployed quotient claim's point reads the
+  five values (`vCells(t)/claimDen(α, β, t, a, s)`), so `Joint.lean`'s openings (weights from the challenges
+  alone) cannot carry it: `JointV.lean` is the same chain over `ChV = Chal × Vals` (`modelV`, `jointSimV`,
+  `LinkV`, **`zk_rpm_deployed_jointV_fs'`**, same bound). For the deployed prover: the schedule (`394` steps:
+  `5 + 123 + 114 + 152` draws, `openDraws`) and the challenges of the oracle's answers (`chOf`, an
+  equivalence with what no challenge reads, so **`hch`** `chOf_uniform`; causality `chOf_take_*`,
+  `Challenges.lean`); the two openings at `2^22` rows (`openW`, `openQ`: `witness_layout(22)`,
+  `quotient_layout(22)` with the gadget `1, Y, Y²`, the verifier's claims `modelWitness`, `modelQuotient`,
+  `modelSum`, the novel basis at the opened positions: level 0's queries then fillers, `224`/`225`) and their
+  **`Conditions`** (`Openings.lean`); the prover `Pb` (the claims' bytes at the openings' starts, then any
+  public renderer `R` of the part of the joint view drawn for by then; leaves the 64-word images of the stacks'
+  rows) and **`LinkV`** (`link`: the view from the joint view by causality, injective leaves, the free vectors
+  from the novel basis's degrees, `Prover.lean`); **`FSFresh`'s conditions** (`Fresh.lean`: `hcw` at `2^-191`,
+  `hrow₀` at `2^-2368`, the three `ClaimsAt`, long rows, `hcK`, `hn`); the simulator's tables chosen with the
+  verifier's claimed values (`solve`). **`zk_rpm_deployed_instance`** (`Instance/Main.lean`) and, for the end
+  statement, `deployedJointData`, `deployedJointData_valid` (`EndToEnd/ZK/Joint.lean`): remaining are the
+  field, F1's, and **the honest tables meeting the verifier's claims** (`hTW`, `hTQ`, the claim maps'
+  completeness, proved for the deployed tables in `Completeness/`, not yet linked); every renderer `R` (WHIR's
+  honest prover is one) and every pair of such tables is covered. The simulator's tables are a classical choice.
+- **What stays a hypothesis**: the honest tables' claims (above); F1's on the witness; that `skel` and `Pb` are
+  the Rust prover (transcribed; `skel` equal by test, not by proof: see the next item). The lift to leanerVM's
+  random-permutation model is separate (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
 - **`skel` against the Rust prover, by test** (`QuotientZk/Test/SkelTrace.lean`, executable `skeltrace`;
   `crates/quotient/tests/skel_trace.rs`, feature `skel-trace`, which records every Keccak call of a proof through
   test-only hooks): at `2^17` rows `skel`, run as compiled with mumbai's Keccak-256 and Keccak-f[1600] as the
@@ -145,6 +161,66 @@ in that PRG).
   the grammar of the shape derived from WHIR's configuration, which at `2^22` is `deployedShape` (the numbers
   and the IV prefixes with the real layout ids). `skel` itself is not run at `2^22`: its trees' `levelUp` nests
   one bind a pair, quadratic to run (`2^17` rows: 6 minutes).
+
+## Zero knowledge end to end (`EndToEnd/ZK`)
+
+The Statement states zero knowledge for a simulator given as a parameter, `PcsQuotient.ZeroKnowledgeWith s₀ sim
+simOracle ζ` (`Statement/PcsQuotient/Security.lean`); `ZeroKnowledge ζ` is that at the Statement's own
+`simulator`, a tested heuristic that no theorem covers. **`zeroKnowledge_end`** (`EndToEnd/ZK/Main.lean`,
+library `ZK`; `propext`, `Classical.choice`, `Quot.sound`, guarded in `ZK/Axioms.lean`) proves
+`ZeroKnowledgeWith s₀ (zkSimulator pp simV skelOf fmt) rpmSimOracle ζ`: the simulator the theorem covers is in
+its statement.
+
+**The simulator** (`zkSimulator`, `ZK/With.lean`; `rpmSimulator`, `rpmSimOracle`, `ZK/Simulator.lean`; compiled
+definitions). It reads the statement and public data, never the witness: `pp stmt`, the skeleton model's public
+part (the number `n` of Fiat–Shamir challenges, when each secret table is committed, which positions are opened:
+functions of the challenges), `simV stmt`, the joint honest-verifier simulator (`jointSim`: the four values
+uniform in `K` or `E` and the wiring value `σ(t)`, the two secret tables built from them with the verifier's
+claims, opened by the honest WHIR algorithm with fresh paddings, the wiring table's opening), and the skeleton
+`skelOf stmt` (`skelSetup`: the circuit's commitment, then `Deployed.skel`). Its state is the indifferentiability
+simulator's (the permutation's edges it has answered, the rooted sponge states) and a random oracle's cache of
+Keccak-256 and of the permutation.
+
+1. Draw the `n` challenges uniformly; compute the view `simV σ` (messages and opened rows).
+2. Run the skeleton (`QuotientZk.sim` on `skelRec`): every hash a lazily sampled random-oracle query, the `c`-th
+   Fiat–Shamir query answered by the `c`-th challenge and written into the cache (programming), the messages
+   and opened rows from the view, a fresh private digest at every unopened leaf of a secret table (so the trees'
+   nodes and roots hash fresh values), grinding run as the prover runs it; record the duplex's permutation calls.
+3. Set the state to that record and the cache; read the Statement's proof from the skeleton's (`fmt`,
+   `ZK/Format.lean`: the reduction's nine scalars; per opening the stream, and the verifier's program replayed
+   from the claims it computes, the full Merkle path of every queried position, in the verifier's order,
+   produced from the pruned multiproofs; within `2^23` calls of `π`, answered as below).
+4. Answer every query of the distinguisher: coins forwarded; `π` and `π⁻¹` on lanes, read as bytes, by
+   `common`'s two-oracle simulator `S₂` (`simulator2`): a recorded edge from the record (so the duplex the
+   distinguisher recomputes from the proof meets the programmed challenges), a fresh forward query that ends a
+   sponge path padding a message `m` by the cache's Keccak-256 of `m` completed by uniform bits, any other fresh
+   forward query by the cache's permutation answer, a fresh inverse query by a uniform state.
+
+**Its cost**: no call of a real `π`; step 1, `n` uniform draws and `jointSim` (four samples, two table builds,
+two WHIR openings with fresh paddings, the wiring opening: the honest prover's opening work); step 2, the
+skeleton's at most `2^24 + 2^70` operations (`skelSetup_queryBound`; worst-case grinding counted, `2^17`
+expected tries a grind), each a cache lookup, a programmed answer or a uniform digest; step 3, `fmt`'s calls;
+step 4, per query one step of `S₂` (lookups in its edges and rooted states, the unpadding of one path, at most
+one cache lookup or uniform answer and one uniform state).
+
+**The theorem** (`zeroKnowledge_deployed_end`, `ZK/End.lean`; `zeroKnowledge_end` for any valid joint model):
+`ζ Q = εR Q + 2^-113 + 2^-165 + 2^24 (2^24 + 2^70 + 2^23 + Q) 2^-2368 + 2^48 2^-2368 + (Qp + 2^23 + Q)² / 2^508`
+for a distinguisher of `Q` calls of `π` and `π⁻¹` (coins free), at most
+`εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + 2^23 + Q)² / 2^508` for `Q ≤ 2^126` (`zkBoundEnd_le`). Proved: the
+distinguisher's coins removed (`ZK/Coins.lean`, a tape drawn first), the ideal experiment of `zkSimulator`
+equal to `QuotientZk`'s simulated game (`rpmIdeal_eq`), `QuotientZk`'s closeness from the joint model
+(`coreClose_of_joint`: `zk_rpm_skel`, `jointHVZK_of_link`, `factors_single`, `factors_pair`), `skelSetup`'s
+operations, duplex discipline and Fiat–Shamir freshness (`fsFresh_setup_deployed_bits`, `2^-113`), the real
+experiment's coins drawn outside the model (`realExperiment_coins`), `fmt`'s budget (`fmt_queryBound`), the
+Statement's coins `decodeCoins` of uniform words (`sampleCoinsP_eq`, `coinsMatch_of_bijective`), the joint model
+of the deployed prover (`deployedJointData_valid`; its public part and view simulator the simulator's by
+definition, `pub_deployed`, `simV_deployed`).
+**Named**: the field and F1's facts on the statement and the witness, the simulator's public functions, the
+honest tables' claims (`deployedJointData_valid`'s hypotheses); the prover's permutation budget `Qp`; a bijection
+`e` of the skeleton model's randomness onto the Statement's coins' words; `ProverBridge` (`εR`: the Statement's
+prover at the coins `decodeCoins (e s)` against the skeleton's prover `proverJ` on `skelSetup` at `s`, then
+`fmt`: the proof-of-work fuel `2^25` with no proof on failure, the replayed chain and the order of public queries,
+the proof's format; the skeleton trace test's list of differences is the checklist).
 
 ## End-to-end completeness (`Completeness/`)
 
@@ -226,14 +302,19 @@ most `|Bad| / 2^576 + 2 / 2^256`, for any challenge map with at most `2^64` dige
 `challengeOf` is such a map (`Regular.lean`); the transfer from the random permutation to the two random oracles
 for any honest computation following the duplex discipline (`Transfer.lean`, `rpm_le_rom`, mumbai's
 indifferentiability, `N² / 2^508`); `Bad` is `completeness_deployed_concrete`'s set for the secret and the masks
-(`badSet`, density `badSet_density`). **The hypothesis left**, `Staged.Holds` for the Statement's experiment: it
-is, in distribution, the coins then a two-call computation of the chain's shape (`staged`: the setup's, index and
-witness trees and the label's hash; `s₁ … s₃`; the quotient tree; `s₄`; the rest) whose permutation calls follow
-the duplex discipline, of at most `N` block calls, hashing before `α` and between `γ` and `t` nothing of `32` or
-`96` bytes; and in the two-call random-oracle model its honest proof is rejected at non-degenerate challenges
-with probability at most `εpow` (`completeness_deployed_concrete` for every hash and permutation, given the
-Statement's prover and verifier as `honestProve`, `deployedVerify` (`EndToEnd/Bridge`), and mumbai's
-proof-of-work potential for the openings' grinding, `ours_romComplete`'s `2^-277` per opening).
+(`badSet`, density `badSet_density`; `completeness_bad_set`'s set on the deployed instance). **The staged form
+for the Statement's experiment, proved** (`Staged.Holds`, `Assemble.lean`): the Statement's setup, prover and
+verifier with Keccak-256 an explicit call (`WithHash.lean`: `setupWithH`, `proverWithH`, `verifyWithH`, equal to
+the Statement's at `keccak256With F` and commuting with simulation); the experiment coins first (the raw coin
+words swapped with the setup, `Experiment.lean`, `completenessExperiment_eq_expH`); the run in the chain's shape
+(`Staging.lean`, `expH_eq_staged`, generic in the circuit so that no definitional check evaluates the deployed
+circuit); nothing of `32` or `96` bytes hashed before `α` or between `γ` and `t` (`HashLen.lean`: 512-byte
+leaves, 64-byte nodes, the 112-byte label); the duplex discipline (`Duplex.lean`, `duplexVm_stagedRun`: every
+opening, prover's and verifier's, starts its own duplex at a zero capacity). **The hypotheses left**
+(`completeness_deployed_cost_rej`): the deployed staged run makes at most `2^48` block calls (`hashBlocks`), and
+`RejectGood (3 · 2^-277)`: in the two-call random-oracle model it is rejected at non-degenerate challenges with
+probability at most `3 · 2^-277` (the Statement's prover accepted at non-degenerate challenges when its proofs of
+work succeed, the prover bridge; mumbai's proof-of-work potential for the openings' grinding).
 
 ## The port to this protocol (F1)
 

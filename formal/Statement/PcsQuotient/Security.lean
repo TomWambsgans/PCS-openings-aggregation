@@ -30,7 +30,11 @@ deployed Keccak-f[1600], independent of `π`.
 * **Zero knowledge** (`ZeroKnowledge ζ`, statistical, the permutation programmable): for every
   statement and witness of the relation and every distinguisher of at most `Q` calls of `π` and
   `π⁻¹`, its verdict on the honest proof in the model and on **`simulator`**'s proof, the simulator
-  answering its queries, differ in probability by at most `ζ Q`.
+  answering its queries, differ in probability by at most `ζ Q`. `ZeroKnowledgeWith s₀ sim simOracle ζ`
+  is the same for any simulator (`sim`, its oracle `simOracle`, its state from `s₀`):
+  `ZeroKnowledge ζ` is it at this package's `simulator`, a tested heuristic; the end theorem
+  (`formal/EndToEnd/ZK`) proves `ZeroKnowledgeWith` for `formal/QuotientZk`'s simulator in this shape
+  (`README.md`, "The simulator").
 
 **The bounds are parameters** (`ε`, `δ`, `ζ`): they are not yet known, and the end theorem will fix
 them (`README.md` gives the targets). A bound is part of what is proved: `KnowledgeSoundness ε` for
@@ -219,23 +223,38 @@ noncomputable def realExperiment (stmt : Statement) (w : Secret) (D : Distinguis
     let coins ← sampleCoins
     D (← prover queryPermutation stmt w coins)
 
-/-- **The ideal experiment**: `simulator`'s proof of `stmt`, without the witness, then the
-distinguisher, its every query answered by the simulator (`Simulator.simOracle`), from no edge. -/
-def idealExperiment (stmt : Statement) (D : Distinguisher) : ProbComp Bool :=
+/-- **The ideal experiment of a simulator**: `sim`'s proof of `stmt`, without the witness, then the
+distinguisher, its every query answered by the simulator's oracle `simOracle`, the simulator's state
+(of type `S`) starting at `s₀`. -/
+def idealExperimentWith {S : Type} (s₀ : S) (sim : Statement → StateT S ProbComp (Option Proof))
+    (simOracle : QueryImpl RandomPermutationOracles (StateT S ProbComp)) (stmt : Statement)
+    (D : Distinguisher) : ProbComp Bool :=
   (do
-    let proof ← simulator stmt
-    simulateQ Simulator.simOracle (D proof)).run' {}
+    let proof ← sim stmt
+    simulateQ simOracle (D proof)).run' s₀
 
-/-- **Statistical zero knowledge in the programmable random-permutation model**, for the simulator
-`simulator`, with the error `ζ Q` for a distinguisher of at most `Q` calls of `π` and `π⁻¹` (its
-coins free): its verdicts in the two experiments differ in probability by at most `ζ Q`. -/
-def ZeroKnowledge (ζ : ℕ → ℝ≥0∞) : Prop :=
+/-- **The ideal experiment** of this package's `simulator` (`Simulator.simOracle`, from no edge). -/
+def idealExperiment (stmt : Statement) (D : Distinguisher) : ProbComp Bool :=
+  idealExperimentWith (S := Simulator.SimState) {} simulator Simulator.simOracle stmt D
+
+/-- **Statistical zero knowledge in the programmable random-permutation model, for a simulator**
+`sim` with its oracle `simOracle` (from the state `s₀`), with the error `ζ Q` for a distinguisher of at
+most `Q` calls of `π` and `π⁻¹` (its coins free): its verdicts in the real experiment and in the ideal
+experiment of `sim` differ in probability by at most `ζ Q`. The simulator is a parameter so that the end
+theorem can name the simulator it proves (`README.md`, "The simulator"). -/
+def ZeroKnowledgeWith {S : Type} (s₀ : S) (sim : Statement → StateT S ProbComp (Option Proof))
+    (simOracle : QueryImpl RandomPermutationOracles (StateT S ProbComp)) (ζ : ℕ → ℝ≥0∞) : Prop :=
   ∀ (stmt : Statement) (w : Secret), Relation stmt w →
   ∀ (D : Distinguisher) (Q : ℕ), (∀ proof, QueryCostAtMost (D proof) permutationCallCost Q) →
     Pr{let b ← realExperiment stmt w D}[b = true] ≤
-        Pr{let b ← idealExperiment stmt D}[b = true] + ζ Q ∧
-      Pr{let b ← idealExperiment stmt D}[b = true] ≤
+        Pr{let b ← idealExperimentWith s₀ sim simOracle stmt D}[b = true] + ζ Q ∧
+      Pr{let b ← idealExperimentWith s₀ sim simOracle stmt D}[b = true] ≤
         Pr{let b ← realExperiment stmt w D}[b = true] + ζ Q
+
+/-- **Statistical zero knowledge for this package's `simulator`** (`ZeroKnowledgeWith` at `simulator`,
+`Simulator.simOracle`, from no edge). -/
+def ZeroKnowledge (ζ : ℕ → ℝ≥0∞) : Prop :=
+  ZeroKnowledgeWith (S := Simulator.SimState) {} simulator Simulator.simOracle ζ
 
 /-! ### Collisions of the deployed Keccak-256 -/
 

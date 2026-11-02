@@ -8,6 +8,7 @@ import E2ECompleteness.Experiment
 import E2ECompleteness.Staging
 import E2ECompleteness.HashLen
 import E2ECompleteness.Assemble
+import E2ECompleteness.Duplex
 
 /-!
 # `PcsQuotient.Completeness`, end to end
@@ -74,3 +75,11 @@ challenges). See the completeness section of `formal/README.md`.
 /-- info: 'E2ECompleteness.completeness_deployed_staged' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms E2ECompleteness.completeness_deployed_staged
+
+/-- info: 'E2ECompleteness.duplexVm_stagedRun' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.duplexVm_stagedRun
+
+/-- info: 'E2ECompleteness.completeness_deployed_cost_rej' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.completeness_deployed_cost_rej
