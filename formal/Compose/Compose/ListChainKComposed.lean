@@ -145,12 +145,11 @@ theorem lostWon_of_extract {St' : Type} {K' : ChainSpec F St'} (R' : Piop K' M)
       (∀ c₀ ∈ optC (C 0) H T (ms.getD 0 (none, [])),
         ¬ R'.pre s [] (c₀, (ms.getD 0 (none, [])).2)) →
       opened cs ms ch = p ++ [(m, c)] → R'.post s p m c → R'.LostWon s (opened cs ms ch)
-  | c₀ :: cs, m₀ :: ms, ch₀ :: chs, p, m, c, hcs, hext, hpe, hpost => by
+  | c₀ :: cs, m₀ :: ms, chs, p, m, c, hcs, hext, hpe, hpost => by
     cases hcs with
     | cons h0 _ => exact ⟨hext c₀ h0, p, m, c, hpe, hpost⟩
   | [], _, _, p, m, c, _, _, hpe, _ => by simp [opened] at hpe
   | _ :: _, [], _, p, m, c, _, _, hpe, _ => by simp [opened] at hpe
-  | _ :: _, _ :: _, [], p, m, c, _, _, hpe, _ => by simp [opened] at hpe
 
 /-- **A broken run has a doomed opening, or wins the list game.** -/
 theorem breaksK_imp

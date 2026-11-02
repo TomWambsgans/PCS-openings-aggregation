@@ -680,9 +680,10 @@ def facL {M : Type} (C : ℕ → ListCommit M) : ℕ → List RoundSpec → ℕ
   | _, [] => 1
   | i, s :: rs => (if s.root then (C i).bound else 1) * facL C (i + 1) rs
 
-/-- The opened transcript of candidates, messages and challenges. -/
+/-- The opened transcript of candidates, messages and challenges (a missing round's challenges
+read as `[]`). -/
 def opened {M : Type} : List (Option M) → List (RMsg F) → List (List F) → Opened M F
-  | c :: cs, m :: ms, ch :: chs => ((c, m.2), ch) :: opened cs ms chs
+  | c :: cs, m :: ms, chs => ((c, m.2), chs.headD []) :: opened cs ms chs.tail
   | _, _, _ => []
 
 section Cands
@@ -739,15 +740,13 @@ theorem optC_congr (C : ListCommit M) {H : Hist} {T T' : Table} (h : ∀ d ∈ H
   split <;> simp [C.congr H T T' _ h]
 
 theorem length_opened : ∀ (cs : List (Option M)) (ms : List (RMsg F)) (chs : List (List F)),
-    cs.length = ms.length → chs.length = ms.length → (opened cs ms chs).length = ms.length
-  | [], [], [], _, _ => rfl
-  | _ :: cs, _ :: ms, _ :: chs, h1, h2 => by
-    simp only [opened, List.length_cons] at h1 h2 ⊢
-    rw [length_opened cs ms chs (by omega) (by omega)]
-  | [], _ :: _, _, h, _ => by simp at h
-  | _ :: _, [], _, h, _ => by simp at h
-  | _, [], _ :: _, _, h => by simp at h
-  | _, _ :: _, [], _, h => by simp at h
+    cs.length = ms.length → (opened cs ms chs).length = ms.length
+  | [], [], _, _ => rfl
+  | _ :: cs, _ :: ms, chs, h1 => by
+    simp only [opened, List.length_cons] at h1 ⊢
+    rw [length_opened cs ms chs.tail (by omega)]
+  | [], _ :: _, _, h => by simp at h
+  | _ :: _, [], _, h => by simp at h
 
 /-- **The union bound over a product of lists**: if each tuple's event has probability at most
 `ε`, some tuple of the lists' members has probability at most the product of the lengths times
@@ -1004,9 +1003,8 @@ theorem prob_roundBadK (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) 
                 (tableOf c g)).map (chalL K.lim)))] ≤ R.err j := by
         intro cs hcs c' _
         have hlen : (opened cs ms chs).length = j := by
-          rw [length_opened cs ms chs (hcs.length_eq.trans (length_candLists C _ _ 0 ms)) (by
-              simp only [chs, chalsT, length_groupK, List.length_take, hp.length_eq]
-              omega), hp.length_eq]
+          rw [length_opened cs ms chs (hcs.length_eq.trans (length_candLists C _ _ 0 ms)),
+            hp.length_eq]
         refine (prEvent_round hS₀ c t ht (K.spec j).ns (fun l => ¬ R.pre s (opened cs ms chs)
           (c', m.2) ∧ R.post s (opened cs ms chs) (c', m.2) (l.map (chalL K.lim)))).trans ?_
         rw [prEvent_draws_chalL K.lim ((K.spec j).ns + 1) (fun l => ¬ R.pre s (opened cs ms chs)
@@ -1129,27 +1127,27 @@ theorem forall₂_append_split {α β : Type} {R' : α → β → Prop} :
 /-- **An opened transcript split at a round** splits its candidates, messages and challenges. -/
 theorem opened_eq_append_cons : ∀ (p : Opened M F) (cs : List (Option M)) (ms : List (RMsg F))
     (chs : List (List F)) (m' : Option M × List F) (c' : List F) (rest : Opened M F),
-    opened cs ms chs = p ++ (m', c') :: rest →
+    chs.length = ms.length → opened cs ms chs = p ++ (m', c') :: rest →
       ∃ cs₀ c cs₁ ms₀ m ms₁ chs₀ ch chs₁, cs = cs₀ ++ c :: cs₁ ∧ ms = ms₀ ++ m :: ms₁ ∧
         chs = chs₀ ++ ch :: chs₁ ∧ cs₀.length = p.length ∧ ms₀.length = p.length ∧
         chs₀.length = p.length ∧ p = opened cs₀ ms₀ chs₀ ∧ m' = (c, m.2) ∧ c' = ch
-  | [], c :: cs, m :: ms, ch :: chs, m', c', rest, h => by
-    simp only [opened, List.nil_append, List.cons.injEq, Prod.mk.injEq] at h
+  | [], c :: cs, m :: ms, ch :: chs, m', c', rest, _, h => by
+    simp only [opened, List.headD_cons, List.tail_cons, List.nil_append, List.cons.injEq,
+      Prod.mk.injEq] at h
     exact ⟨[], c, cs, [], m, ms, [], ch, chs, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
       by rw [← h.1.1], h.1.2.symm⟩
-  | q :: p, c₀ :: cs, m₀ :: ms, ch₀ :: chs, m', c', rest, h => by
-    simp only [opened, List.cons_append, List.cons.injEq] at h
+  | q :: p, c₀ :: cs, m₀ :: ms, ch₀ :: chs, m', c', rest, hl, h => by
+    simp only [opened, List.headD_cons, List.tail_cons, List.cons_append, List.cons.injEq] at h
     obtain ⟨cs₀, c, cs₁, ms₀, m, ms₁, chs₀, ch, chs₁, e1, e2, e3, l1, l2, l3, ep, em, ec⟩ :=
-      opened_eq_append_cons p cs ms chs m' c' rest h.2
+      opened_eq_append_cons p cs ms chs m' c' rest (by simpa using hl) h.2
     exact ⟨c₀ :: cs₀, c, cs₁, m₀ :: ms₀, m, ms₁, ch₀ :: chs₀, ch, chs₁, by rw [e1]; rfl,
       by rw [e2]; rfl, by rw [e3]; rfl, by simp [l1], by simp [l2], by simp [l3],
       by rw [← h.1, ep]; rfl, em, ec⟩
-  | [], [], _, _, _, _, _, h => by simp [opened] at h
-  | [], _ :: _, [], _, _, _, _, h => by simp [opened] at h
-  | [], _ :: _, _ :: _, [], _, _, _, h => by simp [opened] at h
-  | _ :: _, [], _, _, _, _, _, h => by simp [opened] at h
-  | _ :: _, _ :: _, [], _, _, _, _, h => by simp [opened] at h
-  | _ :: _, _ :: _, _ :: _, [], _, _, _, h => by simp [opened] at h
+  | [], [], _, _, _, _, _, _, h => by simp [opened] at h
+  | [], _ :: _, [], _, _, _, _, _, h => by simp [opened] at h
+  | _, _ :: _, _ :: _, [], _, _, _, hl, _ => by simp at hl
+  | _ :: _, [], _, _, _, _, _, _, h => by simp [opened] at h
+  | _ :: _, _ :: _, [], _, _, _, _, _, h => by simp [opened] at h
 
 theorem fitsAll_split : ∀ (rs : List RoundSpec) (ms₀ : List (RMsg F)) (m : RMsg F)
     (ms₁ : List (RMsg F)), FitsAll rs (ms₀ ++ m :: ms₁) →
@@ -1285,7 +1283,8 @@ theorem trace_coreK (L : List (List UInt8)) (T : Table) (s : St) (ms : List (RMs
   -- The round that turns the state from lost to won.
   obtain ⟨p, m', c', rest, hfull, hpre, hpost⟩ := R.exists_bad_of_lostWon s _ hwin
   obtain ⟨cs₀, c, cs₁, ms₀, m, ms₁, chs₀, ch, chs₁, ecs, ems, echs, l1, l2, l3, ep, em, ec⟩ :=
-    opened_eq_append_cons p cs ms _ m' c' rest hfull
+    opened_eq_append_cons p cs ms _ m' c' rest (by rw [chalsT, length_groupK, hfit.length_eq])
+      hfull
   rw [ems] at hfit
   obtain ⟨rs₀, s₁, rs₁, ers, hf0, hfm, hf1⟩ := fitsAll_split K.rounds ms₀ m ms₁ hfit
   have hl0 : ms₀.length = rs₀.length := hf0.length_eq
