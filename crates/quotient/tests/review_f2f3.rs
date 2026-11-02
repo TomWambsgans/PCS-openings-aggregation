@@ -2,6 +2,10 @@
 // `formal/QuotientSecurity/Hiding` (F3)). MIT OR Apache-2.0; see NOTICE.md.
 //! What the two Lean layers are about, checked against the deployed Rust.
 //!
+//! (The F2 finding below is fixed: `formal/WhirBridge` now mirrors every field of `Layout` and both branches of
+//! `verify`'s weight, builds the protocol's layouts with `Layout.hidden`, and `whir_bridge_vector.rs` writes deployed
+//! witness and quotient openings that `Test/Check.lean` accepts. `bridge_layouts` here is the bridge before the fix.)
+//!
 //! * F2: the bridge's `WhirBridge.Layout` is `Layout::new`'s public layout, and its `witnessLayout` /
 //!   `quotientLayout` (`formal/WhirBridge/WhirBridge/Sound.lean:171-196`) are the pre-hiding layouts. The
 //!   deployed witness and quotient openings use `Layout::hidden` (`protocol.rs:116-129`): a proof of the deployed
