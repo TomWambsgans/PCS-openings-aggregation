@@ -209,7 +209,76 @@ pub fn round1(a: &[u8], b: &[u8], c: &[u8], m: usize, k: usize, r_rest: &[F192])
     if k == MIN_SKIP && super::bit_fold::GFNI {
         return round1_bytes(a, b, c, m, r_rest);
     }
-    round1_generic(a, b, c, m, k, r_rest)
+    round1_folded(a, b, c, m, k, r_rest)
+}
+
+/// [`round1_generic`] with the medium positions' conversion as one GF(2)-linear map of a lane's 16 bytes (a
+/// [`BitFold`] of 16-byte rows, GFNI where the build has it) instead of 16 table lookups a lane.
+pub fn round1_folded(a: &[u8], b: &[u8], c: &[u8], m: usize, k: usize, r_rest: &[F192]) -> Vec<F192> {
+    assert!((MIN_SKIP..=K_SKIP).contains(&k));
+    assert_eq!(r_rest.len(), m - k);
+    let ell = 1usize << k;
+    let nc = ell / 8;
+    let ntt_s = AdditiveNttGf8::new(k, F8::ZERO);
+    let ntt_l = AdditiveNttGf8::new(k, F8(ell as u8));
+    let table = InvNttTableByteSingleGf8::new(&ntt_s, &ntt_l);
+    let eq_small = build_eq(&r_rest[..3]);
+    let cs = c_s();
+    for (kk, &e) in eq_small.iter().enumerate() {
+        assert_eq!(e, cs * PHI_8_TABLE[1 << kk], "the small coordinates' eq is C_s X^K");
+    }
+    let eq_med = build_eq(&r_rest[3..N_INNER]);
+    let weights: Vec<F192> = (0..128).map(|w| eq_med[w / 8] * cs * PHI_8_TABLE[1 << (w % 8)]).collect();
+    let fold = BitFold::new(&weights);
+    let eq = SplitEq::new(&r_rest[N_INNER..]);
+    let lo_size = 1usize << eq.n_lo;
+    let block = GROUPS * nc;
+    assert_eq!(a.len(), (lo_size << eq.n_hi) * block);
+
+    let zero = || (vec![F192::ZERO; ell], vec![F192::ZERO; ell]);
+    let (ab, c_s_part) = parallel::fold_reduce(
+        1usize << eq.n_hi,
+        zero,
+        |acc, x_hi| {
+            let (mut part_ab, mut part_c) = zero();
+            let mut scratch = Rows::new(ell);
+            // An x's rows: the AB lanes, then the C lanes, 16 medium bytes each.
+            let mut rows = vec![[0u8; 16]; 2 * ell];
+            let mut folded = vec![F192::ZERO; 2 * ell];
+            let mut out = [F192::ZERO; super::bit_fold::BLOCK];
+            for x_lo in 0..lo_size {
+                let at = (x_hi * lo_size + x_lo) * block;
+                let (a, b, c) = (&a[at..at + block], &b[at..at + block], &c[at..at + block]);
+                if a.iter().chain(b).chain(c).all(|&x| x == 0) {
+                    continue;
+                }
+                scratch.rows(a, b, c, &table, &mut rows);
+                for (chunk, dst) in rows.chunks(64).zip(folded.chunks_mut(64)) {
+                    fold.fold_block(chunk, &mut out);
+                    dst.copy_from_slice(&out[..dst.len()]);
+                }
+                let e = eq.lo[x_lo];
+                for l in 0..ell {
+                    part_ab[l] += e * folded[l];
+                    part_c[l] += e * folded[ell + l];
+                }
+            }
+            let e = eq.hi[x_hi];
+            for l in 0..ell {
+                acc.0[l] += e * part_ab[l];
+                acc.1[l] += e * part_c[l];
+            }
+        },
+        |mut x, y| {
+            for l in 0..ell {
+                x.0[l] += y.0[l];
+                x.1[l] += y.1[l];
+            }
+            x
+        },
+    );
+    let c_lifted = ntt_extend_vec(&c_s_part, &table);
+    ab.iter().zip(&c_lifted).map(|(&x, &y)| x + y).collect()
 }
 
 /// Round 1 at a skip of 3, a group a byte. For one `x` (16 medium positions of 8 bytes, one a small position `K`):
@@ -430,39 +499,67 @@ impl Rows {
         convert: &[[F192; 256]],
     ) -> ([F192; 64], [F192; 64]) {
         let ell = self.ell;
-        let nc = ell / 8;
         let (mut sum_ab, mut sum_c) = ([F192::ZERO; 64], [F192::ZERO; 64]);
-        let mut products = [0u8; 8 * 64];
         for (medium, lookups) in convert.iter().enumerate() {
-            let at = medium * 8 * nc;
-            for kk in 0..8 {
-                let group = at + kk * nc..at + (kk + 1) * nc;
-                table.apply(&a[group.clone()], &mut self.ea[kk * ell..(kk + 1) * ell]);
-                table.apply(&b[group], &mut self.eb[kk * ell..(kk + 1) * ell]);
-            }
-            // y_K = â b̂, then X^K y_K, summed over K: lane l of the row.
-            let len = 8 * ell;
-            mul_bytes(bytes_of(&self.ea[..len]), bytes_of(&self.eb[..len]), &mut products[..len]);
-            let mut shifted = [0u8; 8 * 64];
-            mul_bytes(&products[..len], &self.powers[..len], &mut shifted[..len]);
-            let mut row = [0u8; 64];
-            for kk in 0..8 {
-                for (r, &s) in row[..ell].iter_mut().zip(&shifted[kk * ell..(kk + 1) * ell]) {
-                    *r ^= s;
-                }
-            }
-            // The C bits of lane s: bit K from group K.
-            let mut crow = [0u8; 64];
-            for j in 0..nc {
-                let word = (0..8).fold(0u64, |w, kk| w | u64::from(c[at + kk * nc + j]) << (8 * kk));
-                crow[8 * j..8 * j + 8].copy_from_slice(&transpose_8x8(word).to_le_bytes());
-            }
+            let (row, crow) = self.medium(a, b, c, medium, table);
             for l in 0..ell {
                 sum_ab[l] += lookups[row[l] as usize];
                 sum_c[l] += lookups[crow[l] as usize];
             }
         }
         (sum_ab, sum_c)
+    }
+
+    /// One `x`'s rows: lane `l`'s 16 medium bytes, the AB lanes (`rows[l]`) then the C lanes (`rows[ell + l]`).
+    #[inline]
+    fn rows(&mut self, a: &[u8], b: &[u8], c: &[u8], table: &InvNttTableByteSingleGf8, rows: &mut [[u8; 16]]) {
+        let ell = self.ell;
+        for medium in 0..16 {
+            let (row, crow) = self.medium(a, b, c, medium, table);
+            for l in 0..ell {
+                rows[l][medium] = row[l];
+                rows[ell + l][medium] = crow[l];
+            }
+        }
+    }
+
+    /// Medium position `medium`'s AB row (`Σ_K X^K â b̂`, a lane a byte) and C row (lane `s`, bit `K` group `K`'s).
+    #[inline]
+    fn medium(
+        &mut self,
+        a: &[u8],
+        b: &[u8],
+        c: &[u8],
+        medium: usize,
+        table: &InvNttTableByteSingleGf8,
+    ) -> ([u8; 64], [u8; 64]) {
+        let ell = self.ell;
+        let nc = ell / 8;
+        let at = medium * 8 * nc;
+        for kk in 0..8 {
+            let group = at + kk * nc..at + (kk + 1) * nc;
+            table.apply(&a[group.clone()], &mut self.ea[kk * ell..(kk + 1) * ell]);
+            table.apply(&b[group], &mut self.eb[kk * ell..(kk + 1) * ell]);
+        }
+        // y_K = â b̂, then X^K y_K, summed over K: lane l of the row.
+        let len = 8 * ell;
+        let mut products = [0u8; 8 * 64];
+        mul_bytes(bytes_of(&self.ea[..len]), bytes_of(&self.eb[..len]), &mut products[..len]);
+        let mut shifted = [0u8; 8 * 64];
+        mul_bytes(&products[..len], &self.powers[..len], &mut shifted[..len]);
+        let mut row = [0u8; 64];
+        for kk in 0..8 {
+            for (r, &s) in row[..ell].iter_mut().zip(&shifted[kk * ell..(kk + 1) * ell]) {
+                *r ^= s;
+            }
+        }
+        // The C bits of lane s: bit K from group K.
+        let mut crow = [0u8; 64];
+        for j in 0..nc {
+            let word = (0..8).fold(0u64, |w, kk| w | u64::from(c[at + kk * nc + j]) << (8 * kk));
+            crow[8 * j..8 * j + 8].copy_from_slice(&transpose_8x8(word).to_le_bytes());
+        }
+        (row, crow)
     }
 }
 

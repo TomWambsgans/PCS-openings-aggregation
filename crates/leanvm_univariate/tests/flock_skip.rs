@@ -180,6 +180,33 @@ fn round1_bytes_is_the_generic_round1() {
     }
 }
 
+/// At skips of 3 to 6, round 1 with the medium positions folded (GFNI) is the generic one's.
+#[test]
+fn round1_folded_is_the_generic_round1() {
+    let mut rng = Rng(0x5eed_0008);
+    for k in 3..=6 {
+        for m in [k + 8, 16] {
+            let padding = PaddingSpec {
+                k_log: 14,
+                useful_bits_per_block: 16_000,
+            };
+            let [a, b, c] = witness(m, &padding, &mut rng);
+            let [noise, ..] = witness(m, &padding, &mut rng);
+            let c: Vec<u8> = c.iter().zip(&noise).map(|(&x, &y)| x ^ y).collect();
+            let r_rest: Vec<F192> = small_challenges()
+                .into_iter()
+                .chain(medium_challenges())
+                .chain((0..m - k - 7).map(|_| rng.ext()))
+                .collect();
+            assert_eq!(
+                lv42_flock::zerocheck::skip::round1_folded(&a, &b, &c, m, k, &r_rest),
+                lv42_flock::zerocheck::skip::round1_generic(&a, &b, &c, m, k, &r_rest),
+                "k = {k}, m = {m}"
+            );
+        }
+    }
+}
+
 /// At a skip of 6 the skip module's zerocheck writes leanVM's stream, byte for byte, and leaves its claim.
 #[test]
 fn zerocheck_at_six_is_leanvms() {
