@@ -198,11 +198,15 @@ fn round1_folded_is_the_generic_round1() {
                 .chain(medium_challenges())
                 .chain((0..m - k - 7).map(|_| rng.ext()))
                 .collect();
-            assert_eq!(
-                lv42_flock::zerocheck::skip::round1_folded(&a, &b, &c, m, k, &r_rest),
-                lv42_flock::zerocheck::skip::round1_generic(&a, &b, &c, m, k, &r_rest),
-                "k = {k}, m = {m}"
-            );
+            let generic = lv42_flock::zerocheck::skip::round1_generic(&a, &b, &c, m, k, &r_rest);
+            assert_eq!(lv42_flock::zerocheck::skip::round1_folded(&a, &b, &c, m, k, &r_rest), generic, "k = {k}, m = {m}");
+            if (4..=5).contains(&k) {
+                assert_eq!(
+                    lv42_flock::zerocheck::skip::round1_words(&a, &b, &c, m, k, &r_rest),
+                    generic,
+                    "words: k = {k}, m = {m}"
+                );
+            }
         }
     }
 }

@@ -1389,6 +1389,7 @@ fn lean_honest_vectors() {
                     shape,
                     flock: ("omitted", Blake2s::Omitted),
                     claims: (name, mode),
+                    program_iv: IV,
                 };
                 let mut extra = String::new();
                 if mode == Claims::Point {

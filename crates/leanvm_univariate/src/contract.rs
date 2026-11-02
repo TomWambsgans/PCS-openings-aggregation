@@ -138,6 +138,12 @@ pub struct Recorded {
 }
 
 pub fn record_verifier(shape: &Shape, blake2s: Blake2s, mode: Claims) -> Recorded {
+    record_verifier_with(shape, blake2s, mode, &SetupRoots::REFERENCE)
+}
+
+/// [`record_verifier`] for a contract that binds `setup` (another shape's `F`, say): the graph is the same, the
+/// roots are the code's constants.
+pub fn record_verifier_with(shape: &Shape, blake2s: Blake2s, mode: Claims, setup: &SetupRoots) -> Recorded {
     let ((reduced, stream_len, roots, reads), graph) = record(|| {
         let mut recorder = Recorder::new();
         let words = Recorder::statement();
@@ -147,7 +153,7 @@ pub fn record_verifier(shape: &Shape, blake2s: Blake2s, mode: Claims) -> Recorde
     assert_eq!(roots.len(), 2, "two commitments in the stream");
     Recorded {
         shape: *shape,
-        roots: SetupRoots::REFERENCE,
+        roots: *setup,
         graph,
         reduced,
         stream_len,
@@ -271,7 +277,20 @@ pub fn rust_verifier(
     blake2s: Blake2s,
     mode: Claims,
 ) -> Result<(Reduced<E>, Vec<E>, Vec<E>), leanvm_flock_gas::VerifierError> {
-    let seed = keccak_seed(&NAME, &contract_iv(shape, iv, &SetupRoots::REFERENCE), public_words);
+    rust_verifier_with(shape, iv, &SetupRoots::REFERENCE, public_words, stream, blake2s, mode)
+}
+
+/// [`rust_verifier`] for a contract that binds `setup` in its IV.
+pub fn rust_verifier_with(
+    shape: &Shape,
+    iv: &[u8; 32],
+    setup: &SetupRoots,
+    public_words: &[u8; 32],
+    stream: &[u8],
+    blake2s: Blake2s,
+    mode: Claims,
+) -> Result<(Reduced<E>, Vec<E>, Vec<E>), leanvm_flock_gas::VerifierError> {
+    let seed = keccak_seed(&NAME, &contract_iv(shape, iv, setup), public_words);
     let mut channel = KeccakChannel::new(
         seed,
         stream,
@@ -464,7 +483,20 @@ fn expected_words(reduced: &Reduced<E>, recorded: &Recorded, stream: &[u8]) -> V
 /// The contract, built to return what it would hand `PCS_OPEN` and every value it checks, against the Rust verifier
 /// on the same calldata: word for word.
 pub fn parity(shape: &Shape, iv: &[u8; 32], public_words: &[u8; 32], stream: &[u8], blake2s: Blake2s, mode: Claims) {
-    let recorded = record_verifier(shape, blake2s, mode);
+    parity_with(shape, iv, &SetupRoots::REFERENCE, public_words, stream, blake2s, mode);
+}
+
+/// [`parity`] for a contract that binds `setup`.
+pub fn parity_with(
+    shape: &Shape,
+    iv: &[u8; 32],
+    setup: &SetupRoots,
+    public_words: &[u8; 32],
+    stream: &[u8],
+    blake2s: Blake2s,
+    mode: Claims,
+) {
+    let recorded = record_verifier_with(shape, blake2s, mode, setup);
     let entry = Entry {
         name: NAME,
         iv: contract_iv(shape, iv, &recorded.roots),
@@ -479,7 +511,7 @@ pub fn parity(shape: &Shape, iv: &[u8; 32], public_words: &[u8; 32], stream: &[u
         .collect();
     let contract = compile(&recorded.graph, &outputs, &Ending::Return, &entry);
     let (reduced, zero, nonzero) =
-        rust_verifier(shape, iv, public_words, stream, blake2s, mode).expect("the stream's length");
+        rust_verifier_with(shape, iv, setup, public_words, stream, blake2s, mode).expect("the stream's length");
     let mut expected = expected_words(&reduced, &recorded, stream);
     expected.extend(zero.iter().chain(&nonzero).map(|&x| leanvm_flock_gas::evm::machine::element_word(x)));
     let outcome = call(&contract.code, &[], &calldata(public_words, stream), &PcsOpen::default());

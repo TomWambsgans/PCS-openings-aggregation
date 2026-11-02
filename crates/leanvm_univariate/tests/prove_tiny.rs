@@ -19,6 +19,8 @@ use leanvm_flock_gas::layout::{
 use leanvm_univariate::prover::prove::{Config, prove, verify};
 use leanvm_univariate::contract::SetupRoots;
 use leanvm_univariate::domain::active_positions;
+use leanvm_univariate::prover::columns::setup_polys;
+use leanvm_univariate::prover::setup::shape_roots;
 use leanvm_univariate::prover::trace::Trace;
 use leanvm_univariate::{Blake2s, Claims, Shape};
 use primitives::field::F64;
@@ -309,27 +311,31 @@ fn tiny_executions_are_proven_and_verified() {
         SIZES.set((memory, bytecode));
         let mut rng = Rng(0x5EED ^ (memory << 8 | bytecode) as u64);
         let trace = trace_of(&execution(&mut rng));
+        // The contract for this shape binds its own F (and the R1CS's A0, B0).
+        let roots = shape_roots(&trace.shape(), &setup_polys(&trace));
         let config = Config {
             blake2s: Blake2s::Omitted,
             claims: Claims::Point,
             check: true,
             garbage: false,
             stand_in_roots: None,
-            roots: SetupRoots::REFERENCE,
+            roots,
         };
         let (proof, report) = prove(&trace, None, &[0x77; 32], config).expect("a proof");
         assert!(report.checks.iter().all(|(_, ok)| *ok), "{:?}", report.checks);
         for (name, degree, count, _) in &report.quotients {
             assert!(*degree < *count as i64, "{name}");
         }
-        verify(&trace.shape(), &[0x77; 32], &trace.public_input(), &proof, Blake2s::Omitted, false).expect("accepted");
-        // The review's honest prover sends these stand-in roots (it commits nothing): with them, the stream is the
-        // one it writes for the same execution, byte for byte, if the two provers agree on every value.
+        verify(&trace.shape(), &[0x77; 32], &roots, &trace.public_input(), &proof, Blake2s::Omitted).expect("accepted");
+        // The review's honest prover sends these stand-in roots (it commits nothing) and binds the reference setup
+        // roots: with them, the stream is the one it writes for the same execution, byte for byte, if the two
+        // provers agree on every value.
         let stand_in = Config {
             stand_in_roots: Some([
                 [E::new(0x1111, 0x2222, 0), E::new(0x3333, 0x4444, 0)],
                 [E::new(0x5555, 0x6666, 0), E::new(0x7777, 0x8888, 0)],
             ]),
+            roots: SetupRoots::REFERENCE,
             ..config
         };
         let (cross, _) = prove(&trace, None, &[0x77; 32], stand_in).expect("a proof");

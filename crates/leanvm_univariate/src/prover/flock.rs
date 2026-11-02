@@ -180,16 +180,22 @@ impl Pending {
 fn sliced(k: usize, low: &[E], chi_in: &[E], chi_in_prime: &[E], alpha: E) -> Vec<E> {
     let high = eq_kernel(chi_in_prime);
     let rows = eq_kernel(&[low, chi_in].concat());
-    let mut g = vec![ZERO; (1 << k) * K_BITS];
-    for y in 0..K_BITS {
+    // One walk of the circuit per packing position y, in parallel.
+    let columns: Vec<Vec<E>> = parallel::map_collect(K_BITS, |y| {
         let mut w = vec![ZERO; 1 << BLAKE2S_R1CS_LOG_SIZE];
         for (h, &weight) in high.iter().enumerate() {
             w[h * K_BITS + y] = weight;
         }
         let (left, right) = blake2s_row_values(&w);
+        let mut column = vec![ZERO; 1 << k];
         for (row, (&l, &r)) in left.iter().zip(&right).enumerate() {
-            g[(row & ((1 << k) - 1)) + (y << k)] += rows[row >> k] * (l + alpha * r);
+            column[row & ((1 << k) - 1)] += rows[row >> k] * (l + alpha * r);
         }
+        column
+    });
+    let mut g = vec![ZERO; (1 << k) * K_BITS];
+    for (y, column) in columns.into_iter().enumerate() {
+        g[y << k..(y + 1) << k].copy_from_slice(&column);
     }
     g
 }
