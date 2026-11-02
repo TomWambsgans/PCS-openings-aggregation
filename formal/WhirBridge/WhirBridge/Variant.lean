@@ -21,12 +21,14 @@ import LeanVM.Protocol.Compile.Rom.Sound
 mumbai's random-oracle theorem covers a verifier program whose commitments are **read from the
 proof** (`Prog.commit`: the root's two halves absorbed into the duplex, `verifier.py`'s
 `Digest.from_halves(*next_scalars(2))`), run from a seed of hash steps and one permutation whose
-root history has no commitment (`Compile.Rom.RootOk`). `opening.rs` instead hashes the root, with
-the claims, into the seed's public-input digest and never absorbs it (`Gaps.lean`). This file
-proves the theorem for the opening **with mumbai's shape**:
+root history has no commitment (`Compile.Rom.RootOk`). `opening.rs` has that shape since its
+version 2 (the root the proof's first two scalars, `opening.rs:742-745`). This file proves the
+theorem for a fixed statement; `Family.lean` for claims the adversary chooses, `Verifier.lean` for
+`opening::verify` itself:
 
 * `variantProg L R claims`: read the stack's root as commitment `0` (`commitStack`, as leanVM's
-  `verify_execution` does), then `openingCheck L R claims`, then accept;
+  `verify_execution` does), then the stacking's opening `L.check R claims` (a layout's is
+  `opening::verify`'s, `Layout.check_eq`), then accept;
 * `fixedSeeds label D`: the seed `F(H(label) ‖ D ‖ 0)`, for a fixed statement (a family of one):
   any label and any public digest `D`, for instance `keccak256(claims)` computed outside the
   model.
@@ -34,10 +36,10 @@ proves the theorem for the opening **with mumbai's shape**:
 `variant_sound`: for an adversary making at most `QA` queries to Keccak-256 and Keccak-f[1600]
 (independent random oracles), the verifier accepts while **every candidate of the root's word
 extracted from the oracle's answers** (the straight-line extraction of mumbai's
-`Compile.Rom.extractedHistory`) has a table violating one of the claims, with probability at most
+`Compile.Rom.extractedHistory`) violates one of the claims, with probability at most
 `(QA + QV) · (2^-128 + 5 (QA + QV) / 2^256)`, `QV = variantQueries = 10122`, which is at most
-`2^-63` for `QA ≤ 2^64` (`variant_bound_le`). `variant_sound_table` says the same in table terms:
-every candidate's **table** (`Layout.tableEval`) violates one of the claims. The extracted word is
+`2^-63` for `QA ≤ 2^64` (`variant_bound_le`). `extracted_root_word`: in an accepted run, that word
+is mumbai's `extract` at the root the proof's first two scalars encode. The extracted word is
 read off the final random-oracle cache (the adversary's and the verifier's answers), as in mumbai's
 `romSound`; a straight-line extractor reading the adversary's queries only is mumbai's further step
 for leanVM (`Sound.extractor_of_extracted`, `Sound.prEvent_logged2_root_le`, `LeanVMSound.lean`),
@@ -62,9 +64,9 @@ attribute [local irreducible] instFintypeDigest instFintypeKState
 
 /-- **The opening with leanVM's transcript shape**: the stack's root read as commitment `0`, then
 the opening check, then accept. -/
-def variantProg (L : Layout) (R : ℕ) (claims : List Claim) : Prog Bool := do
+def variantProg (L : Stacking) (R : ℕ) (claims : List Claim) : Prog Bool := do
   commitStack L.logN R
-  openingCheck L R claims
+  L.check R claims
   return true
 
 theorem after_nil' {α : Type} (p : Prog α) : p.after [] = some p := by
@@ -101,7 +103,7 @@ def fixedSeeds (label : Bytes) (D : Digest) : Seeds Unit where
   cap0 x ds := capOf_seedInput _ _
   inj _ _ _ _ _ _ _ _ _ := Subsingleton.elim _ _
 
-variable (L : Layout) (R : ℕ) (hw : Whir.Admissible L.logN R) (claims : List Claim)
+variable (L : Stacking) (R : ℕ) (hw : Whir.Admissible L.logN R) (claims : List Claim)
   (hJ : claims.length ≤ 2 ^ 46 + 1)
 
 /-- The specification of the variant: from no doom, the root creates `OpeningDoom`, the opening
@@ -138,7 +140,6 @@ theorem movesOK_variant :
     MovesOK (· ≤ 64) True (variantProg L R claims) := by
   refine MovesOK.seq ((movesOK_commitStack _ _).mono (fun _ h ↦ h.elim) id) fun _ ↦
     MovesOK.seq ?_ fun _ ↦ MovesOK.pure _
-  rw [openingCheck_eq]
   exact MovesOK.seq (MovesOK.require _) fun _ ↦
     (movesOK_verifyStackedOpening _ _ _).mono (fun _ hb ↦ hb ▸ queryGrindingBits_le) id
 
@@ -160,9 +161,8 @@ theorem rootOk_nil : RootOk (variantProg L R claims) [] :=
 largest admissible ladder (mumbai's `whirBound`). -/
 theorem costLE_variant :
     (variantProg L R claims).CostLE costHeight (2 + (4 + (2 + whirBound))) := by
-  have hopen : Prog.Costs costHeight (openingCheck L R claims) (4 + (2 + whirBound))
+  have hopen : Prog.Costs costHeight (L.check R claims) (4 + (2 + whirBound))
       fun _ ↦ True := by
-    rw [openingCheck_eq]
     refine Prog.Costs.seq (a := 0) (Prog.Costs.require _) (fun _ _ ↦ ?_) (Nat.zero_le _)
     exact (costs_verifyStackedOpening _ _ _ whirBound fun levels h ↦
       ⟨(ladder_cost _ _ levels h).1, (ladder_cost _ _ levels h).2.2.1,
@@ -183,6 +183,62 @@ theorem isTotalQueryBound_variant (label : Bytes) (D : Digest) (z : Unit × Proo
     variantQueries
   rw [nodeAt, after_nil']
   exact isTotalQueryBound_verifierComp (costLE_variant L R claims) (fixedSeed label D) z.2
+
+
+/-! ## The root read from the proof -/
+
+/-- **The root the proof's first two scalars encode** (`Digest::from_halves(next_scalars(2))`,
+`opening.rs:742-745`; mumbai's `digestOfScalars`), if they are two and encode one. -/
+def rootOf (π : Proof) : Option Digest :=
+  match π.stream with
+  | x0 :: x1 :: _ => digestOfScalars (x0, x1)
+  | _ => none
+
+/-- The height of level 0's commitment: `log_n − 6 + R`. -/
+def rootHeight (logN R : ℕ) : ℕ := logN - laneFold + R
+
+theorem commitStack_eq {logN R : ℕ} (hw : Whir.Admissible logN R) :
+    commitStack logN R = Prog.commit (rootHeight logN R) (2 ^ laneFold) (Prog.ret ()) := by
+  obtain ⟨q₀, rest, hc, -⟩ := LeanVM.Protocol.Whir.Complete.exists_ladder hw
+  unfold commitStack
+  rw [hc]
+  rfl
+
+theorem variantProg_eq {L : Stacking} {R : ℕ} (hw : Whir.Admissible L.logN R) (claims : List Claim) :
+    variantProg L R claims = Prog.commit (rootHeight L.logN R) (2 ^ laneFold)
+      ((L.check R claims).bind fun _ ↦ Prog.ret true) := by
+  unfold variantProg
+  rw [commitStack_eq hw]
+  rfl
+
+/-- **In an accepted run, the extracted root word is the root's**: the history starts with the
+commitment of the root the proof's first two scalars encode, holding mumbai's `extract` of it. -/
+theorem extracted_root_word {L : Stacking} {R : ℕ} (hw : Whir.Admissible L.logN R)
+    {claims : List Claim} {H : Bytes → Option Digest} {F : KeccakState → Option KeccakState}
+    {σ : Seed} {π : Proof}
+    (hv : LeanVM.Protocol.Compile.Rom.verify H F σ (variantProg L R claims) π = some true) :
+    ∃ r rest, rootOf π = some r ∧
+      extractedHistory H F σ (variantProg L R claims) π =
+        Ev.commit (rootHeight L.logN R) (2 ^ laneFold)
+          (extract H r (rootHeight L.logN R) (2 ^ laneFold)) :: rest := by
+  obtain ⟨seed, st, -, hx⟩ := xrun_of_verify_from [] hv
+  rw [extractedHistory]
+  generalize extractedFrom H F σ (variantProg L R claims) [] π = hist at hx ⊢
+  rw [variantProg_eq hw] at hx
+  simp only [xrun] at hx
+  split at hx
+  · rename_i x0 x1 xs hs
+    simp only [Option.bind_eq_some_iff] at hx
+    obtain ⟨sp0, -, sp1, -, hx⟩ := hx
+    split at hx
+    · rename_i r hr
+      have hp := xrun_prefix H F _ _ _ hx
+      obtain ⟨rest, hrest⟩ := hp
+      refine ⟨r, rest, by simp [rootOf, hs, hr], ?_⟩
+      rw [← hrest]
+      rfl
+    · simp at hx
+  · simp at hx
 
 /-! ## The doom after the root -/
 
@@ -275,55 +331,6 @@ theorem shapeOK_root {e : Ev} (hce : (commitStack L.logN R).after [e] = some (.r
     rw [hd.2.2.1, hd.2.2.2.1]
     simp [levelShape, laneBits]
   · exact hws _ _ _ rfl
-
-/-- The event in table terms: every candidate of the extracted root word has a table violating
-one of the claims. -/
-def TableDoomed (label : Bytes) (D : Digest) (z : Unit × Proof) (c : KeccakCalls.QueryCache) :
-    Prop :=
-  ∀ q ∈ Candidates L.logN R (code₀ L.logN R).thr
-      (LeanVM.Protocol.Whir.Sound.wordOf (commits (rootEvents (extractedHistory
-        (fun x ↦ c (.inl x)) (fun s ↦ c (.inr s)) (fixedSeed label D) (variantProg L R claims)
-          z.2))) 0),
-    ∃ cl ∈ claims, L.tableEval q cl.point ≠ cl.value
-
-include hw hJ in
-/-- **Fiat-Shamir soundness of the opening with leanVM's transcript shape, in table terms**: the
-verifier accepts while every candidate table of the extracted root word violates one of the
-claims with probability at most `(QA + QV) · (2^-128 + 5 (QA + QV) / 2^256)`. -/
-theorem variant_sound_table (hL : L.Valid) (hc : ∀ c ∈ claims, c.point.length = L.vars)
-    (label : Bytes) (D : Digest)
-    (A : OracleComp KeccakCalls (Unit × Proof)) (QA : ℕ) (hA : IsTotalQueryBound A QA) :
-    Pr{let z ← romExperiment A (verifierFam (fixedSeeds label D) (variantProg L R claims))}[
-        z.1.2 = true ∧ TableDoomed L R claims label D z.1.1 z.2] ≤
-      (QA + variantQueries : ℕ) *
-        (εWhir + failBound (fixedSeeds label D) (QA + variantQueries)) := by
-  refine romSound_of_imp (variantProg L R claims) (variantCert L R hw claims hJ)
-    (fixedSeeds label D) (fun _ ↦ rootOk_nil L R claims) εWhir (variantCert_bound L R hw claims hJ)
-    A QA hA variantQueries (isTotalQueryBound_variant L R claims label D)
-    (TableDoomed L R claims label D) fun z c hv hbad ↦ ?_
-  have key : (fixedSeeds label D).root z.1 = [] := rfl
-  have hseed : (fixedSeeds label D).seed z.1 = fixedSeed label D := rfl
-  have hroot : nodeAt (variantProg L R claims) [] = variantProg L R claims := by
-    rw [nodeAt, after_nil']; rfl
-  rw [key, hroot, hseed] at hv
-  obtain ⟨e, rest, hhist, hce⟩ := extracted_root (L := L) (R := R) (claims := claims) hv
-  have hws := (Sound.after_extractedHistory _ _ hv).2
-  rw [hhist] at hws
-  unfold Doomed
-  rw [key, hroot, hseed]
-  refine ⟨[e], ?_, Nat.zero_le _, ?_, ?_⟩
-  · show [e] <+: extractedHistory _ _ (fixedSeed label D) (variantProg L R claims) z.2
-    rw [hhist]
-    exact ⟨rest, rfl⟩
-  · obtain ⟨level, rest', W, -, he⟩ := commitStack_after_ret hce
-    rw [List.singleton_inj.1 he]
-    trivial
-  · refine variantCert_D_root L R hw claims hJ hce ((openingDoom_iff L hL R claims hc _).2
-      ⟨shapeOK_root L R hw hce fun ht w W he ↦ hws ht w W (he ▸ List.mem_cons_self ..), ?_⟩)
-    have h := hbad
-    unfold TableDoomed rootEvents at h
-    rw [hhist] at h
-    simpa using h
 
 /-- `2^-k` as `2^(n - k) / 2^n` (mumbai's `inv_pow_eq_div`, `EndToEnd/Sound/Statements.lean`). -/
 theorem inv_pow_eq_div (k n : ℕ) (h : k ≤ n) :

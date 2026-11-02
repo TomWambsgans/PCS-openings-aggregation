@@ -7,7 +7,7 @@ seedings naming the statement; the certificate of every statement) is adapted fr
 `mumbai`'s for leanVM (https://github.com/Verified-zkEVM/leanerVM, commit 6175f1a0, MIT OR
 Apache-2.0: `lean_vm/LeanVM/Protocol/EndToEnd/Sound/Statements.lean`), whose general lemmas it uses.
 -/
-import WhirBridge.Gaps
+import WhirBridge.Variant
 import LeanVM.Protocol.EndToEnd.Sound.Statements
 
 /-!
@@ -44,12 +44,12 @@ attribute [local irreducible] instFintypeDigest instFintypeKState
 /-! ## Statements -/
 
 /-- A statement: claims on the layout `L`, every point of `vars` coordinates. -/
-structure Stmt (L : Layout) where
+structure Stmt (L : Stacking) where
   claims : List Claim
   short : claims.length ≤ 2 ^ 46 + 1
   wide : ∀ c ∈ claims, c.point.length = L.vars
 
-theorem Stmt.ext' {L : Layout} {x x' : Stmt L} (h : x.claims = x'.claims) : x = x' := by
+theorem Stmt.ext' {L : Stacking} {x x' : Stmt L} (h : x.claims = x'.claims) : x = x' := by
   cases x; cases x'; cases h; rfl
 
 /-- The claims' scalars: each point, then its value. -/
@@ -106,11 +106,11 @@ theorem after_readScalarsK (k : List E → Prog Bool) :
 
 /-- **The program of every statement**: the claims' count and scalars, read, then `variantProg`
 on the claims. -/
-def famProgram (L : Layout) (R : ℕ) : Prog Bool :=
+def famProgram (L : Stacking) (R : ℕ) : Prog Bool :=
   .read fun n ↦ readScalarsK (kNat (n.limb 0) * (L.vars + 1)) fun xs ↦
     variantProg L R (chunkClaims L.vars (kNat (n.limb 0)) xs)
 
-variable {L : Layout} {R : ℕ}
+variable {L : Stacking} {R : ℕ}
 
 /-- A statement's scalars: the count, then the claims'. -/
 def famScalars (x : Stmt L) : List E := wordE (K.ofBits x.claims.length) :: flat x.claims
@@ -172,7 +172,11 @@ theorem fam_eq_of_prefix {x x' : Stmt L} {h : List Ev} (hx : famHistory x <+: h)
 
 /-! ## The seedings -/
 
-/-- The claims' bytes, as `seed` writes them after the root. -/
+/-- A scalar's bytes as `iv` writes them (`opening.rs:595-599`): its three limbs, little-endian. -/
+def scalarBytes (x : E) : Bytes := kBytes (x.limb 0) ++ kBytes (x.limb 1) ++ kBytes (x.limb 2)
+
+/-- The claims' bytes, as `iv` writes them after the prefix (`opening.rs:592-602`): each claim's
+point, then its value. -/
 def claimsBytes (cs : List Claim) : Bytes := (flat cs).flatMap scalarBytes
 
 theorem scalarBytes_length (x : E) : (scalarBytes x).length = 24 := by
@@ -371,32 +375,36 @@ theorem isTotalQueryBound_fam (pre : Bytes) (z : Stmt L × Proof) :
   rw [verifierFam_fam pre]
   exact isTotalQueryBound_verifierComp (costLE_variant L R z.1.claims) (famSeed pre z.1) z.2
 
-/-- The event: every candidate table of the extracted root word violates one of the statement's
-claims. -/
-def FamTableDoomed (pre : Bytes) (z : Stmt L × Proof) (c : KeccakCalls.QueryCache) : Prop :=
-  ∀ q ∈ Candidates L.logN R (code₀ L.logN R).thr
-      (LeanVM.Protocol.Whir.Sound.wordOf (commits (rootEvents (extractedHistory
-        (fun x ↦ c (.inl x)) (fun s ↦ c (.inr s)) (famSeed pre z.1) (variantProg L R z.1.claims)
-          z.2))) 0),
-    ∃ cl ∈ z.1.claims, L.tableEval q cl.point ≠ cl.value
+/-- **The event**: for the root the proof's first two scalars encode, every candidate of the word
+extracted for it from the oracle's answers (mumbai's `extract`, at level 0's shape) violates one of
+the statement's claims. -/
+def FamDoomed (L : Stacking) (R : ℕ) (z : Stmt L × Proof) (c : KeccakCalls.QueryCache) : Prop :=
+  ∀ r, rootOf z.2 = some r →
+    ∀ q ∈ Candidates L.logN R (code₀ L.logN R).thr
+        (extract (fun x ↦ c (.inl x)) r (rootHeight L.logN R) (2 ^ laneFold)),
+      ∃ cl ∈ z.1.claims, ¬ StackClaim.Holds L.logN (L.weight cl, cl.value) q
 
 /-- **Fiat-Shamir soundness of the opening with leanVM's transcript shape, for claims the
-adversary chooses**: an adversary of at most `QA` queries outputs claims on the layout `L` and a
-proof; the verifier accepts while every candidate table of the extracted root word violates one
-of its claims with probability at most `(QA + QV) · (2^-128 + 5 (QA + QV) / 2^256)`. -/
-theorem family_sound (hw : Whir.Admissible L.logN R) (hL : L.Valid) (pre : Bytes)
+adversary chooses**: an adversary of at most `QA` queries outputs claims on the stacking `L` and a
+proof; the verifier accepts while every candidate of the word extracted for the proof's root
+violates one of its claims with probability at most `(QA + QV) · (2^-128 + 5 (QA + QV) / 2^256)`. -/
+theorem family_sound (hw : Whir.Admissible L.logN R) (pre : Bytes)
     (A : OracleComp KeccakCalls (Stmt L × Proof)) (QA : ℕ)
     (hA : IsTotalQueryBound A QA) :
     Pr{let z ← romExperiment A (verifierFam (famSeeds L pre) (famProgram L R))}[
-        z.1.2 = true ∧ FamTableDoomed (R := R) pre z.1.1 z.2] ≤
+        z.1.2 = true ∧ FamDoomed L R z.1.1 z.2] ≤
       (QA + variantQueries : ℕ) * (εWhir + failBound (famSeeds L pre) (QA + variantQueries)) := by
   refine romSound_of_imp (famProgram L R) (famCert L R hw) (famSeeds L pre)
     (fun x ↦ rootOk_famHistory x) εWhir (famCert_bound L R hw) A QA hA variantQueries
-    (isTotalQueryBound_fam pre) (FamTableDoomed pre) fun z c hv hbad ↦ ?_
+    (isTotalQueryBound_fam pre) (FamDoomed L R) fun z c hv hbad ↦ ?_
   have hseed : (famSeeds L pre).seed z.1 = famSeed pre z.1 := rfl
   have hroot : (famSeeds L pre).root z.1 = famHistory z.1 := rfl
   rw [hseed, hroot, nodeAt_famHistory] at hv
   obtain ⟨e, rest, hhist, hce⟩ := extracted_root (L := L) (R := R) (claims := z.1.claims) hv
+  obtain ⟨r, rest', hr, hhist'⟩ := extracted_root_word hw hv
+  have he : e = Ev.commit (rootHeight L.logN R) (2 ^ laneFold)
+      (extract (fun x ↦ c (.inl x)) r (rootHeight L.logN R) (2 ^ laneFold)) :=
+    (List.cons.inj (hhist.symm.trans hhist')).1
   have hws := (Sound.after_extractedHistory _ _ hv).2
   rw [hhist] at hws
   unfold Doomed
@@ -408,15 +416,17 @@ theorem family_sound (hw : Whir.Admissible L.logN R) (hL : L.Valid) (pre : Bytes
     rw [List.singleton_inj.1 he]
     exact boundary_append_of (h := []) trivial
   · refine (famD_iff L R hw z.1 [e]).2 (variantCert_D_root L R hw z.1.claims z.1.short hce
-      ((openingDoom_iff L hL R z.1.claims z.1.wide _).2
-        ⟨shapeOK_root L R hw hce fun ht w W he ↦ hws ht w W (he ▸ List.mem_cons_self ..), ?_⟩))
-    have h := hbad
-    unfold FamTableDoomed rootEvents at h
-    rw [hhist] at h
-    simpa using h
+      ⟨shapeOK_root L R hw hce fun ht w W he ↦ hws ht w W (he ▸ List.mem_cons_self ..),
+        fun q hq ↦ ?_⟩)
+    have hq' : q ∈ Candidates L.logN R (code₀ L.logN R).thr
+        (extract (fun x ↦ c (.inl x)) r (rootHeight L.logN R) (2 ^ laneFold)) := by
+      rw [he] at hq
+      simpa [LeanVM.Protocol.Whir.Sound.wordOf, commits] using hq
+    obtain ⟨cl, hcl, hn⟩ := hbad r hr q hq'
+    exact ⟨_, List.mem_map.2 ⟨cl, hcl, rfl⟩, hn⟩
 
 /-- **The numbers**: against `2^64` queries, the bound of `family_sound` is at most `2^-63`. -/
-theorem family_bound_le (L : Layout) (pre : Bytes) {QA : ℕ} (hQ : QA ≤ 2 ^ 64) :
+theorem family_bound_le (L : Stacking) (pre : Bytes) {QA : ℕ} (hQ : QA ≤ 2 ^ 64) :
     ((QA + variantQueries : ℕ) : ℝ≥0∞) * (εWhir + failBound (famSeeds L pre) (QA + variantQueries)) ≤
       (2 : ℝ≥0∞)⁻¹ ^ 63 :=
   bound_le _ rfl hQ

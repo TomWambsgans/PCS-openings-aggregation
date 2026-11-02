@@ -11,6 +11,11 @@ accepts it. So mumbai's verifier covers the deployed proof; what is missing is t
 `isMultiaffine`, `holds_iff` for it).
 
   cd formal/WhirBridge && lake env lean --run ../Review/HiddenWeight.lean <hidden vector>
+
+Superseded by the fix: `WhirBridge.Layout.check` transcribes both branches (`WhirBridge/Opening.lean`)
+and `Test/Check.lean` runs it on deployed openings in the version-2 transcript. This file keeps the
+review's experiment with the transcript of the time (`statementBytes`, the root hashed into the seed,
+defined here since the bridge no longer has it).
 -/
 import WhirBridge
 
@@ -18,6 +23,10 @@ open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.Compile
 open LeanVM.Protocol.Verifier LeanVM.Protocol.KeccakHash WhirBridge
 
 namespace WhirBridge.Review
+
+/-- The statement's bytes of the version-1 seed: the root, then each claim's point and value. -/
+def statementBytes (root : Digest) (claims : List Claim) : Bytes :=
+  digestBytes root ++ claims.flatMap fun c ↦ (c.point ++ [c.value]).flatMap scalarBytes
 
 /-- What a lane of a hidden layout holds (`opening::Lane`). -/
 inductive HLane where
