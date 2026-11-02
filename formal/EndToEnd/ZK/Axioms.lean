@@ -1,5 +1,5 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
-import ZK.Main
+import ZK.End
 
 /-! # The axioms of the zero-knowledge bridge's theorems -/
 
@@ -70,3 +70,7 @@ import ZK.Main
 /-- info: 'PcsQuotient.EndToEnd.zeroKnowledge_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zeroKnowledge_end
+
+/-- info: 'PcsQuotient.EndToEnd.zeroKnowledge_deployed_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.zeroKnowledge_deployed_end

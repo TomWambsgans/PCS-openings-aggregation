@@ -7,6 +7,7 @@ import ZK.Real
 import ZK.Setup
 import ZK.With
 import ZK.Main
+import ZK.End
 import ZK.Axioms
 
 /-!
