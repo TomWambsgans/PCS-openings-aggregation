@@ -1,0 +1,283 @@
+-- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+import QuotientSecurity.Hiding.Sumcheck
+import QuotientSecurity.Hiding.Layout
+
+/-!
+# The gadget of the hidden layouts: its patterns reach every round value
+
+`crates/quotient/HIDING.md`, "Condition (R) for every challenge: the gadget". The gadget weighs, at
+nine entries of every lane's first piece, three patterns: lanes `0` and `31`, lanes `1` and `30`
+(pairs complementary in bits `0 .. 4`, on the lower half), and lane `32` (the overflow lane, on the
+upper half). Here, for one entry each and with `E`-valued tables:
+
+* `pair_fold`, `pair_halvesDual`, `nd_pair`: a pair's folds are pairs, with independent halves;
+* `deployed_nd`: the two lower patterns are nondegenerate at every `φ` with no coordinate in
+  `{0, 1}` and `2 φ₀ ≠ 1` (characteristic 2: always);
+* `deployed_reach_all`: with the upper pattern against lane `33`, they reach every value of the six
+  rounds but the last quadratic coefficient (the step of `HIDING.md` that removes the Frobenius
+  twist forgets that coordinate).
+-/
+
+namespace QuotientSecurity.Hiding
+
+open Finset
+
+set_option linter.unusedSectionVars false
+
+variable {E : Type} [Field E]
+
+/-- The unit table at lane index `a`. -/
+def unitCol {k : ℕ} (a : Fin k → Bool) : Col E k := fun b => if b = a then 1 else 0
+
+/-- `eq` of one bit. -/
+def eqb (r : E) (c : Bool) : E := if c then r else 1 - r
+
+theorem eqb_ne_zero {r : E} (h0 : r ≠ 0) (h1 : r ≠ 1) (c : Bool) : eqb r c ≠ 0 := by
+  cases c
+  · simp only [eqb, Bool.false_eq_true, ite_false]
+    exact sub_ne_zero.mpr (Ne.symm h1)
+  · simpa [eqb] using h0
+
+theorem cons_eq_iff {k : ℕ} (x : Bool) (b : Fin k → Bool) (a : Fin (k + 1) → Bool) :
+    (Fin.cons x b : Fin (k + 1) → Bool) = a ↔ x = a 0 ∧ b = Fin.tail a := by
+  constructor
+  · rintro rfl
+    exact ⟨rfl, rfl⟩
+  · rintro ⟨rfl, rfl⟩
+    exact Fin.cons_self_tail a
+
+theorem colFold_unit {k : ℕ} (r : E) (a : Fin (k + 1) → Bool) :
+    colFold r (unitCol a) = eqb r (a 0) • unitCol (Fin.tail a) := by
+  funext b
+  simp only [colFold, unitCol, Pi.smul_apply, smul_eq_mul, cons_eq_iff]
+  by_cases hb : b = Fin.tail a
+  · cases h : a 0 <;> simp [hb, h, eqb]
+  · simp [hb]
+
+/-- Complement every bit but the last. -/
+def flipC {k : ℕ} (a : Fin (k + 1) → Bool) : Fin (k + 1) → Bool :=
+  fun i => if i = Fin.last k then a i else !a i
+
+theorem flipC_zero {k : ℕ} (a : Fin (k + 2) → Bool) : flipC a 0 = !a 0 := by
+  simp [flipC, Fin.ext_iff]
+
+theorem tail_flipC {k : ℕ} (a : Fin (k + 2) → Bool) : Fin.tail (flipC a) = flipC (Fin.tail a) := by
+  funext i
+  simp only [Fin.tail, flipC, ← Fin.succ_last, Fin.succ_inj]
+
+theorem flipC_last {k : ℕ} (a : Fin (k + 1) → Bool) : flipC a (Fin.last k) = a (Fin.last k) := by
+  simp [flipC]
+
+theorem flipC_ne {k : ℕ} (a : Fin (k + 2) → Bool) : flipC a ≠ a := by
+  intro h
+  have := congrFun h 0
+  rw [flipC_zero] at this
+  cases h0 : a 0 <;> simp [h0] at this
+
+/-- A pair of lanes complementary but in the last bit, weighed `d₀` and `d₁`. -/
+def pairCol {k : ℕ} (a : Fin (k + 1) → Bool) (d₀ d₁ : E) : Col E (k + 1) :=
+  d₀ • unitCol a + d₁ • unitCol (flipC a)
+
+theorem pair_fold {k : ℕ} (r : E) (a : Fin (k + 2) → Bool) (d₀ d₁ : E) :
+    colFold r (pairCol a d₀ d₁)
+      = pairCol (Fin.tail a) (d₀ * eqb r (a 0)) (d₁ * eqb r (!a 0)) := by
+  simp only [pairCol, colFold_add, colFold_smul, colFold_unit, flipC_zero, tail_flipC, smul_smul]
+
+theorem colIp_unit {k : ℕ} (p q : Fin k → Bool) :
+    colIp (unitCol (E := E) p) (unitCol q) = if p = q then 1 else 0 := by
+  simp only [colIp, unitCol, mul_ite, mul_one, mul_zero]
+  rw [sum_eq_single p]
+  · simp
+  · intro b _ hb
+    simp [hb]
+  · simp
+
+theorem colIp_smul_left {k : ℕ} (c : E) (w t : Col E k) : colIp (c • w) t = c * colIp w t := by
+  simp [colIp, mul_sum, mul_assoc]
+
+theorem colIp_add_left {k : ℕ} (w w' t : Col E k) : colIp (w + w') t = colIp w t + colIp w' t := by
+  simp [colIp, add_mul, sum_add_distrib]
+
+theorem half0_pair {k : ℕ} (a : Fin (k + 2) → Bool) (d₀ d₁ : E) :
+    half0 (pairCol a d₀ d₁) = (if a 0 then d₁ else d₀) • unitCol (if a 0 then flipC (Fin.tail a) else Fin.tail a) := by
+  funext b
+  simp only [half0, pairCol, unitCol, Pi.add_apply, Pi.smul_apply, smul_eq_mul, cons_eq_iff,
+    flipC_zero, tail_flipC]
+  cases h : a 0 <;> simp [h]
+
+theorem half1_pair {k : ℕ} (a : Fin (k + 2) → Bool) (d₀ d₁ : E) :
+    half1 (pairCol a d₀ d₁) = (if a 0 then d₀ else d₁) • unitCol (if a 0 then Fin.tail a else flipC (Fin.tail a)) := by
+  funext b
+  simp only [half1, pairCol, unitCol, Pi.add_apply, Pi.smul_apply, smul_eq_mul, cons_eq_iff,
+    flipC_zero, tail_flipC]
+  cases h : a 0 <;> simp [h]
+
+theorem lower_unit {n : ℕ} {a : Fin (n + 1) → Bool} (ha : a (Fin.last n) = false) :
+    Lower (unitCol (E := E) a) := by
+  intro b hb
+  have : b ≠ a := fun h => by rw [h, ha] at hb; exact Bool.false_ne_true hb
+  simp [unitCol, this]
+
+theorem lower_smul_unit {n : ℕ} (c : E) {a : Fin (n + 1) → Bool} (ha : a (Fin.last n) = false) :
+    Lower (c • unitCol (E := E) a) := lower_smul c (lower_unit ha)
+
+/-- **A pair's halves have a dual pair** (two points of the other variables, on the lower half). -/
+theorem pair_halvesDual {n : ℕ} (a : Fin (n + 3) → Bool) (ha : a (Fin.last (n + 2)) = false)
+    {d₀ d₁ : E} (h₀ : d₀ ≠ 0) (h₁ : d₁ ≠ 0) : HalvesDual (pairCol a d₀ d₁) := by
+  have hta : Fin.tail a (Fin.last (n + 1)) = false := by rw [Fin.tail, Fin.succ_last]; exact ha
+  have hfta : flipC (Fin.tail a) (Fin.last (n + 1)) = false := by rw [flipC_last]; exact hta
+  have hne : flipC (Fin.tail a) ≠ Fin.tail a := flipC_ne _
+  rw [HalvesDual, half0_pair, half1_pair]
+  cases h : a 0
+  · refine ⟨d₀⁻¹ • unitCol (Fin.tail a), d₁⁻¹ • unitCol (flipC (Fin.tail a)),
+      lower_smul_unit _ hta, lower_smul_unit _ hfta, ?_, ?_, ?_, ?_⟩ <;>
+    simp [colIp_smul_left, colIp_smul, colIp_unit, hne, Ne.symm hne, h₀, h₁]
+  · refine ⟨d₁⁻¹ • unitCol (flipC (Fin.tail a)), d₀⁻¹ • unitCol (Fin.tail a),
+      lower_smul_unit _ hfta, lower_smul_unit _ hta, ?_, ?_, ?_, ?_⟩ <;>
+    simp [colIp_smul_left, colIp_smul, colIp_unit, hne, Ne.symm hne, h₀, h₁]
+
+/-- The condition at the last two rounds for two pairs, on their coefficients folded down to two
+variables. -/
+def PairBot : (n : ℕ) → (Fin (n + 1) → E) → (Fin (n + 2) → Bool) → (Fin (n + 2) → Bool) → E → E → E → E →
+    Prop
+  | 0, φ, a, a', d₀, d₁, d₀', d₁' => ND 1 φ (pairCol a d₀ d₁) (pairCol a' d₀' d₁')
+  | n + 1, φ, a, a', d₀, d₁, d₀', d₁' => PairBot n (Fin.tail φ) (Fin.tail a) (Fin.tail a')
+      (d₀ * eqb (φ 0) (a 0)) (d₁ * eqb (φ 0) (!a 0)) (d₀' * eqb (φ 0) (a' 0)) (d₁' * eqb (φ 0) (!a' 0))
+
+/-- **Two pairs are nondegenerate** given their bottom condition. -/
+theorem nd_pair : ∀ (n : ℕ) (φ : Fin (n + 1) → E), (∀ i, φ i ≠ 0 ∧ φ i ≠ 1) →
+    ∀ (a a' : Fin (n + 2) → Bool), a (Fin.last (n + 1)) = false → a' (Fin.last (n + 1)) = false →
+    ∀ (d₀ d₁ d₀' d₁' : E), d₀ ≠ 0 → d₁ ≠ 0 → d₀' ≠ 0 → d₁' ≠ 0 →
+    PairBot n φ a a' d₀ d₁ d₀' d₁' → ND (n + 1) φ (pairCol a d₀ d₁) (pairCol a' d₀' d₁')
+  | 0, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hbot => hbot
+  | n + 1, φ, hφ, a, a', ha, ha', d₀, d₁, d₀', d₁', h₀, h₁, h₀', h₁', hbot => by
+    have hta : Fin.tail a (Fin.last (n + 1)) = false := by rw [Fin.tail, Fin.succ_last]; exact ha
+    have hta' : Fin.tail a' (Fin.last (n + 1)) = false := by rw [Fin.tail, Fin.succ_last]; exact ha'
+    have he := fun c => eqb_ne_zero (hφ 0).1 (hφ 0).2 c
+    refine ⟨pair_halvesDual a ha h₀ h₁, pair_halvesDual a' ha' h₀' h₁', ?_⟩
+    rw [pair_fold, pair_fold]
+    exact nd_pair n (Fin.tail φ) (fun i => hφ i.succ) _ _ hta hta' _ _ _ _
+      (mul_ne_zero h₀ (he _)) (mul_ne_zero h₁ (he _)) (mul_ne_zero h₀' (he _))
+      (mul_ne_zero h₁' (he _)) hbot
+
+/-- Lane `l`'s index: its six bits (`laneBits` of `Hiding.Layout`). -/
+abbrev lane (l : Fin 64) : Fin 6 → Bool := laneBits l
+
+theorem flipC_lane0 : flipC (lane 0) = lane 31 := by decide
+theorem flipC_lane1 : flipC (lane 1) = lane 30 := by decide
+
+/-- The gadget's first pattern: lanes `0` and `31`. -/
+def pattern0 : Col E 6 := pairCol (lane 0) 1 1
+
+/-- The second: lanes `1` and `30`. -/
+def pattern1 : Col E 6 := pairCol (lane 1) 1 1
+
+/-- **The deployed lower patterns are nondegenerate** at every `φ` with no coordinate in `{0, 1}`
+and `2 φ₀ ≠ 1`. -/
+theorem deployed_nd (φ : Fin 5 → E) (hφ : ∀ i, φ i ≠ 0 ∧ φ i ≠ 1) (h2 : 2 * φ 0 ≠ 1) :
+    ND 5 φ (pattern0 (E := E)) pattern1 := by
+  refine nd_pair 4 φ hφ (lane 0) (lane 1) (by decide) (by decide) 1 1 1 1 one_ne_zero one_ne_zero
+    one_ne_zero one_ne_zero ?_
+  have e : ∀ i, φ i ≠ 0 ∧ 1 - φ i ≠ 0 := fun i => ⟨(hφ i).1, sub_ne_zero.mpr (Ne.symm (hφ i).2)⟩
+  have t0 : Fin.tail (Fin.tail (Fin.tail (Fin.tail (lane 0)))) = (Fin.cons false (pt false) : Fin 2 → Bool) := by
+    decide
+  have t1 : Fin.tail (Fin.tail (Fin.tail (Fin.tail (lane 1)))) = (Fin.cons false (pt false) : Fin 2 → Bool) := by
+    decide
+  have f00 : flipC (Fin.cons false (pt false) : Fin 2 → Bool) = Fin.cons true (pt false) := by decide
+  have ne1 : (Fin.cons true (pt false) : Fin 2 → Bool) ≠ Fin.cons false (pt false) := by decide
+  have b00 : lane 0 0 = false := by decide
+  have b01 : Fin.tail (lane 0) 0 = false := by decide
+  have b02 : Fin.tail (Fin.tail (lane 0)) 0 = false := by decide
+  have b03 : Fin.tail (Fin.tail (Fin.tail (lane 0))) 0 = false := by decide
+  have b10 : lane 1 0 = true := by decide
+  have b11 : Fin.tail (lane 1) 0 = false := by decide
+  have b12 : Fin.tail (Fin.tail (lane 1)) 0 = false := by decide
+  have b13 : Fin.tail (Fin.tail (Fin.tail (lane 1))) 0 = false := by decide
+  have p1 : Fin.tail φ 0 = φ 1 := rfl
+  have p2 : Fin.tail (Fin.tail φ) 0 = φ 2 := rfl
+  have p3 : Fin.tail (Fin.tail (Fin.tail φ)) 0 = φ 3 := rfl
+  simp only [PairBot, ND, pairCol, unitCol, Pi.add_apply, Pi.smul_apply, smul_eq_mul, t0, t1, f00,
+    ne1, Ne.symm ne1, b00, b01, b02, b03, b10, b11, b12, b13, p1, p2, p3, ite_true, ite_false, eqb,
+    Bool.not_false, Bool.not_true, Bool.false_eq_true, mul_one, mul_zero, add_zero, zero_add, one_mul]
+  obtain ⟨e0, e0'⟩ := e 0
+  obtain ⟨e1, e1'⟩ := e 1
+  obtain ⟨e2, e2'⟩ := e 2
+  obtain ⟨e3, e3'⟩ := e 3
+  refine ⟨by simp [e0', e1', e2', e3'], fun h => ?_⟩
+  have hx : ((1 - φ 1) * (1 - φ 2) * (1 - φ 3) * (φ 1 * φ 2 * φ 3)) * (1 - 2 * φ 0) = 0 := by
+    linear_combination h
+  rcases mul_eq_zero.mp hx with hx | hx
+  · simp [e1, e2, e3, e1', e2', e3'] at hx
+  · exact h2 (by linear_combination -hx)
+
+/-! ### The upper pattern -/
+
+/-- The product of the first variables' `eq` factors of lane index `a`. -/
+def eqProd : (n : ℕ) → (Fin n → E) → (Fin (n + 1) → Bool) → E
+  | 0, _, _ => 1
+  | n + 1, φ, a => eqb (φ 0) (a 0) * eqProd n (Fin.tail φ) (Fin.tail a)
+
+theorem eqProd_ne_zero : ∀ (n : ℕ) (φ : Fin n → E), (∀ i, φ i ≠ 0 ∧ φ i ≠ 1) →
+    ∀ a : Fin (n + 1) → Bool, eqProd n φ a ≠ 0
+  | 0, _, _, _ => one_ne_zero
+  | n + 1, φ, hφ, _ => mul_ne_zero (eqb_ne_zero (hφ 0).1 (hφ 0).2 _)
+      (eqProd_ne_zero n (Fin.tail φ) (fun i => hφ i.succ) _)
+
+theorem colFoldN_smul : ∀ (n : ℕ) (φ : Fin n → E) (c : E) (t : Col E (n + 1)),
+    colFoldN n φ (c • t) = c • colFoldN n φ t
+  | 0, _, _, _ => rfl
+  | n + 1, φ, c, t => by
+    simp only [colFoldN, colFold_smul, colFoldN_smul n]
+
+/-- A unit table folded down to its last variable. -/
+theorem colFoldN_unit : ∀ (n : ℕ) (φ : Fin n → E) (a : Fin (n + 1) → Bool),
+    colFoldN n φ (unitCol a) = eqProd n φ a • unitCol (pt (a (Fin.last n)))
+  | 0, _, a => by
+    have : pt (a (Fin.last 0)) = a := by funext i; fin_cases i; rfl
+    rw [this, eqProd, one_smul]
+    rfl
+  | n + 1, φ, a => by
+    simp only [colFoldN, colFold_unit, colFoldN_smul, colFoldN_unit n, eqProd, smul_smul]
+    rw [show Fin.tail a (Fin.last n) = a (Fin.last (n + 1)) by rw [Fin.tail, Fin.succ_last]]
+
+/-- The gadget's third pattern: the overflow lane, `32`. -/
+def pattern2 : Col E 6 := unitCol (lane 32)
+
+/-- Its move: the unit table of lane `33`. -/
+def move2 : Col E 6 := unitCol (lane 33)
+
+theorem upper_move2 : Upper (move2 (E := E)) := by
+  intro b hb
+  have : b ≠ lane 33 := fun h => by rw [h] at hb; exact absurd hb (by decide)
+  simp [move2, unitCol, this]
+
+/-- **The upper pattern's move has a nonzero running claim** after the rounds but the last. -/
+theorem runClaim_move2 (Φ : Fin 6 → E) (hΦ : ∀ i, Φ i ≠ 0 ∧ Φ i ≠ 1) :
+    runClaim (Fin.init Φ) (Fin.init (colRounds 6 Φ pattern2 move2)) ≠ 0 := by
+  have hc : colIp (pattern2 (E := E)) move2 = 0 := by
+    rw [pattern2, move2, colIp_unit]
+    simp [show lane 32 ≠ lane 33 by decide]
+  have h := lastClaim_upper 5 Φ (w := pattern2) upper_move2
+  rw [hc] at h
+  rw [runClaim, h, pattern2, move2, colFoldN_unit, colFoldN_unit]
+  have h32 : lane 32 (Fin.last 5) = true := by decide
+  have h33 : lane 33 (Fin.last 5) = true := by decide
+  have hi : ∀ i, Fin.init Φ i ≠ 0 ∧ Fin.init Φ i ≠ 1 := fun i => hΦ _
+  simp only [h32, h33, Pi.smul_apply, smul_eq_mul, unitCol, ite_true, mul_one]
+  exact mul_ne_zero (eqProd_ne_zero 5 _ hi _) (eqProd_ne_zero 5 _ hi _)
+
+/-- **The gadget's patterns reach every value of the six rounds** but the last quadratic
+coefficient, at every `Φ` with no coordinate in `{0, 1}` and `2 Φ₀ ≠ 1`: two lower tables (one
+against each lower pattern, each of zero weighted sum) and a multiple of the upper move. -/
+theorem deployed_reach_all (Φ : Fin 6 → E) (hΦ : ∀ i, Φ i ≠ 0 ∧ Φ i ≠ 1) (h2 : 2 * Φ 0 ≠ 1)
+    (v : Fin 6 → E × E) :
+    ∃ (τa τb : Col E 6) (α : E), Lower τa ∧ Lower τb ∧ colIp pattern0 τa = 0 ∧
+      colIp pattern1 τb = 0 ∧
+      (∀ i : Fin 5, (colRounds 6 Φ pattern0 τa + colRounds 6 Φ pattern1 τb
+          + α • colRounds 6 Φ pattern2 move2) i.castSucc = v i.castSucc) ∧
+      ((colRounds 6 Φ pattern0 τa + colRounds 6 Φ pattern1 τb
+          + α • colRounds 6 Φ pattern2 move2) (Fin.last 5)).1 = (v (Fin.last 5)).1 :=
+  reach_all 3 Φ hΦ pattern0 pattern1 (deployed_nd (Fin.init Φ) (fun _ => hΦ _) h2) pattern2 move2
+    upper_move2 (runClaim_move2 Φ hΦ) v
+
+end QuotientSecurity.Hiding
