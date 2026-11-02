@@ -318,10 +318,10 @@ def drawMany (o : OSt) : ℕ → OracleComp DSpec (List Limbs × OSt)
     let (cs, o) ← drawMany o m
     return (c :: cs, o)
 
-/-- Commit to the next codeword (rows from the message): its tree, its root sent. -/
+/-- Commit to the next codeword (its `2^depth` rows from the message): its tree, its root sent. -/
 def commitNext (o : OSt) (depth : ℕ) : OracleComp DSpec OSt := do
   let (rows, items) := takeRows o.items
-  let leaves ← rows.mapM hashH
+  let leaves ← (List.range (2 ^ depth)).mapM fun i => hashH (rows.getD i [])
   let lv ← levels depth leaves
   let o' : OSt := { o with items := items, trees := o.trees ++ [lv] }
   let dx ← o'.dx.absorbAll (rootLimbs (rootOf lv))
