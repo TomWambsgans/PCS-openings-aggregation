@@ -132,4 +132,120 @@ theorem isWeightBound_of_toOne {α : Type} (G : OracleComp DS2 α) :
       rw [isWeightBound_query_bind_iff] at h
       exact ⟨h.1, fun u ↦ ih u _ (h.2 u)⟩
 
+/-! ## The games -/
+
+variable {S : Type} [SampleableType S] (P : Proto S Inp Out Msg Tbl Pos)
+
+/-- Coins in the statement's model. -/
+noncomputable abbrev coinR (α : Type) [SampleableType α] : OracleComp RandomPermutationOracles α :=
+  liftM ($ᵗ α)
+
+/-- **The real game for the secret `s`, in the random-permutation model**: the deployed prover's
+proof (Keccak-256 over `π`, the duplex's permutations calls of `π`, its coins for the
+completions), then `D` with `π` and `π⁻¹`. -/
+noncomputable def zkGameRpmD (skel : OracleComp DSpec Proof)
+    (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) (s : S) :
+    OracleComp RandomPermutationOracles Bool :=
+  proverJ P keccak256OverPermutation queryPermutation (coinR KSt) (coinR DigestBytes) s skel >>=
+    fun pf ↦ simulateQ permQuery (D pf)
+
+/-- **The real game in the random-permutation model.** -/
+noncomputable def realGameRpmD (skel : OracleComp DSpec Proof)
+    (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) : ProbComp Bool := do
+  let s ← $ᵗ S
+  runWithRandomPermutation (zkGameRpmD P skel D s)
+
+/-- `D` through `S₂` from the bookkeeping `σ`, `S₂`'s `H` and `F` lazily sampled from `c₂`. -/
+noncomputable def runS2 (D : OracleComp (permutationOracleSpec KSt) Bool) (σ : SimSt)
+    (c₂ : HF.QueryCache) : ProbComp Bool :=
+  (simulateQ HF.romImpl ((simulateQ (simulator2 (Msg := List UInt8) keccakPadding)
+    (simulateQ laneToByte D)).run' σ)).run' c₂
+
+/-- **The simulated game in the random-permutation model.** The simulator: `zk_rom`'s `sim` on the
+skeleton with the duplex's bookkeeping, giving the proof, the bookkeeping `σ` and `G`'s programmed
+cache `c`; then `D`'s queries of `π` and `π⁻¹` answered by `S₂` from `σ`, with `H` and `F` the
+cache read through `hfOf`. -/
+noncomputable def simGameRpmD (simV : List Out → ProbComp (View Msg Inp Tbl Pos))
+    (skel : OracleComp DSpec Proof) (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) :
+    ProbComp Bool := do
+  let z ← sim P simV (skelRec skel) []
+  runS2 (D z.1.1) z.1.2 (hfOf z.2)
+
+/-! ## The real game read with a Keccak-256 oracle, on bytes, in the two-oracle model -/
+
+/-- The real game with a Keccak-256 oracle. -/
+noncomputable def gameHD (skel : OracleComp DSpec Proof)
+    (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) (s : S) : OracleComp KSpecH Bool :=
+  proverJ P hashH (fun x ↦ permH (.forward x)) (liftM ($ᵗ KSt)) (liftM ($ᵗ DigestBytes)) s skel >>=
+    fun pf ↦ simulateQ permH (D pf)
+
+/-- The real game in the two-oracle model: the prover with `H` and `F`, embedded; `D` through
+`π`, `π⁻¹` on bytes. -/
+noncomputable def game2D (skel : OracleComp DSpec Proof)
+    (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) (s : S) : OracleComp DS2 Bool :=
+  simulateQ (hfEmbed (Msg := List UInt8)) (proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s skel)
+    >>= fun pf ↦ simulateQ permD2 (simulateQ laneToByte (D pf))
+
+theorem expand_gameHD (skel : OracleComp DSpec Proof)
+    (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) (s : S) :
+    simulateQ expand (gameHD P skel D s) = zkGameRpmD P skel D s := by
+  have h1 : (fun t ↦ simulateQ expand (hashH t)) = keccak256OverPermutation := by
+    funext t
+    simp only [hashH, simulateQ_spec_query]
+    rfl
+  have h2 : (fun x ↦ simulateQ expand (permH (.forward x))) = queryPermutation := by
+    funext x
+    simp only [permH, simulateQ_spec_query]
+    rfl
+  have h3 : expand ∘ₛ permH = permQuery := by
+    funext q
+    simp only [QueryImpl.apply_compose, permH, simulateQ_spec_query]
+    rfl
+  have hc : ∀ (α : Type) [SampleableType α],
+      simulateQ expand (liftM ($ᵗ α) : OracleComp KSpecH α) = coinR α := fun α _ ↦
+    simulateQ_liftM_of_coins expand (fun _ ↦ rfl) _
+  simp only [gameHD, zkGameRpmD, simulateQ_bind, simulateQ_proverJ, h1, h2, hc,
+    ← QueryImpl.simulateQ_compose, h3]
+
+theorem relabel_gameHD (skel : OracleComp DSpec Proof)
+    (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) (s : S) :
+    simulateQ relabel (gameHD P skel D s) = simulateQ (toOne (E := KRest) (C := KCap))
+      (game2D P skel D s) := by
+  have hH : (fun t ↦ simulateQ relabel (hashH t)) =
+      (fun t ↦ simulateQ (toOne (E := KRest) (C := KCap))
+        (simulateQ (hfEmbed (Msg := List UInt8)) (hH2 t))) := by
+    funext t
+    simp only [hashH, hH2, hQuery, simulateQ_spec_query, simulateQ_hq]
+    rfl
+  have hF : (fun x ↦ simulateQ relabel (permH (.forward x))) =
+      (fun x ↦ simulateQ (toOne (E := KRest) (C := KCap))
+        (simulateQ (hfEmbed (Msg := List UInt8)) (hF2 x))) := by
+    funext x
+    simp only [permH, hF2, fQuery, simulateQ_spec_query, simulateQ_map, simulateQ_hq]
+    rfl
+  have hc : ∀ (α : Type) [SampleableType α],
+      simulateQ relabel (liftM ($ᵗ α) : OracleComp KSpecH α) =
+        simulateQ (toOne (E := KRest) (C := KCap))
+          (simulateQ (hfEmbed (Msg := List UInt8)) (coin2 α)) := fun α _ ↦ by
+    rw [simulateQ_liftM_of_coins relabel (fun _ ↦ rfl),
+      simulateQ_liftM_of_coins (hfEmbed (Msg := List UInt8)) (fun _ ↦ rfl),
+      simulateQ_liftM_of_coins (toOne (E := KRest) (C := KCap)) (fun _ ↦ rfl)]
+  have hD : relabel ∘ₛ permH = toOne (E := KRest) (C := KCap) ∘ₛ (permD2 ∘ₛ laneToByte) := by
+    funext q
+    simp only [QueryImpl.apply_compose, permH, simulateQ_spec_query, laneToByte, simulateQ_map,
+      permD2]
+    rfl
+  simp only [gameHD, game2D, simulateQ_bind, simulateQ_proverJ, hH, hF, hc,
+    ← QueryImpl.simulateQ_compose, hD]
+
+/-- **The real game is the two-oracle model's real world**, in distribution. -/
+theorem runRpm_gameD (skel : OracleComp DSpec Proof)
+    (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) (s : S) :
+    runWithRandomPermutation (zkGameRpmD P skel D s) =ᵈ
+      realGame2 keccakPadding KState.zero (game2D P skel D s) := by
+  rw [← expand_gameHD, runK_expand]
+  refine (runK_relabel _).trans ?_
+  rw [relabel_gameHD]
+  exact EvalDistEq.rfl
+
 end QuotientZk.DRpm
