@@ -181,7 +181,9 @@ fn vector_body(
 }
 
 /// The head `formal/Review/HiddenWeight.lean` reads: the deployed layout, lane `l` coded `2b` (block `b`), `1`
-/// (overflow), `3` (random), then the overflow lane's pieces.
+/// (overflow), `3` (random), then the overflow lane's pieces. (The field that was the share lane is now the
+/// overflow lane, `opening::OVERFLOW_LANE`: the hidden layouts have no share since the gadget, and
+/// `HiddenWeight.lean` transcribes the share design's closure, without the gadget's term.)
 fn hidden_head(layout: &Layout) -> String {
     let code = |l: usize| match layout.lane(l) {
         Lane::Block(b) => 2 * b as u64,
@@ -194,7 +196,7 @@ fn hidden_head(layout: &Layout) -> String {
             layout.vars as u64,
             layout.log_n as u64,
             LOG_PIECE as u64,
-            layout.share().expect("a share lane") as u64,
+            layout.overflow().expect("an overflow lane") as u64,
             layout.lanes() as u64,
         ]
         .into_iter()
@@ -255,36 +257,26 @@ fn f2_deployed_openings_are_not_the_bridge_check() {
     }
 }
 
-/// F3: what the Lean hiding layer takes from the design, at every supported size. The random lanes named by
-/// `witness_lane_pattern` (`1, 7, 13, 25`) and `quotient_lane_pattern` (`1, 21, 11, 41`) are random lanes other
-/// than the share; the lane counts behind `unopened_row_le`'s `64(L - 3)` are 40 and 63 (2368 and 3840 bits);
-/// the overflow and share lanes are `L - 2` and `L - 1`; the overflow lane holds `33` and `167` pieces.
+/// F3: what the Lean hiding layer takes from the design, at every supported size. Since the gadget: the random
+/// lanes are `33 .. 40` (with the overflow lane `32`, the cube of lanes `32 .. 40`, which condition (S) uses), the
+/// gadget's lanes are `0, 31`, `1, 30` (blocks) and `32`, and there is no share lane; the lane counts behind
+/// `unopened_row_le`'s `64(L - 3)` are 40 and 63 (2368 and 3840 bits); the overflow lane holds `33` and `167`
+/// pieces. (Before the gadget the random lanes were `1, 7, 13, 19, 25, 31, 39` and `1, 11, 21, 31, 41, 51, 62`,
+/// the share the last lane, and `witness_lane_pattern`, `quotient_lane_pattern` named four of them.)
 #[test]
 fn f3_design_facts_hold_at_every_size() {
     for log_rows in MIN_LOG_ROWS..=MAX_LOG_ROWS {
-        for (layout, lanes, random, pattern, pieces) in [
-            (
-                witness_layout(log_rows),
-                40,
-                vec![1, 7, 13, 19, 25, 31, 39],
-                [1, 7, 13, 25],
-                33,
-            ),
-            (
-                quotient_layout(log_rows),
-                63,
-                vec![1, 11, 21, 31, 41, 51, 62],
-                [1, 21, 11, 41],
-                167,
-            ),
-        ] {
+        for (layout, lanes, pieces) in [(witness_layout(log_rows), 40, 33), (quotient_layout(log_rows), 63, 167)] {
             assert_eq!(layout.lanes(), lanes);
-            assert_eq!(random_lanes(&layout), random);
-            assert_eq!((layout.overflow(), layout.share()), (Some(lanes - 2), Some(lanes - 1)));
-            for l in pattern {
-                assert_eq!(layout.lane(l), Lane::Random);
-                assert_ne!(layout.share(), Some(l));
+            assert_eq!(random_lanes(&layout), (33..40).collect::<Vec<_>>());
+            assert_eq!(layout.overflow(), Some(opening::OVERFLOW_LANE));
+            assert_eq!(opening::OVERFLOW_LANE, 32);
+            for g in 0..2 {
+                for &l in opening::gadget_lanes(g) {
+                    assert!(matches!(layout.lane(l), Lane::Block(_)));
+                }
             }
+            assert_eq!(opening::gadget_lanes(2), &[32]);
             assert_eq!(layout.pieces().len(), pieces);
             assert!(pieces < 1 << (layout.log_lane() - LOG_PIECE));
             assert_eq!(64 * (lanes - 3), if lanes == 40 { 2368 } else { 3840 });

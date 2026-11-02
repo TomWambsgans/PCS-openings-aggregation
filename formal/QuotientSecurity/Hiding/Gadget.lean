@@ -280,4 +280,96 @@ theorem deployed_reach_all (Φ : Fin 6 → E) (hΦ : ∀ i, Φ i ≠ 0 ∧ Φ i 
   reach_all 3 Φ hΦ pattern0 pattern1 (deployed_nd (Fin.init Φ) (fun _ => hΦ _) h2) pattern2 move2
     upper_move2 (runClaim_move2 Φ hΦ) v
 
+/-! ### `K`-valued moves: the twisted completions, `β`, and forgetting the last coefficient -/
+
+section Moves
+
+variable {K : Type} [Field K] [Algebra K E]
+
+/-- A `K`-valued table as one of `E`. -/
+def ofK {k : ℕ} (c : (Fin k → Bool) → K) : Col E k := fun b => algebraMap K E (c b)
+
+theorem ofK_add {k : ℕ} (c c' : (Fin k → Bool) → K) : ofK (E := E) (c + c') = ofK c + ofK c' := by
+  funext b; simp [ofK]
+
+/-- The gadget's patterns (`E`-valued, of `K`-values `0` and `1`). -/
+def patE : Fin 3 → Col E 6
+  | 0 => pattern0
+  | 1 => pattern1
+  | 2 => pattern2
+
+/-- The half a pattern weighs: lower for the pairs, upper for the overflow lane. -/
+def OnHalf (p : Fin 3) (t : Col E 6) : Prop := if p.val < 2 then Lower t else Upper t
+
+/-- The other half: the solvers'. -/
+def OnOther (p : Fin 3) (t : Col E 6) : Prop := if p.val < 2 then Upper t else Lower t
+
+theorem pattern0_lower : Lower (pattern0 (E := E)) := by
+  intro b hb
+  have h1 : b ≠ lane 0 := fun h => by rw [h] at hb; exact absurd hb (by decide)
+  have h2 : b ≠ flipC (lane 0) := fun h => by rw [h] at hb; exact absurd hb (by decide)
+  simp [pattern0, pairCol, unitCol, h1, h2]
+
+theorem pattern1_lower : Lower (pattern1 (E := E)) := by
+  intro b hb
+  have h1 : b ≠ lane 1 := fun h => by rw [h] at hb; exact absurd hb (by decide)
+  have h2 : b ≠ flipC (lane 1) := fun h => by rw [h] at hb; exact absurd hb (by decide)
+  simp [pattern1, pairCol, unitCol, h1, h2]
+
+theorem pattern2_upper : Upper (pattern2 (E := E)) := by
+  intro b hb
+  have h1 : b ≠ lane 32 := fun h => by rw [h] at hb; exact absurd hb (by decide)
+  simp [pattern2, unitCol, h1]
+
+/-- A weight on one half and a table on the other weigh zero. -/
+theorem colIp_sep {k : ℕ} {w t : Col E (k + 1)} (h : (Lower w ∧ Upper t) ∨ (Upper w ∧ Lower t)) :
+    colIp w t = 0 := by
+  refine sum_eq_zero fun b _ => ?_
+  rcases h with ⟨hw, ht⟩ | ⟨hw, ht⟩ <;> cases hb : b (Fin.last k)
+  · simp [ht b hb]
+  · simp [hw b hb]
+  · simp [hw b hb]
+  · simp [ht b hb]
+
+theorem sep_of (p : Fin 3) {s : Col E 6} (hs : OnOther p s) :
+    (Lower (patE (E := E) p) ∧ Upper s) ∨ (Upper (patE (E := E) p) ∧ Lower s) := by
+  fin_cases p
+  · exact Or.inl ⟨pattern0_lower, hs⟩
+  · exact Or.inl ⟨pattern1_lower, hs⟩
+  · exact Or.inr ⟨pattern2_upper, hs⟩
+
+/-- The rounds' values but the last quadratic coefficient. -/
+def piv (x : Fin 6 → E × E) : (Fin 5 → E × E) × E := (Fin.init x, (x (Fin.last 5)).1)
+
+theorem piv_add (x y : Fin 6 → E × E) : piv (x + y) = piv x + piv y := rfl
+
+theorem piv_smul (e : E) (x : Fin 6 → E × E) : piv (e • x) = e • piv x := rfl
+
+theorem piv_sum {ι : Type} (s : Finset ι) (f : ι → Fin 6 → E × E) :
+    piv (∑ i ∈ s, f i) = ∑ i ∈ s, piv (f i) := by
+  classical
+  induction s using Finset.induction_on with
+  | empty => rfl
+  | insert a s ha ih => rw [sum_insert ha, sum_insert ha, piv_add, ih]
+
+/-- The moves of the gadget: at pattern `p`'s entry `i` (weight `μ β_i` on the pattern), `K`-values
+`c` on the pattern's half weighing zero against it and `s` on the other half, folding to zero
+together; their rounds. -/
+def gadgetMoves (Φ : Fin 6 → E) (μ : E) (β : Module.Basis (Fin 3) K E) : Set (Fin 6 → E × E) :=
+  {v | ∃ (p i : Fin 3) (c s : (Fin 6 → Bool) → K), OnHalf p (ofK (E := E) c) ∧
+    OnOther p (ofK (E := E) s) ∧ colIp (patE (E := E) p) (ofK c) = 0 ∧
+    (∑ b, eqW Φ b * algebraMap K E (c b + s b)) = 0 ∧
+    v = (μ * β i) • colRounds 6 Φ (patE p) (ofK (c + s))}
+
+/-- A move keeps the last running claim: its rounds lie in `ker lastMap`. -/
+theorem lastClaim_move (Φ : Fin 6 → E) (w t : Col E 6) (hip : colIp w t = 0)
+    (hfold : (∑ b, eqW Φ b * t b) = 0) : lastClaim 6 Φ (colRounds 6 Φ w t) 0 = 0 := by
+  have h := lastClaim_laneRounds 6 Φ (toT w) (toT t)
+  rw [ip_toT, hip] at h
+  rw [colRounds, h]
+  simp only [Fintype.sum_unique, foldAll_eq, toT]
+  rw [hfold, mul_zero]
+
+end Moves
+
 end QuotientSecurity.Hiding
