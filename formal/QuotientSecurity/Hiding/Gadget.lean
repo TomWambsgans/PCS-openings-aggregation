@@ -353,10 +353,12 @@ theorem piv_sum {ι : Type} (s : Finset ι) (f : ι → Fin 6 → E × E) :
   | insert a s ha ih => rw [sum_insert ha, sum_insert ha, piv_add, ih]
 
 /-- The moves of the gadget: at pattern `p`'s entry `i` (weight `μ β_i` on the pattern), `K`-values
-`c` on the pattern's half weighing zero against it and `s` on the other half, folding to zero
-together; their rounds. -/
-def gadgetMoves (Φ : Fin 6 → E) (μ : E) (β : Module.Basis (Fin 3) K E) : Set (Fin 6 → E × E) :=
-  {v | ∃ (p i : Fin 3) (c s : (Fin 6 → Bool) → K), OnHalf p (ofK (E := E) c) ∧
+`c` on the pattern's half weighing zero against it and `s` on the other half, both on the lanes `S`
+(those the stack has), folding to zero together; their rounds. -/
+def gadgetMoves (Φ : Fin 6 → E) (μ : E) (β : Module.Basis (Fin 3) K E) (S : Set (Fin 6 → Bool)) :
+    Set (Fin 6 → E × E) :=
+  {v | ∃ (p i : Fin 3) (c s : (Fin 6 → Bool) → K), (∀ b, b ∉ S → c b = 0 ∧ s b = 0) ∧
+    OnHalf p (ofK (E := E) c) ∧
     OnOther p (ofK (E := E) s) ∧ colIp (patE (E := E) p) (ofK c) = 0 ∧
     (∑ b, eqW Φ b * algebraMap K E (c b + s b)) = 0 ∧
     v = (μ * β i) • colRounds 6 Φ (patE p) (ofK (c + s))}
@@ -432,18 +434,18 @@ theorem colIp_ofK {k : ℕ} (w c : (Fin k → Bool) → K) :
 /-- **The `E`-multiples of a `K`-move**, through the gadget's three entries (`β`) and a twisted
 completion by the solvers (which moves only the last quadratic coefficient). -/
 theorem reach_multiple (Φ : Fin 6 → E) (μ : E) (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E)
-    (p : Fin 3)
-    (hsolve : ∀ e : E, ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK (E := E) s) ∧
+    (S : Set (Fin 6 → Bool)) (p : Fin 3)
+    (hsolve : ∀ e : E, ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK (E := E) s) ∧ (∀ b, b ∉ S → s b = 0) ∧
       (∑ b, eqW Φ b * algebraMap K E (s b)) = e)
-    (c : (Fin 6 → Bool) → K) (hc : OnHalf p (ofK (E := E) c)) (hip : colIp (patE (E := E) p) (ofK c) = 0)
-    (e : E) :
-    ∃ u ∈ Submodule.span K (gadgetMoves Φ μ β),
+    (c : (Fin 6 → Bool) → K) (hcS : ∀ b, b ∉ S → c b = 0) (hc : OnHalf p (ofK (E := E) c))
+    (hip : colIp (patE (E := E) p) (ofK c) = 0) (e : E) :
+    ∃ u ∈ Submodule.span K (gadgetMoves Φ μ β S),
       piv u = e • piv (colRounds 6 Φ (patE p) (ofK c)) := by
-  obtain ⟨sol, hs, hsf⟩ := hsolve (-(∑ b, eqW Φ b * algebraMap K E (c b)))
+  obtain ⟨sol, hs, hsS, hsf⟩ := hsolve (-(∑ b, eqW Φ b * algebraMap K E (c b)))
   set X := colRounds 6 Φ (patE (E := E) p) (ofK (c + sol))
-  have hmove : ∀ i, (μ * β i) • X ∈ gadgetMoves Φ μ β := by
+  have hmove : ∀ i, (μ * β i) • X ∈ gadgetMoves Φ μ β S := by
     intro i
-    refine ⟨p, i, c, sol, hc, hs, hip, ?_, rfl⟩
+    refine ⟨p, i, c, sol, fun b hb => ⟨hcS b hb, hsS b hb⟩, hc, hs, hip, ?_, rfl⟩
     simp only [map_add, mul_add, sum_add_distrib, hsf, add_neg_cancel]
   set a := β.repr (e / μ)
   refine ⟨∑ i, a i • ((μ * β i) • X), Submodule.sum_mem _ fun i _ =>
@@ -479,11 +481,12 @@ theorem onHalf_mono (p : Fin 3) {τ t : Col E 6} (h : ∀ b, τ b = 0 → t b = 
 
 /-- **An `E`-valued table of a pattern's half** (weighing zero against it), as `K`-moves: its rounds,
 but the last quadratic coefficient, are those of a `K`-combination of the gadget's moves. -/
-theorem reach_table (Φ : Fin 6 → E) (μ : E) (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E) (p : Fin 3)
-    (hsolve : ∀ e : E, ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK (E := E) s) ∧
+theorem reach_table (Φ : Fin 6 → E) (μ : E) (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E)
+    (S : Set (Fin 6 → Bool)) (p : Fin 3)
+    (hsolve : ∀ e : E, ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK (E := E) s) ∧ (∀ b, b ∉ S → s b = 0) ∧
       (∑ b, eqW Φ b * algebraMap K E (s b)) = e)
-    (τ : Col E 6) (hτ : OnHalf p τ) (hip : colIp (patE p) τ = 0) :
-    ∃ u ∈ Submodule.span K (gadgetMoves Φ μ β), piv u = piv (colRounds 6 Φ (patE p) τ) := by
+    (τ : Col E 6) (hτS : ∀ b, b ∉ S → τ b = 0) (hτ : OnHalf p τ) (hip : colIp (patE p) τ = 0) :
+    ∃ u ∈ Submodule.span K (gadgetMoves Φ μ β S), piv u = piv (colRounds 6 Φ (patE p) τ) := by
   set c : Fin 3 → (Fin 6 → Bool) → K := fun j b => β.repr (τ b) j
   have hdec : τ = β 0 • ofK (c 0) + β 1 • ofK (c 1) + β 2 • ofK (c 2) := by
     funext b
@@ -507,7 +510,8 @@ theorem reach_table (Φ : Fin 6 → E) (μ : E) (hμ : μ ≠ 0) (β : Module.Ba
     have hli := Fintype.linearIndependent_iff.mp β.linearIndependent _ hsum
     intro j
     rw [hk, hli j, map_zero]
-  choose u hu hpu using fun j => reach_multiple Φ μ hμ β p hsolve (c j) (hhalf j) (hzero j) (β j)
+  have hcS : ∀ j b, b ∉ S → c j b = 0 := fun j b hb => by simp [c, hτS b hb]
+  choose u hu hpu using fun j => reach_multiple Φ μ hμ β S p hsolve (c j) (hcS j) (hhalf j) (hzero j) (β j)
   refine ⟨u 0 + u 1 + u 2, Submodule.add_mem _ (Submodule.add_mem _ (hu 0) (hu 1)) (hu 2), ?_⟩
   rw [piv_add, piv_add, hpu, hpu, hpu, hdec, colRounds_add, colRounds_add, colRounds_smul,
     colRounds_smul, colRounds_smul, piv_add, piv_add, piv_smul, piv_smul, piv_smul]
@@ -524,15 +528,18 @@ every `Φ` with no coordinate in `{0, 1}` and `2 Φ₀ ≠ 1`, every nonzero sca
 `β` of `E` over `K`, given the solvers (`K`-values on the other half whose fold reaches every
 element of `E`). -/
 theorem column_reach (Φ : Fin 6 → E) (hΦ : ∀ i, Φ i ≠ 0 ∧ Φ i ≠ 1) (h2 : 2 * Φ 0 ≠ 1) (μ : E)
-    (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E)
+    (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E) (S : Set (Fin 6 → Bool))
+    (hlowS : ∀ b : Fin 6 → Bool, b (Fin.last 5) = false → b ∈ S) (h33 : lane 33 ∈ S)
     (hsolve : ∀ (p : Fin 3) (e : E), ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK (E := E) s) ∧
-      (∑ b, eqW Φ b * algebraMap K E (s b)) = e) :
-    LinearMap.ker (lastMap (K := K) Φ) ≤ Submodule.span K (gadgetMoves Φ μ β) := by
+      (∀ b, b ∉ S → s b = 0) ∧ (∑ b, eqW Φ b * algebraMap K E (s b)) = e) :
+    LinearMap.ker (lastMap (K := K) Φ) ≤ Submodule.span K (gadgetMoves Φ μ β S) := by
   intro v hv
   have hv' : lastClaim 6 Φ v 0 = 0 := hv
   obtain ⟨τa, τb, α, hτa, hτb, ha, hb, hcs, hlast⟩ := deployed_reach_all Φ hΦ h2 v
-  obtain ⟨ua, hua, hpa⟩ := reach_table Φ μ hμ β 0 (hsolve 0) τa hτa ha
-  obtain ⟨ub, hub, hpb⟩ := reach_table Φ μ hμ β 1 (hsolve 1) τb hτb hb
+  have hoff : ∀ {τ : Col E 6}, Lower τ → ∀ b, b ∉ S → τ b = 0 := fun hτ b hb =>
+    hτ b (by by_contra h; exact hb (hlowS b (by simpa using h)))
+  obtain ⟨ua, hua, hpa⟩ := reach_table Φ μ hμ β S 0 (hsolve 0) τa (hoff hτa) hτa ha
+  obtain ⟨ub, hub, hpb⟩ := reach_table Φ μ hμ β S 1 (hsolve 1) τb (hoff hτb) hτb hb
   have hc2 : OnHalf 2 (ofK (E := E) (unitCol (E := K) (lane 33))) := by
     rw [← move2_ofK]; exact upper_move2
   have hip2 : colIp (patE (E := E) 2) (ofK (unitCol (E := K) (lane 33))) = 0 := by
@@ -540,9 +547,12 @@ theorem column_reach (Φ : Fin 6 → E) (hΦ : ∀ i, Φ i ≠ 0 ∧ Φ i ≠ 1)
     show colIp pattern2 move2 = 0
     rw [pattern2, move2, colIp_unit]
     simp [show lane 32 ≠ lane 33 by decide]
-  obtain ⟨uc, huc, hpc⟩ := reach_multiple Φ μ hμ β 2 (hsolve 2) _ hc2 hip2 α
+  have hcS : ∀ b, b ∉ S → unitCol (E := K) (lane 33) b = 0 := fun b hb => by
+    have : b ≠ lane 33 := fun h => hb (h ▸ h33)
+    simp [unitCol, this]
+  obtain ⟨uc, huc, hpc⟩ := reach_multiple Φ μ hμ β S 2 (hsolve 2) _ hcS hc2 hip2 α
   set u := ua + ub + uc
-  have hu : u ∈ Submodule.span K (gadgetMoves Φ μ β) :=
+  have hu : u ∈ Submodule.span K (gadgetMoves Φ μ β S) :=
     Submodule.add_mem _ (Submodule.add_mem _ hua hub) huc
   have hpiv : piv u = piv v := by
     simp only [u, piv_add, hpa, hpb, hpc, ← move2_ofK]
@@ -553,9 +563,9 @@ theorem column_reach (Φ : Fin 6 → E) (hΦ : ∀ i, Φ i ≠ 0 ∧ Φ i ≠ 1)
       exact hcs i
     rw [← this, piv_add, piv_add, piv_smul]
     rfl
-  have hspan : Submodule.span K (gadgetMoves Φ μ β) ≤ LinearMap.ker (lastMap (K := K) Φ) := by
+  have hspan : Submodule.span K (gadgetMoves Φ μ β S) ≤ LinearMap.ker (lastMap (K := K) Φ) := by
     refine Submodule.span_le.mpr ?_
-    rintro x ⟨p, i, c, sol, hc, hs, hip, hf, rfl⟩
+    rintro x ⟨p, i, c, sol, -, hc, hs, hip, hf, rfl⟩
     show lastClaim 6 Φ ((μ * β i) • colRounds 6 Φ (patE p) (ofK (c + sol))) 0 = 0
     have h := lastClaim_smul 6 Φ (μ * β i) (colRounds 6 Φ (patE p) (ofK (c + sol))) 0
     rw [smul_zero] at h
