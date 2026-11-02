@@ -472,8 +472,79 @@ theorem drive (hfuel : fuel < 2 ^ 64) : ∀ (evs : List Render.Ev) (o : OSt)
     simp
   | .opened lvl q b :: evs, o, pl, hist, S, sp, cs, rs, str, ops, ms, hI, hT, hH, hL, hn, hmsg,
       hr => by
-    sorry
+    obtain ⟨hb, hb1, hH'⟩ := hH
+    rw [List.getElem?_map] at hb
+    rcases hcs : cs[lvl]? with _ | tree
+    · rw [hcs] at hb
+      cases hb
+    rw [hcs] at hb
+    have htb : tree.height = b := Option.some.inj hb
+    rw [runEvS_opened, hcs] at hr
+    obtain ⟨⟨t1, t2, t3⟩, ht, hte⟩ := Option.map_eq_some_iff.mp hr
+    simp only [Prod.mk.injEq] at hte
+    obtain ⟨rfl, rfl, rfl⟩ := hte
+    have hc : rs.comms.getD lvl (0, fun _ ↦ []) = (tree.height, tree.word) := by
+      rw [hI.comms, List.getD_eq_getElem?_getD, List.getElem?_map, hcs]
+      rfl
+    have hpos : posOf rs.posLimbs b q = posOf pl b q := by rw [hI.pos]
+    have hps : ∀ p ∈ sortedUnique (posOf pl b q), p % 2 ^ tree.height = p := fun p hp ↦
+      Nat.mod_eq_of_lt (by rw [htb]; exact posOf_lt pl b q hb1 p (Merkle.mem_sortedUnique.mp hp))
+    have hopened : ((sortedUnique (posOf rs.posLimbs b q)).map fun p ↦
+        ((rs.comms.getD lvl (0, fun _ ↦ [])).2 (p % 2 ^ (rs.comms.getD lvl (0, fun _ ↦ [])).1)).map
+          K.lane) = (sortedUnique (posOf pl b q)).map fun p ↦ (tree.word p).map K.lane := by
+      rw [hpos, hc]
+      exact List.map_congr_left fun p hp ↦ by rw [hps p hp]
+    have hrows : ((posOf rs.posLimbs b q).map fun p ↦
+        (rs.comms.getD lvl (0, fun _ ↦ [])).2 (p % 2 ^ (rs.comms.getD lvl (0, fun _ ↦ [])).1)) =
+        (posOf pl b q).map fun p ↦ tree.word (p % 2 ^ tree.height) := by
+      rw [hpos, hc]
+    have hitems : o.items = Item.opened ((sortedUnique (posOf rs.posLimbs b q)).map fun p ↦
+        ((rs.comms.getD lvl (0, fun _ ↦ [])).2 (p % 2 ^ (rs.comms.getD lvl (0, fun _ ↦ [])).1)).map
+          K.lane) :: itemsAhead evs ⟨Script.afterQuery ((posOf rs.posLimbs b q).map fun p ↦
+            (rs.comms.getD lvl (0, fun _ ↦ [])).2 (p % 2 ^ (rs.comms.getD lvl (0, fun _ ↦ [])).1))
+            rs.script, rs.comms, [], [], rs.done⟩ := by
+      rcases hI.items with h | h
+      · cases h
+      rw [h, itemsAhead]
+      show lastMsg (evRun evs [] ⟨_, rs.comms, [], [] ++ [_], rs.done⟩) = _
+      rw [evRun_nil_acc]
+      rfl
+    have htr : o.trees.getD lvl [] = treeBytesOf tree := by
+      rw [hI.trees, List.getD_eq_getElem?_getD, List.getElem?_map, hcs]
+      rfl
+    have hmulti : (sortedUnique (posOf pl b q), (takeOpened o.items).1,
+        prune (o.trees.getD lvl []) (sortedUnique (posOf pl b q))) = multiOf tree (posOf pl b q) := by
+      rw [hitems, htr, hopened]
+      rfl
+    have hstep : skelEv (.opened lvl q b :: evs) o pl = skelEv evs ⟨o.dx, (takeOpened o.items).2,
+        o.trees, o.stream, o.merkle ++ [multiOf tree (posOf pl b q)]⟩ [] := by
+      rw [skelEv, hmulti]
+    rw [hstep]
+    have hI' : DriveInv ⟨o.dx, (takeOpened o.items).2, o.trees, o.stream,
+        o.merkle ++ [multiOf tree (posOf pl b q)]⟩ ⟨Script.afterQuery ((posOf rs.posLimbs b q).map
+          fun p ↦ (rs.comms.getD lvl (0, fun _ ↦ [])).2
+            (p % 2 ^ (rs.comms.getD lvl (0, fun _ ↦ [])).1)) rs.script, rs.comms, [],
+          rs.acc ++ [Item.opened ((sortedUnique (posOf rs.posLimbs b q)).map fun p ↦
+            ((rs.comms.getD lvl (0, fun _ ↦ [])).2
+              (p % 2 ^ (rs.comms.getD lvl (0, fun _ ↦ [])).1)).map K.lane)], rs.done⟩
+        (Script.afterQuery ((posOf pl b q).map fun p ↦ tree.word (p % 2 ^ tree.height)) S) sp cs []
+        evs :=
+      ⟨hI.rel, by rw [hrows, hI.script], rfl, hI.comms, hI.trees, by
+        rcases evs with _ | ⟨e', evs'⟩
+        · exact Or.inl rfl
+        · right
+          show (takeOpened o.items).2 = _
+          rw [hitems]
+          rfl⟩
+    obtain ⟨e1, e2⟩ := drive hfuel evs _ [] hist _ _ cs _ t1 t2 t3 hI' hT hH' (lastDraw_tail hL)
+      (by simpa [drawsIn] using hn)
+      (fun chs h1 h2 ↦ hmsg chs h1 (by simpa [drawsIn] using h2)) ht
+    exact ⟨e1, e2.trans (by simp)⟩
 
 end Lock
 
 end PcsQuotient.EndToEnd.Core
+
+/-- info: 'PcsQuotient.EndToEnd.Core.drive' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms PcsQuotient.EndToEnd.Core.drive
