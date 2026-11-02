@@ -9,6 +9,8 @@ import E2ECompleteness.Staging
 import E2ECompleteness.HashLen
 import E2ECompleteness.Assemble
 import E2ECompleteness.Duplex
+import E2ECompleteness.Grinding
+import E2ECompleteness.Final
 
 /-!
 # `PcsQuotient.Completeness`, end to end
@@ -30,10 +32,15 @@ layers, with an explicit `δ`:
 
 * `Regular.lean`: the transcript's challenge (`challengeOf`, the digest's bytes `8 … 31` read
   big-endian) has at most `2^64` digests per value (`challengeOf_regular`).
+* `Grinding.lean`: the grinding at non-degenerate challenges, `RejectGood (3 · 2^-277)`
+  (`rejectGood_deployed`), from the block count and the Prover bridge, by mumbai's proof-of-work
+  potential over the whole run's log;
+* `Final.lean`: **`completeness_deployed_final`**, `PcsQuotient.Completeness deltaDeployed` with
+  `deltaDeployed < 2^-162`.
 
-What stays a hypothesis: `Staged.Holds` for the Statement's experiment (its two-call staged form,
-the duplex discipline, the block count, the chain's lengths, and the grinding at non-degenerate
-challenges). See the completeness section of `formal/README.md`.
+What stays a hypothesis: the block count of the deployed staged run (`2^48`, `Common.QueryCostAtMost
+… hashBlocks`), and the Prover bridge's `Constants`, `Bridge.ClaimsMatch stmtConsts`,
+`CircuitMatch`, `TablesMatch`. See the completeness section of `formal/README.md`.
 -/
 
 /-- info: 'E2ECompleteness.challengeOf_regular' depends on axioms: [propext, Classical.choice, Quot.sound] -/
