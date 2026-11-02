@@ -35,7 +35,7 @@ functions, of the honest tables' claims and of the coins discharged:
 budget (`hprover`: at most `Qp` calls of `π`; it reads the renderer's messages, whose rows the
 skeleton hashes), and **`ProverBridge`** (`hbridge`) at the coins `decodeCoins ∘ eD`. The simulator
 is `zkSimulator` at `deployedPub deployedRep` and `deployedSimV` (its tables `simTW`, `simTQ` are
-`QuotientZk.Instance.solve`'s, a classical choice, being made computable separately; its wiring
+computed, `Instance/Builder.lean`'s Gaussian elimination in `deployedRep`'s coordinates; its wiring
 value `P₀D.sigmaPoly.eval` is the polynomial `Completeness.wiringTableK`'s table holds).
 
 `ζ Q = εR Q + 2^-113 + epsHV + 2^24 (2^24 + 2^70 + 2^23 + Q) 2^-2368 + 2^48 2^-2368 +
