@@ -82,13 +82,47 @@ impl lv42_fiat_shamir::transcript::Transcript for Chain<'_> {
     }
 }
 
-/// What Flock leaves: the slices' point and values, and the matrices' claim (`A0`, `B0` at `point`).
+/// What Flock leaves: the slices' point and values, where the stream stood after them, and the matrices' reduction,
+/// done (its claim on `A0`, `B0`) or left to the batching sumcheck (SPEC.md §13, lever 4a).
 pub struct FlockOut {
     pub point: Vec<E>,
     pub slices: Vec<E>,
-    pub matrices_point: Vec<E>,
-    pub a: E,
-    pub b: E,
+    /// The stream's length right after the slices.
+    pub slices_end: usize,
+    pub matrices: Matrices,
+}
+
+pub enum Matrices {
+    /// Its `k + 6` rounds and `a`, `b` sent after the slices: the claim `A0`, `B0` at `point`.
+    Done { point: Vec<E>, a: E, b: E },
+    /// Its sum `Σ_(x, y) G'(x, y) L̂(x) ŝ(y)`, run by the batching sumcheck.
+    Pending(Pending),
+}
+
+/// The matrices' reduction left to the batching sumcheck: its three tables over the skip's `k` row bits (low) and the
+/// column's 6 packing bits, and what its claim's point is made of.
+pub struct Pending {
+    pub k: usize,
+    /// `G'`, the skip's Lagrange weights `L̂` and the slices `ŝ`, at index `x + 2^k y`.
+    pub tables: [Vec<E>; 3],
+    row_low: Vec<E>,
+    chi_in: Vec<E>,
+    chi_in_prime: Vec<E>,
+}
+
+impl Pending {
+    /// The sum's variables: the batching sumcheck's first ones.
+    pub fn rounds(&self) -> usize {
+        self.k + PACKING
+    }
+
+    /// The claim on `A0`, `B0`: at `(ρ, row_low, chi_in, σ, chi_in')`, `(ρ, σ)` the batch point's first coordinates.
+    pub fn claim(&self, batch_point: &[E]) -> Result<(Vec<E>, E, E), String> {
+        let (rho, sigma) = batch_point[..self.rounds()].split_at(self.k);
+        let point = [rho, &self.row_low, &self.chi_in, sigma, &self.chi_in_prime].concat();
+        let (a, b) = matrix_values(&point).map_err(|e| format!("{e:?}"))?;
+        Ok((point, a, b))
+    }
 }
 
 /// `G'(x, y) = (Â0 + α B̂0)((x, low, chi_in), (y, chi_in'))` at index `x + 2^k y` (`flock_min`'s test's `sliced`).
@@ -147,8 +181,14 @@ fn product_sum(writer: &mut KeccakWriter, mut tables: Vec<Vec<E>>, rounds: usize
 }
 
 /// Flock at `log_n = 14 + log(instances)` variables, written to `writer` as `flock_min::verify(log_n, variant)` reads
-/// it.
-pub fn prove(writer: &mut KeccakWriter, witness: &FlockWitness, variant: Variant, log_n: usize) -> Result<FlockOut, String> {
+/// it, or as `flock_min::verify_deferred` does when `deferred` (the matrices' reduction left to the batching sumcheck).
+pub fn prove(
+    writer: &mut KeccakWriter,
+    witness: &FlockWitness,
+    variant: Variant,
+    log_n: usize,
+    deferred: bool,
+) -> Result<FlockOut, String> {
     let k = variant.skip;
     if k != PACKING || variant.slices != Slices::Weighted {
         return Err(format!(
@@ -186,6 +226,7 @@ pub fn prove(writer: &mut KeccakWriter, witness: &FlockWitness, variant: Variant
         return Err("Flock's slices are not at the point the verifier derives".into());
     }
     let slices: Vec<E> = claim.s_hat_v.iter().map(|x| E::new(x.c0, x.c1, x.c2)).collect();
+    let slices_end = writer.stream.len();
 
     // The matrices' reduction: Σ_(x, y) L(x) s(y) G'(x, y) over the skip's k row bits and the 6 packing bits.
     let g = sliced(k, row_low, chi_in, &chi_in_prime, alpha);
@@ -193,12 +234,22 @@ pub fn prove(writer: &mut KeccakWriter, witness: &FlockWitness, variant: Variant
     let size = (1 << k) * K_BITS;
     let skip_table: Vec<E> = (0..size).map(|i| skip[i % (1 << k)]).collect();
     let s_table: Vec<E> = (0..size).map(|i| slices[i >> k]).collect();
-    let reduced = product_sum(writer, vec![g, skip_table, s_table], k + PACKING);
-    let (rho, sigma) = reduced.split_at(k);
-    let matrices_point = [rho, row_low, chi_in, sigma, &chi_in_prime[..]].concat();
-    let (a, b) = matrix_values(&matrices_point).map_err(|e| format!("{e:?}"))?;
-    writer.send(a);
-    writer.send(b);
+    let pending = Pending {
+        k,
+        tables: [g, skip_table, s_table],
+        row_low: row_low.to_vec(),
+        chi_in: chi_in.to_vec(),
+        chi_in_prime,
+    };
+    let matrices = if deferred {
+        Matrices::Pending(pending)
+    } else {
+        let reduced = product_sum(writer, pending.tables.to_vec(), k + PACKING);
+        let (point, a, b) = pending.claim(&reduced)?;
+        writer.send(a);
+        writer.send(b);
+        Matrices::Done { point, a, b }
+    };
     // The ring map's challenges.
     for _ in 0..RING_MAP_CHALLENGES {
         writer.sample();
@@ -206,8 +257,7 @@ pub fn prove(writer: &mut KeccakWriter, witness: &FlockWitness, variant: Variant
     Ok(FlockOut {
         point,
         slices,
-        matrices_point,
-        a,
-        b,
+        slices_end,
+        matrices,
     })
 }

@@ -10,6 +10,7 @@
 //! - [`stack`]: the three stacks, as the verifier's layouts place the columns;
 //! - [`batch`]: the batching sumcheck (point-claim ABI);
 //! - [`opening`]: the point claims proven with leanVM's WHIR;
+//! - [`replay`]: the verifier's combined claims on the point-claim stream;
 //! - [`prove`]: the driver, and [`check`]: the identities on the domain.
 
 pub mod batch;
@@ -23,6 +24,7 @@ pub mod opening;
 pub mod poly;
 pub mod prove;
 pub mod quotients;
+pub mod replay;
 pub mod setup;
 pub mod stack;
 pub mod trace;

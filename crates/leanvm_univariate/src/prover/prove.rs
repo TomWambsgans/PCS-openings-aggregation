@@ -11,12 +11,14 @@ use std::time::Instant;
 use fiat_shamir::merkle::Hash;
 use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::layout::{Form, OP_BLAKE2S, OP_JUMP, SEP_MEM, tables};
-use leanvm_flock_gas::transcript::{Checks, KeccakChannel, KeccakWriter, keccak_seed};
+use leanvm_flock_gas::flock_min::Slices;
+use leanvm_flock_gas::transcript::{KeccakWriter, keccak_seed};
 use primitives::field::{F64, F192};
 
 use super::bus::{Bus, all_leaves, expected_root, heap};
 use super::columns::{c1_polys, setup_polys};
-use super::flock::FlockWitness;
+use super::flock::{FlockWitness, Matrices};
+use super::replay::Replay;
 use super::opening::{self, Committed};
 use super::poly::{eval_e, eval_k, from_v, novel_from_values, subset_sums, to_v};
 use super::quotients::{self, Quotient};
@@ -198,13 +200,21 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     let beta = from_v(writer.sample());
     let gamma = from_v(writer.sample());
 
-    // 3. Flock, on q_flock: leanVM's prover (`flock.rs`).
+    // 3. Flock, on q_flock (`flock.rs`). On the point-claim ABI with the slices sent, its matrices' reduction runs in
+    // the batching sumcheck (SPEC.md §13, lever 4a), as `verifier::reduce` has it.
+    let mut pending = None;
+    let mut slices_end = None;
     if let Blake2s::Flock(variant) = config.blake2s {
         let witness = flock.ok_or("Flock needs leanVM's Flock inputs (flock.bin)")?;
         let log_n = leanvm_flock_gas::layout::BLAKE2S_R1CS_LOG_SIZE + trace.heights[OP_BLAKE2S];
-        let out = super::flock::prove(&mut writer, witness, variant, log_n)?;
-        report.flock = Some((out.matrices_point, out.a, out.b));
-        clock.lap(&mut report, "Flock: zerocheck, lincheck, slices, matrices' reduction");
+        let deferred = config.claims == Claims::Point && variant.slices != Slices::Claim;
+        let out = super::flock::prove(&mut writer, witness, variant, log_n, deferred)?;
+        slices_end = Some(out.slices_end);
+        match out.matrices {
+            Matrices::Done { point, a, b } => report.flock = Some((point, a, b)),
+            Matrices::Pending(p) => pending = Some(p),
+        }
+        clock.lap(&mut report, "Flock: zerocheck, lincheck, slices");
     }
 
     // 4. The heap.
@@ -365,20 +375,19 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     }
     clock.lap(&mut report, "values at t");
 
-    // 8. ρ, and the combined claims: the verifier's own, on the stream so far.
+    // 8. ρ, and the combined claims: the verifier's own, on the stream so far, in weighted mode (which reads nothing
+    // after ρ). With the matrices' reduction pending, weighted mode reads it after the slices: `Replay` serves it there
+    // outside the chain (`replay.rs`).
     let rho = writer.sample();
     let combined: Vec<(Commitment, Combined<E>)> = {
-        let mut channel = KeccakChannel::new(
-            keccak_seed(&NAME, iv, &public),
-            &writer.stream,
-            Checks::Collect {
-                zero: vec![],
-                nonzero: vec![],
-            },
-        );
+        let (insert_at, scalars, samples) = match (&pending, slices_end) {
+            (Some(p), Some(at)) => (at, 2 * p.rounds() + 2, p.rounds()),
+            _ => (0, 0, 0),
+        };
+        let mut channel = Replay::new(keccak_seed(&NAME, iv, &public), &writer.stream, insert_at, scalars, samples);
         let words: [E; 4] = std::array::from_fn(|k| E::new(u64::from_be_bytes(public[8 * k..8 * k + 8].try_into().unwrap()), 0, 0));
         let reduced = reduce(&shape, words, &mut channel, config.blake2s, Claims::Weighted).map_err(|e| format!("{e:?}"))?;
-        channel.finish().map_err(|e| format!("the verifier reads the stream so far: {e:?}"))?;
+        channel.finish().map_err(|e| format!("the verifier reads the stream so far: {e}"))?;
         for (commitment, vars) in &reduced.stack_vars {
             let mine = match commitment {
                 Commitment::C1 => stack1.layout.vars,
@@ -446,7 +455,10 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
                     (&s.words[..], s.layout.vars)
                 })
                 .collect();
-            let (point, values) = super::batch::prove(&mut writer, &stacks, weights_dense, lambda);
+            let (point, values, matrices) = super::batch::prove(&mut writer, &stacks, weights_dense, lambda, pending.as_ref())?;
+            if let Some(claim) = matrices {
+                report.flock = Some(claim);
+            }
             clock.lap(&mut report, "batching sumcheck");
             for ((c, _), &value) in combined.iter().zip(&values) {
                 let (stack, committed) = stacks_of(*c);
