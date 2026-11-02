@@ -1,0 +1,25 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+# The end-to-end bridge: the proofs of `formal/` (package `pcs-quotient-formal`) applied to the
+# statements of `formal/Statement` (package `pcs-quotient-statement`). Both are path dependencies; their
+# own dependencies (Mathlib, VCVio, CompPoly, ArkLib, leanerVM `mumbai`'s `statement` and `common`) are at
+# the revisions both pin, resolved once here.
+name = "pcs-quotient-end-to-end"
+version = "0.1.0"
+defaultTargets = ["ZK"]
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[require]]
+name = "pcs-quotient-formal"
+path = ".."
+
+[[require]]
+name = "pcs-quotient-statement"
+path = "../Statement"
+
+# Zero knowledge (Bridge-ZK): `PcsQuotient.ZeroKnowledge` from `formal/QuotientZk`.
+[[lean_lib]]
+name = "ZK"
+globs = ["ZK", "ZK.+"]
