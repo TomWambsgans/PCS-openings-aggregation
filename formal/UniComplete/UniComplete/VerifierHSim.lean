@@ -391,8 +391,9 @@ section Commute
 
 variable {r : Type → Type} [Monad r] [LawfulMonad r] (impl : QueryImpl KeccakCalls r)
 
-/-- **`simulateQ impl` is a monad morphism.** -/
-def Morph.sim : Morph (OracleComp KeccakCalls) r :=
+/-- **`simulateQ impl` is a monad morphism**, for any oracles. -/
+def Morph.sim {ι : Type} {spec : OracleSpec.{0, 0} ι} {r : Type → Type} [Monad r] [LawfulMonad r]
+    (impl : QueryImpl spec r) : Morph (OracleComp spec) r :=
   ⟨fun x ↦ simulateQ impl x, fun a ↦ simulateQ_pure impl a, fun x f ↦ simulateQ_bind impl x f⟩
 
 theorem Morph.sim_H : (fun x ↦ (Morph.sim impl).app (callKeccak256 x)) = implH impl :=
