@@ -77,6 +77,13 @@ def IsRow : Src → Prop
 
 theorem isRow_row (r : Nat) : IsRow (.row r) := trivial
 
+theorem prod_fst_mk {α β : Type} (a : α) (b : β) : (a, b).1 = a := rfl
+theorem prod_snd_mk {α β : Type} (a : α) (b : β) : (a, b).2 = b := rfl
+
+theorem valid_zero (b : Builder) : Valid b .zero := trivial
+
+theorem valid_one (b : Builder) : Valid b .one := trivial
+
 theorem valid_row {b : Builder} {r : Nat} (h1 : publicRows ≤ r) (h2 : r < b.rows.size) : Valid b (.row r) :=
   ⟨h1, h2⟩
 
@@ -180,6 +187,10 @@ theorem runB_pure {α : Type} (a : α) (b : Builder) : runB (pure a : BuildM α)
 
 theorem runB_bind {α β : Type} (m : BuildM α) (f : α → BuildM β) (b : Builder) :
     runB (m >>= f) b = runB (f (runB m b).1) (runB m b).2 := rfl
+
+theorem runB_bind_of {α β : Type} {m : BuildM α} {f : α → BuildM β} {b b' : Builder} {a : α}
+    (h : runB m b = (a, b')) : runB (m >>= f) b = runB (f a) b' := by
+  rw [runB_bind, h]
 
 theorem Spec.pure {α : Type} {a : α} {b : Builder} {k : Nat} {P : α → Builder → Prop} (hb : WF b)
     (h : P a b) : Spec (Pure.pure a : BuildM α) b k P :=

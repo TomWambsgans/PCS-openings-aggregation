@@ -294,4 +294,149 @@ theorem spec_levels (s : Secret) (hsib : ∀ i < depth, (s.siblings.getD i []).l
       · exact hnode' _ (by omega)
       · exact hS _ (by omega)
 
+/-! ## The membership rows -/
+
+-- From here on a run is opaque: unifying with a run must not evaluate it.
+attribute [local irreducible] runB
+
+/-- A secret of the statement's shape: `x` and the `32` siblings are `32` bytes each. -/
+def Secret.WellFormed (s : Secret) : Prop :=
+  s.x.length = 32 ∧ ∀ i < depth, (s.siblings.getD i []).length = 32
+
+/-- The input bits of the circuit are the secret's: `x`'s `256` bits, then each level's sibling and
+direction (`membership_inputs`). -/
+def SecretInputs (s : Secret) (v : Nat → Bool) (ins : Array Nat) : Prop :=
+  (∀ k < 256, v (ins.getD k 0) = bitOf s.x k) ∧ LevelInputs s v ins 256 depth
+
+/-- The rows of `membership` before `finish`, at most: the public rows, `x`, two hashes, the path. -/
+def buildRows : Nat := publicRows + 256 + 2 * keccakRows true + depth * levelRows
+
+theorem buildRows_eq : buildRows = 4002624 := by decide
+
+theorem wf_new : WF Builder.new :=
+  ⟨by simp [Builder.new], by simp [Builder.new], fun r h => by simp [Builder.new] at h,
+    fun r h => by simp [Builder.new] at h, fun r h1 h2 => by simp [Builder.new] at h2; omega⟩
+
+theorem new_size : Builder.new.rows.size = publicRows := by simp [Builder.new]
+
+theorem constantBlock_read (byte : UInt8) (v : Nat → Bool) (q : Nat) (hq : q < 256) :
+    read v ((constantBlock byte).getD q .zero) = bitOf (List.replicate 32 byte) q := by
+  simp only [constantBlock]
+  rw [map_range_getD _ _ _ _ hq]
+  simp only [bitOf, List.getD_eq_getElem?_getD, List.getElem?_replicate, show q / 8 < 32 by omega, if_true,
+    Option.getD_some]
+  split <;> simp_all
+
+/-- The message `x ‖ pad^32` of the two hashes of `x`. -/
+theorem msg_read {x : Array Src} (hx : x.size = 256) (byte : UInt8) (v : Nat → Bool) (X : List UInt8)
+    (hX : ∀ k < 256, read v (x.getD k .zero) = bitOf X k) (p : Nat) (hp : p < 512) :
+    read v ((x ++ constantBlock byte).getD p .zero) =
+      if p < 256 then bitOf X p else bitOf (List.replicate 32 byte) (p - 256) := by
+  rw [array_append_getD, hx]
+  split
+  · exact hX p (by assumption)
+  · exact constantBlock_read byte v _ (by omega)
+
+/-- The membership rows from any well-formed builder of `512` rows and no inputs. -/
+theorem spec_membershipBuild_from (b0 : Builder) (hb0 : WF b0) (hs0 : b0.rows.size = publicRows)
+    (hi0 : b0.inputs = #[]) :
+    ∃ y root bf, runB membershipBuild b0 = ((y, root), bf) ∧
+    WF bf ∧ bf.rows.size ≤ buildRows ∧ bf.inputs.size = 256 + 257 * depth ∧
+    (∀ k < 256, Valid bf (y.getD k .zero) ∧ Valid bf (root.getD k .zero)) ∧
+    ∀ s : Secret, s.WellFormed → ∀ v, Sat v bf → SecretInputs s v bf.inputs →
+      ∀ k < 256, read v (y.getD k .zero) = bitOf s.y k ∧ read v (root.getD k .zero) = bitOf s.root k := by
+  have hfb : runB (freeBits 256) b0 =
+      ((runB ((List.range 256).mapM fun _ => input) b0).1.toArray,
+        (runB ((List.range 256).mapM fun _ => input) b0).2) := by
+    unfold freeBits; rewrite [runB_bind, runB_pure]; rfl
+  obtain ⟨h1ext, h1size, h1wf, h1inp, h1res, h1sat⟩ := spec_freeBits_list (List.range 256) b0 hb0
+  obtain ⟨⟨l, b1⟩, hr1⟩ : ∃ r, runB ((List.range 256).mapM fun _ => input) b0 = r := ⟨_, rfl⟩
+  rw [hr1] at h1ext h1size h1wf h1inp h1res h1sat hfb
+  simp only at h1ext h1size h1wf h1inp h1res h1sat hfb
+  simp only [List.length_range, hs0] at h1size h1inp h1res
+  subst h1res
+  -- `x`: the input rows `512 … 767`
+  have hxs : (((List.range 256).map fun k => Src.row (publicRows + k)).toArray).size = 256 := by simp
+  have hxv : ∀ k < 256, (((List.range 256).map fun k => Src.row (publicRows + k)).toArray).getD k .zero =
+      .row (publicRows + k) := fun k hk => map_range_getD _ _ _ _ hk
+  obtain ⟨x, hxdef⟩ : ∃ x, ((List.range 256).map fun k => Src.row (publicRows + k)).toArray = x := ⟨_, rfl⟩
+  rw [hxdef] at hxs hxv hfb
+  have hmsg : ∀ (byte : UInt8) (b : Builder), RowsExt b1 b → ∀ p < 512,
+      Valid b ((x ++ constantBlock byte).getD p .zero) ∧
+      (p < 256 → IsRow ((x ++ constantBlock byte).getD p .zero)) := by
+    intro byte b he p hp
+    rw [array_append_getD, hxs]
+    split
+    · rw [hxv p (by assumption)]
+      exact ⟨valid_row (by unfold publicRows; omega) (by have := he.size_le; omega), fun _ => isRow_row _⟩
+    · refine ⟨?_, fun h => absurd h (by assumption)⟩
+      simp only [constantBlock]
+      rw [map_range_getD _ _ _ _ (by omega)]
+      split
+      · exact valid_one b
+      · exact valid_zero b
+  -- `y` and the leaf
+  obtain ⟨hg2, hy⟩ := spec_keccak256Block (msg := x ++ constantBlock yPad) true h1wf
+    (fun p hp => (hmsg yPad b1 (RowsExt.refl _) p hp).1) (fun _ p hp => (hmsg yPad b1 (RowsExt.refl _) p (by omega)).2 hp)
+  obtain ⟨⟨y, b2⟩, hr2⟩ : ∃ r, runB (keccak256Block (x ++ constantBlock yPad)) b1 = r := ⟨_, rfl⟩
+  rw [hr2] at hg2 hy
+  simp only at hg2 hy
+  obtain ⟨hg3, hleaf⟩ := spec_keccak256Block (msg := x ++ constantBlock leafPad) true hg2.wf
+    (fun p hp => (hmsg leafPad b2 hg2.ext.toRowsExt p hp).1)
+    (fun _ p hp => (hmsg leafPad b2 hg2.ext.toRowsExt p (by omega)).2 hp)
+  obtain ⟨⟨leaf, b3⟩, hr3⟩ : ∃ r, runB (keccak256Block (x ++ constantBlock leafPad)) b2 = r := ⟨_, rfl⟩
+  rw [hr3] at hg3 hleaf
+  simp only at hg3 hleaf
+  -- the path
+  have heq : runB membershipBuild b0 =
+      ((y, (levelsRun depth leaf b3).1), (levelsRun depth leaf b3).2) := by
+    unfold membershipBuild
+    rewrite [runB_bind_of hfb, runB_bind_of hr2, runB_bind_of hr3, runB_bind, runB_pure]
+    rfl
+  have hleafv : ∀ k < 256, Valid b3 (leaf.getD k .zero) ∧ IsRow (leaf.getD k .zero) :=
+    fun k hk => ⟨(hleaf k hk).2.1, (hleaf k hk).1 trivial⟩
+  have hdummy : ∀ i < depth, ((List.replicate 32 (List.replicate 32 (0 : UInt8))).getD i []).length = 32 :=
+    fun i hi => by
+      simp only [List.getD_eq_getElem?_getD, List.getElem?_replicate, show i < 32 by unfold depth at hi; omega,
+        if_true, Option.getD_some, List.length_replicate]
+  obtain ⟨e4, w4, z4, ⟨L, hL, hLs⟩, val4, -⟩ := spec_levels ⟨[], List.replicate 32 (List.replicate 32 0), 0⟩
+    hdummy (fun _ => False) depth (Nat.le_refl _) leaf (List.replicate 32 0) b3 hg3.wf (by simp) hleafv
+    (fun _ _ h => h.elim)
+  have hin3 : b3.inputs = ((List.range 256).map (publicRows + ·)).toArray := by
+    rw [hg3.ext.inputs_eq, hg2.ext.inputs_eq, h1inp, hi0]; simp
+  have hin3s : b3.inputs.size = 256 := by rw [hin3]; simp
+  have e24 : RowsExt b2 (levelsRun depth leaf b3).2 := hg3.ext.toRowsExt.trans e4
+  refine ⟨y, (levelsRun depth leaf b3).1, (levelsRun depth leaf b3).2, heq, w4, ?_, ?_,
+    fun k hk => ⟨((hy k hk).2.1.of_rowsExt e24), (val4 k hk).1⟩, fun s hs v hv hin k hk => ?_⟩
+  · have := hg2.le; have := hg3.le
+    unfold buildRows; omega
+  · rw [hL, Array.size_append, hLs, hin3s]
+  -- the semantics
+  have hx : ∀ k < 256, read v (x.getD k .zero) = bitOf s.x k := by
+    intro k hk
+    rw [hxv k hk, read_row, ← hin.1 k hk, hL, array_append_getD, if_pos (by omega), hin3,
+      map_range_getD _ _ _ _ hk]
+  have hpair : ∀ (byte : UInt8) (out : Array Src) (b : Builder), (∀ k < 256, Out True
+      (fun v => KeccakBits.hash (fun p => read v ((x ++ constantBlock byte).getD p .zero)) k) (out.getD k .zero) b) →
+      ∀ v, Sat v b → (∀ k < 256, read v (x.getD k .zero) = bitOf s.x k) →
+      ∀ k < 256, read v (out.getD k .zero) = bitOf (H (s.x ++ List.replicate 32 byte)) k := by
+    intro byte out b hout v hv hxv' k hk
+    rw [(hout k hk).2.2 v hv]
+    exact pair_bits _ _ hs.1 (by simp) _ (fun p hp => msg_read hxs byte v s.x hxv' p hp) k hk
+  have hsat2 : Sat v b2 := hv.of_rowsExt e24
+  have hlev := (spec_levels s hs.2 (fun v => ∀ k < 256, read v (x.getD k .zero) = bitOf s.x k) depth
+    (Nat.le_refl _) leaf (H (s.x ++ List.replicate 32 leafPad)) b3 hg3.wf (H_length _) hleafv
+    (fun v hv hq => hpair leafPad leaf b3 hleaf v hv hq)).2.2.2.2.2 v hv hx (by rw [hin3s]; exact hin.2) k hk
+  exact ⟨hpair yPad y b2 hy v hsat2 hx k hk, hlev⟩
+/-- **The membership rows** (`membership` before `finish`): well-formed, at most `4,002,624` rows,
+`256 + 257 · 32` inputs, and, for every valuation satisfying them whose input bits are a well-formed
+secret's, the wires of `y` and `root` hold the bits of `y = H(x ‖ 0x11^32)` and of the root. -/
+theorem spec_membershipBuild :
+    ∃ y root bf, runB membershipBuild Builder.new = ((y, root), bf) ∧
+    WF bf ∧ bf.rows.size ≤ buildRows ∧ bf.inputs.size = 256 + 257 * depth ∧
+    (∀ k < 256, Valid bf (y.getD k .zero) ∧ Valid bf (root.getD k .zero)) ∧
+    ∀ s : Secret, s.WellFormed → ∀ v, Sat v bf → SecretInputs s v bf.inputs →
+      ∀ k < 256, read v (y.getD k .zero) = bitOf s.y k ∧ read v (root.getD k .zero) = bitOf s.root k :=
+  spec_membershipBuild_from Builder.new wf_new new_size rfl
+
 end PcsCircuit

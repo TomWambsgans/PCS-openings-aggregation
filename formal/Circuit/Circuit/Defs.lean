@@ -302,8 +302,8 @@ def Builder.finish (b : Builder) (logRows : Nat) (pub : Nat → Nat → Src) : C
 
 /-- **The membership circuit** (`circuit::membership`). -/
 def membership : Circuit :=
-  let ((y, root), b) := membershipBuild.run Builder.new
-  b.finish logRows (publicWords y root)
+  let r := (membershipBuild.run Builder.new).run
+  r.2.finish logRows (publicWords r.1.1 r.1.2)
 
 /-! ## The computation -/
 
