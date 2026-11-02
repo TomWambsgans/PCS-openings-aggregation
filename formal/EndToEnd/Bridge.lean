@@ -4,6 +4,8 @@ import Bridge.Opening
 import Bridge.Chain
 import Bridge.Verifier
 import Bridge.Extractor
+import Bridge.Claims.Reduce
+import Bridge.Facts
 
 /-!
 # The bridge: the statement's definitions are the proof layers'
@@ -25,4 +27,9 @@ definitions equal to the proofs' (see `README.md` of this package):
   `verifierBridge_of_claims`: `Soundness.VerifierBridge`).
 * `Bridge/Extractor.lean`: the extractor's read-back of the witness table is F4's table of the stack
   (`witnessEntries_eq`).
+* `Bridge/Claims/*.lean`: the statement's reduction claims `claimsAt 22` are `Compose.Reduce.reduce`
+  at the statement's constants `statementConsts` (`claimsAt_eq_reduce`), and those constants are
+  `beta()`'s and `row_vanishing(24)`'s (kernel evaluation, stepwise).
+* `Bridge/Facts.lean`: the three facts `formal/EndToEnd/Soundness/Hypotheses.lean` takes, at
+  `statementConsts`.
 -/
