@@ -248,4 +248,50 @@ theorem runRpm_gameD (skel : OracleComp DSpec Proof)
   rw [relabel_gameHD]
   exact EvalDistEq.rfl
 
+/-! ## The shadow world of the real game -/
+
+theorem shadow_permD2 : shadowImpl keccakPadding ∘ₛ permD2 = simulator2 (Msg := List UInt8) keccakPadding := by
+  funext q
+  simp only [QueryImpl.apply_compose, permD2, simulateQ_spec_query]
+  rfl
+
+theorem shadow_permD2_lanes : shadowImpl keccakPadding ∘ₛ (permD2 ∘ₛ laneToByte) =
+    simulator2 (Msg := List UInt8) keccakPadding ∘ₛ laneToByte := by
+  funext q
+  simp only [QueryImpl.apply_compose]
+  rw [← QueryImpl.simulateQ_compose, shadow_permD2]
+
+/-- The prover with its permutation calls recorded is the skeleton with its bookkeeping. -/
+theorem recImpl_proverJ (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m) (s : S)
+    (skel : OracleComp DSpec Proof) :
+    (simulateQ recImpl (proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s skel)).run
+        (SimState.init KState.zero) =
+      proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s (skelRec skel) := by
+  unfold proverJ skelRec
+  rw [StateT.run'_eq, simulateQ_map, StateT.run_map, recImpl_implHF P hrow s skel, StateT.run'_eq,
+    Functor.map_map]
+
+/-- **The real game's shadow world** is the prover's run on the skeleton with its bookkeeping,
+then `D` through `S₂` from the bookkeeping. -/
+theorem shadow_game2D (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m) (s : S)
+    (skel : OracleComp DSpec Proof) (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) :
+    shadowGame keccakPadding KState.zero (game2D P skel D s) =
+      ((simulateQ HF.romImpl (proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s
+        (skelRec skel))).run ∅ >>= fun w ↦ runS2 (D w.1.1) w.1.2 w.2) := by
+  have hin : (simulateQ (shadowImpl keccakPadding)
+      (simulateQ (hfEmbed (Msg := List UInt8)) (proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s
+        skel) >>= fun pf ↦ simulateQ permD2 (simulateQ laneToByte (D pf)))).run'
+        (SimState.init KState.zero) =
+      (proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s (skelRec skel) >>= fun p ↦
+        (simulateQ (simulator2 (Msg := List UInt8) keccakPadding)
+          (simulateQ laneToByte (D p.1))).run' p.2) := by
+    rw [simulateQ_bind, StateT.run'_eq, StateT.run_bind, ← QueryImpl.simulateQ_compose
+      (shadowImpl keccakPadding) (hfEmbed (Msg := List UInt8)), recImpl_proverJ P hrow s skel,
+      map_bind]
+    simp only [← QueryImpl.simulateQ_compose, shadow_permD2_lanes, StateT.run'_eq]
+  unfold shadowGame game2D
+  rw [← run'_simulateQ_foldRO, hin]
+  simp only [simulateQ_bind, StateT.run'_eq, StateT.run_bind, map_bind]
+  rfl
+
 end QuotientZk.DRpm
