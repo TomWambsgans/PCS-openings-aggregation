@@ -48,12 +48,12 @@ layers, with an explicit `δ`:
   `ProverAccept`: `accept_core`, `reduce_honest`; `ProverStaged`, `ProverBridge`: on the staged run,
   `acc_staged`, `red_staged`; `ProverConstants`, `ProverFacts`, `ProverTablesMatch`: the constants,
   the claims and the tables discharged.
-* `Closed.lean`: **`completeness_deployed_of_circuit`**, `PcsQuotient.Completeness deltaDeployed`
-  from the block count and `CircuitMatch`.
+* `ProverCircuit.lean`: the membership circuit's cells and wiring are F0b's (`circuitMatch`).
+* `Closed.lean`: **`completeness_deployed_closed`**, `PcsQuotient.Completeness deltaDeployed` with
+  `deltaDeployed < 2^-162`, from the block count alone.
 
 What stays a hypothesis: the block count of the deployed staged run (`2^48`, `Common.QueryCostAtMost
-… hashBlocks`), and the Prover bridge's `CircuitMatch` (the membership circuit's cells and wiring are
-F0b's). See the completeness section of `formal/README.md`.
+… hashBlocks`). See the completeness section of `formal/README.md`.
 -/
 
 /-- info: 'E2ECompleteness.challengeOf_regular' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -131,3 +131,11 @@ F0b's). See the completeness section of `formal/README.md`.
 /-- info: 'E2ECompleteness.completeness_deployed_of_circuit' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms E2ECompleteness.completeness_deployed_of_circuit
+
+/-- info: 'E2ECompleteness.circuitMatch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.circuitMatch
+
+/-- info: 'E2ECompleteness.completeness_deployed_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.completeness_deployed_closed
