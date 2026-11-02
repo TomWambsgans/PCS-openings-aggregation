@@ -40,12 +40,40 @@ from where.
   cold `SLOAD`), which a fixed owner may change (`setIndexRoot`). About 14,300 gas of execution at a claim price
   of 0, and 1.43 M gas to deploy.
 - Vendored from leanVM `c445e3d5`: `primitives`, `fiat_shamir`, `pcs`, `parallel`, `verifier`, `bench`.
-- `formal/`: the Lean 4 proofs (knowledge soundness, completeness and zero knowledge of the reduction, sorry-free;
-  the layers still to do towards an end-to-end theorem are in [`formal/README.md`](formal/README.md)).
+- `formal/`: the Lean 4 proofs, sorry-free, on the three standard axioms.
+  [`formal/Statement`](formal/Statement/README.md) states the end theorems about its own transcription of the
+  Rust; `formal/EndToEnd` proves them ([`formal/README.md`](formal/README.md), "End-to-end theorems"):
+  - knowledge soundness, no hypotheses: `Soundness.knowledgeSoundness`, about 2^-62 at 2^64 queries, with an
+    explicit computable extractor that reads the adversary's transcript and the public setup tree;
+  - completeness, no hypotheses: `E2ECompleteness.completeness_end`, δ < 2^-162;
+  - the EVM contract is the Statement's verifier: `Evm.evm_accepts_iff_verifyWith`, `Evm.evm_accepts_iff_exists`
+    (the bytecode = the recorded graph, and the `PCS_OPEN` mock = `opening::verify` = the Statement's opening,
+    by tests);
+  - zero knowledge, no hypotheses: `PcsQuotient.EndToEnd.zeroKnowledge_closed`, about 2^-113, for an explicit
+    simulator named in the statement (its full computability in progress).
+
+  The deployed Rust prover is trusted for completeness (the Statement's prover is compared with it on the
+  reduction's nine scalars at 2^17 rows only). The theorems are in the random-permutation model and do not
+  formally compose with the EVM one, which holds at the real Keccak-f[1600].
+
+  The models: Keccak-f[1600] as one random permutation, the prover's randomness uniform (deployed: ChaCha12 and a
+  Keccak-256 KDF, so computational). The Statement is the Rust by differential tests, not by proof.
 - [`STATUS.md`](STATUS.md): where things stand, the numbers, the reviews and what they changed.
 
 ```sh
 cargo test --release -p quotient -p evm                               # tests, incl. contract == Rust verifier
 cargo bench -p quotient --bench membership                            # prover / verifier timings and sizes
 cargo test --release -p evm -- --ignored --nocapture gas_report       # gas of the contract
+```
+
+The Lean builds run on h1, under `/root/pcs-quotient-fv/` only (the rest of h1 is other work). Copy the
+repository there (rsync, without `.lake`), link `formal/leanervm` to `/root/pcs-quotient-fv/leanervm` (a built
+leanerVM `6175f1a0`, which `WhirBridge`, `Compose`, `Completeness` and `EndToEnd` build against), then:
+
+```sh
+cd formal/EndToEnd
+systemd-run --scope -p MemoryMax=12G lake build Soundness E2ECompleteness Evm ZK   # end theorems; #guard_msgs checks axioms
+lake env lean Review/E2ESoundness.lean                                            # the knowledge-soundness review
+lake env lean Review/E2ECompletenessReview.lean                                   # the completeness review
+python3 -I Review/E2ESoundnessNumbers.py                                          # ksBound, exact rationals
 ```

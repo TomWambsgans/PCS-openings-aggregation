@@ -60,3 +60,4 @@ to `root`. Measured on the implementation in `crates/` (details: [`AGENTS.md`](A
 | PCS claims | 4, in 3 `PCS_OPEN` calls |
 | Gas, `PCS_OPEN` free | 14,289 execution; 18,309 transaction (without the 21,000 base) |
 | Contract deployment | 1.43 M gas |
+| Formal verification (Lean 4) | knowledge soundness (≈ 2^-62 at 2^64 queries), completeness (failure < 2^-162) and zero knowledge (≈ 2^-113) proved end to end, in the random-permutation model; the contract proved to be the verifier (its bytecode by tests) |

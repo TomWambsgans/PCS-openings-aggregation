@@ -1,11 +1,15 @@
 # Formal verification of `crates/quotient`
 
-Goal: knowledge soundness, completeness and statistical zero knowledge of the membership proof that
-`crates/quotient` builds and `crates/evm` verifies, proved in Lean 4 end to end, with the **extractor and the
-simulator as explicit, computable definitions in the statements** so that a reviewer can check that they are
-efficient (the target: F1's extractor reads the proof's polynomials in the ideal model, and F1's extractor and
-simulator are `noncomputable`; the computable ones are the `Statement` package's work, F4/F5) (Lean has no running-time theorem; the convention is leanerVM's: a fixed straight-line extractor
-that reads only the adversary's oracle transcript, its cost read off its loops).
+Knowledge soundness, completeness and statistical zero knowledge of the membership proof that `crates/quotient`
+builds and `crates/evm` verifies, in Lean 4. **The statement** is [`Statement/`](Statement/README.md), a Lake
+package of definitions and end statements only, on leanerVM `mumbai`'s `Statement/`: the relation, the proof
+format, the verifier (computable, differential-tested against the Rust), the honest prover, the extractor and
+the simulator, and `KnowledgeSoundness`, `Completeness`, `ZeroKnowledge(With)` in the random-permutation model.
+The extractor and the simulator are explicit, computable definitions in the statements, so that a reviewer can
+check what they read and that they are efficient. Lean has no running-time theorem; the convention is
+leanerVM's: a fixed straight-line extractor, its cost read off its loops. Here the extractor reads the
+statement, the proof, the adversary's transcript and the public setup tree (the circuit commitment's Merkle
+tree). **The proofs** of the statements are in [`EndToEnd/`](#end-to-end-theorems), from the layers F0–F5 below.
 
 Toolchain and dependency revisions are leanerVM `mumbai`'s (Lean `v4.34.1`, Mathlib `d13f23b7`, VCVio
 `afa6593f`, CompPoly `572f9973`, ArkLib `4dae3acf`), so its results can be imported rather than reproved. The
@@ -13,22 +17,120 @@ starting point is leanVM's `formal/quotient` (branch `PCS-openings-aggregation`)
 [`README.upstream.md`](README.upstream.md): sorry-free proofs of the reduction for the BLAKE2s/full-adder
 circuit, with ideal commitments.
 
-**The statement** is [`Statement/`](Statement/README.md), a Lake package of definitions and end statements
-only, on leanerVM `mumbai`'s `Statement/`: the relation, the proof format, the verifier (computable,
-differential-tested against the Rust), the honest prover, the extractor and the simulator, and
-`KnowledgeSoundness`, `Completeness`, `ZeroKnowledge` in the random-permutation model. The proofs here are
-to prove it.
+## End-to-end theorems
+
+`EndToEnd/` (a Lake workspace, `EndToEnd/lakefile.toml`) proves the Statement's end statements about the
+Statement's own definitions. Every theorem below is sorry-free and depends only on `propext`,
+`Classical.choice` and `Quot.sound`, checked by `#guard_msgs` in each library (so no `native_decide`).
+
+- **Knowledge soundness: proved, no hypotheses.** `Soundness.knowledgeSoundness :
+  PcsQuotient.KnowledgeSoundness Soundness.ksBound` (`EndToEnd/Soundness/Final.lean`, library `Soundness`). In
+  one random permutation π: the setup computes the circuit's commitment over π; the adversary is given its root,
+  makes at most `Q` calls of π and π⁻¹ (its coins free), and outputs a statement and a proof. The probability
+  that the verifier accepts while `PcsQuotient.extractor` returns no secret satisfying `PcsQuotient.Relation`
+  (Keccak-256 Merkle membership over the deployed Keccak-256) is at most `ksBound Q`: about `2^-105` at `Q = 0`,
+  `2^-86` at `2^40`, `2^-62` at `2^64` (`EndToEnd/Review/E2ESoundnessNumbers.py`). The extractor queries
+  no π and does not rerun the adversary: a hash-map replay and Merkle inversion (proved equal to mumbai's
+  lists), then interpolation, Gao's unique decoder, and the Guruswami–Sudan list decoder only beyond the
+  unique-decoding radius (the cost table in `Statement/PcsQuotient/Extractor.lean`: about `2^34.3` operations of
+  `K` for a word with few wrong columns, at most `2^45.7` within the radius, about `2^98` beyond it). This is
+  stand-alone knowledge soundness, not simulation-extractability. The proof: F4's random-permutation theorem at
+  the deployed claim maps (`Soundness.knowledgeSoundness_rust_rpm`); the Statement's experiment coupled to F4's
+  (the same setup and adversary, the verifiers run last); the bridge's three facts (`EndToEnd/Bridge/Facts.lean`:
+  `setupBridge_final`, `verifierBridge_final`, `readsSecret_final`).
+- **Completeness: proved, no hypotheses.** `E2ECompleteness.completeness_end : PcsQuotient.Completeness
+  deltaDeployed` (`EndToEnd/Completeness/E2ECompleteness/Done.lean`, library `E2ECompleteness`). For every
+  statement and secret of the relation, the Statement's honest prover with uniform coins, then the verifier, in
+  one random permutation, rejects with probability at most `deltaDeployed = (17 · 2^24 + 8)/2^192 + 2/2^256 +
+  3 · 2^-277 + (2^48)²/2^508 ≈ 2^-163.91`: degenerate challenges (`2^-163.91`), a chain query that is not fresh
+  (`2^-255`), the proofs of work (`2^-275.4`; the proof bounds the whole run's grinding failure by `2^-304`,
+  `grinding_le`), the permutation as two random oracles (`2^-412`; the run makes exactly `114 098 677 826 653 <
+  2^47` block calls, `hcost_exact`) ("End-to-end completeness", below). The same `δ` holds for every fixed value
+  of the coins (`completeness_every_coins`, `EndToEnd/Review/E2ECompletenessReview.lean`), so the uniform-coins
+  model does not matter for completeness. The prover is the Statement's; the deployed Rust prover is trusted
+  for completeness (below).
+- **Zero knowledge: proved, no hypotheses.** `PcsQuotient.EndToEnd.zeroKnowledge_closed :
+  PcsQuotient.ZeroKnowledgeWith s₀ (zkSimulator …) rpmSimOracle (zkBoundEnd ((2^24 + 2^70)·12) fmtBudget
+  (· ↦ deltaNone))` (`EndToEnd/ZK/CoreMain.lean`, library `ZK`). For every statement and secret of the relation and
+  every distinguisher of at most `Q` calls of π and π⁻¹ fixed after them, its verdicts on the honest proof and on
+  the simulator's proof (the permutation programmable) differ in probability by at most `ζ Q ≈ 2^-113` for
+  `Q ≤ 2^126`. The simulator is explicit and named in the statement (`zkSimulator`, `rpmSimOracle`); it reads no
+  witness; its full computability is in progress (its tables are computed, `QuotientZk/Instance/Builder.lean`).
+  The largest term of `ζ` is Fiat–Shamir freshness, `2^-113` (`6 Q'(c + Q')/2^256 ≈ 2^-113.4` for the honest
+  prover's `Q' = 2^24 + 2^70` oracle operations, worst-case grinding counted, and `c = 2^19` public rows); the
+  others are `epsHV = 2^-165 + 2^-125 + 2/2^192` (bad challenges, degenerate scales and masks), `deltaNone <
+  2^-162` (the prover makes no proof or meets degenerate `α, β`), `2^-2200` (unopened leaves) and
+  `(Qp + 2^23 + Q)²/2^508 ≤ 2^-256` (the permutation). Two statement changes were needed: the deterministic core
+  `CoreWhir` is false at degenerate `α, β` and is stated off them (`CoreWhirG`, proved as `coreD`), those `α, β`
+  charged to `deltaNone`; `fmt`'s `fillRun` ends at the program's `fail` as at its `ret` (as mumbai's `runFrom`).
+  Details: "Zero knowledge end to end", below.
+- **The EVM contract is the Statement's verifier.** `Evm.evm_accepts_iff_verifyWith` (`EndToEnd/Evm/Contract.lean`,
+  library `Evm`): on the calldata of a statement and proof, the contract's recorded operation graph (F5), with the
+  stored index root and `PCS_OPEN` modelled by an explicit definition (`pcsOpen`, `Evm/PcsOpen.lean`: the input read
+  as the precompile reads it, then `PcsQuotient.opening`), accepts exactly when `PcsQuotient.verifyWith` accepts
+  at π = Keccak-f[1600]. `Evm.evm_accepts_iff_exists` (`Evm/Calldata.lean`): over all calldata, the contract accepts
+  exactly the calldata of a proof that `PcsQuotient.verify` accepts. So the contract runs the verifier the three
+  theorems above are about, up to the tested links below; their probabilities are over a random permutation and
+  do not formally transfer to the real Keccak-f[1600] ("Scope", below).
+
+**What is trusted.**
+
+- The Lean kernel and the three standard axioms.
+- **The models**: Keccak-f[1600] is one random permutation, and Keccak-256 is its sponge; every hash of the protocol
+  is over that one π (the chain, the Merkle trees, the openings' duplex, the circuit's commitment), and the relation
+  is over the deployed Keccak-256. The prover's randomness is uniform. As deployed (`Randomness::derive`,
+  `crates/quotient/src/protocol.rs`): a key is Keccak-256 of a tag, a 32-byte OS seed, the transcript's label (the
+  circuit's commitment, the statement) and a digest of the witness's cells; the masks are the words of
+  Keccak-256(tag ‖ key ‖ k), `k = 0, 1, 2`; the padding seed is Keccak-256(tag ‖ key), each table's seed is
+  derived from it (`table_seed`), and each lane's padding is ChaCha12 keyed by Keccak-256(table seed ‖ lane).
+  Deployed zero knowledge is therefore computational in that generator; completeness holds for every coins.
+- **Scope**: the three theorems are about the Statement's `verifyWith` in the random-permutation model; the EVM
+  theorem holds at the real Keccak-f[1600]. They do not formally compose: a probability over a random
+  permutation does not transfer to a fixed hash.
+- **mumbai's definitions** that the Statement reuses: Keccak-256 and Keccak-f[1600], the random-permutation model,
+  the WHIR verifier `verifyStackedOpening` (mumbai tests it against leanVM's), its prover's pieces, the list decoder.
+- **Tested, not proved**:
+  - the Statement's definitions are the Rust (`Statement/PcsQuotientTest/Differential.lean`: reductions at `2^16`
+    to `2^23` rows, whole proofs honest and tampered verified at `2^17` rows, and at `2^22` in the soundness
+    review, the circuit commitments; the Rust's pruned Merkle paths expanded to the Statement's full ones);
+  - the Statement's prover against the Rust's: the reduction's stream of nine scalars, at `2^17` rows on a small
+    circuit only (the openings are not compared); for zero knowledge, the Lean skeleton, which `coreD` relates to
+    the Statement's prover, makes the Rust prover's queries and proof byte for byte at `2^17` rows
+    (`crates/quotient/tests/skel_trace.rs`);
+  - the EVM bytecode computes the recorded graph (`crates/evm`'s parity tests); `FIELD_MUL` and `KECCAK256` are
+    the Lean operations (`mulE` is proved to be `F192`'s product; the Rust's `F192` arithmetic by test vectors);
+  - the `PCS_OPEN` mock (`crates/evm/src/machine.rs`) is the Rust `opening::verify`, which is
+    `PcsQuotient.openingWith` (the differential test);
+  - the extractor's cost table (read off its loops), and Gao's decoder recovering every word within its radius
+    (`PcsQuotientTest/Decoder.lean`; the soundness proof does not need it).
+- **Outside the theorems**: the `PCS_OPEN` aggregation layer, which must check all the claims of one call in one
+  opening; the index root in the contract's storage (the theorems hold for whatever root is stored; a fixed owner
+  may change it). The Rust prover is not trusted for soundness. Completeness and zero knowledge are about the
+  Statement's prover; the deployed Rust prover is trusted for completeness (the tests above are its only link).
+- **Not covered**: simulation-extractability; the Statement's own heuristic `simulator` (`ZeroKnowledge ζ`);
+  `StatementBinds` (immediate, not proved in Lean).
+
+**Building.** As [`WhirBridge/`](WhirBridge/README.md#building), against a built leanerVM `6175f1a0` at
+`formal/leanervm` (on h1 a link to `/root/pcs-quotient-fv/leanervm`):
+
+```sh
+cd formal/EndToEnd
+lake build Soundness E2ECompleteness Evm ZK        # the end theorems; #guard_msgs checks their axioms
+lake env lean Review/E2ESoundness.lean             # the knowledge-soundness review
+lake env lean Review/E2ECompletenessReview.lean    # the completeness review
+python3 -I Review/E2ESoundnessNumbers.py           # ksBound in exact rationals
+```
 
 ## Layers
 
 | | What | Source | Status |
 |---|---|---|---|
-| F0 | The circuit: a Lean definition of the deployed wiring (`quotient::circuit::membership`), proof that a satisfying assignment is its computation and that this computation is Keccak-256 membership; the constants (Cantor basis, `τ`, `b`, the bit weights) as computable definitions whose hypotheses are checked | new (found missing by the Lean review: `Instance.soundness` holds for every wiring, so for a degenerate one it says nothing) | **done for a circuit given as a parameter** (`CircuitLayout.lean`, `Pinning.lean`, `Statement.lean`): `Instance.soundness_circuit`: for an instance whose wiring lays a loop-free χ circuit `C` (`Laid`: input cells on the cycle of what they read, word 5's 128 bits on the zero's cycle, word 4's bit 0 the one's anchor and its other bits on the zero's) and whose weights are `coordinate_weight`'s (`bit_weight(j)` = `x^j`, `Y x^(j-64)`, with `x ≠ 1`, `Y ≠ 1`), an accepted proof of `statementWords x Y y root` (`statement::halves` of `y`, `root`, then `(1, 0, 0, 0)`) holds `C`'s computation on some input bits with public words 0–3 the halves of `(y, root)`, except with probability `(Q + 3) / 2^128`; `soundness_circuit_bits`: with the 128 bit weights independent over `GF(2)`, its public bits are the bytes' bits as `circuit::public_words` reads them. Derived from `Instance.soundness` and `cells_determined` (bridged by `Instance.cells_determined`; zero then one pinned by `zero_pinned`, `one_pinned`); the cone of both reaches the circuit argument. Not vacuous: `wiringOf C` meets `Laid` (`laid_wiringOf`) and the cells of every computation of `C` satisfy the relation on it (`relation_wiringOf`, `relation_statementWords`). Sorry-free, on `propext`, `Classical.choice`, `Quot.sound`. **To do**: the deployed circuit as a Lean `C : ChiCircuit (Fin (2^22))` with `Laid` for the deployed wiring (or `I.wiring = wiringOf C`), its computation being Keccak-256 membership, and `x`, `Y` of `F192` with independent bit weights |
+| F0 | The circuit: a Lean definition of the deployed wiring (`quotient::circuit::membership`), proof that a satisfying assignment is its computation and that this computation is Keccak-256 membership; the constants (Cantor basis, `τ`, `b`, the bit weights) as computable definitions whose hypotheses are checked | new (found missing by the Lean review: `Instance.soundness` holds for every wiring, so for a degenerate one it says nothing) | **done** (F0a for a circuit given as a parameter: `CircuitLayout.lean`, `Pinning.lean`, `Statement.lean`): `Instance.soundness_circuit`: for an instance whose wiring lays a loop-free χ circuit `C` (`Laid`: input cells on the cycle of what they read, word 5's 128 bits on the zero's cycle, word 4's bit 0 the one's anchor and its other bits on the zero's) and whose weights are `coordinate_weight`'s (`bit_weight(j)` = `x^j`, `Y x^(j-64)`, with `x ≠ 1`, `Y ≠ 1`), an accepted proof of `statementWords x Y y root` (`statement::halves` of `y`, `root`, then `(1, 0, 0, 0)`) holds `C`'s computation on some input bits with public words 0–3 the halves of `(y, root)`, except with probability `(Q + 3) / 2^128`; `soundness_circuit_bits`: with the 128 bit weights independent over `GF(2)`, its public bits are the bytes' bits as `circuit::public_words` reads them. Derived from `Instance.soundness` and `cells_determined` (bridged by `Instance.cells_determined`; zero then one pinned by `zero_pinned`, `one_pinned`); the cone of both reaches the circuit argument. Not vacuous: `wiringOf C` meets `Laid` (`laid_wiringOf`) and the cells of every computation of `C` satisfy the relation on it (`relation_wiringOf`, `relation_statementWords`). **The deployed circuit** (F0b, `Circuit/`, `QuotientSecurity/Deployed.lean`; F0c, `Field/`, `QuotientSecurity/DeployedConcrete.lean`): `soundness_membership_deployed`: an accepted proof's cells are a computation of the deployed `2^22`-row circuit whose input bits give `x` and a path with `y = H(x ‖ 0x11..)` and the path from `H(x ‖ 0x22..)` ending at `root`, except with `(Q + 3) / 2^128`; Keccak-256 checked against mumbai's spec (`keccak256_bits`); `soundness_membership_deployed_concrete`: the same over `primitives`' `F192` (CompPoly's `BF64.Ext3`) with `x`, `Y`, the bit and coordinate weights and `statement::halves` transcribed and proved equal to the theorem's, no field hypothesis left. Sorry-free, on `propext`, `Classical.choice`, `Quot.sound`, no `native_decide`. σ equals the Rust's by a hash of both dumps (and the Statement's circuit is F0b's, `EndToEnd/Bridge/Circuit.lean`'s `membership_eq`) |
 | F1 | The reduction (five field elements → four claims): round-by-round knowledge soundness, completeness, honest-verifier ZK, Fiat–Shamir in the ROM, **ideal commitments** | ported from leanVM `formal/quotient` and adapted (below): `2^22` rows, the χ gate on bits (degree 2), degree bounds, the circuit argument (bits, no carries) | done for the reduction: `lake build` green, sorry-free, end theorems on `propext`, `Classical.choice`, `Quot.sound` (761 declarations swept, `formal/Review/Axioms.lean`). Its zero knowledge is for ideal *hiding* commitments only: the deployed roots and openings are F3's (and the masks of the five values have no slack, so nothing else may reveal an evaluation of a witness polynomial). `Instance.soundness`, `zero_knowledge`, `completeness` hold for every wiring; `soundness_circuit` (F0) is for a wiring that lays a χ circuit |
-| F2 | WHIR openings list-sound for our claims (some member of the root's level-0 list satisfies all claims of one opening) | leanerVM `mumbai`, `lean_vm` `Whir/Sound`: `stackedSpec` holds for any multiaffine weights; ours are | **done for the deployed openings** in [`WhirBridge/`](WhirBridge/README.md) (sorry-free, `propext`, `Classical.choice`, `Quot.sound`; 589 declarations swept, no `native_decide`): `ours_sound`, Fiat–Shamir soundness in the two-oracle ROM of `opening::verify` itself (version-2 transcript: IV `keccak256(prefix ‖ claims)`, zero public digest, root read from the proof and checked; no claim rejected) for the witness and quotient (hidden, **the redesigned layouts for condition (R)**: overflow lane 32, random lanes 33..39, the gadget) and wiring (public) layouts at every `2^17..2^22` rows: an adversary of `QA` queries outputting a root, claims and a proof makes it accept while every candidate **table** (`Table::read`) of the root's extracted word violates a claim with probability ≤ `(QA + 10122)(2^-128 + 5(QA + 10122)/2^256)` ≤ `2^-63` for `QA ≤ 2^64`. The Lean `Layout` has every field of the Rust's, both branches of the weight closure transcribed with the gadget's term (the gadget one more stack claim of value zero, batched with `λ^m`; every weight multiaffine; `holds_iff` for the hidden layouts' claims, `gadget_holds_iff`: the gadget says the pattern lanes' `β`-combination at its entries is zero; the event, on the claims only, implies mumbai's doom, which counts the gadget); `Test/Check.lean` accepts the Rust's deployed witness and quotient openings, rejects them without the gadget's term, and recomputes the 18 prefixes. Level-0 candidates per root exported: ≤ 9,952 (wiring), 7,908 (witness), 3,564 (quotient). Not covered: the random-permutation model, pruned paths, the Rust being the Lean mirror (test evidence), extraction from the adversary's queries alone, composition with the reduction (F4) |
-| F3 | Hiding openings: the padded tables (base field `K = GF(2^64)`, challenges in `E = GF(2^192)`, first fold 6); then (F3b) the roots, Merkle siblings, nonces and Fiat–Shamir in the random-oracle and random-permutation models, with an explicit simulator | new (the ZK-WHIR note, adapted to `K ⊂ E`; `membership-zk.md` of leanVM's branch for the sibling argument) | Lean: `formal/QuotientSecurity/Hiding/` (sorry-free): for two tables with the same claims, the views (lane rounds, the folded table, every opened row) have the same distribution on the good challenges (`hidden_view_evalDistEq`), and differ by at most Pr[(R) fails] + ~2^-127 on any event (`hidden_prEvent_le_bound`; (S) bounded by `card_not_span_four_le`); unopened rows keep ≥ 2,368 / 3,840 bits (`unopened_row_le`). Condition (R) (`RoundsReached`) is a hypothesis with no bound in Lean (estimated ≈ 2^-53 in `HIDING.md`, not proven); a layout change that makes it hold for all challenges is being designed. The view is the linear part only: not modelled are the level-0 roots (in calldata), the Merkle siblings, the grinding nonces and Fiat–Shamir (F3b, in progress; `formal/Review/HidingReview.lean`'s `stack_ne_of_entry_ne`: hiding of the roots rests on that random-oracle step). Per table, interactive, honest verifier; (Q) and `WeightsFit` are hypotheses, not yet instantiated with the deployed layout. The padding is uniform here; the prover's comes from a CSPRNG (ChaCha12 keyed by a Keccak-256 KDF of an OS seed), so as deployed the hiding is computational in that generator |
-| F4 | Composition: commitments as Merkle trees over Keccak-256 in the random-permutation model, the reduction's Keccak-256 chain, the openings' duplex; extraction from the adversary's transcript (`mumbai`'s `Statement/Extractor.lean` decodes WHIR words by Guruswami–Sudan) | `mumbai` `common` (sponge indifferentiability, ROM→RPM), `lean_vm` extraction | **the chain (F4a) done** in [`QuotientRpm/`](#the-keccak-256-chain-f4a) (sorry-free, `propext`, `Classical.choice`, `Quot.sound`): the reduction with `transcript.rs`'s chain, byte for byte, in the ROM and in leanerVM's RPM, ideal commitments (a root is Keccak-256 of an injective encoding of the message). **Real commitments composed with the openings (F4b)** in [`Compose/`](Compose/README.md) (sorry-free, same three axioms): the chain absorbs the proof's roots, every round union-bounded over the roots' candidate lists (`L₁` for `(α, β, γ)`, `L₁ L₂` for `t`, `ρ`; `≤ 2^-128` per query for lists up to `2^18`, `2^-138` with the certified `7908` / `3564`), the Merkle extraction from the transcript (computable, stable; mumbai's `extract` without collisions, `wordOfMerkle_eq_extract`), in the ROM and in mumbai's two-oracle model. The general statements (`knowledgeSoundness_merkle`, `_kc`) take the openings' doomed events as hypotheses: events in F2's oracle model, **not** literally F2's (any openings' verifier; `merkleWord` and a decoder for `extract`, `Candidates`, `Layout.tableEval`; F1's polynomial identities for `reduce`'s multilinear claims; the final transcript for the cache at the end of the opening), and their extractor reads every Keccak-256 query of the run. **The deployed composition** (`Deployed.lean`, `DeployedWired.lean`, `WiringSetup.lean`; **`knowledgeSoundness_wired_setup(_bits)`**): the setup computes the Merkle tree of the wiring stack's word with the oracle before the adversary runs (`stackSetup`, `2^20` queries at `2^22` rows); its root is in the chain's label and is the wiring opening's root; the chain, then `opening::verify` three times (F2's `ourVerifier`); the computable extractor reads the adversary's queries only (`adversaryExtractor`, decoder `tableCode`: mumbai's Guruswami–Sudan `decodeStacks`); **all three openings' terms are F2's `ours_sound`** (`prEvent_EWw_le`, `prEvent_Eσw_le`, `prEvent_EQw_le`; `QO = 10122` derived from F2's `variantQueries_eq`), the wiring term discharged: the setup's queries make the root's extracted word the stack's word (`extract_wiringSetup`), whose only candidate at the level-0 Johnson threshold is the stack (`candidates_honest`; rate `1/2`, Johnson radius ≈ 0.293 < distance 1/2): `openingBound (QS + Q + 6) + openingBound (QS + Q + 6 + QO) + openingBound (QS + Q + 6 + 2 QO) + N (2^-128 + 5 N / 2^256)`, `N = QS + Q + 6 + 3 QO` (about `2^-62` for `Q ≤ 2^64`). Hypotheses left: `WitnessClaims`, `QuotientClaims`, `WiringClaims` (a table satisfying an opening's claims, `D.clW`/`D.clσ`/`D.clQ`, reads as a message satisfying F1's claim: statements about the claim maps and F1's tables only), the RPM transfer (separate) |
-| F5 | The implementation is the model: the EVM contract and the Rust verifier are generated from one recorded operation graph (`crates/evm/src/record.rs`); emit that graph as a Lean term too and prove it equals the model's verifier | new | **done for the graph** in [`Implementation/`](Implementation.lean) (sorry-free, no `native_decide`; end theorems on `propext`, `Classical.choice`, `Quot.sound`): `Implementation/Graph.lean` is the deployed contract's recorded graph (631 nodes, 122 output words, 1 nonzero check), written by `crates/evm/src/lean.rs` (`graph_lean_is_current` fails when stale); `Interp.lean` interprets it on calldata as `codegen.rs` compiles each node (EVM words, `XOR`, `FIELD_MUL` = `mulE`, Keccak-256 of `MSTORE`d words, `CALLDATALOAD` and shifts), for any hash. Proved, in any field with `F192`'s limbs (`IsF192`: `XOR` is `+`, `mulE` is `*`; the Frobenius node is then `x^(2^64)`, `frobOK`): a Lean transcription of `reduce` finds every node it asks for and gives exactly the contract's words and nonzero check (`Program.reduceIds_eq`, kernel evaluation); those nodes hold `reduce`'s formulas (per-node semantics, the norm inversion is `x⁻¹`), which are the claims and denominator of `claims_iff_accepts_ofCantor` on `membershipParams` with the graph's constants checked by computation (`consts`: Cantor basis, `b`, `tau`, extension); on `calldataOf` the leaves are `Wire.verifyWith`'s Keccak-256 chain byte for byte (`leafVals_calldataOf`); so `graph_reaches_iff` (the contract reaches its `PCS_OPEN` calls iff the denominators' product is nonzero), `graph_words` (it hands them the root words of `r₁`, the index root, `r₂`, the layout ids and the model's four claims) and **`graph_is_verifier`**: with those claims true of tables whose polynomials are a model proof's messages, the contract accepts iff no `1 + w_k(t)` vanishes and `Wire.verifyWith` accepts, for the deployed `Wire` (`wire`: index root an input, `statement::halves`, `F192` limbs, coefficient encodings of the ideal commitments). **On the concrete field** (`Implementation/Field192.lean`): `isF192_primitives` discharges `IsF192` for F0c's `Primitives.F192` (CompPoly's `BF64.Ext3`) with its Rust limbs `(c0, c1, c2)` (`limbsEquiv`): `mulE` is its product, the core being `mul64_eq` (Rust's shift-fold `reduce` of the carry-less product is CompPoly's `reduce (carryLessMul a b)` for all 64-bit `a`, `b`: both are the remainder of the same polynomial modulo `x^64 + x^4 + x^3 + x + 1`, `clmul_eq_carryLessMul`, `reduce64_eq_reduce`; a structural proof, no `bv_decide`); so **`graph_is_verifier_F192`**, `graph_words_F192`, `graph_reaches_iff_F192` hold with no field hypothesis. **Tested, not proved**: bytecode = graph (`crates/evm` parity tests); the interpreter = the Rust verifier (`Implementation/Diff.lean`, 3,000 random calldata, 0 disagreements); the Rust's `F192` arithmetic = `mulE` (`mulE` transcribes its software `clmul` and `reduce`; the transcription and the Karatsuba and PMULL paths are checked by those tests and `Field/Test.lean`'s vectors); `PCS_OPEN` attests exactly true claims (F2/F4b) |
+| F2 | WHIR openings list-sound for our claims (some member of the root's level-0 list satisfies all claims of one opening) | leanerVM `mumbai`, `lean_vm` `Whir/Sound`: `stackedSpec` holds for any multiaffine weights; ours are | **done for the deployed openings** in [`WhirBridge/`](WhirBridge/README.md) (sorry-free, `propext`, `Classical.choice`, `Quot.sound`; 589 declarations swept, no `native_decide`): `ours_sound`, Fiat–Shamir soundness in the two-oracle ROM of `opening::verify` itself (version-2 transcript: IV `keccak256(prefix ‖ claims)`, zero public digest, root read from the proof and checked; no claim rejected) for the witness and quotient (hidden, **the redesigned layouts for condition (R)**: overflow lane 32, random lanes 33..39, the gadget) and wiring (public) layouts at every `2^17..2^22` rows: an adversary of `QA` queries outputting a root, claims and a proof makes it accept while every candidate **table** (`Table::read`) of the root's extracted word violates a claim with probability ≤ `(QA + 10122)(2^-128 + 5(QA + 10122)/2^256)` ≤ `2^-63` for `QA ≤ 2^64`. The Lean `Layout` has every field of the Rust's, both branches of the weight closure transcribed with the gadget's term (the gadget one more stack claim of value zero, batched with `λ^m`; every weight multiaffine; `holds_iff` for the hidden layouts' claims, `gadget_holds_iff`: the gadget says the pattern lanes' `β`-combination at its entries is zero; the event, on the claims only, implies mumbai's doom, which counts the gadget); `Test/Check.lean` accepts the Rust's deployed witness and quotient openings, rejects them without the gadget's term, and recomputes the 18 prefixes. Level-0 candidates per root exported: ≤ 9,952 (wiring), 7,908 (witness), 3,564 (quotient). Not covered here, and done in F4: the random-permutation model, extraction from the adversary's queries alone, the composition with the reduction. Not covered: pruned paths, the Rust being the Lean mirror (test evidence) |
+| F3 | Hiding openings: the padded tables (base field `K = GF(2^64)`, challenges in `E = GF(2^192)`, first fold 6); then (F3b) the roots, Merkle siblings, nonces and Fiat–Shamir in the random-oracle and random-permutation models, with an explicit simulator | new (the ZK-WHIR note, adapted to `K ⊂ E`; `membership-zk.md` of leanVM's branch for the sibling argument) | Lean: `formal/QuotientSecurity/Hiding/` (sorry-free): for two tables with the same claims, the views (lane rounds, the folded table, every opened row) have the same distribution on the good challenges (`hidden_view_evalDistEq`), and differ by at most Pr[(R) fails] + ~2^-127 on any event (`hidden_prEvent_le_bound`; (S) bounded by `card_not_span_four_le`); unopened rows keep ≥ 2,368 / 3,840 bits (`unopened_row_le`). For that first layout, condition (R) (`RoundsReached`) is a hypothesis (estimated ≈ 2^-53 in `HIDING.md`). **The deployed layouts, with the gadget** (`GadgetTheorem.lean`, `Deployed.lean`): (S) and (R) proven, not assumed, at every challenge `(μ, φ)` with `μ ≠ 0`, no coordinate of `φ` in `{0, 1}` and at most one of `φ₀, φ₁, φ₂` in `K` (`Solve.span_cube_erase`, `GadgetLayout.roundsReached`), (Q) and `WeightsFit` proven for the deployed weights, and **`deployed_prEvent_le`**: for the witness and quotient tables at `2^17 .. 2^22` rows, two tables with the same claims give experiments within `1/\|E\| + (12·\|E\| + 3·\|K\|²)/\|E\|² < 2^-188` on any event. The view is the linear part only: the level-0 roots (in calldata), the Merkle siblings, the grinding nonces and Fiat–Shamir are F3b's (below; `formal/Review/HidingReview.lean`'s `stack_ne_of_entry_ne`: hiding of the roots rests on that random-oracle step). Per table, interactive, honest verifier. The padding is uniform here; the prover's comes from a CSPRNG (ChaCha12 keyed by a Keccak-256 KDF of an OS seed), so as deployed the hiding is computational in that generator |
+| F4 | Composition: commitments as Merkle trees over Keccak-256 in the random-permutation model, the reduction's Keccak-256 chain, the openings' duplex; extraction from the adversary's transcript (`mumbai`'s `Statement/Extractor.lean` decodes WHIR words by Guruswami–Sudan) | `mumbai` `common` (sponge indifferentiability, ROM→RPM), `lean_vm` extraction | **the chain (F4a) done** in [`QuotientRpm/`](#the-keccak-256-chain-f4a) (sorry-free, `propext`, `Classical.choice`, `Quot.sound`): the reduction with `transcript.rs`'s chain, byte for byte, in the ROM and in leanerVM's RPM, ideal commitments (a root is Keccak-256 of an injective encoding of the message). **Real commitments composed with the openings (F4b)** in [`Compose/`](Compose/README.md) (sorry-free, same three axioms): the chain absorbs the proof's roots, every round union-bounded over the roots' candidate lists (`L₁` for `(α, β, γ)`, `L₁ L₂` for `t`, `ρ`; `≤ 2^-128` per query for lists up to `2^18`, `2^-138` with the certified `7908` / `3564`), the Merkle extraction from the transcript (computable, stable; mumbai's `extract` without collisions, `wordOfMerkle_eq_extract`), in the ROM and in mumbai's two-oracle model. The general statements (`knowledgeSoundness_merkle`, `_kc`) take the openings' doomed events as hypotheses: events in F2's oracle model, **not** literally F2's (any openings' verifier; `merkleWord` and a decoder for `extract`, `Candidates`, `Layout.tableEval`; F1's polynomial identities for `reduce`'s multilinear claims; the final transcript for the cache at the end of the opening), and their extractor reads every Keccak-256 query of the run. **The deployed composition** (`Deployed.lean`, `DeployedWired.lean`, `WiringSetup.lean`; **`knowledgeSoundness_wired_setup(_bits)`**): the setup computes the Merkle tree of the wiring stack's word with the oracle before the adversary runs (`stackSetup`, `2^20` queries at `2^22` rows); its root is in the chain's label and is the wiring opening's root; the chain, then `opening::verify` three times (F2's `ourVerifier`); the computable extractor reads the adversary's queries only (`adversaryExtractor`, decoder `tableCode`: mumbai's Guruswami–Sudan `decodeStacks`); **all three openings' terms are F2's `ours_sound`** (`prEvent_EWw_le`, `prEvent_Eσw_le`, `prEvent_EQw_le`; `QO = 10122` derived from F2's `variantQueries_eq`), the wiring term discharged: the setup's queries make the root's extracted word the stack's word (`extract_wiringSetup`), whose only candidate at the level-0 Johnson threshold is the stack (`candidates_honest`; rate `1/2`, Johnson radius ≈ 0.293 < distance 1/2): `openingBound (QS + Q + 6) + openingBound (QS + Q + 6 + QO) + openingBound (QS + Q + 6 + 2 QO) + N (2^-128 + 5 N / 2^256)`, `N = QS + Q + 6 + 3 QO` (about `2^-62` for `Q ≤ 2^64`). **The claim maps** `reduce`'s, `WitnessClaims`, `QuotientClaims`, `WiringClaims` discharged (`Compose/Claims.lean`: `knowledgeSoundness_deployed_rust`). **In the random-permutation model** (`Compose/Rpm.lean`: `knowledgeSoundness_wired_setup_rpm_bits`, `+ (QSπ + Q + 7 + 3 QOπ)² / 2^508`; at the deployed claim maps `Soundness.knowledgeSoundness_rust_rpm`, `EndToEnd/Soundness/RpmV.lean`), which the end-to-end theorem uses. Nothing left |
+| F5 | The implementation is the model: the EVM contract and the Rust verifier are generated from one recorded operation graph (`crates/evm/src/record.rs`); emit that graph as a Lean term too and prove it equals the model's verifier | new | **done for the graph** in [`Implementation/`](Implementation.lean) (sorry-free, no `native_decide`; end theorems on `propext`, `Classical.choice`, `Quot.sound`): `Implementation/Graph.lean` is the deployed contract's recorded graph (631 nodes, 122 output words, 1 nonzero check), written by `crates/evm/src/lean.rs` (`graph_lean_is_current` fails when stale); `Interp.lean` interprets it on calldata as `codegen.rs` compiles each node (EVM words, `XOR`, `FIELD_MUL` = `mulE`, Keccak-256 of `MSTORE`d words, `CALLDATALOAD` and shifts), for any hash. Proved, in any field with `F192`'s limbs (`IsF192`: `XOR` is `+`, `mulE` is `*`; the Frobenius node is then `x^(2^64)`, `frobOK`): a Lean transcription of `reduce` finds every node it asks for and gives exactly the contract's words and nonzero check (`Program.reduceIds_eq`, kernel evaluation); those nodes hold `reduce`'s formulas (per-node semantics, the norm inversion is `x⁻¹`), which are the claims and denominator of `claims_iff_accepts_ofCantor` on `membershipParams` with the graph's constants checked by computation (`consts`: Cantor basis, `b`, `tau`, extension); on `calldataOf` the leaves are `Wire.verifyWith`'s Keccak-256 chain byte for byte (`leafVals_calldataOf`); so `graph_reaches_iff` (the contract reaches its `PCS_OPEN` calls iff the denominators' product is nonzero), `graph_words` (it hands them the root words of `r₁`, the index root, `r₂`, the layout ids and the model's four claims) and **`graph_is_verifier`**: with those claims true of tables whose polynomials are a model proof's messages, the contract accepts iff no `1 + w_k(t)` vanishes and `Wire.verifyWith` accepts, for the deployed `Wire` (`wire`: index root an input, `statement::halves`, `F192` limbs, coefficient encodings of the ideal commitments). **On the concrete field** (`Implementation/Field192.lean`): `isF192_primitives` discharges `IsF192` for F0c's `Primitives.F192` (CompPoly's `BF64.Ext3`) with its Rust limbs `(c0, c1, c2)` (`limbsEquiv`): `mulE` is its product, the core being `mul64_eq` (Rust's shift-fold `reduce` of the carry-less product is CompPoly's `reduce (carryLessMul a b)` for all 64-bit `a`, `b`: both are the remainder of the same polynomial modulo `x^64 + x^4 + x^3 + x + 1`, `clmul_eq_carryLessMul`, `reduce64_eq_reduce`; a structural proof, no `bv_decide`); so **`graph_is_verifier_F192`**, `graph_words_F192`, `graph_reaches_iff_F192` hold with no field hypothesis. **Tested, not proved**: bytecode = graph (`crates/evm` parity tests); the interpreter = the Rust verifier (`Implementation/Diff.lean`, 3,000 random calldata, 0 disagreements); the Rust's `F192` arithmetic = `mulE` (`mulE` transcribes its software `clmul` and `reduce`; the transcription and the Karatsuba and PMULL paths are checked by those tests and `Field/Test.lean`'s vectors); the `PCS_OPEN` mock is `opening::verify`, which is `PcsQuotient.openingWith` (the Statement's differential test). **To the Statement's verifier**: `EndToEnd/Evm` (`evm_accepts_iff_verifyWith`, `evm_accepts_iff_exists`) |
 
 ## The Keccak-256 chain (F4a)
 
@@ -138,14 +240,16 @@ in that PRG).
   `hrow₀` at `2^-2368`, the three `ClaimsAt`, long rows, `hcK`, `hn`); the simulator's tables `simTW`, `simTQ`
   built by a computable Gaussian elimination (`Instance/Builder.lean`: the claimed values met whenever some
   table meets them, `claims_simTW`, `claims_simTQ`; the scan stops at full rank, at most every entry). **`zk_rpm_deployed_instance`** (`Instance/Main.lean`) and, for the end
-  statement, `deployedJointData`, `deployedJointData_valid` (`EndToEnd/ZK/Joint.lean`): remaining are the
-  field, F1's, and **the honest tables meeting the verifier's claims** (`hTW`, `hTQ`, the claim maps'
-  completeness, proved for the deployed tables in `Completeness/`, not yet linked); every renderer `R` (WHIR's
-  honest prover is one) and every pair of such tables is covered. The simulator's tables are computed
+  statement, `deployedJointData`, `deployedJointData_valid` (`EndToEnd/ZK/Joint.lean`): their hypotheses are the
+  field, F1's, and **the honest tables meeting the verifier's claims** (`hTW`, `hTQ`), all discharged for the
+  deployed instance in `EndToEnd/ZK/Final.lean` (`hTWD`, `hTQD`, from `Completeness/`'s tables); every renderer
+  `R` (WHIR's honest prover is one) and every pair of such tables is covered. The simulator's tables are computed
   (`Test/Builder.lean` runs the builder on `F192`).
-- **What stays a hypothesis**: the honest tables' claims (above); F1's on the witness; that `skel` and `Pb` are
-  the Rust prover (transcribed; `skel` equal by test, not by proof: see the next item). The lift to leanerVM's
-  random-permutation model is separate (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
+- **What stays a hypothesis here**: the honest tables' claims and F1's facts on the witness (discharged end to
+  end, above); that `skel` and `Pb` are the Rust prover (transcribed; `skel` equal by test, not by proof: see the
+  next item; the Statement's prover against the skeleton is `ProverBridge`, "Zero knowledge end to end"). The
+  lift to leanerVM's random-permutation model is separate (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`,
+  `RpmDiscipline.lean`).
 - **`skel` against the Rust prover, by test** (`QuotientZk/Test/SkelTrace.lean`, executable `skeltrace`;
   `crates/quotient/tests/skel_trace.rs`, feature `skel-trace`, which records every Keccak call of a proof through
   test-only hooks): at `2^17` rows `skel`, run as compiled with mumbai's Keccak-256 and Keccak-f[1600] as the
@@ -170,8 +274,9 @@ The Statement states zero knowledge for a simulator given as a parameter, `PcsQu
 simOracle ζ` (`Statement/PcsQuotient/Security.lean`); `ZeroKnowledge ζ` is that at the Statement's own
 `simulator`, a tested heuristic that no theorem covers. **`zeroKnowledge_end`** (`EndToEnd/ZK/Main.lean`,
 library `ZK`; `propext`, `Classical.choice`, `Quot.sound`, guarded in `ZK/Axioms.lean`) proves
-`ZeroKnowledgeWith s₀ (zkSimulator pp simV skelOf fmt) rpmSimOracle ζ`: the simulator the theorem covers is in
-its statement.
+`ZeroKnowledgeWith s₀ (zkSimulator pp simV skelOf fmt) rpmSimOracle ζ` under named hypotheses: the simulator
+the theorem covers is in its statement. The hypotheses are discharged step by step below;
+**`zeroKnowledge_closed`** (`ZK/CoreMain.lean`) has none.
 
 **The simulator** (`zkSimulator`, `ZK/With.lean`; `rpmSimulator`, `rpmSimOracle`, `ZK/Simulator.lean`; compiled
 definitions). It reads the statement and public data, never the witness: `pp stmt`, the skeleton model's public
@@ -243,8 +348,21 @@ F1's completeness passed to the tables, `ZK/FactsClaims.lean`: `hTWD`, `hTQD`) a
 (`eD`: the masks' words, each lane's padding words, the overflow lane's stream shifted past its held pieces as
 `Layout.stackOf` reads it) discharged. **Named**: the renderer `R`, the prover's permutation budget `Qp`
 (`hprover`: the skeleton hashes the renderer's rows, so it depends on `R`), `ProverBridge` at
-`decodeCoins ∘ eD`. The simulator's tables `simTW`, `simTQ` (`QuotientZk.Instance.solve`, a classical choice)
-and its wiring value (`P₀D.sigmaPoly.eval`) are noncomputable.
+`decodeCoins ∘ eD`. The simulator's tables `simTW`, `simTQ` are computed (`QuotientZk/Instance/Builder.lean`'s
+Gaussian elimination in `deployedRep`'s coordinates); its wiring value (`sigmaAtD`, `P₀D.sigmaPoly.eval`) and
+`deployedSimV` are still `noncomputable` (being made computable).
+
+**The prover bridge's parts and the bound** (`ZK/ProverBridge*.lean`, `ZK/Budget.lean`, `ZK/CoreBad.lean`).
+With WHIR's honest prover as the renderer (`whirRenderer`), `ProverBridge` follows from a deterministic core at
+a fixed permutation and a bound on `badProb`, the probability that the prover makes no proof or meets degenerate
+`α, β` (`proverBridge_of_detG`). Proved: `badProb ≤ deltaNone < 2^-162` (`hbad_deployed`, from completeness's
+staged run; `E2ECompleteness.hnone_deployed` for no proof alone); the prover's budget `Qp = 12 · (2^24 + 2^70)`
+calls of π (`hprover_whir`); the duplex and grinding (`ProverBridgeDuplex.lean`), the trees and the expansion of
+the pruned multiproofs (`ProverBridgeMerkle.lean`). The bound is then `ζ Q = deltaNone + 2^-113 + epsHV +
+2^24 (2^24 + 2^70 + 2^23 + Q) 2^-2368 + 2^48 2^-2368 + (Qp + 2^23 + Q)² / 2^508 ≈ 2^-113` for `Q ≤ 2^126`
+(`zkBoundEnd_le`), its largest term Fiat–Shamir freshness (`fsFresh_setup_deployed_bits`: `6 Q'(c + Q')/2^256 +
+6 (c + Q') 2^-191 + c 2^-2368`, `Q' = 2^24 + 2^70` the skeleton's operations with worst-case grinding,
+`c = 2^19` the setup's public rows).
 
 **Rendered by WHIR's honest prover** (`zeroKnowledge_final`, `ZK/CoreEnd.lean`): the Statement's
 `ZeroKnowledgeWith` at `zkBoundEnd ((2^24 + 2^70)·12) fmtBudget (· ↦ deltaNone)` (`deltaNone < 2^-162`) for
@@ -329,10 +447,11 @@ weights, Cantor basis) with no hypothesis left (`completeness_deployed_concrete`
   the honest proof (when the openings' proofs of work succeed) is accepted; **`completeness_deployed_keccak`**
   the same on `transcript.rs`'s chain (`deployedChain`). No circuit, wiring, weight or basis hypothesis remains
   (`completeness_deployed_basis`: any Cantor basis of `K`; `completeness_deployed_sigma`: any instance with the
-  deployed σ). **Not covered**: a random-oracle theorem for the chain's honest challenges (the
+  deployed σ). **Not covered here**: a random-oracle theorem for the chain's honest challenges (the
   density above is over uniform `(α, β, t)`; an honest run's chain queries are fresh but for collisions, a few
-  `Q² / 2^256`), one experiment holding both the chain and the openings' proofs of work, `log_rows < 22`, and
-  that the Rust is this Lean (F5; the claims' values by F1's review, the openings by F2's tests).
+  `Q² / 2^256`) and one experiment holding both the chain and the openings' proofs of work (both proved in
+  `EndToEnd/Completeness`, below); `log_rows < 22`; that the Rust is this Lean (F5; the claims' values by F1's
+  review, the openings by F2's tests).
 
 **To the Statement's `Completeness δ`** (`EndToEnd/Completeness/`, library `E2ECompleteness`; sorry-free,
 `propext`, `Classical.choice`, `Quot.sound`, checked by `#guard_msgs` in `E2ECompleteness.lean`):
@@ -354,11 +473,17 @@ words swapped with the setup, `Experiment.lean`, `completenessExperiment_eq_expH
 (`Staging.lean`, `expH_eq_staged`, generic in the circuit so that no definitional check evaluates the deployed
 circuit); nothing of `32` or `96` bytes hashed before `α` or between `γ` and `t` (`HashLen.lean`: 512-byte
 leaves, 64-byte nodes, the 112-byte label); the duplex discipline (`Duplex.lean`, `duplexVm_stagedRun`: every
-opening, prover's and verifier's, starts its own duplex at a zero capacity). **The hypotheses left**
-(`completeness_deployed_cost_rej`): the deployed staged run makes at most `2^48` block calls (`hashBlocks`), and
-`RejectGood (3 · 2^-277)`: in the two-call random-oracle model it is rejected at non-degenerate challenges with
-probability at most `3 · 2^-277` (the Statement's prover accepted at non-degenerate challenges when its proofs of
-work succeed, the prover bridge; mumbai's proof-of-work potential for the openings' grinding).
+opening, prover's and verifier's, starts its own duplex at a zero capacity). **The last two hypotheses of
+`completeness_deployed_cost_rej`, proved**: `RejectGood (3 · 2^-277)` (`Grinding.lean`, `rejectGood_deployed`: in
+the two-call random-oracle model the run is rejected at non-degenerate challenges with probability at most
+`3 · 2^-277`; the Statement's prover is accepted at non-degenerate challenges when its proofs of work succeed, the
+prover bridge `Prover*.lean`, with mumbai's proof-of-work potential over the whole run's log: the grinding fails
+with probability below `2^-304`, `grinding_le`, within the stated `3 · 2^-277`; not `formal/Completeness`'s
+per-opening `ours_romComplete`) and the block count (`Cost.lean`, `hcost_deployed`: at most `2^48` block calls;
+exactly `114 098 677 826 653 < 2^47`, the review's `hcost_exact`). So **`completeness_end`** (`Done.lean`):
+`PcsQuotient.Completeness deltaDeployed`, no hypothesis, `deltaDeployed ≈ 2^-163.91`. The review
+(`Review/E2ECompletenessReview.lean`) adds `completeness_every_coins`: the same `δ` for every fixed value of the
+coins.
 
 ## The port to this protocol (F1)
 
@@ -427,11 +552,3 @@ wiring and quotient claims' points and values, the sum claim, the cells of the r
 public weight's product, the target, the rows' polynomial and the rejection; the comparison is written out
 above `claims_iff_accepts_ofCantor` (`Concrete.lean`). No mismatch; `reduce` is leanVM's but for the gate,
 which is the model's `gate` on `cellAt`.
-
-## What will be trusted (the target)
-
-The Keccak-f\[1600\] permutation behaves as a random permutation (leanerVM's model; note that one Keccak-256 serves
-the reduction's transcript, the WHIR Merkle trees and the statement's own Merkle tree, so the model must be the
-shared random permutation, not a private oracle as in F1); the Lean kernel and the three standard axioms; until
-F0 is done, that the circuit committed as the index root is a Lean `C` meeting `Laid` whose computation is the statement (the step from such a `C` to the end theorem is proved: `soundness_circuit`); the EVM bytecode generator and revm with `FIELD_MUL` (differential tests, not proofs);
-the PCS_OPEN aggregation layer, which must check all the claims of each call in one opening; the Rust prover (only completeness depends on it).
