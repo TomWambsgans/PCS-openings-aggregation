@@ -293,12 +293,15 @@ theorem bytes32_secretTr (w : Secret) :
   · rw [← hr]
     simp [bytes32]
 
-/-- **A witness of the statement's relation satisfies F1's relation** for the statement's words. -/
-theorem hsatD (stmt : Statement) (w : Secret) (hw : Relation stmt w) :
-    P₀D.Sat (stmtWD stmt) (P₀D.cells (committed (gKD w) vanD 0)) := by
-  apply instD.sat_of_relation
+/-- **The masked first message's cells satisfy F1's relation** for a witness of the statement's
+relation, whatever the masks: they are the honest assignment's (`cellsOf_honest`), which satisfies
+the deployed circuit and whose public words are the statement's (`relation_statementWords_keeps`,
+`deployedAssign_public`). -/
+theorem relation_honestD (stmt : Statement) (w : Secret) (hw : Relation stmt w)
+    (m : Fin 4 → Fin 3 → K) :
+    instD.Relation (stmtWD stmt) (instD.cellsOf (committed (E := E) (gKD w) vanD m)) := by
   set s := Bridge.Circuit.secretTr w
-  have hcells : instD.cellsOf (committed (E := E) (gKD w) vanD 0) =
+  have hcells : instD.cellsOf (committed (E := E) (gKD w) vanD m) =
       deployed.cellsOfBits (deployedAssign s) := by
     funext x
     rw [committed_eq]
@@ -307,7 +310,8 @@ theorem hsatD (stmt : Statement) (w : Secret) (hw : Relation stmt w) :
     unfold cellsKD ChiCircuit.cellsOfBits bitF
     split_ifs <;> simp
   rw [hcells]
-  have hstmt : stmtWD stmt = QuotientSecurity.statementWords F192.G F192.Y (bytes32 s.y) (bytes32 s.root) := by
+  have hstmt : stmtWD stmt =
+      QuotientSecurity.statementWords F192.G F192.Y (bytes32 s.y) (bytes32 s.root) := by
     obtain ⟨hy, hr⟩ := bytes32_secretTr w
     rw [stmtWD, hy, hr, hw]
   rw [hstmt]
@@ -316,5 +320,10 @@ theorem hsatD (stmt : Statement) (w : Secret) (hw : Relation stmt w) :
     deployed_word5 deployed_word6 deployed_word7 _ (deployedAssign_satisfies s) _ _ fun J => ?_
   rw [halves_eq_sum, ChiCircuit.pubWord]
   exact Finset.sum_congr rfl fun j _ => by rw [deployedAssign_public s (secretTr_wellFormed w) J j]
+
+/-- **A witness of the statement's relation satisfies F1's relation** for the statement's words. -/
+theorem hsatD (stmt : Statement) (w : Secret) (hw : Relation stmt w) :
+    P₀D.Sat (stmtWD stmt) (P₀D.cells (committed (gKD w) vanD 0)) :=
+  instD.sat_of_relation _ _ (relation_honestD stmt w hw 0)
 
 end PcsQuotient.EndToEnd
