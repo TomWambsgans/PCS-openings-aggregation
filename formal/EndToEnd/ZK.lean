@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import ZK.Coins
 import ZK.Assembly
+import ZK.Joint
 import ZK.Simulator
 import ZK.Real
 import ZK.Setup
