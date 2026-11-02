@@ -117,3 +117,13 @@ globs = ["E2ECompleteness", "E2ECompleteness.+"]
 # opens its claims.
 [[lean_lib]]
 name = "Evm"
+
+# The univariate PIOP for leanVM 42422001 (`crates/leanvm_univariate`): its verifier transcribed
+# (`formal/UniStatement`, library `UniStatement`) and its end statements against `Lv42`'s relation
+# (`UniStatement.Security`). The differential runner (`UniStatementTest/Runner.lean`) runs with
+# `lake env lean`, not built.
+[[lean_lib]]
+name = "UniStatement"
+srcDir = "../UniStatement"
+globs = ["UniStatement", "UniStatement.+"]
+leanOptions = { warningAsError = true }
