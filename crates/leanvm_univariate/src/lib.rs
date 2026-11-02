@@ -10,6 +10,7 @@ pub mod claims;
 pub mod contract;
 pub mod domain;
 pub mod heap;
+pub mod prover;
 pub mod stacks;
 pub mod verifier;
 
