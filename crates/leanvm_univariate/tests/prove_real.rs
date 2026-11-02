@@ -15,6 +15,7 @@ use leanvm_univariate::claims::Commitment;
 use leanvm_univariate::contract::{calldata, compile_verifier, record_verifier};
 use leanvm_univariate::prover::check::on_domain;
 use leanvm_univariate::prover::flock::FlockWitness;
+use leanvm_univariate::prover::opening;
 use leanvm_univariate::prover::poly::to_v;
 use leanvm_univariate::prover::prove::{Config, OpeningProof, Proof, layout_word, prove, verify};
 use leanvm_univariate::prover::trace::Trace;
@@ -182,6 +183,31 @@ fn end_to_end(blake2s: Blake2s) {
     println!("  the contract returns {:?} on the real proof, {gas} gas of execution", accepted.as_ref().map(|o| o[31]));
     assert_eq!(accepted.as_deref(), Some(&word([1, 0, 0])[..]), "the contract accepts the real proof");
     assert!(!rejected, "the contract rejects a mutated proof");
+
+    // Flock's two setup claims, opened: A0 and B0 committed with WHIR (2^28 words each) and opened at the claim's point.
+    if let Some((point, a, b)) = &report.flock {
+        let started = std::time::Instant::now();
+        let (a0, b0) = leanvm_univariate::prover::matrices::setup_matrices();
+        println!("  A0, B0 built in {:.2} s", started.elapsed().as_secs_f64());
+        let point: Vec<F192> = point.iter().map(|&x| leanvm_univariate::prover::poly::from_v(x)).collect();
+        for (name, layout, words, value) in [("A0", 0x5504u64, a0, *a), ("B0", 0x5505, b0, *b)] {
+            let value = leanvm_univariate::prover::poly::from_v(value);
+            assert_eq!(primitives::multilinear::mle_eval_par(&words, &point), value, "{name} at the claim's point");
+            let started = std::time::Instant::now();
+            let committed = opening::commit(&words, 28, 1 << 28);
+            let commit = started.elapsed().as_secs_f64();
+            let started = std::time::Instant::now();
+            let proof = opening::open(&words, &committed, layout, &point, value);
+            let open = started.elapsed().as_secs_f64();
+            drop(words);
+            opening::verify(&committed.root, 28, 1 << 28, layout, &point, value, &opening::wire_proof(&proof))
+                .expect("the setup opening verifies");
+            println!(
+                "  {name}: committed in {commit:.2} s (root {:02x?}), opened in {open:.2} s, verified",
+                &committed.root[..8]
+            );
+        }
+    }
 
     // Mutations: a root, a value early on, the middle, a final value, a sumcheck round.
     let mut refused = 0;
