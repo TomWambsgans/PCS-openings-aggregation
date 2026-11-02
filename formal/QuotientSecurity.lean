@@ -18,6 +18,8 @@ import QuotientSecurity.ConcreteZK
 import QuotientSecurity.Sequence
 import QuotientSecurity.Joint
 import QuotientSecurity.Statement
+import QuotientSecurity.CircuitLayout
+import QuotientSecurity.Pinning
 import QuotientSecurity.Hiding
 
 /-- info: 'QuotientSecurity.verifier_rbrKnowledgeSoundness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -335,3 +337,63 @@ import QuotientSecurity.Hiding
 /-- info: 'QuotientSecurity.Instance.sat_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms QuotientSecurity.Instance.sat_iff
+
+/-- info: 'QuotientSecurity.Instance.soundness_circuit' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Instance.soundness_circuit
+
+/-- info: 'QuotientSecurity.Instance.soundness_circuit_bits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Instance.soundness_circuit_bits
+
+/-- info: 'QuotientSecurity.Instance.proves_of_relation' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Instance.proves_of_relation
+
+/-- info: 'QuotientSecurity.Instance.proves_of_relation_statement' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Instance.proves_of_relation_statement
+
+/-- info: 'QuotientSecurity.Instance.cells_determined' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Instance.cells_determined
+
+/-- info: 'QuotientSecurity.zero_pinned' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.zero_pinned
+
+/-- info: 'QuotientSecurity.one_pinned' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.one_pinned
+
+/-- info: 'QuotientSecurity.sum_regionWeight' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.sum_regionWeight
+
+/-- info: 'QuotientSecurity.regionWeight_coordWeight' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.regionWeight_coordWeight
+
+/-- info: 'QuotientSecurity.sum_bitWeight_ne_zero' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.sum_bitWeight_ne_zero
+
+/-- info: 'QuotientSecurity.halves_eq_sum' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.halves_eq_sum
+
+/-- info: 'QuotientSecurity.testBit_halfValue' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.testBit_halfValue
+
+/-- info: 'QuotientSecurity.ChiCircuit.Proves.bits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.ChiCircuit.Proves.bits
+
+/-- info: 'QuotientSecurity.ChiCircuit.bits_determined' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.ChiCircuit.bits_determined
+
+/-- info: 'QuotientSecurity.rowCell_eq_cellOf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.rowCell_eq_cellOf

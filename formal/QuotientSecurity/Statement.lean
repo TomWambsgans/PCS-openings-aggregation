@@ -1,6 +1,7 @@
 -- Adapted from leanVM (https://github.com/leanEthereum/leanVM), branch PCS-openings-aggregation, commit 651453c6,
 -- file formal/quotient/QuotientSecurity/Statement.lean. MIT OR Apache-2.0; see NOTICE.md.
 import QuotientSecurity.SetupLemmas
+import QuotientSecurity.Pinning
 
 /-!
 # The statements
@@ -16,10 +17,18 @@ these theorems mention are in `Setup.lean`, which is short and has no proof in i
   commitment is a random handle and its openings reveal only whether the claims are true. These
   are two different idealizations, and no theorem here has both at once.
 
+**The circuit.** `soundness`, `zero_knowledge` and `completeness` are for every wiring and
+every weights, and with a degenerate circuit the relation holds of every statement
+(`formal/Review/Degenerate.lean`). `soundness_circuit` and `soundness_circuit_bits` are for an
+instance whose wiring lays a loop-free χ circuit `C` as `quotient::circuit::Builder::finish` lays
+it (`Laid`, `CircuitLayout.lean`) and whose weights are `coordinate_weight`'s: an accepted proof
+of the statement `(y, root)` holds `C`'s computation on some input bits, whose public words are
+`(y, root)`'s halves (its public bits `(y, root)`'s bits). `C` is a parameter.
+
 **What is not said.**
-* That the circuit is the one of `quotient::circuit::membership`: the theorems are for every
-  wiring and every weights, and with a degenerate circuit the relation holds of every statement.
-  The Rust tests check that code's wiring is a permutation with no loop.
+* That `C` is `quotient::circuit::membership` and that its computation is Keccak-256 membership:
+  `C` is a parameter of `soundness_circuit`, and that the deployed circuit meets `Laid` and
+  computes the statement is layer F0's remaining work (`formal/README.md`).
 * That the Rust `reduce` is this verifier. `claims_iff_accepts_ofCantor` proves that four claims
   on committed tables, at given points with given values, are "accepts" here; that `reduce`
   forms those points and values is by review (the coordinate-by-coordinate comparison is written
@@ -74,6 +83,43 @@ theorem soundness (hq : Fintype.card F = 2 ^ 192) (adv : I.Adversary) (Q : ℕ)
   rw [bound_eq] at h
   exact le_trans (prEvent_mono _ _ _ fun r hr =>
     ⟨hr.1, fun hsat => hr.2 (I.relation_of_sat _ _ hsat)⟩) h
+
+/-- **Knowledge soundness for a circuit.** Over a field of `2^192` elements, for an instance
+whose wiring lays the loop-free χ circuit `C` (`Laid`: every input cell on the cycle of what it
+reads, word 5's bits on the zero's cycle, word 4's bit 0 the one's anchor and its other bits on
+the zero's) and whose weights are `coordinate_weight`'s for `x ≠ 1`, `Y ≠ 1`: for every adversary
+making at most `Q` oracle queries, the probability that the verdict is true, the statement is the
+eight words of some `(y, root)` (`statementWords`: its halves, then `1, 0, 0, 0`), and the cells
+of the proof's first message are not `C`'s computation on some input bits with public words 0 to
+3 the halves of `(y, root)` (`ChiCircuit.Proves`), is at most `(Q + 3) / 2^128`. -/
+theorem soundness_circuit (hq : Fintype.card F = 2 ^ 192) (C : ChiCircuit (Fin (2 ^ 22)))
+    {x Y : F} (hx : x ≠ 1) (hY : Y ≠ 1) (hc : I.c = coordWeight x Y) (hC : Laid I.wiring C)
+    (adv : I.Adversary) (Q : ℕ) (hQ : IsTotalQueryBound adv Q) :
+    Pr{let r ← (simulateQ randomOracle (experiment adv)).run' ∅}[
+        r.2 = true ∧ ∃ y root, r.1.stmt = statementWords x Y y root ∧
+          ¬ C.Proves x Y (I.cellsOf r.1.g.1) y root]
+      ≤ (Q + 3 : ENNReal) / 2 ^ 128 :=
+  le_trans (prEvent_mono _ _ _ fun r hr => ⟨hr.1, fun hrel => by
+    obtain ⟨y, root, hs, hn⟩ := hr.2
+    exact hn (I.proves_of_relation_statement C hx hY hc hC y root _ (hs ▸ hrel))⟩)
+    (I.soundness hq adv Q hQ)
+
+/-- **Knowledge soundness for a circuit, bit by bit.** The same, with the bit weights independent
+over `GF(2)` (as `F192`'s are): the probability that the verdict is true for the eight words of
+some `(y, root)` and the proof's cells are not `C`'s computation on some input bits whose public
+bits are the bits of `y` and `root`, as `circuit::public_words` reads them
+(`ChiCircuit.ProvesBits`), is at most `(Q + 3) / 2^128`. -/
+theorem soundness_circuit_bits (hq : Fintype.card F = 2 ^ 192) (C : ChiCircuit (Fin (2 ^ 22)))
+    {x Y : F} (hind : BitWeightsIndependent x Y) (hc : I.c = coordWeight x Y)
+    (hC : Laid I.wiring C) (adv : I.Adversary) (Q : ℕ) (hQ : IsTotalQueryBound adv Q) :
+    Pr{let r ← (simulateQ randomOracle (experiment adv)).run' ∅}[
+        r.2 = true ∧ ∃ y root, r.1.stmt = statementWords x Y y root ∧
+          ¬ C.ProvesBits (I.cellsOf r.1.g.1) y root]
+      ≤ (Q + 3 : ENNReal) / 2 ^ 128 :=
+  le_trans (prEvent_mono _ _ _ fun r hr => by
+    obtain ⟨y, root, hs, hn⟩ := hr.2
+    exact ⟨hr.1, y, root, hs, fun h => hn (h.bits hind)⟩)
+    (I.soundness_circuit hq C hind.ne_one.1 hind.ne_one.2 hc hC adv Q hQ)
 
 end Soundness
 
