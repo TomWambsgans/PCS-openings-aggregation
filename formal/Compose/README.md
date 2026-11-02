@@ -21,6 +21,11 @@ depends on `propext`, `Classical.choice` and `Quot.sound` only (`Compose/Axioms.
 | `Compose/Coupling.lean` | The logged run is the random oracle's run (`map_run_loggedKC`) and its transcript is the oracle's cache (`consistent_run_loggedKC`), so an event of a stage's cache is an event of its transcript (`prEvent_loggedPrefix`: the logged prefix is `romExperiment`). |
 | `Compose/Deployed.lean` | **The deployed composition**: the setup computes the circuit's commitment with the oracle (`withSetup`, `wiringSetup`); the chain, then `opening::verify` (F2's `ourVerifier`) for the witness, wiring and quotient tables (`deployedExp`); **`prEvent_EW_le`, `prEvent_EQ_le`**: the witness and quotient terms are F2's `ours_sound`; `trace_deployed`; **`knowledgeSoundness_deployed_setup`**. |
 | `Compose/Extract.lean` | **The Merkle extraction is mumbai's `extract` without collisions**: a climb through the history's answers is `merkleWord`'s descent and conversely (`leafAt_of_climb`, `leafAt_some`); with answers injective on the history, at every position of the tree `merkleWord`'s row read as words is mumbai's `Rom.extract` row (`wordOfMerkle_eq_extract`). |
+| `Compose/Wiring.lean` | **The circuit's commitment has one candidate**: a word that is the encoding of a stack `q₀` (`HonestWord`) has `q₀` as its only member of mumbai's `Candidates` at the level-0 Johnson threshold (`candidates_of_codeword`: two codewords of degree `< 2^κ` agreeing on `2^κ` columns are equal, and the threshold is at least `2^κ`, `LevelCode.two_pow_le_thr`; at rate `1/2` the Johnson radius `1 − √ρ ≈ 0.293` is below the relative distance `1/2`); **`candidates_honest`** at the deployed codes. |
+| `Compose/DeployedWired.lean` | **Every opening's term is `ours_sound`'s**: the run logs the wiring opening's stage too (`wiredExp`), so the wiring opening's doom is an event of `ours_sound`'s experiment (`prEvent_Eσw_le`, with `prEvent_EWw_le`, `prEvent_EQw_le`); the wired run reads as the deployed run (`wired_deployed`); an undoomed wiring opening gives F1's wiring claim given `WiringMatch` (the setup's queries make the root's word an honest codeword, whose only candidate's table satisfies the opening's claims only if the wiring claim holds), so `trace_wired`; **`knowledgeSoundness_wired`**: `hσ` discharged, `εσ = openingBound (QS + Q + 6 + QO)`. `QO = 10122` is derived (`ourVerifier_queryBound`, `Deployed.lean`: F2's `variantQueries_eq` and `isTotalQueryBound_fam`). |
+| `Compose/WiredDecoded.lean` | `knowledgeSoundness_wired_decoded(_bits)`: the same with the computable decoders (`DecoderDeployed.lean`), `WitnessMatch` and `QuotientMatch` reduced to `WitnessClaims`, `QuotientClaims`. |
+| `Compose/WiringSetup.lean` | **The setup's word** (`extract_wiringSetup`): on every table and every history holding the setup's Keccak-256 queries without collision, the word mumbai's `extract` reads under the setup's root is the committed word. The setup's run through the history's partial answers is its run through the table (`simulateQ_option_of_log`); then each climb of the tree's paths succeeds through those answers (`climb_of_levels`: each step's input is one of the parents' inputs the build hashed), the honest opening is accepted and, through injective answers, `extract` reads its leaf. With the wiring stack's word (`stackWord`, honest by `stackWord_agrees`): **`wiringMatch`**, `WiringMatch` but for `WiringClaims`; **`knowledgeSoundness_wired_setup(_bits)`**, the setup `stackSetup D q₀` (`2^(ht+1)` queries, `2^20` at `2^22` rows). |
+| `Compose/Decoder*.lean` | The computable decoder (mumbai's Guruswami–Sudan `decodeStacks`, exact for `Candidates`), `WitnessMatch`/`QuotientMatch` for it (`DecoderDeployed.lean`), its cost. |
 
 ## The statement
 
@@ -53,6 +58,41 @@ the witness table's Merkle tree (height `c₁.height`, leaves of `c₁.leafLen` 
 word with `c₁.dec` (lists of at most `c₁.bound`). `_certified`: `2^-138` in place of `2^-128` for
 `c₁.bound ≤ 7908`, `c₂.bound ≤ 3564`, identities of degree at most `2^29`.
 
+## The deployed statement
+
+```lean
+theorem knowledgeSoundness_wired_setup_bits (hq : Fintype.card F = 2 ^ 192)
+    (hN : P.nCells = 2 ^ 24) (hw : P.words = 8) (hd : B.identity ≤ 2 ^ 28)
+    (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r) (h2 : r ≤ WhirBridge.maxLogRows)
+    (hLw : D.Lw = witnessLayout r) (hLσ : D.Lσ = wiringLayout r)
+    (hLQ : D.LQ = quotientLayout r) (hR : D.R = logInvRate)
+    (read₁ : Tab D.Lw → B.Msg₁) (read₂ : Tab D.LQ → B.Msg₂)
+    (hcl₁ : WitnessClaims D read₁) (hcl₂ : QuotientClaims W D read₂)
+    (q₀ : Column D.Lσ.logN) (hclσ : WiringClaims (P := P) D q₀)
+    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) (Q : ℕ)
+    (hQ : ∀ ir, IsTotalQueryBound (A ir) Q) :
+    Pr{let z ← (simulateQ randomOracle (wiredExp W D (withSetup (stackSetup D q₀) A))).run' ∅}[
+        BreaksW W (tableCode D.Lw D.R
+          (admissible_of_eq hLw hR (layouts_ok r h1 h2).1) read₁) z] ≤
+      openingBound (setupQueries D + Q + 6) + openingBound (setupQueries D + Q + 6 + 10122) +
+        openingBound (setupQueries D + Q + 6 + 10122 + 10122) +
+        ((setupQueries D + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) *
+          (((1 / 2 ^ 128 : ℝ≥0) : ℝ≥0∞) +
+          5 * ((setupQueries D + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) / 2 ^ 256)
+```
+
+In mumbai's two-oracle random-oracle model (Keccak-256 and Keccak-f[1600]): the setup computes the
+Merkle tree of the wiring stack `q₀`'s word with the oracle (`stackSetup`, `setupQueries D =
+2^(ht+1)` queries, `2^20` at `2^22` rows); the adversary (at most `Q` queries) is given its root and
+outputs the proof (roots, values, three openings); the verifier runs the chain with the setup's root
+in its label, then `opening::verify` (F2's `ourVerifier`) on the witness, wiring (root: the
+setup's) and quotient tables. `BreaksW`: the verifier accepts (the reduction's check, the three
+openings) while no message the computable extractor reads off **the adversary's queries** and the
+proof (`adversaryExtractor`, with the decoder `tableCode`) is a witness of the statement. Each
+`openingBound x = (x + 10122)(2^-128 + 5 (x + 10122)/2^256)` is F2's `ours_sound` for one opening;
+for `Q ≤ 2^64` the whole is about `2^-62`. Without `_bits`: `max L₁ (L₁ L₂) · roundError` (the
+certified list sizes) in place of `2^-128`.
+
 ## The statement in mumbai's model
 
 `knowledgeSoundness_merkle_kc` is `knowledgeSoundness_merkle` with `OracleComp KeccakCalls` in
@@ -73,18 +113,21 @@ transcript of every Keccak-256 query of the run.
      (an exact enumeration of `Candidates`), read back as F1's message, and a candidate whose table
      satisfies the opening's claims (`ourVerifier`'s, `Layout.tableEval`) reads back as a message
      satisfying F1's claim (`Concrete.lean`'s `claims_iff_accepts_ofCantor` is the starting point);
-  2. **the wiring term `εσ`**: the experiment now computes the circuit's commitment with the oracle
-     before the adversary runs (`withSetup`, `wiringSetup`), so its discharge is meaningful: the
-     setup's queries make the index root's word the honest codeword, whose Johnson list is itself
-     (at rate `1/2` the Johnson radius `1 − √ρ ≈ 0.293` is below the relative distance `1/2`, to be
-     proved for mumbai's `Candidates` of stacked tables), and its doom is then the wiring claim's
-     failure (to do).
+  2. **the wiring term**: discharged (`DeployedWired.lean`, `WiringSetup.lean`): the experiment
+     computes the circuit's commitment with the oracle before the adversary runs, the setup's
+     queries make the root's extracted word the wiring stack's word (`extract_wiringSetup`), its only
+     candidate is the stack itself (`candidates_honest`), and the wiring opening's term is
+     `ours_sound`'s. What remains is **`WiringClaims D q₀`**: the stack's table satisfies the wiring
+     opening's claims (`D.clσ`, `Layout.tableEval`) only if F1's wiring claim holds.
+  So the deployed statement's hypotheses are `WitnessClaims`, `QuotientClaims` and `WiringClaims`,
+  statements about the claim maps `D.clW`, `D.clσ`, `D.clQ` and F1's tables only.
 * **The decoder's list bound** `c.bound`: `WhirBridge.candidates_ours` (`7908`, `3564`) for
   mumbai's `Candidates`; an exact decoder inherits it.
 * **The `Wire`** (F4a's): the circuit's commitment, the statement's decoding, the limbs, as in
   `QuotientRpm`; and **the circuit** (F0): the relation is `Params.Sat` for the deployed wiring.
-* **The model**: one random oracle for Keccak-256 (the random-permutation model, mumbai's
-  `common` transfer as F4a's `Rpm.lean` applies it, is not taken here).
+* **The model**: the random-oracle model (one oracle for Keccak-256, and Keccak-f[1600] as a random
+  function in mumbai's two-oracle model); the random-permutation transfer is separate work
+  (`Rpm.lean`).
 * **The extractor's reads**: `witnessExtractor` and `extractor` (ROM, two-oracle) read every
   Keccak-256 query of the run; `adversaryExtractor` (`AdversaryLog.lean`, `Deployed.lean`) reads the
   adversary's queries (and the setup's, which are public) only.
@@ -97,6 +140,6 @@ transcript of every Keccak-256 query of the run.
 As `WhirBridge`: against a built leanerVM `6175f1a0` at `../leanervm`, sharing `lean_vm`'s
 packages; the libraries `QuotientSecurity`, `QuotientRpm`, `WhirBridge` compile from their sources
 in `formal/` (`srcDir`), which checks that `formal/` builds against `lean_vm`'s package set (it
-does: 9,925 jobs, ArkLib's `OracleReduction.Security.RoundByRound` and VCVio's `FreshQuery` added).
+does: 10,012 jobs, ArkLib's `OracleReduction.Security.RoundByRound` and VCVio's `FreshQuery` added).
 On `h1`: `/root/pcs-quotient-fv/compose/formal/Compose`, `lake build`; `Compose` itself builds in
 about a minute.
