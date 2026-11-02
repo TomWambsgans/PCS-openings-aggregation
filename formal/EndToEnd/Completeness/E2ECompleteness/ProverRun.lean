@@ -213,6 +213,75 @@ theorem finishSpec_id_some {fuel logRows : ℕ} {stmt : Statement}
   obtain rfl := Option.some.inj h
   exact ⟨red, rfl, hw, hs, hq, rfl⟩
 
+/-! ### The run's fields -/
+
+section Fields
+
+variable (circuit : Circuit) (stmt : Statement) (cells : Array K) (masks : Masks)
+  (wp qp : Padding)
+
+theorem runOf_sigmaHat : (runOf H circuit stmt cells masks wp qp).sigmaHat = circuit.wiringTable :=
+  rfl
+
+theorem runOf_indexTree : (runOf H circuit stmt cells masks wp qp).indexTree =
+    commitWithH (m := Id) H (cellVars circuit.logRows) circuit.wiringTable := rfl
+
+theorem runOf_wHat : (runOf H circuit stmt cells masks wp qp).wHat =
+    coefficients (cellVars circuit.logRows) 0 cells := rfl
+
+theorem runOf_mask : (runOf H circuit stmt cells masks wp qp).mask = maskEntries masks := rfl
+
+theorem runOf_wStack : (runOf H circuit stmt cells masks wp qp).wStack =
+    (witnessLayout circuit.logRows).stackOf (witnessEntry (2 ^ cellVars circuit.logRows)
+      (runOf H circuit stmt cells masks wp qp).wHat (runOf H circuit stmt cells masks wp qp).mask) wp :=
+  rfl
+
+theorem runOf_witnessTree : (runOf H circuit stmt cells masks wp qp).witnessTree =
+    commitWithH (m := Id) H (cellVars circuit.logRows + 1)
+      (runOf H circuit stmt cells masks wp qp).wStack := rfl
+
+theorem runOf_hHat : (runOf H circuit stmt cells masks wp qp).hHat =
+    coefficients (cellVars circuit.logRows) 0 (hValues circuit.logRows cells circuit.sigma
+      (runOf H circuit stmt cells masks wp qp).α (runOf H circuit stmt cells masks wp qp).β
+      (runOf H circuit stmt cells masks wp qp).γ) := rfl
+
+theorem runOf_qHat : (runOf H circuit stmt cells masks wp qp).qHat =
+    coefficients (cellVars circuit.logRows + 2) (betaAt (cellVars circuit.logRows + 2))
+      (qValuesOf circuit.logRows
+        (wValuesOf circuit.logRows (runOf H circuit stmt cells masks wp qp).wHat
+          (runOf H circuit stmt cells masks wp qp).mask)
+        (sigmaValuesOf circuit.logRows (runOf H circuit stmt cells masks wp qp).sigmaHat)
+        (q0Of circuit.logRows (runOf H circuit stmt cells masks wp qp).hHat)
+        (blocksOf circuit.logRows (runOf H circuit stmt cells masks wp qp).γ)
+        (runOf H circuit stmt cells masks wp qp).α (runOf H circuit stmt cells masks wp qp).β) :=
+  rfl
+
+theorem runOf_qGateHat : (runOf H circuit stmt cells masks wp qp).qGateHat =
+    coefficients (cellVars circuit.logRows + 2) (betaAt (cellVars circuit.logRows + 2))
+      (qGateValuesOf circuit.logRows
+        (wValuesOf circuit.logRows (runOf H circuit stmt cells masks wp qp).wHat
+          (runOf H circuit stmt cells masks wp qp).mask)
+        (blocksOf circuit.logRows (runOf H circuit stmt cells masks wp qp).γ)) := rfl
+
+theorem runOf_qStack : (runOf H circuit stmt cells masks wp qp).qStack =
+    (quotientLayout circuit.logRows).stackOf (quotientEntry circuit.logRows
+      (runOf H circuit stmt cells masks wp qp).hHat (runOf H circuit stmt cells masks wp qp).qHat
+      (runOf H circuit stmt cells masks wp qp).qGateHat) qp := rfl
+
+theorem runOf_quotientTree : (runOf H circuit stmt cells masks wp qp).quotientTree =
+    commitWithH (m := Id) H (cellVars circuit.logRows + 4)
+      (runOf H circuit stmt cells masks wp qp).qStack := rfl
+
+theorem runOf_values : (runOf H circuit stmt cells masks wp qp).proof.values =
+    rowValuesAt circuit.logRows (runOf H circuit stmt cells masks wp qp).wHat
+      (runOf H circuit stmt cells masks wp qp).mask (runOf H circuit stmt cells masks wp qp).t := rfl
+
+theorem runOf_next : (runOf H circuit stmt cells masks wp qp).proof.next =
+    nextAt circuit.logRows (runOf H circuit stmt cells masks wp qp).sigmaHat
+      (runOf H circuit stmt cells masks wp qp).t := rfl
+
+end Fields
+
 /-- The run's roots name its trees' roots. -/
 theorem runOf_roots (circuit : Circuit) (stmt : Statement) (cells : Array K) (masks : Masks)
     (witnessPad quotientPad : Padding) :
