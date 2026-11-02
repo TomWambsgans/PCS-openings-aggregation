@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Soundness.Defs
+import QuotientSecurity.DeployedConcrete
 
 /-!
 # The bridge facts knowledge soundness takes from the definitions' bridge
@@ -7,7 +8,8 @@ import Soundness.Defs
 Three statements that the Statement's definitions (`formal/Statement`, `PcsQuotient`) are the
 proof layers' (`formal/Compose`, `formal/QuotientSecurity`, `formal/WhirBridge`), each a
 proposition about definitions only (no probability), at the constants `c` (`beta()`'s words and
-`row_vanishing`'s `tau`, `Reduce.Consts`) and the instance `rustInstance c h deployedSigma`. The
+`row_vanishing`'s `tau`, `Reduce.Consts`) and F1's instance `inst c h` (`beta()`'s basis, the
+deployed wiring, `coordinate_weight`'s weights). The
 end theorem (`Final.lean`) takes them as hypotheses; the definitions' bridge
 (`formal/EndToEnd/Bridge`) is to prove them.
 
@@ -39,9 +41,12 @@ open LeanVM.Protocol LeanVM.Protocol.KeccakHash LeanVM.Protocol.Compile WhirBrid
 
 variable (c : Consts) (h : IsCantor c.beta)
 
-/-- F1's instance of the deployed protocol: `beta()`'s Cantor basis, the deployed wiring
-(`membership.sigma`, the Rust's), `coordinate_weight`'s weights. -/
-noncomputable abbrev inst : Instance E := rustInstance c h deployedSigma
+/-- F1's instance of the deployed protocol: `beta()`'s Cantor basis (`basisE`), the deployed wiring
+(`membership.sigma`, the Rust's, `deployedSigma`), `coordinate_weight`'s weights as F0c states them
+(`coordWeight F192.G F192.Y`, `rustCoordinateWeight_eq`; `Compose`'s `rustInstance` takes
+`coordinate_weight`'s values below `8` and zero above, which F1's relation does not read). -/
+noncomputable abbrev inst : Instance E :=
+  ⟨basisE c h, deployedSigma, coordWeight Primitives.F192.G Primitives.F192.Y⟩
 
 /-- **SETUP**: the Statement's wiring table is the stack `q₀` of `2^24` words, and `q₀`'s table's
 polynomial carries the deployed wiring on the cells of `beta()`'s basis (`wiringClaims_deployD`'s

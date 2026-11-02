@@ -74,8 +74,8 @@ theorem allQ_ourVerifier (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking)
   rw [ourVerifier_eq]
   by_cases hne : w.1.2.claims.isEmpty = false
   swap
-  · rw [if_neg hne]; trivial
-  rw [if_pos hne]
+  · simp only [hne, ↓reduceIte]; trivial
+  simp only [hne, ↓reduceIte]
   refine allQueriesSatisfy_bind (allQueriesSatisfy_bind (LeanVM.Rpm.allQ_queryH ?_)
     fun _ => LeanVM.Rpm.allQ_queryF _) fun seed => ?_
   · rw [List.length_append, openingPrefix_length, length_claimsBytes, length_flat]
@@ -89,9 +89,9 @@ theorem allQ_ourVerifier (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking)
     have : w.1.2.claims.length * (2 ^ 30 + 1) ≤ 2 * (2 ^ 30 + 1) := Nat.mul_le_mul_right _ h2
     omega
   · by_cases hr : WhirBridge.rootOf w.2 = some w.1.1
-    · rw [if_pos hr]
+    · simp only [hr, ↓reduceIte]
       exact LeanVM.Rpm.allQ_runProof _ seed _ (widthsLE_variantProg _ _ _)
-    · rw [if_neg hr]; trivial
+    · simp only [hr, ↓reduceIte]; trivial
 
 /-- `toStmt`'s claims are at most two when the claims handed are. -/
 theorem length_toStmt_le (L : Layout) (cs : List Claim) (h : cs.length ≤ 2) :

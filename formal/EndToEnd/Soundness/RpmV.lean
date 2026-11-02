@@ -13,8 +13,8 @@ their proofs `Rpm.lean`'s with `cost_verifyD` replaced:
 
 * `cost_gameB_V`, `rpm_le_wired_V`: `cost_gameB`, `rpm_le_wired` with `hV`;
 * **`knowledgeSoundness_rust_rpm`**: the random-permutation statement at the deployed claim maps
-  (`deployD c 22`), F1's instance of `beta()` (`rustInstance`), the deployed wiring and the wiring
-  stack `q₀`: `knowledgeSoundness_deployed_concrete` (`Compose/Claims.lean`) for the
+  (`deployD c 22`), for F1's instance of `beta()`'s basis and `coordinate_weight`'s weights and the
+  wiring stack `q₀`: `knowledgeSoundness_deployed_concrete` (`Compose/Claims.lean`) for the
   derandomized adversary, plus the transfer's `(2^52 + Q + verifierPermCalls)² / 2^508`.
 -/
 
@@ -95,34 +95,34 @@ noncomputable def ksBound (Q : ℕ) : ℝ≥0∞ :=
     ((setupPermCalls + Q + verifierPermCalls : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508
 
 /-- **Knowledge soundness of the deployed verifier in the random-permutation model, at the deployed
-claim maps.** F1's instance of `beta()`'s Cantor basis, `coordinate_weight`'s weights and the wiring
-`σ` (`rustInstance`); a wire reading the statement as its halves then `1, 0, 0, 0`; `tau` solving
-`row_vanishing`'s system; the setup the wiring stack `q₀`'s commitment, `q₀`'s table carrying `σ`
-(`hq₀`). For an adversary of at most `Q` calls of `π`, `π⁻¹`, the verifier (the chain and the three
-openings of `deployD c 22`, over `π`) accepts while the extractor's list (`rpmExtractor` with the
-deployed witness decoder) holds no witness with probability at most `ksBound Q`. -/
-theorem knowledgeSoundness_rust_rpm (c : Consts) (h : IsCantor c.beta) (hτ : RowVanishing c 22)
-    (σ : Equiv.Perm (Fin (22 + 2) → Bool))
-    (W : Wire (rustInstance c h σ).params (rustInstance c h σ).bounds)
-    (hdec : ∀ sb, W.decode sb = stmtWords sb) (q₀ : Column (wiringLayout 22).logN)
-    (hq₀ : ∀ x, (tablePoly (wiringFn 22 (tabOf (wiringLayout 22) q₀))).eval
-      ((rustInstance c h σ).basis.point x) = (rustInstance c h σ).basis.point ((rustInstance c h σ).wiring x))
+claim maps.** F1's instance `I` with `beta()`'s Cantor basis (`hβ`) and `coordinate_weight`'s weights
+(`hc`); a wire reading the statement as its halves then `1, 0, 0, 0`; `tau` solving
+`row_vanishing`'s system; the setup the wiring stack `q₀`'s commitment, `q₀`'s table carrying `I`'s
+wiring (`hq₀`). For an adversary of at most `Q` calls of `π`, `π⁻¹`, the verifier (the chain and the
+three openings of `deployD c 22`, over `π`) accepts while the extractor's list (`rpmExtractor` with
+the deployed witness decoder) holds no witness with probability at most `ksBound Q`. -/
+theorem knowledgeSoundness_rust_rpm (I : Instance E) (c : Consts)
+    (hβ : ∀ k < 22 + 2, I.basis.β k = ofK (c.beta k))
+    (hc : ∀ k < 8, coordinateWeight k = some (I.c k)) (hτ : RowVanishing c 22)
+    (W : Wire I.params I.bounds) (hdec : ∀ sb, W.decode sb = stmtWords sb)
+    (q₀ : Column (wiringLayout 22).logN)
+    (hq₀ : ∀ x, (tablePoly (wiringFn 22 (tabOf (wiringLayout 22) q₀))).eval (I.basis.point x) =
+      I.basis.point (I.wiring x))
     (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof E × OpenProofs))
     (Q : ℕ) (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q) :
     Pr{let z ← Common.runWithRandomPermutation
         (rpmGame W (deployD c 22) (stackSetup (deployD c 22) q₀) A)}[
-        BreaksRpm W (witnessDecoder (rustInstance c h σ) c) z] ≤ ksBound Q := by
+        BreaksRpm W (witnessDecoder I c) z] ≤ ksBound Q := by
   have hS := setupQueries_deployD c
-  obtain ⟨A', hA', hle⟩ := rpm_le_wired_V W (deployD c 22)
-    (witnessDecoder (rustInstance c h σ) c) (stackSetup (deployD c 22) q₀)
-    (hOnly_stackSetup (deployD c 22) q₀) (setupQueries (deployD c 22))
-    (setupQueries (deployD c 22) * 2 ^ 32) (isTotalQueryBound_stackSetup (deployD c 22) q₀)
-    (cost_stackSetup (deployD c 22) q₀) A Q hA verifierPermCalls (cost_verifyD_deployD c W)
+  obtain ⟨A', hA', hle⟩ := rpm_le_wired_V W (deployD c 22) (witnessDecoder I c)
+    (stackSetup (deployD c 22) q₀) (hOnly_stackSetup (deployD c 22) q₀)
+    (setupQueries (deployD c 22)) (setupQueries (deployD c 22) * 2 ^ 32)
+    (isTotalQueryBound_stackSetup (deployD c 22) q₀) (cost_stackSetup (deployD c 22) q₀) A Q hA
+    verifierPermCalls (cost_verifyD_deployD c W)
   rw [hS] at hA' hle
   refine hle.trans ?_
   unfold ksBound setupPermCalls
-  exact add_le_add (knowledgeSoundness_deployed_concrete (rustInstance c h σ) c
-    (rustInstance_basis c h σ) (rustInstance_weights c h σ) hτ W hdec q₀ hq₀ A' (2 ^ 20 + Q)
+  exact add_le_add (knowledgeSoundness_deployed_concrete I c hβ hc hτ W hdec q₀ hq₀ A' (2 ^ 20 + Q)
     hA') le_rfl
 
 /-- info: 'Soundness.knowledgeSoundness_rust_rpm' depends on axioms: [propext, Classical.choice, Quot.sound] -/
