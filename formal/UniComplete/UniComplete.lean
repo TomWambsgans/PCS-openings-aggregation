@@ -5,4 +5,7 @@ import UniComplete.Bus
 import UniComplete.Quotients
 import UniComplete.Batch
 import UniComplete.Prover
+import UniComplete.Claims
+import UniComplete.Witness
+import UniComplete.Honest
 import UniComplete.Whir
