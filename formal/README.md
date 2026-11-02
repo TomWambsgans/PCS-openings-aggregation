@@ -7,7 +7,7 @@ format, the verifier (computable, differential-tested against the Rust), the hon
 the simulator, and `KnowledgeSoundness`, `Completeness`, `ZeroKnowledge(With)` in the random-permutation model.
 The extractor is an explicit, computable definition in the statements, so that a reviewer can check what it
 reads and that it is efficient; the simulator the zero-knowledge theorem covers is named in its statement: an
-explicit simulator; its computable form is in progress. Lean has no running-time theorem; the convention is
+explicit simulator, compiled in `zeroKnowledge_closed_computable`. Lean has no running-time theorem; the convention is
 leanerVM's: a fixed straight-line extractor, its cost read off its loops. Here the extractor reads the
 statement, the proof, the adversary's transcript and the public setup tree (the circuit commitment's Merkle
 tree). **The proofs** of the statements are in [`EndToEnd/`](#end-to-end-theorems), from the layers F0–F5 below.
@@ -56,8 +56,8 @@ Statement's own definitions. Every theorem below is sorry-free and depends only 
   every distinguisher of at most `Q` calls of π and π⁻¹ fixed after them, its verdicts on the honest proof and on
   the simulator's proof (the permutation programmable) differ in probability by at most `ζ Q ≈ 2^-113` for
   `Q ≤ 2^126`. The simulator is named in the statement (`zkSimulator`, `rpmSimOracle`) and reads no witness: an
-  explicit simulator; its computable form is in progress (its tables are computed,
-  `QuotientZk/Instance/Builder.lean`). **Scope: single-proof zero knowledge.** `realExperiment` starts from an
+  explicit simulator; `zeroKnowledge_closed_computable` restates the theorem with a compiled simulator (no axiom and no `noncomputable` constant in its closure) (its tables by Gaussian
+  elimination, `QuotientZk/Instance/Builder.lean`). **Scope: single-proof zero knowledge.** `realExperiment` starts from an
   empty permutation, the prover goes first, and the distinguisher queries `π`, `π⁻¹` only after the proof; not
   covered are oracle queries before the proof (precomputation, auxiliary input depending on `π`) and several
   proofs under one `π` (a pre-proof phase is planned).
@@ -179,7 +179,7 @@ pinned in `lakefile.toml`) lifts the reduction's knowledge soundness from an abs
 statistical zero knowledge of the proof the Rust prover outputs (calldata and the three openings: roots,
 multiproofs and opened rows, the stream, grinding nonces) in the random-oracle model, with the simulator an
 explicit definition in the statement (`sim` is compiled for any compiled view simulator, `Check.lean` runs it;
-the deployed simulator's computable form is in progress). The prover's randomness is uniform (the deployed
+the deployed simulator is compiled in `zeroKnowledge_closed_computable`). The prover's randomness is uniform (the deployed
 masks and padding come from ChaCha12 keyed by a Keccak KDF of a 32-byte OS seed: the deployed statement is
 computational in that PRG).
 
@@ -310,8 +310,8 @@ with an empty cache before the proof (`c₀ = []`, `fsFresh_setup_deployed_bits`
 `|c₀| · 2^-191` term is `0` here; a pre-proof phase is planned, which will make it nonzero.
 
 **The simulator** (`zkSimulator`, `ZK/With.lean`; `rpmSimulator`, `rpmSimOracle`, `ZK/Simulator.lean`; an
-explicit simulator; its computable form is in progress: the generic definitions are compiled, the deployed
-view simulator `deployedSimV` and wiring value `sigmaAtD` are still `noncomputable`). It reads the statement
+explicit simulator; as stated, `deployedSimV` and `sigmaAtD` are `noncomputable`, and
+`zeroKnowledge_closed_computable` restates the theorem with a compiled simulator (no axiom and no `noncomputable` constant in its closure), proven equal). It reads the statement
 and public data, never the witness: `pp stmt`, the skeleton model's public part (the number `n` of
 Fiat–Shamir challenges, when each secret table is committed, which positions are opened: functions of the
 challenges), `simV stmt`, the joint honest-verifier simulator (`jointSim`: the four values
