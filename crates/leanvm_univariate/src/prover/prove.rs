@@ -79,6 +79,8 @@ pub struct Report {
     pub opening_bytes: Vec<usize>,
     /// Flock's claim on `A0`, `B0`: the point and the two values.
     pub flock: Option<(Vec<E>, E, E)>,
+    /// Finer timings inside a phase, as text.
+    pub notes: Vec<String>,
 }
 
 struct Clock {
@@ -241,6 +243,12 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
         slices_end = Some(out.slices_end);
         if variant.slices == leanvm_flock_gas::flock_min::Slices::Claim {
             flock_slices = Some(out.slices.clone());
+        }
+        report.notes.push(format!("Flock's zerocheck and lincheck: {:.3} s", out.reduction_secs));
+        if variant.skip != leanvm_flock_gas::flock_min::PACKING {
+            for (stage, secs) in std::mem::take(&mut *lv42_flock::zerocheck::skip::STAGES.lock().expect("the stages")) {
+                report.notes.push(format!("  the skip's zerocheck, {stage}: {secs:.3} s"));
+            }
         }
         match out.matrices {
             Matrices::Done { point, a, b } => report.flock = Some((point, a, b)),

@@ -129,6 +129,8 @@ pub struct FlockOut {
     /// The stream's length right after the slices.
     pub slices_end: usize,
     pub matrices: Matrices,
+    /// The zerocheck and the lincheck's seconds (the rest of Flock's phase is the matrices' tables).
+    pub reduction_secs: f64,
 }
 
 pub enum Matrices {
@@ -269,6 +271,7 @@ pub fn prove(
         samples: Vec::new(),
     };
     // leanVM's own prover at a skip of 6; the skip module's zerocheck and the lincheck at its row weights below.
+    let started = std::time::Instant::now();
     let claim = setup.prove_reduction_skip(k, &witness.z, &witness.a, &witness.b, &witness.z_lincheck, &mut chain);
     let samples = chain.samples;
     // The challenges, as the verifier draws them: the zerocheck's sampled eq coordinates, the skip's point, its
@@ -300,6 +303,7 @@ pub fn prove(
     let slices_end = writer.stream.len();
 
     // The matrices' reduction: Σ_(x, y) L(x) s(y) G'(x, y) over the skip's k row bits and the 6 packing bits.
+    let reduction_secs = started.elapsed().as_secs_f64();
     let g = sliced(k, row_low, chi_in, &chi_in_prime, alpha);
     let skip = lagrange_weights(1 << k, z_skip);
     let size = (1 << k) * K_BITS;
@@ -332,5 +336,6 @@ pub fn prove(
         slices,
         slices_end,
         matrices,
+        reduction_secs,
     })
 }

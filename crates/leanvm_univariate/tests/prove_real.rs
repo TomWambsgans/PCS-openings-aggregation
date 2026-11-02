@@ -191,6 +191,9 @@ fn end_to_end(blake2s: Blake2s) {
     for (phase, secs) in &report.phases {
         println!("  {secs:8.3} s  {phase}");
     }
+    for note in &report.notes {
+        println!("  note: {note}");
+    }
     println!(
         "  {:8.3} s  total ({total:.3} s and the placement); peak RSS {:.2} GB",
         total + placing,

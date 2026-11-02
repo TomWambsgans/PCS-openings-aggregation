@@ -59,6 +59,10 @@ pub fn prove_packed_padded_skip(
     prove_skip(a_packed, b_packed, c_packed, m, k, padding, ps)
 }
 
+/// The last [`prove_skip`]'s stages and their seconds (round 1, each bit pass, the storing pass, the table rounds),
+/// for profiling.
+pub static STAGES: std::sync::Mutex<Vec<(String, f64)>> = std::sync::Mutex::new(Vec::new());
+
 /// This module's zerocheck with a skip of `k` (at `k = 6` too, where it writes what leanVM's does: a test of it).
 pub fn prove_skip(
     a_packed: &[u8],
@@ -82,9 +86,17 @@ pub fn prove_skip(
         .chain(ps.sample_vec(m - k - N_INNER))
         .collect();
 
+    let mut stages: Vec<(String, f64)> = Vec::new();
+    let mut clock = std::time::Instant::now();
+    let mut lap = |stages: &mut Vec<(String, f64)>, name: String| {
+        let now = std::time::Instant::now();
+        stages.push((name, (now - clock).as_secs_f64()));
+        clock = now;
+    };
     let span = tracing::info_span!("Round 1").entered();
     let round1 = round1(a_packed, b_packed, c_packed, m, k, &r_rest);
     drop(span);
+    lap(&mut stages, "round 1".into());
     for &x in &round1 {
         ps.add_scalar(x);
     }
@@ -109,6 +121,7 @@ pub fn prove_skip(
         c_running = send_round(ps, c_running, r_rest[t], None, g1, g_inf, &mut mlv_chis);
         let (g1, g_inf) = pair.second(mlv_chis[t]);
         c_running = send_round(ps, c_running, r_rest[t + 1], None, g1, g_inf, &mut mlv_chis);
+        lap(&mut stages, format!("bit pass at level {t}"));
     }
     let materialize_level = mlv_chis.len();
     let fold = BitFold::at_level(&lagrange, &mlv_chis);
@@ -116,6 +129,7 @@ pub fn prove_skip(
         bit_round_materialize(bits, &fold, &r_rest[materialize_level + 1..], padding);
     c_running = send_round(ps, c_running, r_rest[materialize_level], None, g1, g_inf, &mut mlv_chis);
     drop(span);
+    lap(&mut stages, format!("storing pass at level {materialize_level}"));
 
     // The table rounds: leanVM's (crates/flock/src/zerocheck.rs), unchanged.
     let span = tracing::info_span!("Table rounds").entered();
@@ -169,6 +183,8 @@ pub fn prove_skip(
     ps.add_scalar(final_a_eval);
     ps.add_scalar(final_b_eval);
     drop(span);
+    lap(&mut stages, "table rounds".into());
+    *STAGES.lock().expect("the stages") = stages;
     ZerocheckClaim {
         z,
         mlv_challenges: mlv_chis,
@@ -181,8 +197,138 @@ pub fn prove_skip(
 /// The small coordinates' eight groups and the medium coordinates' sixteen runs of them: the groups an `x` covers.
 const GROUPS: usize = 8 * 16;
 
-/// The round-1 message `P(λ) = P^AB(λ) + P^C(λ)` on `Λ`, as the verifier reads it, for a skip of `k`.
+/// The round-1 message `P(λ) = P^AB(λ) + P^C(λ)` on `Λ`, as the verifier reads it, for a skip of `k`: at `k = 3`
+/// with GFNI by [`round1_bytes`], otherwise by [`round1_generic`].
 pub fn round1(a: &[u8], b: &[u8], c: &[u8], m: usize, k: usize, r_rest: &[F192]) -> Vec<F192> {
+    if k == MIN_SKIP && super::bit_fold::GFNI {
+        return round1_bytes(a, b, c, m, r_rest);
+    }
+    round1_generic(a, b, c, m, k, r_rest)
+}
+
+/// Round 1 at a skip of 3, a group a byte. For one `x` (16 medium positions of 8 bytes, one a small position `K`):
+///
+/// - a word's 8 groups extend to `Λ` in one `gf2p8affine` (qword `λ` the word broadcast, its matrix lane `λ` of the
+///   extension), so byte `8 λ + K` is `â(λ, K)`; `â b̂` and `X^K` are two `gf2p8mulb`, and the sum over `K` a fold of
+///   each qword's bytes: the AB row of the medium position, one byte a lane;
+/// - the C row is the word's 8×8 bit transpose (lane `s`, bit `K`);
+/// - the 16 medium positions' rows of a lane are a 16-byte row, `Σ_b eq(r_med, b) C_s φ_8(row_b)` one GF(2)-linear
+///   map of it: [`BitFold`]'s, 64 rows (4 `x`s, 8 AB and 8 C lanes each) at a time.
+#[cfg(all(target_arch = "x86_64", target_feature = "gfni", target_feature = "avx512bw", target_feature = "avx512vbmi"))]
+pub fn round1_bytes(a: &[u8], b: &[u8], c: &[u8], m: usize, r_rest: &[F192]) -> Vec<F192> {
+    use core::arch::x86_64::*;
+    const ELL: usize = 8;
+    let k = MIN_SKIP;
+    assert_eq!(r_rest.len(), m - k);
+    let ntt_s = AdditiveNttGf8::new(k, F8::ZERO);
+    let ntt_l = AdditiveNttGf8::new(k, F8(ELL as u8));
+    let table = InvNttTableByteSingleGf8::new(&ntt_s, &ntt_l);
+    // Lane λ's matrix: input bit s to the byte c_(s, λ), the extension of e_s at lane λ; the affine's result bit j
+    // is the parity of the input against matrix byte 7 - j.
+    let columns: Vec<[F8; ELL]> = (0..8)
+        .map(|s| {
+            let mut out = [F8::ZERO; ELL];
+            table.apply(&[1u8 << s], &mut out);
+            out
+        })
+        .collect();
+    let matrices: [u64; ELL] = std::array::from_fn(|lane| {
+        (0..8).fold(0u64, |q, j| {
+            let row = (0..8).fold(0u64, |r, s| r | u64::from(columns[s][lane].0 >> j & 1) << s);
+            q | row << (8 * (7 - j))
+        })
+    });
+    let eq_small = build_eq(&r_rest[..3]);
+    let cs = c_s();
+    for (kk, &e) in eq_small.iter().enumerate() {
+        assert_eq!(e, cs * PHI_8_TABLE[1 << kk], "the small coordinates' eq is C_s X^K");
+    }
+    // A lane's 16 medium bytes, bit `8 b + i`, weigh eq(r_med, b) C_s φ_8(2^i).
+    let eq_med = build_eq(&r_rest[3..N_INNER]);
+    let weights: Vec<F192> = (0..128).map(|w| eq_med[w / 8] * cs * PHI_8_TABLE[1 << (w % 8)]).collect();
+    let fold = BitFold::new(&weights);
+    let eq = SplitEq::new(&r_rest[N_INNER..]);
+    let lo_size = 1usize << eq.n_lo;
+    let block = GROUPS; // bytes an x covers
+    assert_eq!(a.len(), (lo_size << eq.n_hi) * block);
+
+    // SAFETY: the target features are enabled at compile time; every load is 8 in-bounds bytes.
+    let ab_row = |x: u64, y: u64| -> u64 {
+        unsafe {
+            let m = _mm512_loadu_si512(matrices.as_ptr().cast());
+            let ea = _mm512_gf2p8affine_epi64_epi8::<0>(_mm512_set1_epi64(x as i64), m);
+            let eb = _mm512_gf2p8affine_epi64_epi8::<0>(_mm512_set1_epi64(y as i64), m);
+            let powers = _mm512_set1_epi64(0x8040_2010_0804_0201u64 as i64);
+            let t = _mm512_gf2p8mul_epi8(_mm512_gf2p8mul_epi8(ea, eb), powers);
+            let t = _mm512_xor_si512(t, _mm512_srli_epi64::<32>(t));
+            let t = _mm512_xor_si512(t, _mm512_srli_epi64::<16>(t));
+            let t = _mm512_xor_si512(t, _mm512_srli_epi64::<8>(t));
+            let bytes = _mm512_cvtepi64_epi8(t);
+            _mm_cvtsi128_si64(bytes) as u64
+        }
+    };
+    let word = |data: &[u8], at: usize| u64::from_le_bytes(data[at..at + 8].try_into().expect("8 bytes"));
+    let zero = || ([F192::ZERO; ELL], [F192::ZERO; ELL]);
+    let (ab, c_s_part) = parallel::fold_reduce(
+        1usize << eq.n_hi,
+        zero,
+        |acc, x_hi| {
+            let (mut part_ab, mut part_c) = zero();
+            let mut rows = [[0u8; 16]; 64];
+            let mut folded = [F192::ZERO; super::bit_fold::BLOCK];
+            for x_first in (0..lo_size).step_by(4) {
+                let subs = (lo_size - x_first).min(4);
+                for sub in 0..subs {
+                    let at = (x_hi * lo_size + x_first + sub) * block;
+                    for medium in 0..16 {
+                        let o = at + 8 * medium;
+                        let row = ab_row(word(a, o), word(b, o));
+                        let crow = transpose_8x8(word(c, o));
+                        for lane in 0..ELL {
+                            rows[16 * sub + lane][medium] = (row >> (8 * lane)) as u8;
+                            rows[16 * sub + 8 + lane][medium] = (crow >> (8 * lane)) as u8;
+                        }
+                    }
+                }
+                fold.fold_block(&rows[..16 * subs], &mut folded);
+                for sub in 0..subs {
+                    let e = eq.lo[x_first + sub];
+                    for lane in 0..ELL {
+                        part_ab[lane] += e * folded[16 * sub + lane];
+                        part_c[lane] += e * folded[16 * sub + 8 + lane];
+                    }
+                }
+            }
+            let e = eq.hi[x_hi];
+            for lane in 0..ELL {
+                acc.0[lane] += e * part_ab[lane];
+                acc.1[lane] += e * part_c[lane];
+            }
+        },
+        |mut x, y| {
+            for l in 0..ELL {
+                x.0[l] += y.0[l];
+                x.1[l] += y.1[l];
+            }
+            x
+        },
+    );
+    let c_lifted = ntt_extend_vec(&c_s_part, &table);
+    ab.iter().zip(&c_lifted).map(|(&x, &y)| x + y).collect()
+}
+
+#[cfg(not(all(
+    target_arch = "x86_64",
+    target_feature = "gfni",
+    target_feature = "avx512bw",
+    target_feature = "avx512vbmi"
+)))]
+pub fn round1_bytes(a: &[u8], b: &[u8], c: &[u8], m: usize, r_rest: &[F192]) -> Vec<F192> {
+    round1_generic(a, b, c, m, MIN_SKIP, r_rest)
+}
+
+/// The round-1 message for any skip of 3 to 6: per `x`, its 128 groups extended by the inverse NTT's byte tables.
+pub fn round1_generic(a: &[u8], b: &[u8], c: &[u8], m: usize, k: usize, r_rest: &[F192]) -> Vec<F192> {
     assert!((MIN_SKIP..=K_SKIP).contains(&k));
     assert_eq!(r_rest.len(), m - k);
     let ell = 1usize << k;

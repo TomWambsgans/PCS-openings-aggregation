@@ -101,6 +101,31 @@ fn round1_at_six_is_leanvms() {
     }
 }
 
+/// At a skip of 3, the byte kernel's round 1 (GFNI) is the generic one's.
+#[test]
+fn round1_bytes_is_the_generic_round1() {
+    let mut rng = Rng(0x5eed_0005);
+    for m in [11usize, 14, 17] {
+        let padding = PaddingSpec {
+            k_log: 14,
+            useful_bits_per_block: 16_000,
+        };
+        let [a, b, c] = witness(m, &padding, &mut rng);
+        // Not an honest witness's C: the message is linear in it, so any bits test the kernel.
+        let c: Vec<u8> = c.iter().map(|&x| x ^ rng.next() as u8).collect();
+        let r_rest: Vec<F192> = small_challenges()
+            .into_iter()
+            .chain(medium_challenges())
+            .chain((0..m - 3 - 7).map(|_| rng.ext()))
+            .collect();
+        assert_eq!(
+            lv42_flock::zerocheck::skip::round1_bytes(&a, &b, &c, m, &r_rest),
+            lv42_flock::zerocheck::skip::round1_generic(&a, &b, &c, m, 3, &r_rest),
+            "m = {m}"
+        );
+    }
+}
+
 /// At a skip of 6 the skip module's zerocheck writes leanVM's stream, byte for byte, and leaves its claim.
 #[test]
 fn zerocheck_at_six_is_leanvms() {
@@ -185,6 +210,63 @@ fn zerocheck_skips_verify_and_are_faithful() {
             assert_eq!(claim.c_eval, quirky(&c, k, claim.z, &chi), "k = {k}, m = {m}: ĉ");
             println!("k = {k}, m = {m}: {} stream bytes, accepted, claims true", writer.stream.len());
         }
+    }
+}
+
+/// The skips' costs on a real trace's Flock witness (`LEANVM_TRACE`; ignored): round 1 alone, the zerocheck, and
+/// the whole reduction (with the lincheck), at skips of 3 to 6.
+#[test]
+#[ignore]
+fn skip_timings_on_a_real_witness() {
+    let Some(dir) = std::env::var("LEANVM_TRACE").ok() else {
+        println!("LEANVM_TRACE is not set");
+        return;
+    };
+    lv42_parallel::init();
+    let w = FlockWitness::load(std::path::Path::new(&dir)).expect("Flock's inputs");
+    let setup = lv42_flock::hash::Blake2sSetup::new(w.n_blocks);
+    let m = setup.m();
+    let bytes = |words: &[u64]| -> Vec<u8> { words.iter().flat_map(|x| x.to_le_bytes()).collect() };
+    let (a, b, c) = (bytes(&w.a), bytes(&w.b), bytes(&w.z));
+    let padding = PaddingSpec {
+        k_log: 14,
+        useful_bits_per_block: lv42_flock::hash::USEFUL_BITS,
+    };
+    for k in [3usize, 4, 5, 6] {
+        let mut rng = Rng(0x7171 ^ k as u64);
+        let r_rest: Vec<F192> = small_challenges()
+            .into_iter()
+            .chain(medium_challenges())
+            .chain((0..m - k - 7).map(|_| rng.ext()))
+            .collect();
+        let started = std::time::Instant::now();
+        let _ = round1(&a, &b, &c, m, k, &r_rest);
+        let r1 = started.elapsed().as_secs_f64();
+        let seed = keccak_seed(b"flock skip time!", &[k as u8; 32], &[0; 32]);
+        let mut writer = KeccakWriter::new(seed);
+        let started = std::time::Instant::now();
+        {
+            let mut chain = Chain {
+                writer: &mut writer,
+                samples: Vec::new(),
+            };
+            let _ = prove_skip(&a, &b, &c, m, k, &padding, &mut chain);
+        }
+        let zc = started.elapsed().as_secs_f64();
+        for (stage, secs) in lv42_flock::zerocheck::skip::STAGES.lock().unwrap().iter() {
+            println!("  skip {k}: {stage} {secs:.3} s");
+        }
+        let mut writer = KeccakWriter::new(seed);
+        let started = std::time::Instant::now();
+        {
+            let mut chain = Chain {
+                writer: &mut writer,
+                samples: Vec::new(),
+            };
+            let _ = setup.prove_reduction_skip(k, &w.z, &w.a, &w.b, &w.z_lincheck, &mut chain);
+        }
+        let all = started.elapsed().as_secs_f64();
+        println!("skip {k}: round 1 {r1:.3} s; zerocheck (this module's) {zc:.3} s; reduction {all:.3} s");
     }
 }
 
