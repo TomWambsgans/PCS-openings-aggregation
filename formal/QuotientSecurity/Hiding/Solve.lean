@@ -14,8 +14,8 @@ of `p`'s other half that the stack has (`S = Set.range pos`), folding to `e` (`h
   `x` or `y` lies in `K` (`mem_range_of_sq_eq`: `E` has no quadratic subfield over `K`, so
   `x² ∈ K + K x` puts `x` in `K`). `span_face`: so do the fold weights of the four lanes of a face
   of the lane cube in two coordinates whose challenges are not in `K`.
-* `span_cube`, `hsolve_of_cube`: the cubes `32 .. 40` and `0 .. 8` span, so `hsolve` holds, for every
-  `φ` with no coordinate in `{0, 1}` and at most one of `φ₀, φ₁, φ₂` in `K` (`¬ TwoInK φ`).
+* `span_cube`, `hsolve_of_cube`: the cubes `32 .. 40` and `0 .. 8` span, so `hsolve` holds, for
+  every `φ` with no coordinate in `{0, 1}` and at most one of `φ₀, φ₁, φ₂` in `K` (`¬ TwoInK φ`).
   `card_twoInK_le`, `prob_twoInK_le`: two of them lie in `K` for at most `3·|K|²·|E|⁴` challenges,
   probability `3·|K|²/|E|²` (`3·2^-256`); `prob_not_solvable_le`: with a coordinate in `{0, 1}`,
   `(12·|E| + 3·|K|²)/|E|²` (`12·2^-192 + 3·2^-256`).
@@ -36,7 +36,8 @@ variable {K E : Type} [Field K] [Field E] [Algebra K E]
 
 /-! ### `hsolve` from a span -/
 
-/-- Bit 5 of pattern `p`'s other half (its solvers'): set for the pairs, clear for the overflow lane. -/
+/-- Bit 5 of pattern `p`'s other half (its solvers'): set for the pairs, clear for the overflow
+lane. -/
 def solverBit (p : Fin 3) : Bool := decide (p.val < 2)
 
 theorem onOther_ofK (p : Fin 3) (s : (Fin 6 → Bool) → K)
@@ -50,8 +51,8 @@ theorem onOther_ofK (p : Fin 3) (s : (Fin 6 → Bool) → K)
     have : s b = 0 := h b (by rw [hb]; simp [solverBit, hp])
     simp [ofK, this]
 
-/-- **A solver from a span.** If the fold weights of lanes `T`, all of the stack (`S`) and on pattern
-`p`'s other half, span `E` over `K`, every `e : E` is the fold of `K`-values on `T`. -/
+/-- **A solver from a span.** If the fold weights of lanes `T`, all of the stack (`S`) and on
+pattern `p`'s other half, span `E` over `K`, every `e : E` is the fold of `K`-values on `T`. -/
 theorem solve_of_span (φ : Fin 6 → E) (S : Set (Fin 6 → Bool)) (p : Fin 3) (T : Set (Fin 6 → Bool))
     (hTS : T ⊆ S) (hTp : ∀ b ∈ T, b (Fin.last 5) = solverBit p)
     (hspan : Submodule.span K (eqW φ '' T) = ⊤) (e : E) :
@@ -216,10 +217,10 @@ section Face
 
 variable [FiniteDimensional K E]
 
-/-- **A face of the lane cube spans `E`**: the fold weights of the four lanes that agree with `r` off
-two coordinates `a, b` whose challenges are not in `K` (the others avoiding `{0, 1}`) are a nonzero
-multiple of `(1 - φ_a)(1 - φ_b), (1 - φ_a) φ_b, φ_a (1 - φ_b), φ_a φ_b`, whose span is that of
-`1, φ_a, φ_b, φ_a φ_b`. -/
+/-- **A face of the lane cube spans `E`**: the fold weights of the four lanes that agree with `r`
+off two coordinates `a, b` whose challenges are not in `K` (the others avoiding `{0, 1}`) are a
+nonzero multiple of `(1 - φ_a)(1 - φ_b), (1 - φ_a) φ_b, φ_a (1 - φ_b), φ_a φ_b`, whose span is that
+of `1, φ_a, φ_b, φ_a φ_b`. -/
 theorem span_face (h3 : Module.finrank K E = 3) {n : ℕ} (φ : Fin n → E) (r : Fin n → Bool)
     {a b : Fin n} (hab : a ≠ b) (hav : ∀ i, i ≠ a → i ≠ b → φ i ≠ 0 ∧ φ i ≠ 1)
     (ha : φ a ∉ Set.range (algebraMap K E)) (hb : φ b ∉ Set.range (algebraMap K E)) :
