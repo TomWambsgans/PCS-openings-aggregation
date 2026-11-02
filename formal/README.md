@@ -101,11 +101,31 @@ in that PRG).
   independent) and the redesigned layout's row entropy (`row_entropy` for any layout whose entries below the
   gadget are free, `gadget_stackR_of_onFirst` for `GadgetLayout`; pairs of rows too): `δ = 2^-64(L-3)`,
   `2^-2368` (40 lanes) and `2^-3840` (63). **`zk_deployed_bits`**: `εFS + εhv + 2^-2200`.
+- **`FSFresh`, proved** (`Deployed/Fresh/`, `Deployed/Fresh.lean`; `fsFresh_deployed`): the honest prover's
+  Fiat–Shamir inputs are fresh but with probability
+  `εFS = Q · 6 (|c₀| + Q) / 2^256 + 2 (|c₀| + Q) · 3 εc + |c₀| δ₀` (`Q = skelBound`), `≤ 2^-54` for
+  `|c₀| ≤ 2^127` (`fsFresh_deployed_bits`), for a prover `P` whose secret rows are Keccak-256 inputs longer than
+  192 bytes, whose witness table needs no challenge and has a first row of min-entropy `δ₀` (`2^-2368`), whose
+  openings' messages begin, after 5, 128 and 242 challenges, with claims whose first 24 bytes are a window `cw j`
+  of the fifth (`ρ`) or fourth (`t`) chain state of min-entropy `εc` (`2^-191`: `ρ`'s limbs, `t / (1 + t)`), and
+  with `242 ≤ P.n`. The run is tracked with a flag *bad*, raised when a fresh answer lands where it should not
+  (its digest the start of an input held, or the root words at its end, or another answer's digest; its
+  capacity an input's or zero; its seed state an input; at the fourth and fifth states, a claims window of an
+  input): `Pr[bad]` is the first two terms (`Fresh/Prob.lean`, a potential-weighted bad-event budget). Off
+  *bad*, Hoare triples over the whole skeleton (`Fresh/Core.lean` … `Fresh/Skel.lean`, `trip_skel`) show every
+  Fiat–Shamir input fresh: the chain's first input (label state, which may be public, then the witness root)
+  through the root, fresh because the first leaf is (`|c₀| δ₀`); each later chain input through the previous
+  state; each opening's seed through the claims' window (the IV hashes public data, so its freshness is the
+  claims' challenge: the inherent `|c₀| · 2^-191`); every draw through the duplex's fresh capacity, grinding
+  included (tries differ in the nonce lane; an exhausted grind leaves a fresh draw input). **`zk_deployed_fs`**,
+  **`zk_deployed_fs_bits`**: `2^-54 + εhv + 2^-2200`; with the joint model **`zk_deployed_joint_fs`**:
+  `2^-54 + 2^-165 + 2^-2200`, and in the random-permutation model **`zk_rpm_deployed_joint_fs`**,
+  **`zk_rpm_deployed_joint_fs'`** (`QuotientZk/FreshJoint.lean`; the latter also without `hrow`, `hduplex`):
+  `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`.
 - **What stays a hypothesis**: `JointHVZK` (the interactive protocol's honest-verifier zero knowledge, F1 with F3
-  and the gadget's (R)); `FSFresh` (the honest prover's Fiat–Shamir inputs fresh but with probability `εFS`: every
-  such input holds the previous chain state or duplex capacity, or a fresh root; a collision bound not formalized);
-  `Factors` for the deployed prover (structural: the masks and the two paddings are independent and WHIR's
-  messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed; equal by
+  and the gadget's (R)); `FSFresh`'s conditions on the prover above (long rows, the first witness row's entropy,
+  claims reading a challenge, structural); `Factors` for the deployed prover (structural: the masks and the two
+  paddings are independent and WHIR's messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed; equal by
   test, not by proof: see the next item). The lift to leanerVM's random-permutation model is separate
   (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
 - **`skel` against the Rust prover, by test** (`QuotientZk/Test/SkelTrace.lean`, executable `skeltrace`;
