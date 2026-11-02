@@ -15,6 +15,9 @@ depends on `propext`, `Classical.choice` and `Quot.sound` only (`Compose/Axioms.
 | `Compose/Openings.lean` | The deployed verifier: `Params.Accepts` is the witness claim, the wiring claim, the reduction's own check and the two quotient claims (`accepts_iff`); the verifier accepts when its check holds and the three openings accept (`Accepted`). The **extractor** (`extractor`) returns the witness root's candidate list read off the transcript. A broken run has a doomed opening or wins the list game (`breaks_imp`). **`knowledgeSoundness_composed`**. |
 | `Compose/Bits.lean` | The numbers: `max L₁ (L₁ L₂) · roundError ≤ 2^-128` for lists up to `2^18` (F1's margin `roundError_mul_sq_le`), `≤ 2^-138` for the certified `7908` / `3564`. |
 | `Compose/Final.lean` | **`knowledgeSoundness_merkle`** / `_certified`: the composed statement with the Merkle extractor `witnessExtractor`. |
+| `Compose/TwoOracle.lean` | **The same in leanerVM `mumbai`'s two-oracle model** `KeccakCalls` (Keccak-256 and Keccak-f[1600], the model of F2's `family_sound`): the bad-query engine for dependent answer types (`prEvent_randomOracle_le_of_freshBad_dep`); Keccak-256's answers read as 32 bytes (`Digest.toRpm`, `viewT`); a uniform table of both oracles read through the view is a uniform table of 32-byte answers (`prEvent_view`), so each fresh query is bad with `listBad`'s probability (`prob_kcBad`); the chain on Keccak-256, the openings any computation of both oracles, the transcript of the Keccak-256 queries (`kcExperiment`); **`knowledgeSoundness_list_kc`**. |
+| `Compose/ComposedKC.lean` | **`knowledgeSoundness_composed_kc`**, **`knowledgeSoundness_merkle_kc`**: the composed statements in mumbai's model, the three openings' doomed events now events of the experiment `family_sound` lives in. |
+| `Compose/Extract.lean` | **The Merkle extraction is mumbai's `extract` without collisions**: a climb through the history's answers is `merkleWord`'s descent and conversely (`leafAt_of_climb`, `leafAt_some`); with answers injective on the history, at every position of the tree `merkleWord`'s row read as words is mumbai's `Rom.extract` row (`wordOfMerkle_eq_extract`). |
 
 ## The statement
 
@@ -47,6 +50,13 @@ the witness table's Merkle tree (height `c₁.height`, leaves of `c₁.leafLen` 
 word with `c₁.dec` (lists of at most `c₁.bound`). `_certified`: `2^-138` in place of `2^-128` for
 `c₁.bound ≤ 7908`, `c₂.bound ≤ 3564`, identities of degree at most `2^29`.
 
+## The statement in mumbai's model
+
+`knowledgeSoundness_merkle_kc` is `knowledgeSoundness_merkle` with `OracleComp KeccakCalls` in
+place of `OracleComp HashSpec` and `kcExperiment` in place of `rootExperiment`: same bound,
+`εW + εσ + εQ + (Q + 6 + QV) (2^-128 + 4 (Q + 6 + QV) / 2^256)`, the extractor reading the
+transcript of every Keccak-256 query of the run.
+
 ## What stays a hypothesis
 
 * **The openings' terms** `hW`, `hσ`, `hQd`: each opening accepts while every candidate of its
@@ -57,12 +67,14 @@ word with `c₁.dec` (lists of at most `c₁.bound`). `_certified`: `2^-138` in 
   instantiation for that exact transcript is in progress in `WhirBridge`; so far `WhirBridge`'s layout
   and weight closure are the public ones, which the **wiring** opening uses: the witness and quotient
   openings use hidden layouts, being added). To discharge them here:
-  1. run this experiment in mumbai's two-oracle model (`KeccakCalls`: the chain and the Merkle
+  1. (done: `TwoOracle.lean`, `ComposedKC.lean`) run this experiment in mumbai's two-oracle model (`KeccakCalls`: the chain and the Merkle
      trees on Keccak-256, the openings' duplex on Keccak-f[1600]) — the bad-query engine of
      `QuotientRpm/FreshBad.lean` is for one oracle, so either it is extended to the sum, or both
      theorems are moved to the random-permutation model, where there is one oracle;
-  2. identify `merkleWord` with mumbai's `extract`/`wordOf` of the root (they agree off mumbai's
-     `Fail` event: unique preimages, `extract_take_eq`), and `dec` with an **exact** list decoder
+  2. identify `merkleWord` with mumbai's `extract`/`wordOf` of the root (done for `extract`, with
+     injective answers: `wordOfMerkle_eq_extract`; still to do: the opening's committed word is
+     `extract` of the root it reads, the stage cache against the final transcript, `extract_take_eq`
+     with the probability of `Fail`), and `dec` with an **exact** list decoder
      (it returns every stack of mumbai's `Candidates` at the level-0 Johnson threshold, read back
      through the layout as a table, then as F1's message), so that a candidate here is a
      candidate there;

@@ -1,5 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Compose.Final
+import Compose.ComposedKC
+import Compose.Extract
 
 /-! The axioms of the composition's theorems (printed when the module is built). -/
 
@@ -16,3 +18,14 @@ import Compose.Final
 #print axioms Compose.merkleCommit
 #print axioms Compose.knowledgeSoundness_merkle
 #print axioms Compose.knowledgeSoundness_merkle_certified
+#print axioms Compose.prEvent_randomOracle_le_of_freshBad_dep
+#print axioms Compose.prEvent_view
+#print axioms Compose.prob_kcBad
+#print axioms Compose.trace_kc
+#print axioms Compose.knowledgeSoundness_list_kc
+#print axioms Compose.knowledgeSoundness_composed_kc
+#print axioms Compose.knowledgeSoundness_merkle_kc
+#print axioms Compose.leafAt_of_climb
+#print axioms Compose.leafAt_some
+#print axioms Compose.merkleWord_eq_extract
+#print axioms Compose.wordOfMerkle_eq_extract

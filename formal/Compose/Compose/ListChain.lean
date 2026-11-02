@@ -714,39 +714,23 @@ theorem rootExperiment_run (A : OracleComp HashSpec (RootProof F × O))
   exact this
 
 open Classical in
-/-- **The trace**: on every table, a winning run asks a bad fresh query. -/
-theorem trace_listBad (A : OracleComp HashSpec (RootProof F × O))
-    (post : RootProof F × O → Chals F → OracleComp HashSpec β) (T : Table)
-    (hwin : ListWins W C₁ C₂ (evalWithAnswerFn (QueryImpl.ofFn T) (rootExperiment W A post))) :
-    FreshBad (listBad W C₁ C₂) T ∅
-      ((tableQueryLog (rootExperiment W A post) T).map Sigma.fst) := by
-  obtain ⟨hlogE, hevalE⟩ := rootExperiment_run W A post T
-  obtain ⟨hL, heval⟩ := rootRun_run W A post T
-  set p := evalWithAnswerFn (QueryImpl.ofFn T) A
-  set π := p.1
-  set x₀ := W.label π.stmt
-  set x₁ := Wire.afterRoot (T x₀) π.r₁
-  set x₂ := (T x₁).toList
-  set x₃ := (T x₂).toList
-  set x₄ := Wire.afterRoot (T x₃) π.r₂
-  set x₅ := W.afterValues (T x₄) π.v
-  set L := (tableQueryLog (rootRun W A post) T).map Sigma.fst
-  rw [hlogE]
-  rw [hevalE, heval] at hwin
-  -- The transcript's candidates are the table's on the inputs asked.
-  set tr : Transcript := (tableQueryLog (rootRun W A post) T).map fun q => (q.1, q.2)
-  have htrH : histOfTr tr = L.toFinset := by
-    simp only [histOfTr, tr, L, List.map_map]
-    rfl
-  have htrT : ∀ d ∈ histOfTr tr, tableOfTr tr d = T d := by
-    intro d hd
-    refine tableOfTr_eq T tr (fun e he => ?_) d (by simpa [histOfTr] using hd)
-    obtain ⟨q, hq, rfl⟩ := List.mem_map.mp he
-    exact tableQueryLog_snd T _ q hq
-  obtain ⟨g, hg, R, hR, hacc, hsat⟩ := hwin
-  simp only at hg hR hacc hsat
-  rw [C₁.congr _ _ _ _ htrT, htrH] at hg
-  rw [C₂.congr _ _ _ _ htrT, htrH] at hR
+/-- **The trace, on a log**: if the log holds the chain's six inputs, and some candidate pair of the
+two roots, read off the log, satisfies the verifier's claims at the chain's challenges while the
+witness candidate's cells fail the relation, then some fresh input of the log is bad. -/
+theorem trace_core (L : List (List UInt8)) (T : Table) (π : RootProof F) (g : B.Msg₁)
+    (R : B.Msg₂) :
+    let x₀ := W.label π.stmt
+    let x₁ := Wire.afterRoot (T x₀) π.r₁
+    let x₂ := (T x₁).toList
+    let x₃ := (T x₂).toList
+    let x₄ := Wire.afterRoot (T x₃) π.r₂
+    let x₅ := W.afterValues (T x₄) π.v
+    (∀ y ∈ [x₀, x₁, x₂, x₃, x₄, x₅], y ∈ L) → g ∈ C₁.cands L.toFinset T π.r₁ →
+      R ∈ C₂.cands L.toFinset T π.r₂ →
+      P.Accepts (W.decode π.stmt) g.1 R.1 (W.chal (T x₁)) (W.chal (T x₂)) (W.chal (T x₃))
+        (W.chal (T x₄)) π.v.1 π.v.2 (W.chal (T x₅)) →
+      ¬ P.Sat (W.decode π.stmt) (P.cells g.1) → FreshBad (listBad W C₁ C₂) T ∅ L := by
+  intro x₀ x₁ x₂ x₃ x₄ x₅ mem hg hR hacc hsat
   by_contra hnb
   have nb : ∀ y ∈ L, ¬ listBad W C₁ C₂ (before L y) y T := fun y hy => by
     simpa using not_bad_before (listBad W C₁ C₂) T ∅ L hnb y hy (Finset.notMem_empty _)
@@ -769,9 +753,6 @@ theorem trace_listBad (A : OracleComp HashSpec (RootProof F × O))
       · exact nb y hy (Or.inl (Or.inr ⟨z, Finset.mem_insert_of_mem h', h⟩))
   have injB : ∀ y, Set.InjOn T ↑(before L y) := fun y a ha b hb hab =>
     hinj a (mem_of_mem_before L a y ha) b (mem_of_mem_before L b y hb) hab
-  have mem : ∀ y ∈ [x₀, x₁, x₂, x₃, x₄, x₅], y ∈ L := fun y hy => by
-    rw [hL]
-    exact List.mem_append_right _ (List.mem_append_left _ hy)
   have m0 := mem x₀ (by simp)
   have m1 := mem x₁ (by simp)
   have m2 := mem x₂ (by simp)
@@ -840,6 +821,44 @@ theorem trace_listBad (A : OracleComp HashSpec (RootProof F × O))
     exact nb x₅ m5 (Or.inr (Or.inr (Or.inr ⟨π.stmt, π.r₁, π.r₂, _, _, π.v,
       ⟨T x₀, T x₁, T x₂, T x₃, T x₄, ⟨s45 c04, rfl⟩, ⟨s45 c14, rfl⟩, ⟨s45 c24, rfl⟩,
         ⟨s45 b34, rfl⟩, ⟨b45, rfl⟩, rfl, rfl, rfl, injB x₅⟩, g, g5, R, R5, h1, h2⟩)))
+
+open Classical in
+/-- **The trace**: on every table, a winning run asks a bad fresh query. -/
+theorem trace_listBad (A : OracleComp HashSpec (RootProof F × O))
+    (post : RootProof F × O → Chals F → OracleComp HashSpec β) (T : Table)
+    (hwin : ListWins W C₁ C₂ (evalWithAnswerFn (QueryImpl.ofFn T) (rootExperiment W A post))) :
+    FreshBad (listBad W C₁ C₂) T ∅
+      ((tableQueryLog (rootExperiment W A post) T).map Sigma.fst) := by
+  obtain ⟨hlogE, hevalE⟩ := rootExperiment_run W A post T
+  obtain ⟨hL, heval⟩ := rootRun_run W A post T
+  set p := evalWithAnswerFn (QueryImpl.ofFn T) A
+  set π := p.1
+  set x₀ := W.label π.stmt
+  set x₁ := Wire.afterRoot (T x₀) π.r₁
+  set x₂ := (T x₁).toList
+  set x₃ := (T x₂).toList
+  set x₄ := Wire.afterRoot (T x₃) π.r₂
+  set x₅ := W.afterValues (T x₄) π.v
+  set L := (tableQueryLog (rootRun W A post) T).map Sigma.fst
+  rw [hlogE]
+  rw [hevalE, heval] at hwin
+  -- The transcript's candidates are the table's on the inputs asked.
+  set tr : Transcript := (tableQueryLog (rootRun W A post) T).map fun q => (q.1, q.2)
+  have htrH : histOfTr tr = L.toFinset := by
+    simp only [histOfTr, tr, L, List.map_map]
+    rfl
+  have htrT : ∀ d ∈ histOfTr tr, tableOfTr tr d = T d := by
+    intro d hd
+    refine tableOfTr_eq T tr (fun e he => ?_) d (by simpa [histOfTr] using hd)
+    obtain ⟨q, hq, rfl⟩ := List.mem_map.mp he
+    exact tableQueryLog_snd T _ q hq
+  obtain ⟨g, hg, R, hR, hacc, hsat⟩ := hwin
+  simp only at hg hR hacc hsat
+  rw [C₁.congr _ _ _ _ htrT, htrH] at hg
+  rw [C₂.congr _ _ _ _ htrT, htrH] at hR
+  exact trace_core W C₁ C₂ L T π g R (fun y hy => by
+    rw [hL]
+    exact List.mem_append_right _ (List.mem_append_left _ hy)) hg hR hacc hsat
 
 end Trace
 
