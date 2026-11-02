@@ -50,13 +50,12 @@ variable {P : Params F} {B : P.Bounds}
 abbrev OpenProofs := Proof × Proof × Proof
 
 /-- **What the deployed verifier hands the openings**: the layouts, the rate, the circuit's
-commitment, and the claims of each opening as a function of the reduction's proof and challenges. -/
+and the claims of each opening as a function of the reduction's proof and challenges. -/
 structure Deploy (F : Type) where
   R : ℕ
   Lw : Layout
   Lσ : Layout
   LQ : Layout
-  indexRoot : Digest
   clW : RootProof F → Chals F → Stmt Lw.stacking
   clσ : RootProof F → Chals F → Stmt Lσ.stacking
   clQ : RootProof F → Chals F → Stmt LQ.stacking
@@ -82,9 +81,10 @@ def DA (A : OracleComp KeccakCalls (RootProof F × OpenProofs)) : OracleComp Kec
 def wIn (a : S0 F) : (Digest × Stmt D.Lw.stacking) × Proof :=
   ((ofB a.π.r₁, D.clW a.π a.ch), a.o.1)
 
-/-- The wiring opening's input: the circuit's commitment, its claim, its proof. -/
+/-- The wiring opening's input: the circuit's commitment (the one the chain's label holds, the
+setup's: `withSetup`), its claim, its proof. -/
 def σIn (a : S0 F) : (Digest × Stmt D.Lσ.stacking) × Proof :=
-  ((D.indexRoot, D.clσ a.π a.ch), a.o.2.1)
+  ((ofB a.π.ir, D.clσ a.π a.ch), a.o.2.1)
 
 /-- The quotient opening's input: the second root, its two claims, its proof. -/
 def qIn (a : S0 F) : (Digest × Stmt D.LQ.stacking) × Proof :=
@@ -198,11 +198,12 @@ theorem isTotalQueryBound_midσ (A : OracleComp KeccakCalls (RootProof F × Open
     IsTotalQueryBound (midσ W D A) (Q + 6 + QO + QO) := by
   have hin : IsTotalQueryBound (innerW W D A) (Q + 6 + QO) := by
     refine isTotalQueryBound_loggedKC_run _ _ _ ?_
-    exact isTotalQueryBound_bind (ob := fun a => (a, ·) <$> ourVerifier D.Lw D.R (wIn D a))
+    exact isTotalQueryBound_bind (ob := fun a : S0 F => (a, ·) <$> ourVerifier D.Lw D.R (wIn D a))
       (isTotalQueryBound_DA W A Q hQ) fun a =>
         (isQueryBound_map_iff (ourVerifier D.Lw D.R (wIn D a)) (fun b => (a, b)) QO _ _).mpr
           (hO D.Lw (wIn D a))
-  exact isTotalQueryBound_bind (ob := fun x => (x, ·) <$> ourVerifier D.Lσ D.R (σIn D x.1.1)) hin
+  exact isTotalQueryBound_bind
+    (ob := fun x : (S0 F × Bool) × Transcript => (x, ·) <$> ourVerifier D.Lσ D.R (σIn D x.1.1)) hin
     fun x => (isQueryBound_map_iff (ourVerifier D.Lσ D.R (σIn D x.1.1)) (fun b => (x, b)) QO _
       _).mpr (hO D.Lσ _)
 
@@ -286,7 +287,7 @@ theorem run_logged {α : Type} (v : OracleComp KeccakCalls α) (T : KTable) :
 /-- The adversary and the chain against a table. -/
 theorem DA_run (A : OracleComp KeccakCalls (RootProof F × OpenProofs)) (T : KTable) :
     let p := evalWithAnswerFn (QueryImpl.ofFn T) A
-    let x₀ := W.label p.1.stmt
+    let x₀ := labelOf p.1.ir p.1.stmt
     let x₁ := Wire.afterRoot (viewT T x₀) p.1.r₁
     let x₂ := (viewT T x₁).toList
     let x₃ := (viewT T x₂).toList
@@ -473,7 +474,7 @@ theorem trace_deployed (c₁ : TableCode B.Msg₁) (c₂ : TableCode B.Msg₂) (
   set rW := (rest.map Sigma.fst).filterMap Sum.getLeft?
   have hLHW : L = HW ++ rW := by
     simp only [L, Lk, HW, rW, hrest, List.map_append, List.filterMap_append]
-  set x₀ := W.label π.stmt
+  set x₀ := labelOf π.ir π.stmt
   set x₁ := Wire.afterRoot (viewT T x₀) π.r₁
   set x₂ := (viewT T x₁).toList
   set x₃ := (viewT T x₂).toList
@@ -728,5 +729,53 @@ theorem knowledgeSoundness_deployed (c₁ : TableCode B.Msg₁) (c₂ : TableCod
     (add_le_add hσ ((prEvent_or_le _ _ _).trans (add_le_add
       (prEvent_EQ_le W D A Q QO hQ hO r h1 h2 hLQ hR) hrest))))).trans (le_of_eq ?_)
   simp only [add_assoc]
+
+/-! ## The setup: the circuit's commitment computed with the oracle -/
+
+/-- **The circuit's commitment, computed with the oracle**: the Merkle tree of the wiring table's
+committed word (mumbai's `buildTreeWithHash`: leaves the rows' bytes, nodes `hash_pair`, all with
+Keccak-256), its root as 32 bytes. -/
+def wiringSetup (ht : ℕ) (word : Word) : OracleComp KeccakCalls Bytes32 :=
+  (fun t => toB t.root) <$> LeanVM.Prover.buildTreeWithHash callKeccak256 ht word
+
+/-- **The setup, then the adversary**: the setup computes the circuit's commitment before the
+adversary runs, the adversary is given it, and the proof the verifier reads carries it (whatever
+the adversary put there): the chain's label and the wiring opening use the setup's root. -/
+def withSetup (setup : OracleComp KeccakCalls Bytes32)
+    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) :
+    OracleComp KeccakCalls (RootProof F × OpenProofs) :=
+  setup >>= fun ir => (fun po => ({ po.1 with ir := ir }, po.2)) <$> A ir
+
+theorem isTotalQueryBound_withSetup (setup : OracleComp KeccakCalls Bytes32)
+    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) (QS Q : ℕ)
+    (hS : IsTotalQueryBound setup QS) (hA : ∀ ir, IsTotalQueryBound (A ir) Q) :
+    IsTotalQueryBound (withSetup setup A) (QS + Q) :=
+  isTotalQueryBound_bind hS fun ir => (isQueryBound_map_iff _ _ _ _ _).mpr (hA ir)
+
+/-- **Knowledge soundness of the deployed verifier, with the setup**: the circuit's commitment is
+computed with the oracle (`setup`, of at most `QS` queries; `wiringSetup` for the deployed wiring
+table) before the adversary (of at most `Q` queries) runs, and is the root the chain's label and
+the wiring opening read. The extractor reads the setup's and the adversary's queries (the setup is
+public). The bound is `knowledgeSoundness_deployed`'s with `QS + Q` queries before the chain. -/
+theorem knowledgeSoundness_deployed_setup (c₁ : TableCode B.Msg₁) (c₂ : TableCode B.Msg₂)
+    (mW : WitnessMatch D c₁) (mQ : QuotientMatch W D c₂)
+    (setup : OracleComp KeccakCalls Bytes32)
+    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) (QS Q QO : ℕ)
+    (hS : IsTotalQueryBound setup QS) (hQ : ∀ ir, IsTotalQueryBound (A ir) Q)
+    (hO : ∀ (L : Layout) w, IsTotalQueryBound (ourVerifier L D.R w) QO)
+    (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r) (h2 : r ≤ WhirBridge.maxLogRows)
+    (hLw : D.Lw = witnessLayout r ∨ D.Lw = wiringLayout r ∨ D.Lw = quotientLayout r)
+    (hLQ : D.LQ = witnessLayout r ∨ D.LQ = wiringLayout r ∨ D.LQ = quotientLayout r)
+    (hR : D.R = logInvRate) (εσ : ℝ≥0∞)
+    (hσ : Pr{let z ← (simulateQ randomOracle (deployedExp W D (withSetup setup A))).run' ∅}[
+      WDd (P := P) z] ≤ εσ) :
+    Pr{let z ← (simulateQ randomOracle (deployedExp W D (withSetup setup A))).run' ∅}[
+        BreaksD W c₁ z] ≤
+      openingBound (QS + Q + 6) + εσ + openingBound (QS + Q + 6 + QO + QO) +
+        ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) * ((listFactor c₁.commit.bound c₂.commit.bound :
+          ℝ≥0∞) * (roundError P B : ℝ≥0∞) +
+          5 * ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) / 2 ^ 256) :=
+  knowledgeSoundness_deployed W D c₁ c₂ mW mQ (withSetup setup A) (QS + Q) QO
+    (isTotalQueryBound_withSetup setup A QS Q hS hQ) hO r h1 h2 hLw hLQ hR εσ hσ
 
 end Compose

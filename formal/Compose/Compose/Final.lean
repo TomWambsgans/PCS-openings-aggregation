@@ -7,8 +7,9 @@ import Compose.Merkle
 
 `knowledgeSoundness_merkle`: the composition of `Openings.lean` with the two roots' list
 commitments the Merkle trees of `Merkle.lean`, so that **the extractor is explicit and
-computable** (`witnessExtractor`): it reads the transcript of every query and the proof's first
-root, climbs the witness table's Merkle tree down from the root through the answered inputs
+computable** (`witnessExtractor`): it reads the transcript of **every** query of the run (the
+adversary's, the chain's, the openings'; `AdversaryLog.lean`'s `adversaryExtractor` reads the
+adversary's only) and the proof's first root, climbs the witness table's Merkle tree down from the root through the answered inputs
 (`merkleWord`), and list-decodes the word with `dec₁` (for the deployed witness table, the
 level-0 Johnson list of WHIR's certified code: at most `7908` stacks, mumbai's `fastStacks` /
 Guruswami–Sudan `decodeStacks`, each read back as a table and as the first message).

@@ -11,19 +11,26 @@ openings: the **witness** claim to the witness table's root, the **wiring** clai
 commitment, and the **two quotient** claims, together, to the quotient table's root
 (`Params.Accepts` is exactly these, `accepts_iff`).
 
-**The extractor** (`extractor`) reads the transcript of every query and the witness table's root,
+**The extractor** (`extractor`) reads the transcript of **every** Keccak-256 query of the run (the
+adversary's, the chain's and the openings'; `AdversaryLog.lean`'s reads the adversary's only) and
+the witness table's root,
 and returns the root's candidate list (`ListCommit.cands`): the tables the root's word may stand
 for. Knowledge soundness is broken (`Breaks`) when the verifier accepts while no candidate's cells
 satisfy the relation for the statement. `extractorOne` picks the first satisfying candidate
 (`breaksOne_iff`: the same event).
 
-**The openings' guarantees**, each an event of the same experiment (what F2's `family_sound`
-bounds, per opening, in the two-oracle model):
+**The openings' guarantees**, each an event of the same experiment. These are **not** F2's events
+literally: here the openings' verifier is any computation, the candidates are `merkleWord` and a
+decoder rather than mumbai's `extract`, `Candidates` and `Layout.tableEval`, the claims are F1's
+polynomial identities rather than `reduce`'s multilinear claims, and the word is read off the final
+transcript rather than the cache at the end of the opening. They are reduced to F2's `ours_sound` for
+the deployed openings in `Deployed.lean` (the witness and quotient terms; the wiring term remains):
 
 * `WitnessDoomed`: the witness opening accepts while every candidate of its root violates the
   witness claim;
-* `WiringDoomed`: the wiring opening accepts while the wiring claim is false (the circuit's
-  commitment is the setup's, honest: its only candidate is the wiring table);
+* `WiringDoomed`: the wiring opening accepts while the wiring claim is false (to be discharged once
+  the experiment computes the circuit's commitment with the oracle, `Deployed.lean`'s `withSetup`:
+  its only candidate is then the wiring table);
 * `QuotientDoomed`: the quotient opening accepts while every candidate of its root violates one
   of the two quotient claims. **One opening holds both claims**: a candidate that is not doomed
   satisfies both (F2's `joint_of_not_doom`); split over two openings each claim would get its own

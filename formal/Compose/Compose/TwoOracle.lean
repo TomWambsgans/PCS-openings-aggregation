@@ -457,7 +457,7 @@ theorem kcExperiment_queryBound (A : OracleComp KeccakCalls (RootProof F × O))
 theorem kcRun_run (A : OracleComp KeccakCalls (RootProof F × O))
     (post : RootProof F × O → Chals F → OracleComp KeccakCalls β) (T : KTable) :
     let p := evalWithAnswerFn (QueryImpl.ofFn T) A
-    let x₀ := W.label p.1.stmt
+    let x₀ := labelOf p.1.ir p.1.stmt
     let x₁ := Wire.afterRoot (viewT T x₀) p.1.r₁
     let x₂ := (viewT T x₁).toList
     let x₃ := (viewT T x₂).toList
