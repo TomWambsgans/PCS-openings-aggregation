@@ -8,7 +8,7 @@
 # a built checkout of leanerVM (https://github.com/Verified-zkEVM/leanerVM, commit
 # 6175f1a07f0dc33bd3d640de0063d1006143ee91) at `../leanervm`, sharing that checkout's `lean_vm`
 # packages, so nothing of them is fetched; the libraries of this repository are compiled from their
-# sources in `formal/` (`srcDir`). See README.md.
+# sources in `formal/` (`srcDir`). See the completeness section of `formal/README.md`.
 name = "pcs-quotient-completeness"
 version = "0.1.0"
 defaultTargets = ["Completeness"]

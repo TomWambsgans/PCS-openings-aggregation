@@ -4,17 +4,15 @@ import Completeness.Deployed
 /-!
 # The end theorems
 
-* **`HiddenOpening`**: what F2's update to the redesigned hidden layout (`cbb527d`, in progress in
-  `formal/WhirBridge`) is to give for the witness and quotient tables: `opening::verify` with the
+* **`HiddenOpening`**: what the witness and quotient tables' openings must give (proven for the
+  deployed layouts in `HiddenOpenings.lean`, with F2's transcription of the redesigned layout): `opening::verify` with the
   gadget, the honest root and opening, and completeness for the honest stack `Layout.fillNew`
   (`HiddenFill.lean`) of a table vanishing off its chunks whose claims are true. Discharging it
   takes three proven pieces and one to come: the table read back from the honest stack is the table
   (`witness_read`, `quotient_read`) and the honest stack cancels the gadget
   (`gadgetWeight_sum_zero`), both here; mumbai's completeness of the opening for any stacking whose
-  stack claims hold (`honestOpen_accepts`, `Opening.lean`); and **to come from F2's update**, the
-  meaning of the redesigned layout's claims (the new `Layout.holds_iff`: a stack claim holds iff the
-  table `Table::read` reads back satisfies the table claim) and the gadget as a stack claim of the
-  opening's program.
+  stack claims hold (`honestOpen_accepts`, `Opening.lean`); and F2's meaning of the redesigned
+  layout's claims (`Layout.holds_iff`) and of its gadget (`Layout.extra_holds_iff`).
 * **`completeness_hidden`**: `completeness_deployed` with those openings.
 * **`completeness_bad_set`**: the degenerate challenges depend only on the witness (the secret and
   the masks), not on the hash, the transcript or the padding: **for each witness there is one set
@@ -37,8 +35,8 @@ namespace Completeness
 
 open QuotientSecurity
 
-/-- **The opening of a redesigned hidden layout** `L` (pieces of `2^s`, table entries `Held`): what
-F2's update is to give. -/
+/-- **The opening of a redesigned hidden layout** `L` (pieces of `2^s`, table entries `Held`): its
+root, honest prover, verifier and completeness (`witnessOpening`, `quotientOpening`). -/
 structure HiddenOpening (L : WhirBridge.Layout) (s : ℕ) (Held : ℕ → Prop) where
   root : (Bytes → Digest) → Column L.logN → Digest
   prove : (Bytes → Digest) → (KeccakState → KeccakState) → Column L.logN → List WhirBridge.Claim →
