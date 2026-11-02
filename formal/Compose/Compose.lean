@@ -7,4 +7,5 @@ import Compose.Final
 import Compose.TwoOracle
 import Compose.ComposedKC
 import Compose.Extract
+import Compose.AdversaryLog
 import Compose.Axioms

@@ -2,6 +2,7 @@
 import Compose.Final
 import Compose.ComposedKC
 import Compose.Extract
+import Compose.AdversaryLog
 
 /-! The axioms of the composition's theorems (printed when the module is built). -/
 
@@ -29,3 +30,9 @@ import Compose.Extract
 #print axioms Compose.leafAt_some
 #print axioms Compose.merkleWord_eq_extract
 #print axioms Compose.wordOfMerkle_eq_extract
+#print axioms Compose.run_congr
+#print axioms Compose.prob_rootBad
+#print axioms Compose.trace_adv
+#print axioms Compose.knowledgeSoundness_list_adv
+#print axioms Compose.knowledgeSoundness_composed_adv
+#print axioms Compose.knowledgeSoundness_merkle_adv
