@@ -12,21 +12,22 @@ functions of the witness: the witness table `R1` held `w_hat` and the masks in c
 guesses a witness could recompute the root from it (the four `a_j` pin the twelve masks), and the opened rows of
 `R1` and `R2` matched the guessed witness's rows. Now both tables are committed in **hidden layouts**, leanVM's
 WHIR verifier is unchanged (`verifier::whir::verify_whir`, a stack of at most `2^28` words in 64 lanes, claims as
-weights), the claims and the contract are unchanged, and the prover is the memory-lean one (three lane tensors a
-claim). The wiring table is public and keeps its plain layout.
+weights), the claims and the contract are unchanged, and the prover is the memory-lean one (a lane tensor a claim
+on the blocks, one on the overflow lane, two for the gadget). The wiring table is public and keeps its plain layout.
 
 ## What is hidden
 
 Notation: `K = GF(2^64)`, `E = GF(2^192)`; a stack has `L ≤ 64` lanes of `2^ℓ` words (`ℓ = log_n - 6`); `s =
-LOG_PIECE = 8`; leanVM's WHIR folds the six lane variables first (`φ ∈ E^6`, lane `l` weighs `e_l = eq(φ, l)`),
+LOG_PIECE = 8`, `D = 2^s - GADGET = 247`; leanVM's WHIR folds the six lane variables first (`φ ∈ E^6`, lane `l`
+weighs `e_l = eq(φ, l)`, variable `j` is bit `j` of `l`), batches the claims with powers of one challenge `λ`,
 opens the first commitment at a set `Q` of positions of its domain of `2^(ℓ+1)` points (222 to 225 queries at
 rate 1/2, so `|Q| ≤ 225`), and takes no out-of-domain sample there.
 
 **Theorem.** Fix the challenges of an opening. Let `T` and `T'` be two tables of a hidden layout on which every
 claim of the opening has the same value. If
 
-- **(Q)** `|Q| < 2^s`,
-- **(S)** the fold weights `e_r` of the random lanes other than the share span `E` over `K`,
+- **(Q)** `|Q| < D`,
+- **(S)** the fold weights `e_r` of the random lanes span `E` over `K`,
 - **(R)** the randomness reaches all 33 dimensions of the lane rounds (defined below),
 
 then a translation of the padding (a bijection) maps the opening's view of `T` up to WHIR's first fold onto that
@@ -41,6 +42,14 @@ indistinguishable but with probability `2·H·2^(ℓ+1)·2^(-64(L-3))` for `H` o
 `membership-zk.md`, unchanged: exchange the oracle's values on each pair of corresponding unopened rows; inner
 nodes and the root then agree).
 
+**(Q) holds always, and (S) and (R) hold for every challenge outside**
+
+`B = {λ = 0} ∪ {some φ_i ∈ {0, 1}} ∪ {two of φ_0, φ_1, φ_2 lie in K}`, `Pr[B] ≤ 13·2^-192 + 3·2^-256 < 2^-188`,
+
+**whatever the claims, their points and values** ("Condition (R) for every challenge: the gadget"). Before the
+gadget, (R) was only observed at random challenges (the provable bound was about `2^-54`, through the
+`K`-coordinates of `φ`) and (S) was bounded by `2^-127 + 13·2^-192`.
+
 With the reduction's own masking (the `a_j` uniform given the statement and `t`, `next = σ(t)` public, so the
 claims are functions of uniform and public values), the prover's whole output for one statement is the same for
 any two witnesses. What is not
@@ -48,8 +57,8 @@ hidden: the statement, the circuit, the wiring table and its opening, the sizes.
 
 **Assumptions.** Keccak-256 as a random oracle on the first commitment's rows; the transcript hashes as
 programmable random oracles for Fiat–Shamir (the standard transfer, as in `membership-zk.md`, not redone here);
-the masks and the padding seed are secret, uniform and fresh per proof, never reused (below); an honest verifier's challenges (conditions (S) and (R) are
-on them, see "What remains open").
+the masks and the padding seed are secret, uniform and fresh per proof, never reused (below); an honest verifier's
+challenges, outside `B`.
 
 ## The layout
 
@@ -57,32 +66,44 @@ on them, see "What remains open").
 tails of its chunks:
 
 - **Every lane's first piece** (entries `0 .. 2^s`, the coefficients of the basis polynomials of degree below
-  `2^s`) is uniform.
-- **Block lanes** hold a whole block each: lane `l` holds its block's piece `k ⊕ (l mod 2)` at its piece `k ≥ 1`
-  (odd lanes swap the pieces of each pair). It gives up the block's piece `l mod 2`.
-- **The overflow lane** (`L - 2`) holds at its pieces `1 .. H` the pieces the blocks give up, then the chunks'
-  tails (the masks' piece; for `R2` the three spills of `q`, 37 pieces each, and the gate quotient's 64 entries),
-  each plus a share `ρ`; its pieces past `H` are uniform.
-- **The share lane** (`L - 1`) is a random lane whose pieces `1 .. H` are `ρ`: the table's piece there is the sum
-  of the overflow lane's and the share lane's.
-- **The other random lanes** sit on odd lanes `2⌊k·P/(R-1)⌋ + 1`, `P = ⌊(L-2)/2⌋`, from lane 1 up.
+  `2^s`) is uniform, but for the gadget's values (below).
+- **Block lanes** hold a whole block each but its first piece, which is on the overflow lane. The first 32 blocks
+  are on lanes `0 .. 32` (random lanes there if there are fewer), the others from lane 40 on.
+- **The overflow lane** is lane 32 (`opening::OVERFLOW_LANE`): its pieces `1 .. H` hold the blocks' first pieces,
+  then the chunks' tails (the masks' piece; for `R2` the three spills of `q`, 37 pieces each, and the gate
+  quotient's 64 entries); its pieces past `H` are uniform.
+- **The random lanes** are lanes `33 .. 40`: with the overflow lane, the cube of lanes `32 .. 40` (bits 0, 1, 2
+  free, bits 3 and 4 zero, bit 5 one).
+- **The gadget** (`opening::GADGET`, `gadget_lanes`, `Layout::gadget_entry`): at the last nine entries of every
+  lane's first piece, three patterns of three entries. Pattern `g` weighs its lanes by `μ·β_i` at its entry
+  `D + 3g + i`, `β = 1, t, t²` the basis of `E` over `K` and `μ = λ^m` the power of the challenge after the `m`
+  claims'. Pattern 0 is lanes 0 and 31, which hold one random value there; pattern 1 lanes 1 and 30, likewise
+  (pairs complementary in bits 0 to 4, in the lower half); pattern 2 the overflow lane (in the upper half), which
+  holds zero there.
 
 | table | before | hidden | random lanes | stack |
 |---|---|---|---|---|
 | `R1` (witness, one claim) | 33 lanes | 32 blocks, overflow (33 pieces), 7 random: **40 lanes** | `WITNESS_RANDOM_LANES = 7` | `2^25` words, unchanged |
 | `R2` (quotient, two claims) | 59 lanes | 55 blocks, overflow (167 pieces), 7 random: **63 lanes** | `QUOTIENT_RANDOM_LANES = 7` | `2^28` words, unchanged |
 
-**The claims do not change.** A claim at `p` is the table's `eq(p, ·)` carried to the stack: `ω_l · eq(p_low, y ⊕
-(l mod 2)·2^s)` on block lane `l` past its first piece (`ω_l = eq(p_high, block)`), `ψ_k · eq(p_{<s}, ·)` on piece
-`k` of the overflow **and** share lanes (`ψ_k = eq(p_{≥s}, k-th held piece)`), zero elsewhere. The random entries
-weigh nothing, and `ρ` weighs the same on both lanes, so it cancels (characteristic 2): every claim's value is
-the table's. The weight is three lane tensors a claim (even blocks, odd blocks, overflow and share; a tensor that
-is zero is left out), which is what `pcs::whir::recursive_prover_with_lane_tensors` takes, and the verifier's
-closure costs `O(L + H·ℓ)` products a claim. `R1`'s and `R2`'s reductions, points, values, and so the EVM
-contract, are those of the plain layouts.
+**The claims do not change.** A claim at `p` is the table's `eq(p, ·)` carried to the stack: `ω_l · eq(p_low, y)`
+on block lane `l` past its first piece (`ω_l = eq(p_high, block)`), `ψ_k · eq(p_{<s}, ·)` on piece `k` of the
+overflow lane (`ψ_k = eq(p_{≥s}, k-th held piece)`), zero elsewhere: every claim's value is the table's, and it
+weighs nothing of the randomness. The opening proves `Σ_c λ^c v_c = Σ W·T` for `W = Σ_c λ^c W_c + λ^m G`, `G` the
+gadget: **the gadget is one more claim, of value zero**, which an honest stack meets (`μβ_i·z + μβ_i·z = 0` on a
+pair, `μβ_i·0` on the overflow lane). Batched with its own power, the opening binds a stack to it as to the claims;
+weighed with the first claim instead, a cheating prover could set the gadget's entries (words of the first piece,
+not of the table) to add any element of `E` to that claim's value (`opening::tests`,
+`claims_open_against_a_hidden_table`: such a stack opens neither the offset claim nor the true ones). As lane
+tensors the weight is one a claim on the blocks, one on the overflow lane (the claims' and pattern 2) and one for
+each of patterns 0 and 1: 4 for `R1`, 5 for `R2` (they were 3 and 6), which is what
+`pcs::whir::recursive_prover_with_lane_tensors` takes (`Layout::weight`); the verifier's closure costs `O(L + H·ℓ)`
+products a claim and nine more. `R1`'s and `R2`'s reductions, points, values, and so the EVM contract, are those
+of the plain layouts.
 
-**Soundness does not change**: the WHIR verifier is leanVM's, and the table a stack encodes is held on the same
-blocks and pieces as before or fewer (the spills now take 37 pieces, not a lane), which `fits` checks.
+**Soundness does not change**: the WHIR verifier is leanVM's, the table a stack encodes is held on the same blocks
+and pieces as before or fewer (the spills now take 37 pieces, not a lane), which `fits` checks, and the batch has
+one term more (the gadget's), `m + 1` instead of `m` in front of the Johnson list.
 
 **Randomness.** The masks and the padding's seed must be uniform, secret, and **fresh per proof, never
 reused**: two proofs that share the padding's seed have the same random first pieces, which their opened rows
@@ -98,79 +119,136 @@ deterministic, for tests and reproducible benchmarks, with the same requirement;
 (`prove_with_randomness`) is crate-private, for the tests that show what reuse reveals.
 A table's seed is Keccak-256(`"pcs-quotient-pad-" ‖ table ‖ seed`); lane `l` is filled by ChaCha12 (`rand_chacha`'s
 `ChaCha12Rng`, by name) keyed by Keccak-256(table seed ‖ `l`), so the prover is deterministic given the seed and fills lanes in
-parallel. Tests and the benchmark draw the proof's seed from `primitives::test_rng`.
+parallel; then each gadget pair's second lane takes its first lane's values there, and the overflow lane's
+pattern-2 entries are set to zero. Tests and the benchmark draw the proof's seed from `primitives::test_rng`.
 
 ## Why it hides
 
 The view up to the first fold is `K`-linear in the stack: **(V1)** the six lane rounds, two `E`-values each,
-`h_j(0)` and `h_j`'s quadratic coefficient, with
+`h_j(0)` and `h_j`'s quadratic coefficient `c_j`, with
 `h_j(X) = Σ_{l, l' agreeing above bit j} eq(φ_{<j}, l) eq(φ_{<j}, l') eq(X, l_j) eq(X, l'_j) ⟨W_l, T_l'⟩`;
 **(V2)** `f¹ = Σ_l e_l T_l`; **(V3)** each lane's codeword at each `x ∈ Q`, `Σ_y T_l(y) X_y(x)` in the novel basis
 (`X_y` of degree `y`). Let `Δ` be `T' - T` on the table's entries; it keeps every claim.
 
-1. *Past the first pieces.* The weight vanishes on first pieces, so (V1) sees only the rest. At an entry `y` past
-   the first piece, the random unknowns there (the random lanes; `ρ(y)`, of fold weight `e_O + e_S`, where the
-   overflow lane holds the table; the overflow lane where it does not) span `E` by (S): pick a change of them
-   that cancels `Δf¹(y)`. The change of (V1) left over keeps the claim (`Δ(h_0(0) + h_0(1)) = 0`) and the last
-   round's value at its challenge, `h_5(φ_5) = Σ_y W̃(y, φ) f¹(y)`; those changes form a 33-dimensional `K`-space
-   `H₁₁`. The changes of the random unknowns that keep `f¹` (the kernel of the fold at each `y`) move (V1) by
-   `Σ_l W_l(y) Σ_u k_u Σ_{r ∈ u} pairing(l, r)`; **condition (R)** is that these span all of `H₁₁`. Then the
-   leftover is cancelled too, and (V1) and (V2) past the first pieces agree.
-2. *First pieces.* Each lane's codeword at `Q` changed by `M·Δhigh_l`. Polynomials of degree below `2^s` take any
-   values on `|Q| ≤ 2^s` points, so a right inverse `N` of the first piece's evaluation at `Q` exists: change the
-   first piece by `-N(M·Δhigh_l)`. Every opened row agrees, and `f¹`'s first piece changes by
-   `-N(M·Σ_l e_l Δhigh_l) = -N(M·Δf¹_high) = 0`. (V1) does not see first pieces.
-3. *An unopened row* `x ∉ Q`: with `|Q| < 2^s` (Q), some `u` of degree below `2^s` vanishes on `Q` and is 1 at
-   `x`. Translating the first pieces by `c_l·u` with `Σ_l e_l c_l = 0` keeps (V1)–(V3) and moves row `x` by `c`:
+1. *Past the first pieces.* The claims' weight vanishes on first pieces. At an entry `y` past the first piece, the
+   random unknowns there (the random lanes, and the overflow lane where it holds none of the table) span `E` by
+   (S): pick a change of them that cancels `Δf¹(y)`. The change of (V1) left over keeps the claims (the gadget's
+   zero claim too: `Δ` and these changes are zero on the gadget's entries) and the last round's value at its
+   challenge, `h_5(φ_5) = Σ_y W̃(y, φ) f¹(y)`: it lies in `H = ker lastMap`, a 33-dimensional `K`-space (an
+   `E`-hyperplane of `E^12`). **Condition (R)**: the changes of the random unknowns at single entries that keep
+   `f¹` and the claims span all of `H` through (V1). Then the leftover is cancelled too, by such changes at the
+   gadget's entries (in the first piece, above `D`).
+2. *First pieces below the gadget.* Each lane's codeword at `Q` changed by `M·Δ_l`. Polynomials of degree below
+   `D` take any values on `|Q| ≤ D` points, so a right inverse `N` of the evaluation at `Q` of entries `0 .. D`
+   exists: change them by `-N(M·Δ_l)`, lane by lane. Every opened row agrees, `f¹` there changes by
+   `-N(M·Σ_l e_l Δ_l) = 0` (every entry of `f¹` already agrees), and (V1) does not see entries below `D`.
+3. *An unopened row* `x ∉ Q`: with `|Q| < D` (Q), some `u` of degree below `D` vanishes on `Q` and is 1 at `x`.
+   Translating entries `0 .. D` by `c_l·u` with `Σ_l e_l c_l = 0` keeps (V1)–(V3) and moves row `x` by `c`:
    `L - 3` free `K`-elements.
 
-**The exact checks** (`src/hiding.rs`, in the real fields, with WHIR's own subspace polynomials):
+## Condition (R) for every challenge: the gadget
+
+**Statement.** For every `λ ≠ 0` and every `φ` with **(a)** `φ_i ∉ {0, 1}` for every `i` and **(b)** at most one
+of `φ_0, φ_1, φ_2` in `K`, the changes of the randomness at the gadget's nine entries alone that keep `f¹` and every
+claim reach all of `H` through the rounds, whatever the claims (the claims weigh nothing there). (a) and (b) also
+give (S).
+
+Write `B(w, τ) ∈ E^12` for the twelve values the rounds of one entry give a weight `w` and a table `τ` on the 64
+lane indices; the rounds of a stack are `Σ_y B(W(·, y), T(·, y))`, bilinear.
+
+1. **Solvers.** At pattern 0's and 1's entries the weight is on the lower half (bit 5 zero), at pattern 2's on the
+   upper half. A lane `r` of the other half meets a weighted lane only in `c_5`: rounds `j < 5` pair lanes that
+   agree above bit `j`, bit 5 included, and `h_5(0)` pairs lanes whose bit 5 is zero. So `B(w, e_r) ∈ E·e_{c_5}`.
+   The other half's values at the entry include a cube of lanes in bits 0, 1, 2 (lanes `32 .. 40` in the upper
+   half, the witness table has no others; `0 .. 8` in the lower), whose fold weights are `c·eq(φ_{012}, x)`,
+   `x ∈ {0,1}^3`, `c` a product of `φ_i`, `1 + φ_i` (nonzero by (a)), so their `K`-span is `c` times that of the
+   eight multilinear monomials in `φ_0, φ_1, φ_2`: all of `E` by (b) and *the lemma*: if `span_K{1, x, y, xy} ≠ E`
+   then `x` or `y` lies in `K` (if `x ∉ K` the span is `span{1, x}`; `y = a + bx` and `xy ∈ span{1, x}` force
+   `bx² ∈ span{1, x}`, and `x` has degree 3 over `K`, `E` having no quadratic subfield over `K`, so `b = 0`); with
+   three coordinates, two must lie in `K`. Hence any change `τ` of the weighted half's values that keeps the claims
+   is completed, by `K`-values on the other half, into one that keeps `f¹(y)`, and the completion moves the rounds
+   only along `e_{c_5}`.
+2. **Forgetting `c_5`.** The completed change keeps the claims and `f¹`: its rounds lie in `H`. `c_5`'s coefficient
+   in `lastMap` is `φ_5 + φ_5² ≠ 0` (a), so `H ∩ E·e_{c_5} = 0` and `π`, forgetting `c_5`, is injective on `H`, with
+   `π(completed) = π(B(w, τ))`: the completion's `K`-coefficients, Frobenius-twisted functions of `φ` (the solution
+   of a `K`-linear system with `E`-coefficients), are gone. This is what the previous design lacked: its
+   completions moved every round, and their twist is why (R) could only be bounded through the `K`-coordinates.
+3. **`β`.** A pattern weighs its lanes `v_g ∈ {0, 1}^64` by `μβ_i` at its entry `i`. Over `i` and over `K`-valued
+   `τ ∈ ker v_g`, the `K`-span of `π(μβ_i·B(v_g, τ))` is the `E`-span of `π(B(v_g, ker_E v_g))`: from here
+   everything is `E`-linear, and the reached space contains `Σ_g π(B(v_g, ker v_g))`.
+4. **The lower patterns.** For a weight `w` and tables `τ` on the lower half, rounds 0 to 4 are those of the
+   5-variable sumcheck of `Σ w·τ`, and `h_5(0) = s_5`, the running claim after round 4 (as `h_5(1) = 0`). *The
+   sumcheck lemma*: for weights `w, w'` on `{0,1}^k` (one entry each) such that, for each round `j < k - 1`, `w`'s
+   and `w'`'s `j`-folded tables have linearly independent halves (by variable `j`), and their `(k-1)`-folded lines
+   are not proportional, every `(claim, messages) ∈ E × E^{2k}` is the sum of one of `w` against a table and one of
+   `w'` against another; and with claims zero, every message vector (induction on `k`: tables `τ` with
+   `fold_φ(τ) = 0` change only the claim and round 0, within the plane where `h_0(φ_0)` is unchanged, all of it when
+   the halves are independent; lifts of the folded tables give the rest; base `k = 1`: two non-proportional lines;
+   a claim is moved to zero along round 0). Pattern 0's `j`-folded weight has the two entries `eq(φ_{<j}, 0…0)` at
+   `(0, 0…0)` and `eq(φ_{<j}, 1…1)` at `(1, 1…1)`: independent halves by (a); its 4-folded line is `(P, Q)`,
+   `P = Π_{i<4}(1 + φ_i)`, `Q = Π_{i<4} φ_i`; pattern 1's is `(φ_0 Π_{1≤i<4}(1 + φ_i), (1 + φ_0) Π_{1≤i<4} φ_i)`.
+   Proportional iff `(1 + φ_0)² = φ_0²`: never. So the lower patterns reach `{(r, ℓ(r)) : r ∈ E^10}`, `ℓ(r)` the
+   running claim after round 4.
+5. **The upper pattern.** Against a weight on the upper half, a table on the upper half has `h_5(0) = 0`, so `π`
+   gives `(r, 0)`. Pattern 2 (the overflow lane, holding zero) against the unit table of lane 33: `ℓ(r) = s_5 =
+   eq(φ_{<5}, 0)·eq(φ_{<5}, 1) ≠ 0` (a), the product of its 5-folded weight and table. With step 4,
+   `(0, ℓ(r))`: all of `E^11`, so the reached space is `H`. ∎
+
+`Pr[B]`: `λ = 0` has probability `2^-192`; some `φ_i ∈ {0,1}` at most `12·2^-192`; two of `φ_0, φ_1, φ_2` in `K`
+at most `3·(2^64/2^192)^2`. **(S)** holds outside the same set: the random lanes `33 .. 40` are the cube `32 .. 40`
+but its corner 32, and its three faces avoiding the corner give `c·φ_a·span_K{1, φ_b, φ_c, φ_bφ_c}`, so (S)
+fails only if two of `φ_0, φ_1, φ_2` lie in `K`.
+
+**Why these three patterns.** One entry's moves reach at most 10 of `H`'s 11 `E`-dimensions (its last round is a
+product of two lines, so vanishes at the weight's root), so (R) needs two kinds of entries; patterns on one half
+give `(r, ℓ(r))` only, so `h_5(0)` needs the other half; a lane weight of tensor rank one (one lane, or two
+adjacent lanes) reaches 5 dimensions (its messages are values of `τ̃` along one staircase of points), the
+complementary pair 9; two lower patterns must have distinct roots (the same pair mirrored in the upper half has the
+same 4-folded line and stops at 10). Through the gadget's entries alone (`hiding.rs`): three patterns 33, any two
+30, one lower 27, the upper one 9; at random challenges the data entries' (twisted) moves make up the rest with a
+single lower pattern, which is how the previous design reached 33 without any guarantee.
+
+## The exact checks
+
+`src/hiding.rs`, in the real fields, with WHIR's own subspace polynomials:
 
 - `model_matches_the_prover`: the model of (V1) is the real prover's, round for round (replaying a real opening's
-  transcript with `verifier::Transcript`), and (V3) is the real committed codeword.
-- `openings_hide_the_tables`: the whole view (V1)–(V3) as a `K`-matrix `M_R·r + M_D·d` on scaled-down layouts
-  built by the same `Layout::hidden` (`R2`: 55 blocks, the overflow, 7 random lanes, 63 lanes of `2^9`; `R1`: 40
-  lanes of `2^8`; pieces of 4, 3 opened positions, both tables' claim shapes, random challenges). It hides the
-  table given the claims if and only if `rank [[M_R, M_D], [0, C]] = rank M_R + rank C`: equal for both, and an
-  unopened row keeps exactly `L - 3` elements (60 and 37). With 6 random lanes the view reveals the table; with as
-  many opened positions as a first piece has entries it still hides it, but an unopened row has fewer left.
-- `round_freedom_predicts_the_exact_test`: on those layouts, what the view reveals is exactly `33 - dim F`, `F`
-  the span of condition (R), for 4, 6 and 7 random lanes: condition (R) is the whole story.
-- `rounds_are_free_at_full_size`: condition (R) holds (`dim F = 33`) and (S) holds on the real layouts at `2^17`
-  and `2^22` rows, at the reduction's own claim points (from `reduce` at random challenges) and random opening
-  challenges, three draws each; with one random lane fewer it fails. `dim F` is computed at sampled entries, a
-  lower bound that is exact once it reaches the maximum, 33.
+  transcript with `verifier::Transcript`), with the gadget scaled as the prover does; the gadget weighs nothing of
+  the stack; (V3) is the real committed codeword.
+- `openings_hide_the_tables`: the whole view (V1)–(V3) as a `K`-matrix `M_R·r + M_D·d` on scaled-down layouts built
+  by the same `Layout::hidden_with` (lanes of `2^8` in pieces of `2^4`, `D = 7`; the witness's claim shape on eight
+  blocks and the masks' piece, the quotient's two claims, a generic point but its limbs and the sum's fixed point,
+  on eleven blocks of four of its chunks; 40 lanes each; random challenges). It hides the table given the claims if
+  and only if `rank [[M_R, M_D], [0, C]] = rank M_R + rank C`: equal for both with 3 and with `D = 7` opened
+  positions, and an unopened row keeps `L - 3 = 37` elements. Without the gadget the view reveals the table.
+- `round_freedom_predicts_the_exact_test`: with all or part of the gadget, the view reveals nothing exactly when
+  (R)'s span is 33, and at most what it misses; through the gadget alone 33 / 30 / 27 / 9.
+- `rounds_are_free_at_full_size`, and the review's `rounds_are_free_at_every_size` (`2^17` to `2^22` rows, eight
+  draws each): on the real layouts at the reduction's own claim points, the gadget's entries alone give 33 and (S)
+  holds; with sampled data entries too, 33; the data entries without the gadget reach at most 30.
+- `rounds_are_free_for_every_challenge`: the argument's parts on both real layouts: (1) across the halves lanes
+  meet only in `c_5`, for every lane pair; at challenges chosen against the argument but outside `B` (all but two
+  of `φ_0, φ_1, φ_2` in `K`, all coordinates equal, alternating `x` and `1 + x`, `φ_4` at a pair's root), (2) the
+  `E`-linear core exactly: each lower pattern reaches 9 dimensions of rounds 0 to 4 with `h_5(0)` its running
+  claim, the upper one has `h_5(0) = 0` and a nonzero running claim, all together 11; (3) (R) itself, the `K`-span
+  through the twisted completions: 33, and (S); (4) with two of `φ_0, φ_1, φ_2` in `K`, (S) fails.
+- `review_hiding.rs`, `translation_holds_on_real_openings` (`2^17` rows) and `translation_holds_at_the_benchmark_size`
+  (`2^22`, ignored, about 8 GB): the translation run with the real prover, (R) solved at the gadget's entries; the
+  second table's opening is the first's byte for byte but the first level's root and siblings.
 
 ## How much randomness is necessary
 
 - **The first piece**: the rows show each lane's codeword at `Q` separately, so every lane holding the table needs
-  `|Q|` uniform values of its own there, and one more for an unopened row to keep any entropy (q < 2^d strictly):
-  a piece of `2^8 = 256 > 225`, in the low coefficients (in a binary field the high ones are a subspace polynomial
-  times something, and vanish on part of the domain). That is 0.05% of `R1` and 0.006% of `R2`, against half of
-  every lane in `membership-zk.md`.
-- **`f¹`**: at every entry, random values whose fold weights span `E`: at least 3 random lanes. With exactly 3,
-  `f¹` uses them all and nothing is left for the rounds (`dim F ≤ 27`).
-- **Round 0's value at 0** is `Σ_{even l} ⟨W_l, T_l⟩`: no lane is paired with another there, so randomness of zero
-  weight never reaches it, and it is the even lanes' share of the claim. Either every lane that holds the table
-  has the same parity (leanVM's layout: at most 32 lanes of data, impossible for `R2`'s 55), or some randomness
-  has weight and cancels in the claims: **the share**. Without it, `dim F ≤ 30`.
-- **Rounds 1 to 5** see a random lane `r` only through `⟨W_l, R_r⟩`. If every block lane has the same in-lane
-  weight, that is one `E`-number a random lane, and `F` stays below 33 for every count of random lanes that
-  fits. Different in-lane weights on different lanes are new directions. `dim F` at `2^22` rows (witness /
-  quotient; 33 is the maximum), the chosen row with the final layout, the others with an earlier variant whose
-  share covered the overflow lane's first held piece only:
-
-| in-lane weights on block lanes | 3 random | 4 | 5 | 6 | 7 | 8 |
-|---|---|---|---|---|---|---|
-| one (no permutation) | 3 / 3 | 12 / 12 | 15 / 18 | | | 27 / 30 |
-| two (odd lanes swap piece pairs) — **chosen** | 6 / 6 | 15 / 15 | 21 / 24 | 27 / 30 | **33 / 33** | 33 / 33 |
-| four (pairs and quadruples) | 12 / 12 | 30 / 30 | 33 / 33 | 33 / 30 | 33 / 33 | 33 / 33 |
-| 64 (lane `l` XORs its pieces with `l`) | 18 / 27 | 33 / 33 | 33 / 33 | 33 / 30 | 33 / 33 | 33 / 33 |
-
-  (A 30 between 33s is the placement's: with that many random lanes, the rule above puts them where they miss
-  one direction.) Each in-lane weight is one lane tensor of `2^ℓ` `E`-values a claim for the memory-lean prover
-  (100 MB at `R2`'s size), so two weights and 7 random lanes (3 tensors a claim) is the cheapest that hides: 64
-  weights would need 4 random lanes but 64 tensors a claim (or the dense weight, 6 GB).
+  `|Q|` uniform values of its own there below `D`, and one more for an unopened row to keep any entropy (q < D
+  strictly): `D = 247 > 225`, in the low coefficients (in a binary field the high ones are a subspace polynomial
+  times something, and vanish on part of the domain). The first piece is 0.05% of `R1` and 0.006% of `R2`, against
+  half of every lane in `membership-zk.md`.
+- **`f¹`**: at every entry, random values whose fold weights span `E`: at least 3 random lanes; seven, the cube
+  `32 .. 40` but the overflow lane's corner, make (S) fail only with two of `φ_0, φ_1, φ_2` in `K`.
+- **The rounds**: the gadget, nine words a lane, two lane tensors. The previous design (a share lane holding a
+  share `ρ` of the overflow lane's pieces, odd block lanes swapping piece pairs for a second in-lane weight, seven
+  random lanes spread over odd lanes; HIDING.md at 875c9f6 has its exploration) reached the 33 dimensions with the
+  data entries' moves, at random challenges only.
 
 ## Options rejected
 
@@ -182,17 +260,26 @@ The view up to the first fold is `K`-linear in the stack: **(V1)** the six lane 
   (with the 4× padding). Each split adds a root to the calldata and the transcript (+64 bytes, a different contract,
   which must also not reveal the split), turns the quotient and sum claims into a claim per part (+2 `E`-values
   sent a part, partial evaluations that leak unless masked by more machinery), and adds a WHIR opening (~330 KiB).
-- **Every lane its own in-lane weight** (4 random lanes): see the table; incompatible with the lane-tensor prover.
+- **More data-entry randomness** (random lanes, in-lane weights, shares): its moves at data entries are completed
+  by `K`-values whose coefficients are Frobenius-twisted, so whatever their number (R) stays a condition on the
+  `K`-coordinates of `φ`, bounded near `deg/2^64`; and solver lanes confined to `c_5` at data entries would need a
+  half without data, which `R2`'s 55 blocks do not leave.
+- **A gadget in one pattern, or in one half**: at most 10 of the 11 `E`-dimensions (above).
+- **The gadget weighed with the first claim**: unsound (above).
 
 ## Parameters and their conditions
 
-- `LOG_PIECE = 8` against at most 225 first-level queries (`|Q| < 2^s`, strict); at rate 1/4 there would be 112.
-- leanVM's WHIR: six lane folds first, no out-of-domain sample at the first commitment (an `eq` weight there would
-  be a full tensor that also weighs the randomness), `LOG_INV_RATE = 1`.
-- 7 random lanes, placed as above (checked exactly; the placement matters).
+- `LOG_PIECE = 8`, `GADGET = 9`: `D = 247` against at most 225 first-level queries (`|Q| < D`, strict); at rate
+  1/4 there would be 112.
+- leanVM's WHIR: six lane folds first (bit 5, the last folded, separates the halves), no out-of-domain sample at the
+  first commitment (an `eq` weight there would be a full tensor that also weighs the randomness), `LOG_INV_RATE = 1`.
+- Lanes: blocks on `0 .. 32` and from 40, the overflow lane 32, random lanes `33 .. 40` (`L ≥ 40`); the gadget's
+  pairs `(0, 31)`, `(1, 30)` and the overflow lane.
 - The overflow lane holds its pieces: `H < 2^(ℓ-s)`. For `R1` (`H = 33`) this needs `ℓ ≥ 14`, so at least
-  `2^17` rows (`protocol::MIN_LOG_ROWS`); the `PCS_OPEN` mock (`crates/evm/src/machine.rs`) now knows layouts for
-  `2^17` to `2^22` rows (it knew `2^13` to `2^22`).
+  `2^17` rows (`protocol::MIN_LOG_ROWS`); the `PCS_OPEN` mock (`crates/evm/src/machine.rs`) knows layouts for
+  `2^17` to `2^22` rows.
+- The layout's id (`opening::layout_id`) encodes the gadget (its patterns' lanes and entries) where it encoded the
+  share lane; a public layout's encoding, so the wiring table's prefix, is unchanged.
 
 ## The review's two attacks
 
@@ -207,34 +294,89 @@ The view up to the first fold is `K`-linear in the stack: **(V1)** the six lane 
   and by the theorem the opening is the same for any two tables with the same claims, which are functions of the
   `a_j`; the masks are entries of the table like any other. `opened_rows_do_not_identify_the_witness`: no opened
   row of `R1` is a row of either candidate's commitment, and at the opened positions (223 distinct) the overflow
-  lane's first piece alone has full rank, so the masks' columns lie in its span: the rows say nothing of them.
+  lane's first piece below the gadget alone has full rank, so the masks' columns lie in its span: the rows say
+  nothing of them.
 
-## Cost (the membership benchmark, `2^22` rows; median of 3; base `2e2d17d`)
+## Cost (the membership benchmark, `2^22` rows)
 
-| | base (not hiding) | hidden |
+Eight runs of each, alternating, on a machine under load (load average about 10); medians (minimum in brackets);
+base `c004698` (the share design).
+
+| | share design | gadget |
 |---|---|---|
-| reduction (commit both tables) | 1.359 s | 1.459 s |
-| openings (three WHIR) | 0.667 s | 0.756 s |
-| prover total | 2.034 s | 2.221 s (+9%) |
-| peak memory | 5.58 GiB | 5.89 GiB (+0.31) |
-| opening: witness / wiring / quotient | 234.1 / 279.3 / 326.4 KiB | 247.9 / 277.9 / 333.2 KiB |
+| reduction (commit both tables) | 1.76 s (1.69) | 1.80 s (1.60) |
+| openings (three WHIR) | 0.88 s (0.81) | 0.88 s (0.84) |
+| prover total | 2.71 s (2.52) | 2.68 s (2.47) |
+| peak memory | 5.88 GiB | 5.80 GiB (5.67 to 5.89) |
+| opening: witness / wiring / quotient | 247.1 / 278.6 / 333.8 KiB | 247.2 / 277.6 / 334.2 KiB |
 | calldata | 248 bytes | 248 bytes |
 | verify: openings | 5 ms | 5 ms |
+| lane tensors (`R1` / `R2`) | 3 / 6 | 4 / 5 |
 
-The memory is the quotient table's stack and the half codeword its commitment encodes in, four lanes (`2^22`
-words) more each, and the witness's coefficients, read back from the hidden stack where they are needed rather
-than kept. The openings grow by the extra lanes in each opened row; the wiring's opening is the same up to
-duplicate queries.
+No difference beyond the noise: the stacks have the same lanes, the gadget's two tensors replace the odd lanes'
+(one a claim), and the opened rows have the same width (the sizes move with duplicate queries). Against the plain
+layouts (not hiding, `2e2d17d`), the hidden ones cost about +9% of prover time and +0.3 GiB, as before.
 
 ## What remains open
 
-- Conditions (S) and (R) are polynomial conditions on the opening's challenges and the claim points. They are
-  checked exactly at the reduction's own claim points for random challenges, at `2^17` and `2^22` rows, and never
-  failed; for a fixed claim point, (R) is a polynomial of degree below `2^11` in the `K`-coordinates of `φ` and
-  `λ`, so if it is not identically zero for that point it fails with probability below `2^-53`. That it is not
-  identically zero for **every** point the reduction can output is not proven, only observed at random ones.
+- The theorem's conditions now hold outside `B`, by the argument above, checked in its parts exactly; its Lean
+  formalization proves the argument's core for every challenge (below), and what is left is plumbing and the
+  solvers' span.
 - The Fiat–Shamir transfer (programmable random oracle) and the reduction's own hiding are taken from
   `membership-zk.md` and the protocol's analysis, not redone.
 - The exact test of the whole view is on scaled-down layouts; at full size the argument rests on the steps above
-  and the exact check of (R) and (S).
+  and the exact checks of (R) and (S).
 - Side channels (timing, memory) are not considered; the padding is only as good as the seed.
+
+## The Lean statement
+
+Proven in `formal/QuotientSecurity/Hiding` (no `sorry`; axioms `propext`, `Classical.choice`, `Quot.sound`,
+guarded in `Hiding.lean`), for any fields `K ⊆ E`, for one entry (a column of the stack, tables on the 64 lane
+indices):
+
+- `Sumcheck.lean`: `rounds_lower_upper` (the solvers: a weight on one half against a table on the other moves
+  only the last quadratic coefficient), `last_fst_lower`, `last_fst_upper`, `lastClaim_upper` (the last round on
+  each half), `kernel_move`, `two_weights_reach`, `two_weights_reach_zero` (the sumcheck lemma, by induction on
+  the rounds), and `reach_all` (two lower weights and one upper move reach every value but `c_5`).
+- `Gadget.lean`: `deployed_nd` (the pairs `(0, 31)`, `(1, 30)` are nondegenerate for every `φ` with no
+  coordinate in `{0, 1}` and `2φ_0 ≠ 1`), `runClaim_move2` (the upper pattern against lane 33), `deployed_reach_all`,
+  `piv_inj` (forgetting `c_5` is injective on `ker lastMap`), `reach_multiple` (the `β` entries and the twisted
+  completions), `reach_table`, and
+
+```lean
+theorem column_reach (Φ : Fin 6 → E) (hΦ : ∀ i, Φ i ≠ 0 ∧ Φ i ≠ 1) (h2 : 2 * Φ 0 ≠ 1) (μ : E)
+    (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E)
+    (hsolve : ∀ (p : Fin 3) (e : E), ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK s) ∧
+      (∑ b, eqW Φ b * algebraMap K E (s b)) = e) :
+    LinearMap.ker (lastMap (K := K) Φ) ≤ Submodule.span K (gadgetMoves Φ μ β)
+```
+
+  `gadgetMoves Φ μ β`: the rounds of the changes the gadget's randomness allows at one of its entries (pattern
+  `p`, entry `i`, weight `μ·β_i` on the pattern): `K`-values `c` on the pattern's half weighing zero against it,
+  `s` on the other half, folding to zero together. This is condition (R) through the gadget's nine entries, for
+  every challenge with no coordinate in `{0, 1}` (`2φ_0 ≠ 1` holds in characteristic 2), whatever the claims.
+
+What the end theorem (`hidden_prEvent_le_bound`, `Layout.lean`) still needs to use it, in place of the hypothesis
+`RoundsReached`:
+
+1. **The layout.** A `GadgetLayout` in place of `HiddenLayout`: no share; the randomness is the entries below
+   `D` of every lane, the random lanes, the overflow lane past its held pieces, and at the gadget's entries every
+   lane but pair copies (lane 31 holds lane 0's value at pattern 0's entries, lane 30 lane 1's at pattern 1's) and
+   the overflow lane's zeros (pattern 2's); `WeightsFit` without the share; the gadget as one more claim of value
+   zero, its weight at entry `(p, i)` being `β_i·patE p`, its power of `λ` being `μ = λ^m`.
+2. **The bridge** from stacks to entries: a stack change supported on one entry `y` has
+   `roundsMap pos Φ W T = colRounds 6 Φ (W(·, y)) (T(·, y))` (the lane rounds decompose over entries), so
+   `gadgetMoves Φ μ β ⊆ roundsMap '' kerMoves` and `column_reach` gives `RoundsReached`.
+3. **The solvers' span** `hsolve`: the fold weights of a cube of lanes in each half (`32 .. 40`, `0 .. 8`) span
+   `E` over `K` unless two of `φ_0, φ_1, φ_2` lie in `K` (the cube lemma above, which needs `[E : K] = 3`: no
+   quadratic subfield); or, with the existing `card_not_span_four_le`, four lanes of each cube in its pattern,
+   e.g. `(35, 34, 33, 39)` and `(3, 2, 1, 7)` with `a, b, c = 0, 1, 2`, at its bound `2^-127 + 13·2^-192` each.
+4. **(S)** for the random lanes `33 .. 40` (`witness_lane_pattern` and `quotient_lane_pattern` name the previous
+   design's lanes, which are now blocks): the same cube lemma, or `card_not_span_four_le` on `(35, 34, 33, 39)`.
+5. Unchanged gaps: (Q) for WHIR's novel basis at `|Q| ≤ 225 < D` (`Interp.lean` proves it for a degree-graded
+   basis), and the instantiation with the deployed layouts' constants.
+
+The F2 mirror of the layouts (`formal/WhirBridge`: `Layout.hidden`, `readHidden`, `HiddenOK`, `Layouts.lean`,
+the weight closure) transcribes the share design and must follow: no share lane, the lanes of `hidden_with`
+above, `readHidden` without the share's sum, the weight closure with the gadget's term scaled by `λ^m` and no
+parity split, and the layout id's encoding of the gadget.

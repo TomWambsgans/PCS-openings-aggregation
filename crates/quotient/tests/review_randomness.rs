@@ -14,7 +14,7 @@
 //!   reduction's chain) by its length.
 //! * `StdRng` is ChaCha12 (an independent ChaCha12 here), and the prover's two tables are filled lane by lane by
 //!   ChaCha12 keyed by Keccak-256(table seed ‖ `l`), the table seed Keccak-256(`"pcs-quotient-pad-"` ‖ name ‖
-//!   padding): the random first pieces, the overflow lane, the share lane `ρ`, the random lanes. No two lanes of
+//!   padding): the random first pieces (with the gadget's copies and zeros), the overflow lane, the random lanes. No two lanes of
 //!   the two tables share a key; the masks sit in the witness table where `derive` says.
 //! * `prove` never repeats (two proofs of one witness share no root and no `a_j`); `derive` hedges (a repeated seed
 //!   repeats the proof for the same witness only); no word of the seed, the key, the cells' digest, the padding, a
@@ -311,15 +311,23 @@ fn toy_setup() -> Toy {
 }
 
 /// The checks of one hidden table's padding against ChaCha12 keyed by `spec_lane_key(table_seed, l)`; the lane
-/// keys it used.
+/// keys it used. Every lane's first piece is its stream's first words but at the gadget's entries (`HIDING.md`):
+/// there a pair's second lane holds its first lane's word and the overflow lane zero.
 fn check_padding(table: &Table, table_seed: &[u8; 32], name: &str) -> Vec<[u8; 32]> {
     let layout = &table.layout;
     let (log_lane, s) = (layout.log_lane(), layout.log_piece().expect("a hidden layout"));
     let (lane_len, piece) = (1usize << log_lane, 1usize << s);
     let held = layout.pieces().len();
-    let share = layout.share().expect("a share lane");
     let overflow = layout.overflow().expect("an overflow lane");
     let lane = |l: usize| &table.stack[l * lane_len..(l + 1) * lane_len];
+    let firsts: Vec<Vec<F64>> = (0..layout.lanes())
+        .map(|l| {
+            chacha12(&spec_lane_key(table_seed, l), piece)
+                .into_iter()
+                .map(F64)
+                .collect()
+        })
+        .collect();
     let mut keys = vec![];
     for l in 0..layout.lanes() {
         let key = spec_lane_key(table_seed, l);
@@ -331,18 +339,22 @@ fn check_padding(table: &Table, table_seed: &[u8; 32], name: &str) -> Vec<[u8; 3
         };
         let stream: Vec<F64> = chacha12(&key, needed).into_iter().map(F64).collect();
         let words = lane(l);
+        // The first piece, with the gadget's values.
+        let mut first = stream[..piece].to_vec();
+        for g in 0..3 {
+            for i in 0..3 {
+                let y = layout.gadget_entry(g, i);
+                match *opening::gadget_lanes(g) {
+                    [a, b] if b == l => first[y] = firsts[a][y],
+                    [o] if o == l => first[y] = F64::ZERO,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(&words[..piece], &first[..], "{name}: lane {l}'s first piece");
         match layout.lane(l) {
-            Lane::Block(_) => assert_eq!(
-                &words[..piece],
-                &stream[..piece],
-                "{name}: block lane {l}'s first piece"
-            ),
+            Lane::Block(_) => {}
             Lane::Overflow => {
-                assert_eq!(
-                    &words[..piece],
-                    &stream[..piece],
-                    "{name}: the overflow lane's first piece"
-                );
                 let tail = lane_len - (held + 1) * piece;
                 assert_eq!(
                     &words[(held + 1) * piece..],
@@ -350,18 +362,17 @@ fn check_padding(table: &Table, table_seed: &[u8; 32], name: &str) -> Vec<[u8; 3
                     "{name}: the overflow lane past its pieces"
                 );
             }
-            Lane::Random => assert_eq!(words, &stream[..], "{name}: random lane {l}"),
+            Lane::Random => assert_eq!(&words[piece..], &stream[piece..], "{name}: random lane {l}"),
         }
     }
-    // The overflow lane's pieces are the table's plus the share lane's: `Table::read` is their sum, and the share
-    // lane's pieces are its own stream (checked above), so the overflow lane is the table masked by `ρ`.
+    // The overflow lane's pieces are the table's: `Table::read` reads them there.
     let mut read = vec![F64::ZERO; held * piece];
     for (k, &p) in layout.pieces().iter().enumerate() {
         table.read(p * piece, &mut read[k * piece..(k + 1) * piece]);
     }
-    let (o, sh) = (lane(overflow), lane(share));
+    let o = lane(overflow);
     for i in 0..held * piece {
-        assert_eq!(o[piece + i] + sh[piece + i], read[i], "{name}: overflow word {i}");
+        assert_eq!(o[piece + i], read[i], "{name}: overflow word {i}");
     }
     keys
 }
@@ -577,7 +588,8 @@ struct Fields {
     lanes: Vec<Lane>,
     log_piece: Option<usize>,
     pieces: Vec<usize>,
-    share: Option<usize>,
+    /// A hidden layout's gadget: per pattern, its lanes and its three entries.
+    gadget: Option<Vec<(Vec<usize>, [usize; 3])>>,
 }
 
 fn fields(layout: &Layout) -> Fields {
@@ -587,7 +599,14 @@ fn fields(layout: &Layout) -> Fields {
         lanes: (0..layout.lanes()).map(|l| layout.lane(l)).collect(),
         log_piece: layout.log_piece(),
         pieces: layout.pieces().to_vec(),
-        share: layout.share(),
+        gadget: layout.log_piece().map(|_| {
+            (0..3)
+                .map(|g| {
+                    let entries = [0, 1, 2].map(|i| layout.gadget_entry(g, i));
+                    (opening::gadget_lanes(g).to_vec(), entries)
+                })
+                .collect()
+        }),
     }
 }
 
@@ -617,7 +636,17 @@ fn encode(f: &Fields) -> Vec<u8> {
     option(f.log_piece, &mut put);
     put(f.pieces.len());
     f.pieces.iter().for_each(|&p| put(p));
-    option(f.share, &mut put);
+    match &f.gadget {
+        None => put(0),
+        Some(patterns) => {
+            put(opening::GADGET);
+            for (lanes, entries) in patterns {
+                put(lanes.len());
+                lanes.iter().for_each(|&l| put(l));
+                entries.iter().for_each(|&y| put(y));
+            }
+        }
+    }
     bytes
 }
 
@@ -649,14 +678,26 @@ fn decode(bytes: &[u8]) -> Option<Fields> {
     let log_piece = option(&mut next)?;
     let held = next()?;
     let pieces = (0..held).map(|_| next()).collect::<Option<Vec<_>>>()?;
-    let share = option(&mut next)?;
+    let gadget = match next()? {
+        0 => None,
+        t if t == opening::GADGET => {
+            let mut patterns = vec![];
+            for _ in 0..3 {
+                let count = next()?;
+                let lanes = (0..count).map(|_| next()).collect::<Option<Vec<_>>>()?;
+                patterns.push((lanes, [next()?, next()?, next()?]));
+            }
+            Some(patterns)
+        }
+        _ => return None,
+    };
     next().is_none().then_some(Fields {
         vars,
         log_n,
         lanes,
         log_piece,
         pieces,
-        share,
+        gadget,
     })
 }
 
@@ -679,19 +720,21 @@ fn hidden_takes(
     {
         return false;
     }
+    if opening::GADGET >= 1 << s {
+        return false;
+    }
     let blocks: usize = chunks.iter().map(|&(_, len)| len >> log_lane).sum();
     let tails: usize = chunks
         .iter()
         .map(|&(_, len)| (len - ((len >> log_lane) << log_lane)).div_ceil(1 << s))
         .sum();
-    let total = blocks + 1 + random;
-    if random < 4 || total > 64 {
+    // Lanes `0 .. 32` (blocks, or random), the overflow lane, the random lanes, the other blocks.
+    let total = opening::OVERFLOW_LANE + 1 + random + blocks.saturating_sub(opening::OVERFLOW_LANE);
+    if random < opening::MIN_RANDOM_LANES || total > 64 {
         return false;
     }
-    let pairs = (total - 2) / 2;
-    let at: HashSet<usize> = (0..random - 1).map(|k| 2 * (k * pairs / (random - 1)) + 1).collect();
     let pieces = blocks + tails;
-    at.len() == random - 1 && pieces > 0 && pieces < 1 << (log_lane - s)
+    pieces > 0 && pieces < 1 << (log_lane - s)
 }
 
 fn new_takes(vars: usize, log_chunk: usize, log_n: usize, chunks: &[(usize, usize)]) -> bool {
@@ -745,8 +788,8 @@ fn many_layouts() -> Vec<Layout> {
             if new_takes(vars, log_chunk, log_n, chunks) {
                 layouts.push(Layout::new(vars, log_chunk, log_n, chunks));
             }
-            for random in [4, 5, 7] {
-                for s in [2, 3, 5, LOG_PIECE] {
+            for random in [4, 7, 8, 9] {
+                for s in [2, 4, 5, 6, LOG_PIECE] {
                     if hidden_takes(vars, log_chunk, log_n, chunks, random, s) {
                         layouts.push(Layout::hidden_with(vars, log_chunk, log_n, chunks, random, s));
                     }
@@ -759,7 +802,7 @@ fn many_layouts() -> Vec<Layout> {
 
 /// `layout_id` is Keccak-256 of the documented encoding, which a decoder inverts: the id is injective up to a
 /// Keccak-256 collision, and it covers every field the verifier reads (vars, the stack's size, the lanes, the
-/// piece, the overflow pieces, the share lane). Over the 18 deployed layouts and ~200 more: equal ids and equal
+/// piece, the overflow pieces, the gadget). Over the 18 deployed layouts and ~200 more: equal ids and equal
 /// prefixes exactly for equal layouts. The prefix is 76 bytes of fixed-width fields, the id at bytes `28..60`.
 #[test]
 fn layout_id_is_injective() {
