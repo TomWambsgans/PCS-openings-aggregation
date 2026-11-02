@@ -1,0 +1,12 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+# Placeholder manifest so that the workspace (`crates/*`) loads while the spec (SPEC.md, SPEC-B.md) is written;
+# the spec's own crate replaces it.
+[package]
+name = "leanvm_univariate"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "A sumcheck-light PIOP for leanVM 42422001 proofs, verified in an EVM contract (spec in progress)"
+
+[lints]
+workspace = true
