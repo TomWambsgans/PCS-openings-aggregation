@@ -41,3 +41,5 @@ elab "#cone " id:ident : command => do
 #cone QuotientSecurity.Instance.soundness
 #cone QuotientSecurity.Instance.zero_knowledge
 #cone QuotientSecurity.Instance.completeness
+#cone QuotientSecurity.Instance.soundness_circuit
+#cone QuotientSecurity.Instance.soundness_circuit_bits
