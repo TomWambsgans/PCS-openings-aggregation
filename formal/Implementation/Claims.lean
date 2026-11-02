@@ -190,4 +190,115 @@ theorem check_eq : Formula.check limbs I =
   rw [hx, hv, digitPoly_eval]
   try ring
 
+/-! ## The four claims -/
+
+omit hK [DecidableEq F] [CharP F 2] in
+theorem ofFn_snoc {n : ℕ} (g : Fin n → F) (x : F) :
+    List.ofFn (Fin.snoc g x : Fin (n + 1) → F) = List.ofFn g ++ [x] := by
+  rw [List.ofFn_succ', List.concat_eq_append]
+  simp
+
+omit hK [DecidableEq F] [CharP F 2] in
+theorem ofFn_cons {n : ℕ} (g : Fin n → F) (x : F) :
+    List.ofFn (Fin.cons x g : Fin (n + 1) → F) = x :: List.ofFn g := by
+  rw [List.ofFn_succ]
+  simp
+
+omit hK in
+theorem ofFn_claimPoint (s n : ℕ) (t : F) :
+    List.ofFn (claimPoint s n t) = (List.range n).map fun k => SQ^[k + s] t / (1 + SQ^[k + s] t) := by
+  apply List.ext_getElem (by simp)
+  intro j h1 h2
+  simp [claimPoint]
+
+omit hK in
+theorem claimScale_eq (s n : ℕ) (t : F) :
+    claimScale s n t = ∏ i ∈ Finset.range n, (1 + SQ^[i + s] t) := by
+  rw [claimScale, Fin.prod_univ_eq_prod_range (fun i => 1 + SQ^[i + s] t)]
+
+variable (P' : Params F)
+
+/-- The witness table's claim, as `claims_iff_accepts_ofCantor` states it: point, then value. -/
+noncomputable def modelWitness (t ρ : F) (a : Fin 4 → F) : List F :=
+  List.ofFn (Fin.cons ρ (Fin.cons (ρ ^ 2) (claimPoint 2 (22 + 1) t)) : Fin (22 + 1 + 1 + 1) → F) ++
+    [(∑ j, Params.opening ρ j * a j) / claimScale 2 (22 + 1) t]
+
+/-- The wiring table's claim. -/
+noncomputable def modelWiring (t s : F) : List F :=
+  List.ofFn (claimPoint 0 (22 + 2) t) ++ [s / claimScale 0 (22 + 2) t]
+
+/-- The quotient table's first claim. -/
+noncomputable def modelQuotient (α β γ t ρ s Y : F) (a : Fin 4 → F) : List F :=
+  List.ofFn (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (claimPoint 0 (22 + 2 + 1 + 1) t)
+      (P'.vCells.eval t / P'.claimDen α β t a s)) ρ) (Y / (1 + Y))) (Y ^ 2 / (1 + Y ^ 2)) :
+      Fin (22 + 2 + 1 + 1 + 1 + 1 + 1 + 1) → F) ++
+    [P'.claimValue α β γ t ρ a s / ((1 + Y) * (1 + Y ^ 2)) / claimScale 0 (22 + 2 + 1 + 1) t]
+
+/-- The quotient table's claim at the fixed point. -/
+noncomputable def modelSum (stmt : Fin P'.words → F) (γ Y : F) : List F :=
+  List.ofFn (sumPoint (22 + 2) Y) ++ [P'.target stmt γ / ((1 + Y) * (1 + Y ^ 2))]
+
+omit hK in
+theorem u_eq (k : ℕ) : Formula.u I k = SQ^[k] I.t / (1 + SQ^[k] I.t) := by
+  rw [Formula.u, div_eq_mul_inv]; rfl
+
+omit hK in
+theorem opened_eq : Formula.opened I = ∑ j, Params.opening I.ρ j * I.a j := by
+  simp only [Formula.opened, Fin.sum_univ_four, Params.opening]
+  simp
+  ring
+
+omit hK in
+/-- **The witness claim the graph passes is the model's.** -/
+theorem witness_eq : Formula.witness I = modelWitness I.t I.ρ I.a := by
+  rw [Formula.witness, modelWitness, ofFn_cons, ofFn_cons, ofFn_claimPoint, claimScale_eq,
+    invProd_eq, opened_eq, div_eq_mul_inv]
+  simp only [u_eq, pow_two]
+  rfl
+
+omit hK in
+/-- **The wiring claim the graph passes is the model's.** -/
+theorem wiring_eq : Formula.wiring I = modelWiring I.t I.next := by
+  rw [Formula.wiring, modelWiring, ofFn_claimPoint, claimScale_eq, List.range_eq_range' (n := 24),
+    invProd_eq, div_eq_mul_inv]
+  simp only [Nat.add_zero, ← List.range_eq_range']
+  exact congrArg₂ (· ++ ·) (List.map_congr_left fun k _ => by rw [u_eq]) rfl
+
+/-- **The quotient table's first claim the graph passes is the model's.** -/
+theorem quotient_eq : Formula.quotient limbs I =
+    modelQuotient (P) I.α I.β I.γ I.t I.ρ I.next Y I.a := by
+  have hx := cells_eq hK I hm σ hb0 hb 0
+  simp only [List.getD_cons_zero, Fin.isValue, Fin.val_zero] at hx
+  have hv : (P).vCells = digitPoly 24 := rfl
+  have hden : (P).claimDen I.α I.β I.t I.a I.next = Formula.product limbs I + Formula.w I 24 := by
+    rw [Params.claimDen, hx, hv, digitPoly_eval]; rfl
+  have hc : (P).claimValue I.α I.β I.γ I.t I.ρ I.a I.next = Formula.identities limbs I /
+      ((Formula.product limbs I + Formula.w I 24) * Formula.rows limbs I) := by
+    rw [Params.claimValue, gate_eq hK I hm σ hb0 hb, hden, ← rows_eq hK I hm σ hb0 hb, hx,
+      ← pub_eq hK I hm σ hb0 hb]
+    simp only [Formula.identities, Formula.copies, Formula.product, Formula.d, Formula.dNext]
+  have hval : (P).claimValue I.α I.β I.γ I.t I.ρ I.a I.next / ((1 + Y) * (1 + Y ^ 2)) /
+      claimScale 0 (22 + 2 + 1 + 1) I.t = elem limbs scale * Formula.invProd I (List.range 26) *
+        (Formula.product limbs I + Formula.w I 24)⁻¹ * (Formula.rows limbs I)⁻¹ *
+          Formula.identities limbs I := by
+    rw [claimScale_eq, List.range_eq_range' (n := 26), invProd_eq, hK.scale, hc]
+    simp only [div_eq_mul_inv, mul_inv]
+    ring
+  have hpt : Formula.w I 24 * (Formula.product limbs I + Formula.w I 24)⁻¹ =
+      (P).vCells.eval I.t / (P).claimDen I.α I.β I.t I.a I.next := by
+    rw [hden, hv, digitPoly_eval, div_eq_mul_inv]; rfl
+  rw [Formula.quotient, modelQuotient, ofFn_snoc, ofFn_snoc, ofFn_snoc, ofFn_snoc, ofFn_claimPoint,
+    hval, hpt, hK.y0, hK.y1]
+  simp only [List.append_assoc, List.singleton_append, List.cons_append, List.nil_append]
+  congr 1
+  refine List.map_congr_left fun k _ => ?_
+  rw [u_eq, Nat.add_zero]
+
+omit hK in
+/-- **The sum's value the graph passes is the model's.** -/
+theorem sum_eq (hs : elem limbs scale = ((1 + Y) * (1 + Y ^ 2))⁻¹) :
+    Formula.sum limbs I =
+      (P).target ![I.s 0, I.s 1, I.s 2, I.s 3, 1, 0, 0, 0] I.γ / ((1 + Y) * (1 + Y ^ 2)) := by
+  rw [Formula.sum, target_eq, hs, div_eq_mul_inv, mul_comm]
+
 end Implementation
