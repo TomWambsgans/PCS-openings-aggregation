@@ -657,4 +657,76 @@ theorem trace_deployed (c₁ : TableCode B.Msg₁) (c₂ : TableCode B.Msg₂) (
   rw [hLsplit]
   exact List.mem_append_right _ (List.mem_append_left _ (List.mem_append_left _ hy))
 
+/-! ## Knowledge soundness of the deployed verifier -/
+
+theorem isTotalQueryBound_deployedExp (A : OracleComp KeccakCalls (RootProof F × OpenProofs))
+    (Q QO : ℕ) (hQ : IsTotalQueryBound A Q)
+    (hO : ∀ (L : Layout) w, IsTotalQueryBound (ourVerifier L D.R w) QO) :
+    IsTotalQueryBound (deployedExp W D A) (Q + 6 + QO + QO + QO) :=
+  isTotalQueryBound_loggedKC_run _ _ _ (isTotalQueryBound_bind
+    (ob := fun y : ((S0 F × Bool) × Transcript) × Bool =>
+      (y, ·) <$> ourVerifier D.LQ D.R (qIn D y.1.1.1))
+    (isTotalQueryBound_midσ W D A Q QO hQ hO) fun y =>
+      (isQueryBound_map_iff (ourVerifier D.LQ D.R (qIn D y.1.1.1)) (fun b => (y, b)) QO _ _).mpr
+        (hO D.LQ _))
+
+/-- **Knowledge soundness of the deployed verifier in mumbai's two-oracle model**: the chain, then
+`opening::verify` (F2's `ourVerifier`) for the witness, wiring and quotient tables. For every
+adversary of at most `Q` queries, with every opening of at most `QO` queries, the decoders and
+claims matched to F1's (`WitnessMatch`, `QuotientMatch`), and the wiring opening's term `εσ`:
+the verifier accepts while the adversary's extractor's list (`adversaryExtractor`: the adversary's
+queries only) holds no witness of the statement with probability at most
+`openingBound (Q + 6) + εσ + openingBound (Q + 6 + 2 QO) + N (max L₁ (L₁ L₂) · roundError + 5 N / 2^256)`,
+`N = Q + 6 + 3 QO`, the two `openingBound`s being F2's `ours_sound` for the witness and the
+quotient opening. -/
+theorem knowledgeSoundness_deployed (c₁ : TableCode B.Msg₁) (c₂ : TableCode B.Msg₂)
+    (mW : WitnessMatch D c₁) (mQ : QuotientMatch W D c₂)
+    (A : OracleComp KeccakCalls (RootProof F × OpenProofs)) (Q QO : ℕ)
+    (hQ : IsTotalQueryBound A Q)
+    (hO : ∀ (L : Layout) w, IsTotalQueryBound (ourVerifier L D.R w) QO)
+    (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r) (h2 : r ≤ WhirBridge.maxLogRows)
+    (hLw : D.Lw = witnessLayout r ∨ D.Lw = wiringLayout r ∨ D.Lw = quotientLayout r)
+    (hLQ : D.LQ = witnessLayout r ∨ D.LQ = wiringLayout r ∨ D.LQ = quotientLayout r)
+    (hR : D.R = logInvRate) (εσ : ℝ≥0∞)
+    (hσ : Pr{let z ← (simulateQ randomOracle (deployedExp W D A)).run' ∅}[WDd (P := P) z] ≤ εσ) :
+    Pr{let z ← (simulateQ randomOracle (deployedExp W D A)).run' ∅}[BreaksD W c₁ z] ≤
+      openingBound (Q + 6) + εσ + openingBound (Q + 6 + QO + QO) +
+        ((Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) * ((listFactor c₁.commit.bound c₂.commit.bound :
+          ℝ≥0∞) * (roundError P B : ℝ≥0∞) + 5 * ((Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
+  set mx := (simulateQ randomOracle (deployedExp W D A)).run' ∅
+  have hrest : Pr{let z ← mx}[BreaksD W c₁ z ∧ ¬ EW D z ∧ ¬ WDd (P := P) z ∧ ¬ EQ D z] ≤
+      ((Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) * ((listFactor c₁.commit.bound c₂.commit.bound :
+        ℝ≥0∞) * (roundError P B : ℝ≥0∞) +
+        5 * ((Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
+    refine prEvent_randomOracle_le_of_freshBad_dep (R := KeccakCalls) (deployedExp W D A)
+      (Q + 6 + QO + QO + QO) (isTotalQueryBound_deployedExp W D A Q QO hQ hO)
+      (Set.range fun v : Bytes32 => (Sum.inl v.toList : List UInt8 ⊕ KeccakState))
+      (Set.finite_range _) _ (advBad W c₁.commit c₂.commit A) _ (fun S hS c t ht hcard => ?_)
+      (fun T h => trace_deployed W D c₁ c₂ mW mQ A T h)
+    have hS' : ∀ v : Bytes32, (Sum.inl v.toList : List UInt8 ⊕ KeccakState) ∈ S :=
+      fun v => hS _ ⟨v, rfl⟩
+    refine (prob_advBad W c₁.commit c₂.commit A S hS' c t ht).trans ?_
+    rw [add_comm]
+    gcongr
+    have : 4 * (cacheDom c).card + 5 ≤ 5 * (Q + 6 + QO + QO + QO) := by omega
+    calc ((4 * (cacheDom c).card + 5 : ℕ) : ℝ≥0∞) ≤ ((5 * (Q + 6 + QO + QO + QO) : ℕ) : ℝ≥0∞) := by
+          exact_mod_cast this
+      _ = 5 * ((Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) := by push_cast; ring
+  have hsplit : ∀ z, BreaksD W c₁ z → EW D z ∨ WDd (P := P) z ∨ EQ D z ∨
+      (BreaksD W c₁ z ∧ ¬ EW D z ∧ ¬ WDd (P := P) z ∧ ¬ EQ D z) := by
+    intro z hb
+    by_cases h1 : EW D z
+    · exact Or.inl h1
+    by_cases h2 : WDd (P := P) z
+    · exact Or.inr (Or.inl h2)
+    by_cases h3 : EQ D z
+    · exact Or.inr (Or.inr (Or.inl h3))
+    exact Or.inr (Or.inr (Or.inr ⟨hb, h1, h2, h3⟩))
+  refine (prEvent_mono mx _ _ hsplit).trans ?_
+  refine (prEvent_or_le _ _ _).trans ?_
+  refine (add_le_add (prEvent_EW_le W D A Q hQ r h1 h2 hLw hR) ((prEvent_or_le _ _ _).trans
+    (add_le_add hσ ((prEvent_or_le _ _ _).trans (add_le_add
+      (prEvent_EQ_le W D A Q QO hQ hO r h1 h2 hLQ hR) hrest))))).trans (le_of_eq ?_)
+  simp only [add_assoc]
+
 end Compose
