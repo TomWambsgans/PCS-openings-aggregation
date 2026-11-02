@@ -437,3 +437,7 @@ Each entry says what changed, why, and what the prover must change (none if the 
    139,640 → 101,820 straight.
    Prover: the ring map's stages in the order shift 1, 2, 4, 8, 16, 32 (the same six challenges, drawn as before):
    `Φ(a)` applies `a ← a + f_j a^(2^(2^j))` for `j = 0..5`, and the weight is `Φ(eq(p, u))` with that `Φ`.
+
+3. **Lever 1b: the tower's leaves as an `XOR` network** (Paar's greedy common subexpressions, `ring_tower::Tower`):
+   1,938 slice terms become 767 `XOR`s (251 shared). Measured, main line straight: 203,829 → 196,524 (target
+   26,832 → 19,542). Prover: nothing.

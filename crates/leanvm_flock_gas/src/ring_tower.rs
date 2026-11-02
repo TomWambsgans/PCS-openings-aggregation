@@ -53,6 +53,46 @@ pub fn ring_map<S: Scalar>(mut value: S, map: &[S]) -> S {
 pub struct Tower {
     pub theta: [E; STAGES],
     pub leaves: [u64; K_BITS],
+    /// The leaves as an `XOR` network: variable `64 + m` is `xors[m].0 + xors[m].1`, the slices being `0..64`.
+    pub xors: Vec<(usize, usize)>,
+    /// Each leaf, as the sum of these variables.
+    pub sums: Vec<Vec<usize>>,
+}
+
+/// Paar's greedy common subexpressions: while some pair of variables occurs in two sums or more, the most frequent
+/// pair (the first such) becomes a new variable. Rows are sets of variables, sorted.
+fn xor_network(leaves: &[u64; K_BITS]) -> (Vec<(usize, usize)>, Vec<Vec<usize>>) {
+    let mut rows: Vec<Vec<usize>> = leaves
+        .iter()
+        .map(|&mask| (0..K_BITS).filter(|&i| mask >> i & 1 == 1).collect())
+        .collect();
+    let mut xors = Vec::new();
+    loop {
+        let vars = K_BITS + xors.len();
+        let mut count = vec![0u32; vars * vars];
+        for row in &rows {
+            for (x, &a) in row.iter().enumerate() {
+                for &b in &row[x + 1..] {
+                    count[a * vars + b] += 1;
+                }
+            }
+        }
+        let (best, &most) = count.iter().enumerate().max_by_key(|&(at, &c)| (c, std::cmp::Reverse(at))).unwrap();
+        if most < 2 {
+            break;
+        }
+        let (a, b) = (best / vars, best % vars);
+        let new = vars;
+        for row in rows.iter_mut() {
+            if let (Ok(x), Ok(y)) = (row.binary_search(&a), row.binary_search(&b)) {
+                row.remove(y.max(x));
+                row.remove(y.min(x));
+                row.push(new);
+            }
+        }
+        xors.push((a, b));
+    }
+    (xors, rows)
 }
 
 /// `c^(|F_j|)`.
@@ -97,7 +137,13 @@ impl Tower {
                 }
             }
         }
-        Self { theta, leaves }
+        let (xors, sums) = xor_network(&leaves);
+        Self {
+            theta,
+            leaves,
+            xors,
+            sums,
+        }
     }
 
     /// `x^i = Σ_w ε_(i,w) Π_j θ_j^(w_j)`: the basis the leaves are coordinates in.
@@ -115,14 +161,14 @@ pub fn tower() -> &'static Tower {
 pub fn target<S: Scalar>(slices: &[S], map: &[S]) -> S {
     assert_eq!(slices.len(), K_BITS);
     let tower = tower();
+    let mut vars = slices.to_vec();
+    for &(a, b) in &tower.xors {
+        vars.push(vars[a] + vars[b]);
+    }
     let mut nodes: Vec<S> = tower
-        .leaves
+        .sums
         .iter()
-        .map(|&mask| {
-            (0..K_BITS)
-                .filter(|&i| mask >> i & 1 == 1)
-                .fold(S::zero(), |acc, i| acc + slices[i])
-        })
+        .map(|sum| sum.iter().fold(S::zero(), |acc, &v| acc + vars[v]))
         .collect();
     for (j, &f) in map.iter().enumerate() {
         let theta = S::constant(tower.theta[j]);
@@ -201,7 +247,8 @@ mod tests {
             assert_eq!(sum, GEN.pow(i as u64), "x^{i}");
         }
         let ones: u32 = tower.leaves.iter().map(|m| m.count_ones()).sum();
-        println!("tower leaves: {ones} slice terms over 64 leaves");
+        let xors = tower.xors.len() + tower.sums.iter().map(|s| s.len().saturating_sub(1)).sum::<usize>();
+        println!("tower leaves: {ones} slice terms over 64 leaves; {xors} XORs in the network ({} shared)", tower.xors.len());
     }
 
     /// The coefficients are the map's, the target is `Σ_i x^i Φ(s_i)`, and the weight at a point is the twisted sum.
