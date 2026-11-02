@@ -268,6 +268,59 @@ def xorshift (seed : UInt64) (count : ℕ) : List UInt64 :=
     let s := s ^^^ (s <<< 17)
     (s, acc.2.push s)) (seed ||| 1, #[])).2.toList
 
+/-! ### The bridge to Lv42's instance: the same tables, read two ways -/
+
+/-- A form on a row of `K`. -/
+def evalForm (f : Form) (row : ℕ → K) : E :=
+  f.foldl (fun acc (mono, c) ↦ acc + mono.foldl (fun p i ↦ p * ofK (row i)) c) 0
+
+/-- **The verifier's tables are Lv42's** on random rows: for each opcode table, the multiset of pull tuples
+and of push tuples (`layout.rs`'s forms, padded to 16 slots) equals the instance's flushes of that side
+(Clean's components through `toM3`), the counter columns are the instance's count columns, and the
+constraints (JUMP's two, none elsewhere) vanish together. The sides are compared as multisets: the
+fingerprint is a sum over a tuple's slots and the bus a product over tuples. -/
+def lv42Bridge : List (String × Bool) :=
+  (List.finRange 6).flatMap fun j ↦
+    let t := tables.getD j.val default
+    let rows := (List.range 3).map fun s ↦ (xorshift (UInt64.ofNat (1000 * j.val + 7 * s + 1)) 64).toArray
+    let pad (tuple : List E) : List E := tuple ++ List.replicate (16 - tuple.length) 0
+    let mine (sideOf : Flushes → List (List Form)) (row : Array UInt64) : List (List E) :=
+      (sideOf t.flushes).map fun tuple ↦ pad (tuple.map fun f ↦ evalForm f fun i ↦ K.ofLane (row.getD i 0))
+    let theirs (side : Lv42.Protocol.Side) (row : Array UInt64) : List (List E) :=
+      ((Lv42.Protocol.LeanIsa.flushes (Lv42.Protocol.LeanIsa.opIdx j)).filter (·.1 == side)).map fun f ↦
+        f.2.toList.map fun P ↦ ofK (P.eval fun i ↦ K.ofLane (row.getD i.val 0))
+    let flushesAgree := rows.all fun row ↦
+      (mine (·.pull) row).isPerm (theirs .pull row) && (mine (·.push) row).isPerm (theirs .push row) &&
+        -- a control: the sides are told apart
+        !(mine (·.pull) row).isPerm (theirs .push row)
+    let countsAgree := t.countColumns ==
+      (Lv42.Protocol.LeanIsa.counts (Lv42.Protocol.LeanIsa.opIdx j)).map (·.val)
+    let widthAgrees := t.width == Lv42.Protocol.LeanIsa.width (Lv42.Protocol.LeanIsa.opIdx j)
+    -- JUMP's rows: random (both fail), `v_cond = b = 0` (both hold), `b = 1, w = v_cond⁻¹` (both hold),
+    -- `b = 1, w` random (both fail).
+    let r0 := rows.getD 0 #[]
+    let x := K.ofLane (r0.getD 5 3)
+    let at_ (n : String) := colIdx t.columns n
+    let set (row : Array UInt64) (n : String) (v : UInt64) : Array UInt64 := row.set! (at_ n) v
+    let constraintRows := rows ++ if t.opcode = opJump then
+        [set (set r0 "v_cond" 0) "b" 0, set (set (set r0 "v_cond" x.lane) "w" x⁻¹.lane) "b" 1,
+          set (set r0 "v_cond" x.lane) "b" 1]
+      else []
+    let constraintsAgree := constraintRows.all fun row ↦
+      let value (n : String) : E := ofK (K.ofLane (row.getD (colIdx t.columns n) 0))
+      let mineVanish := if t.opcode = opJump then
+          value "b" + value "v_cond" * value "w" == 0 && value "v_cond" * (value "b" + 1) == 0
+        else true
+      let theirsVanish := (Lv42.Protocol.LeanIsa.constraints (Lv42.Protocol.LeanIsa.opIdx j)).all fun C ↦
+        C.eval (fun i ↦ K.ofLane (row.getD i.val 0)) == 0
+      mineVanish == theirsVanish &&
+        (Lv42.Protocol.LeanIsa.constraints (Lv42.Protocol.LeanIsa.opIdx j)).length ==
+          if t.opcode = opJump then 2 else 0
+    [(s!"Lv42 bridge, table {j.val}: width", widthAgrees),
+      (s!"Lv42 bridge, table {j.val}: pull and push tuples (multisets, 3 random rows)", flushesAgree),
+      (s!"Lv42 bridge, table {j.val}: counter columns", countsAgree),
+      (s!"Lv42 bridge, table {j.val}: constraints", constraintsAgree)]
+
 /-- The Rust's unit tests of `domain.rs` and `heap.rs`, and the mapping's transform pair, on the Lean
 definitions: each `(name, holds)`. -/
 def selfTests : List (String × Bool) :=
@@ -326,7 +379,7 @@ def selfTests : List (String × Bool) :=
     ("mapping: the verifier's reading at omega_x is the value", reading)]
 
 def main : IO Unit := do
-  let tests := selfTests
+  let tests := selfTests ++ lv42Bridge
   for (n, ok) in tests do
     IO.println s!"{if ok then "SELF-TEST OK" else "SELF-TEST FAILED"} {n}"
   if !tests.all (·.2) then throw (IO.userError "a self-test failed")

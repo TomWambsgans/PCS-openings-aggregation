@@ -18,6 +18,11 @@ starting point is leanVM's `formal/quotient` (branch `PCS-openings-aggregation`)
 [`README.upstream.md`](README.upstream.md): sorry-free proofs of the reduction for the BLAKE2s/full-adder
 circuit, with ideal commitments.
 
+**The univariate PIOP for leanVM 42422001** (`crates/leanvm_univariate`, milestone 4): its verifier transcribed
+and differential-tested, with its end statements `UniKnowledgeSoundness` and `UniCompleteness` against
+[`Lv42/`](Lv42)'s relation `M3Holds`, stated and not yet proved, is [`UniStatement/`](UniStatement/README.md), a
+library of `EndToEnd/`.
+
 ## End-to-end theorems
 
 `EndToEnd/` (a Lake workspace, `EndToEnd/lakefile.toml`) proves the Statement's end statements about the
