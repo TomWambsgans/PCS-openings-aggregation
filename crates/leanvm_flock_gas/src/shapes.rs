@@ -39,7 +39,7 @@ const fn shape(log_memory: u64, table_rows: [u64; N_TABLES]) -> Shape {
 }
 
 /// Table rows in leanVM's order: XOR, MUL, SET, DEREF, JUMP, BLAKE2S.
-pub const WORKLOADS: [Workload; 5] = [
+pub const WORKLOADS: [Workload; 6] = [
     Workload {
         name: "xmss32",
         xmss: 32,
@@ -68,6 +68,15 @@ pub const WORKLOADS: [Workload; 5] = [
         log2_committed: 25.492,
     },
     Workload {
+        name: "xmss1000",
+        xmss: 1000,
+        shape: shape(21, [183266, 195439, 223851, 137591, 80937, 202025]),
+        stream_elements: 1166,
+        piop_elements: 1045,
+        cycles: 1_023_109,
+        log2_committed: 26.527,
+    },
+    Workload {
         name: "xmss1290",
         xmss: 1290,
         shape: shape(22, [236343, 252019, 287373, 177391, 104394, 260605]),
@@ -86,6 +95,12 @@ pub const WORKLOADS: [Workload; 5] = [
         log2_committed: 27.524,
     },
 ];
+
+/// The reference workload of `crates/leanvm_univariate` (about 1M cycles, one commitment per round): 1,000
+/// signatures, its shape from leanVM's own `gas-dump` (run on h1, `/root/pcs-quotient-fv/leanvm-univariate/`).
+pub fn reference() -> &'static Workload {
+    WORKLOADS.iter().find(|w| w.xmss == 1000).expect("the reference workload")
+}
 
 /// leanVM's README benchmark: 1,290 leanXMSS signatures.
 pub fn benchmark() -> &'static Workload {

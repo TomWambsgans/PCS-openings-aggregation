@@ -1,0 +1,15 @@
+# Part of this repository. Builds on crates/leanvm_flock_gas (which vendors and adapts leanVM
+# (https://github.com/leanEthereum/leanVM), commit 42422001), MIT OR Apache-2.0. See NOTICE.md.
+[package]
+name = "leanvm_univariate"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "A univariate PIOP for leanVM 42422001 (two commitments, a product heap for the bus, quotient identities at one point): spec, soundness, verifier gas"
+
+[lints]
+workspace = true
+
+[dependencies]
+leanvm_flock_gas = { path = "../leanvm_flock_gas" }
+revm.workspace = true

@@ -18,14 +18,14 @@
 mod bus;
 mod bytecode;
 pub mod evm;
-mod field;
-mod flock;
+pub mod field;
+pub mod flock;
 mod hash;
 pub mod keccak_gkr;
-mod layout;
+pub mod layout;
 pub mod matrices;
 mod merkle;
-mod multilinear;
+pub mod multilinear;
 pub mod scalar;
 pub mod shapes;
 mod stack;

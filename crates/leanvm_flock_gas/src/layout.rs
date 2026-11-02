@@ -49,6 +49,11 @@ impl<S: Scalar> Form<S> {
         }
     }
 
+    /// The monomials and their coefficients: `[]` is 1, `[i]` is `x_i`, `[i, j]` is `x_i x_j`.
+    pub fn terms(&self) -> impl Iterator<Item = (&[usize], &S)> {
+        self.terms.iter().map(|(monomial, coefficient)| (monomial.as_slice(), coefficient))
+    }
+
     pub fn evaluate(&self, column: &[S]) -> S {
         S::sum(
             self.terms
@@ -153,8 +158,8 @@ pub const SEP_BYTECODE: E = E::new(4, 0, 0); // GEN^2
 
 #[derive(Clone, Debug, Default)]
 pub struct Flushes {
-    push: Vec<Vec<Form>>,
-    pull: Vec<Vec<Form>>,
+    pub push: Vec<Vec<Form>>,
+    pub pull: Vec<Vec<Form>>,
 }
 
 impl Flushes {
@@ -221,7 +226,7 @@ impl Table {
         self.columns.len()
     }
 
-    fn count_columns(&self) -> impl Iterator<Item = usize> {
+    pub fn count_columns(&self) -> impl Iterator<Item = usize> {
         (0..self.width()).filter(|&i| self.columns[i].starts_with("cnt"))
     }
 }
@@ -412,7 +417,7 @@ pub fn tables() -> Vec<Table> {
 // Where in the flock witness each embedded BLAKE2s limb live: one 64-bit slot per limb, the chaining value first, then the
 // digest, the message block and the metadata. Slots 8 and 9 are flock's constant wire and the padding up to its message base, which no memory cell carries.
 #[rustfmt::skip]
-const BLAKE2S_SLOTS: [Option<&str>; 20] = [
+pub const BLAKE2S_SLOTS: [Option<&str>; 20] = [
     Some("cv0_lo"), Some("cv0_hi"), Some("cv1_lo"), Some("cv1_hi"), Some("out0_lo"), Some("out0_hi"), Some("out1_lo"), Some("out1_hi"), None, None,
     Some("m0_lo"), Some("m0_hi"), Some("m1_lo"), Some("m1_hi"), Some("m2_lo"), Some("m2_hi"), Some("m3_lo"), Some("m3_hi"), Some("md_lo"), Some("md_hi"),
 ];

@@ -450,8 +450,8 @@ pub fn ring_switch<S: Scalar>(point: Vec<S>, s: &[S], transcript: &mut impl Chan
 
 /// The ring switch's weight `W` (leanVM returns it as a closure).
 pub struct RingWeight<S> {
-    point: Vec<S>,
-    coefficients: Vec<S>,
+    pub point: Vec<S>,
+    pub coefficients: Vec<S>,
 }
 
 impl<S: Scalar> RingWeight<S> {
