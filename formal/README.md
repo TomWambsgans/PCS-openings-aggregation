@@ -249,9 +249,10 @@ and its wiring value (`P₀D.sigmaPoly.eval`) are noncomputable.
 **Rendered by WHIR's honest prover** (`zeroKnowledge_final`, `ZK/CoreEnd.lean`): the Statement's
 `ZeroKnowledgeWith` at `zkBoundEnd ((2^24 + 2^70)·12) fmtBudget (· ↦ deltaNone)` (`deltaNone < 2^-162`) for
 `zkSimulator` with the renderer `whirRenderer deployedRep stmt` per statement, on `skelSetup` at the deployed
-public data (`stmtBytesD`, the layouts' identifiers, the wiring codeword's rows), from one named hypothesis, the
-**deterministic core `CoreD`** (`ZK/CoreDefs.lean`): for every permutation at which the Statement's prover makes
-a proof and its `α, β` are not degenerate, `fmt` makes that proof of the skeleton's. `CoreWhir` (every
+public data (`stmtBytesD`, the layouts' identifiers, the wiring codeword's rows), from the **deterministic core
+`CoreD`** (`ZK/CoreDefs.lean`): for every permutation at which the Statement's prover makes a proof and its
+`α, β` are not degenerate, `fmt` makes that proof of the skeleton's. **`zeroKnowledge_closed`**
+(`ZK/CoreMain.lean`) is it with `CoreD` proved (`coreD`): no hypothesis is left. `CoreWhir` (every
 permutation) is false: at degenerate `α, β` the Statement's coset division is not F1's quotient, which the joint
 model's `TQD` is; `badProb` (no proof, or degenerate `α, β`) is bounded instead (`hbad_deployed`,
 `ZK/CoreBad.lean`, from completeness's staged run) and enters `ProverBridge` (`proverBridge_of_detG`). `fmt`'s
@@ -260,7 +261,10 @@ joint model's stacks and leaves are the Statement's codeword rows (`ZK/CoreTable
 rounds and folded table are mumbai's arrays' (`ZK/CoreView*.lean`), the verifier's program follows the
 skeleton's events at the three ladders (`ZK/CoreFollows.lean`), `runFrom` and `fmt`'s production on events
 (`ZK/CoreEv.lean`, `ZK/CoreFill.lean`), the skeleton's opening on events (`ZK/CoreSkel.lean`), their lockstep
-(`drive`, `ZK/CoreDrive.lean`), `fmt` within its budget (`ZK/CoreBudget*.lean`).
+(`drive`, `ZK/CoreDrive.lean`), `fmt` within its budget (`ZK/CoreBudget*.lean`), the reduction's chain, values,
+claims and seeds (`ZK/CoreRed*.lean`), the renderer's messages, the honest script's drive of the Statement's
+level-0 word (`ZK/CoreRender*.lean`), an opening end to end (`ZK/CoreOpen.lean`), and the assembly
+(`ZK/CoreMain*.lean`).
 
 ## End-to-end completeness (`Completeness/`)
 
