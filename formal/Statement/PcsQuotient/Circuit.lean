@@ -275,10 +275,13 @@ def membershipBuilder : BuildM (List Src × List Src) := do
 def Builder.new : Builder := ⟨Array.replicate publicRows idle, #[]⟩
 
 /-- **The membership circuit** on `2^logRows` rows (`membership`, `circuit.rs:326-346`; deployed at
-`logRows = 22`, `3 878 612` rows used). -/
+`logRows = 22`, `3 878 612` rows used). The builder's run is read by its projections (`r.1.1` the
+wires of `y`, `r.1.2` those of the root, `r.2` the builder), not by a pattern match, so that a proof
+about the circuit's fields never has to evaluate the run (a match on it is reduced only once the
+`2^22`-row run is computed). -/
 def membership (logRows : ℕ) : Circuit :=
-  let ((y, root), b) := membershipBuilder.run Builder.new
-  finish logRows (publicWords y root) b
+  let r := (membershipBuilder.run Builder.new).run
+  finish logRows (publicWords r.1.1 r.1.2) r.2
 
 /-- `membership_inputs` (`circuit.rs:349-357`): the free inputs of `membership` for a secret, `x`'s
 bits, then each level's sibling's bits and its direction, a byte's bits low first. -/
