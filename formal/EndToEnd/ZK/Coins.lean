@@ -24,9 +24,9 @@ the proof by an oracle that answers coins as `unifSpec` does.
 * **`close_of_coinFree`**: two games closer than `ε` for every coin-free distinguisher of at most `Q`
   calls are closer than `ε` for every distinguisher with coins of at most `Q` calls (the proofs both
   games can produce are finitely many, so one tape serves all of them).
-* **`zeroKnowledge_of_coinFree`**: `PcsQuotient.ZeroKnowledge ζ` from the same bound for coin-free
-  distinguishers (`ZeroKnowledgeCoinFree ζ`), for the statement's `realExperiment` and
-  `idealExperiment`, whatever the simulator (its oracle `Simulator.simOracle` forwards coins).
+* **`zeroKnowledgeWith_of_coinFree`**: `PcsQuotient.ZeroKnowledgeWith s₀ sim simOracle ζ` from the same
+  bound for coin-free distinguishers (`ZeroKnowledgeCoinFreeWith`), for any simulator whose oracle
+  forwards coins (`CoinsUniform`); `zeroKnowledge_of_coinFree` at the package's own `simulator`.
 -/
 
 open OracleComp OracleSpec Common
@@ -417,35 +417,52 @@ theorem realExperiment_eq (stmt : Statement) (w : Secret) (D : Distinguisher) :
   simp only [realExperiment, runWithRandomPermutation, realPrefix, bind_assoc, simulateQ_bind,
     StateT.run'_eq, StateT.run_bind, map_bind]
 
-theorem idealExperiment_eq (stmt : Statement) (D : Distinguisher) :
-    idealExperiment stmt D = ((simulator stmt).run {} >>= fun z ↦
-      (simulateQ Simulator.simOracle (D z.1)).run' z.2) := by
-  simp only [idealExperiment, StateT.run'_eq, StateT.run_bind, map_bind]
+theorem idealExperimentWith_eq {S : Type} (s₀ : S) (sim : Statement → StateT S ProbComp (Option Proof))
+    (simOracle : QueryImpl RandomPermutationOracles (StateT S ProbComp)) (stmt : Statement)
+    (D : Distinguisher) :
+    idealExperimentWith s₀ sim simOracle stmt D = ((sim stmt).run s₀ >>= fun z ↦
+      (simulateQ simOracle (D z.1)).run' z.2) := by
+  simp only [idealExperimentWith, StateT.run'_eq, StateT.run_bind, map_bind]
 
 theorem coinsUniform_lazy : CoinsUniform lazyRandomPermutationOracles := fun _ ↦ rfl
 
 theorem coinsUniform_simOracle : CoinsUniform Simulator.simOracle := fun _ ↦ rfl
 
-/-- **Zero knowledge against coin-free distinguishers**: `ZeroKnowledge`'s statement for every
-distinguisher of `π` and `π⁻¹` alone (`liftPerm`), its calls bounded by `IsTotalQueryBound`. -/
-def ZeroKnowledgeCoinFree (ζ : ℕ → ℝ≥0∞) : Prop :=
+/-- **Zero knowledge against coin-free distinguishers, for a simulator**: `ZeroKnowledgeWith`'s
+statement for every distinguisher of `π` and `π⁻¹` alone (`liftPerm`), its calls bounded by
+`IsTotalQueryBound`. -/
+def ZeroKnowledgeCoinFreeWith {S : Type} (s₀ : S) (sim : Statement → StateT S ProbComp (Option Proof))
+    (simOracle : QueryImpl RandomPermutationOracles (StateT S ProbComp)) (ζ : ℕ → ℝ≥0∞) : Prop :=
   ∀ (stmt : Statement) (w : Secret), Relation stmt w →
   ∀ (D : Option Proof → OracleComp PermSpec Bool) (Q : ℕ), (∀ proof, IsTotalQueryBound (D proof) Q) →
     Close (realExperiment stmt w fun proof ↦ simulateQ liftPerm (D proof))
-      (idealExperiment stmt fun proof ↦ simulateQ liftPerm (D proof)) (ζ Q)
+      (idealExperimentWith s₀ sim simOracle stmt fun proof ↦ simulateQ liftPerm (D proof)) (ζ Q)
+
+/-- **`ZeroKnowledgeWith` from coin-free distinguishers**: for a simulator whose oracle answers coins
+uniformly, the coins of a distinguisher change nothing. -/
+theorem zeroKnowledgeWith_of_coinFree {S : Type} (s₀ : S)
+    (sim : Statement → StateT S ProbComp (Option Proof))
+    (simOracle : QueryImpl RandomPermutationOracles (StateT S ProbComp))
+    (hsim : CoinsUniform simOracle) (ζ : ℕ → ℝ≥0∞) (h : ZeroKnowledgeCoinFreeWith s₀ sim simOracle ζ) :
+    ZeroKnowledgeWith s₀ sim simOracle ζ := by
+  intro stmt w hw D Q hD
+  have hc := close_of_coinFree (realPrefix stmt w) ((sim stmt).run s₀)
+    lazyRandomPermutationOracles simOracle coinsUniform_lazy hsim
+    (ζ Q) Q (fun D₀ hD₀ ↦ by
+      have h' := h stmt w hw D₀ Q hD₀
+      rw [realExperiment_eq, idealExperimentWith_eq] at h'
+      simp only [run_liftPerm] at h'
+      exact h') D hD
+  rw [← realExperiment_eq, ← idealExperimentWith_eq] at hc
+  exact hc
+
+/-- **Zero knowledge against coin-free distinguishers** for this package's `simulator`. -/
+def ZeroKnowledgeCoinFree (ζ : ℕ → ℝ≥0∞) : Prop :=
+  ZeroKnowledgeCoinFreeWith (S := Simulator.SimState) {} simulator Simulator.simOracle ζ
 
 /-- **`ZeroKnowledge` from coin-free distinguishers**: the coins of a distinguisher change nothing. -/
 theorem zeroKnowledge_of_coinFree (ζ : ℕ → ℝ≥0∞) (h : ZeroKnowledgeCoinFree ζ) :
-    ZeroKnowledge ζ := by
-  intro stmt w hw D Q hD
-  have hc := close_of_coinFree (realPrefix stmt w) ((simulator stmt).run {})
-    lazyRandomPermutationOracles Simulator.simOracle coinsUniform_lazy coinsUniform_simOracle
-    (ζ Q) Q (fun D₀ hD₀ ↦ by
-      have h' := h stmt w hw D₀ Q hD₀
-      rw [realExperiment_eq, idealExperiment_eq] at h'
-      simp only [run_liftPerm] at h'
-      exact h') D hD
-  rw [← realExperiment_eq, ← idealExperiment_eq] at hc
-  exact hc
+    ZeroKnowledge ζ :=
+  zeroKnowledgeWith_of_coinFree _ _ _ coinsUniform_simOracle ζ h
 
 end PcsQuotient.EndToEnd
