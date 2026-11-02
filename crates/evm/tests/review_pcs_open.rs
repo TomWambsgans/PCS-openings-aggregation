@@ -43,7 +43,7 @@ fn parse(input: &[u8]) -> Option<(Layout, Hash, Vec<Claim>)> {
     if !input.len().is_multiple_of(32) || input.len() < 96 {
         return None;
     }
-    let words: Vec<&[u8]> = input.chunks_exact(32).collect();
+    let words: Vec<&[u8]> = input.as_chunks::<32>().0.iter().map(|w| &w[..]).collect();
     let layout = layout(U256::from_be_slice(words[1]))?;
     let k = u64::try_from(U256::from_be_slice(words[2])).ok()? as usize;
     let v = layout.vars;
@@ -156,7 +156,7 @@ fn pcs_open_inputs_are_what_opening_verify_reads() {
         // The IV from the raw bytes: the prefix, then each claim word's low 24 bytes reversed (limb 0 first,
         // little-endian), which is `opening::iv`'s.
         let mut iv_bytes = opening::prefix(&layout).to_vec();
-        for word in input[96..].chunks_exact(32) {
+        for word in input[96..].as_chunks::<32>().0 {
             assert_eq!(word[..8], [0; 8]);
             iv_bytes.extend(word[8..].iter().rev());
         }

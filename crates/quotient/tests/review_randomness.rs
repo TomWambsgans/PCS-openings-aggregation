@@ -53,8 +53,10 @@ fn keccak(parts: &[&[u8]]) -> [u8; 32] {
 
 fn le_words(bytes: &[u8]) -> Vec<u64> {
     bytes
-        .chunks_exact(8)
-        .map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|&c| u64::from_le_bytes(c))
         .collect()
 }
 
@@ -618,9 +620,7 @@ fn encode(f: &Fields) -> Vec<u8> {
 
 /// The encoding's inverse: `None` on a byte string no layout encodes to (a bad tag, a short read, bytes left).
 fn decode(bytes: &[u8]) -> Option<Fields> {
-    let mut words = bytes
-        .chunks_exact(8)
-        .map(|c| u64::from_le_bytes(c.try_into().unwrap()) as usize);
+    let mut words = bytes.as_chunks::<8>().0.iter().map(|&c| u64::from_le_bytes(c) as usize);
     if !bytes.len().is_multiple_of(8) {
         return None;
     }
@@ -1072,7 +1072,9 @@ fn iv_reads_back_the_claims() {
         .chunks_exact(per)
         .map(|c| {
             let xs: Vec<F192> = c
-                .chunks_exact(24)
+                .as_chunks::<24>()
+                .0
+                .iter()
                 .map(|e| {
                     let w = le_words(e);
                     F192::new(w[0], w[1], w[2])
