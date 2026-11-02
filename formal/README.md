@@ -107,7 +107,7 @@ in that PRG).
   `Factors` for the deployed prover (structural: the masks and the two paddings are independent and WHIR's
   messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed; equal by
   test, not by proof: see the next item). The lift to leanerVM's random-permutation model is separate
-  (`QuotientZk/Rpm.lean`).
+  (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
 - **`skel` against the Rust prover, by test** (`QuotientZk/Test/SkelTrace.lean`, executable `skeltrace`;
   `crates/quotient/tests/skel_trace.rs`, feature `skel-trace`, which records every Keccak call of a proof through
   test-only hooks): at `2^17` rows `skel`, run as compiled with mumbai's Keccak-256 and Keccak-f[1600] as the
