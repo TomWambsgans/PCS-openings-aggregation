@@ -181,7 +181,9 @@ claim and limb, their weight on the stack `Layout.weightAt`): the free positions
 are independent (`freePositions`; a claim's weight may vanish on whole lanes, as the sum claim's on lane `0`),
 the system solved by Gauss–Jordan elimination (`Domain.eliminate`). In a hidden layout this is a uniform table
 conditioned on its claims, padded uniformly: the stack is an affine bijection of the table and the padding,
-and the claims weigh the table only. A system of rank below `k` (claims that contradict each other) leaves
+and the claims weigh the table only; the gadget's entries are then cancelled as the prover cancels them
+(`Layout.cancelGadget`: first-piece entries, which no claim weighs). A system of rank below `k` (claims that
+contradict each other) leaves
 the words uniform. -/
 def fakeStack (L : Layout) (claims : List Claim) : ProbComp (Array K) := do
   let lane := 2 ^ L.logLane
@@ -205,7 +207,7 @@ def fakeStack (L : Layout) (claims : List Claim) : ProbComp (Array K) := do
       if q.val < k then LeanVM.Prover.limbAt (weightAt w (free.getD q.val 0)) limb
       else LeanVM.Prover.limbAt (rest.getD (e.val / 3) 0) limb
   let reduced := (List.range k).foldl (eliminate k) rows
-  return (List.range k).foldl
+  return L.cancelGadget <| (List.range k).foldl
     (fun s q ↦ s.setIfInBounds (free.getD q 0) ((reduced.getD q #[]).getD k 0)) r
 
 /-! ### The simulator -/

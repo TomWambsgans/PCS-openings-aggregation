@@ -23,11 +23,12 @@ opening.
   `blocks[l]` whole.
 * A **hidden** layout (`Layout.hidden`, `Layout::hidden`; the witness and the quotient tables, so that
   their roots and openings hide them, `HIDING.md`): pieces of `2^8` entries; every lane's first piece is
-  random; block lane `l` holds its block's piece `k ⊕ (l mod 2)` at its piece `k ≥ 1`; the **overflow**
-  lane (`L − 2`) holds, at its pieces `1, 2, …`, the pieces the block lanes give up and the chunks'
-  tails, each plus a share `ρ`; the **share** lane (`L − 1`) is random, `ρ` at those pieces; the other
-  random lanes sit on odd lanes. The weight is zero on the randomness and the same on the overflow and
-  share lanes' held pieces, where `ρ` cancels (characteristic two): the claims are the table's.
+  random; the block lanes hold their blocks but for piece `0`, the first `32` in lanes `0 … 31`, the rest
+  after the random lanes; lane `32` is the **overflow** lane, holding at its pieces `1, 2, …` the pieces
+  the blocks give up and the chunks' tails; the random lanes follow it. The claims weigh the table only.
+  The **gadget** (`gadgetWeight`): a fixed weight on nine first-piece entries of lanes `0, 31` / `1, 30` /
+  `32`, batched as one more claim of value zero; the prover makes the entries cancel it (`HIDING.md`: it
+  makes WHIR's lane rounds uniform).
 
 **The WHIR verifier is mumbai's** `verifyStackedOpening`, a transcription of leanVM's
 `python-verifier/verifier.py` (`verify_stacked_opening`, `verify_whir`) at leanVM `c445e3d5`, the commit
@@ -65,12 +66,11 @@ def logInvRate : ℕ := 1
 
 /-- What a lane of the stack holds (`Lane`, `opening.rs`). -/
 inductive Lane where
-  /-- The table's block (in a hidden layout, all of it but one piece, its pieces in pairs swapped on an
-  odd lane). -/
+  /-- The table's block (in a hidden layout, all of it but its piece `0`). -/
   | block (b : ℕ)
   /-- Pieces of the table, at its pieces `1, 2, …` (`Layout.pieces`). -/
   | overflow
-  /-- Randomness, but for the share lane's pieces `1, 2, …`. -/
+  /-- Randomness. -/
   | random
   deriving DecidableEq, Inhabited
 
@@ -84,11 +84,9 @@ structure Layout where
   lanes : List Lane
   /-- A hidden layout's piece, `2^s` entries; `none` for a public one. -/
   logPiece : Option ℕ
-  /-- The table's pieces at the overflow lane's pieces `1, 2, …`: the piece each block lane gives up, in lane
+  /-- The table's pieces at the overflow lane's pieces `1, 2, …`: piece `0` of each block lane's block, in lane
   order, then the chunks' tails. -/
   pieces : List ℕ
-  /-- The random lane holding the share `ρ` of the overflow lane's held pieces. -/
-  share : Option ℕ
 
 /-- The lanes' variables, `ℓ = logN − 6`. -/
 def Layout.logLane (L : Layout) : ℕ := L.logN - laneFold
@@ -105,13 +103,16 @@ def Layout.ofChunks (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ)) : La
   let lane := 2 ^ (logN - laneFold)
   ⟨vars, logN, chunks.flatMap (fun (chunk, len) ↦
     (List.range ((len + lane - 1) / lane)).map fun j ↦
-      Lane.block (chunk * 2 ^ (logChunk - (logN - laneFold)) + j)), none, [], none⟩
+      Lane.block (chunk * 2 ^ (logChunk - (logN - laneFold)) + j)), none, []⟩
 
-/-- **`Layout::hidden`** (`opening.rs`) with pieces of `2^s` entries and `random` random lanes, `L` lanes in
-all: a lane for each whole block of a chunk, the overflow lane `L − 2`, the share lane `L − 1`, and the other
-random lanes on the odd lanes `2⌊k·P/(R−1)⌋ + 1`, `P = ⌊(L − 2)/2⌋`; the block lanes fill the rest in order.
-The overflow lane holds the piece `l mod 2` of each block lane `l`'s block, then the chunks' tails, piece by
-piece. (The Rust asserts the sizes; at the sizes `supported` admits they hold.) -/
+/-- `OVERFLOW_LANE` (`opening.rs`): a hidden layout's overflow lane. -/
+def overflowLaneIndex : ℕ := 32
+
+/-- **`Layout::hidden`** (`opening.rs`) with pieces of `2^s` entries and `random` random lanes: the first `32`
+whole blocks of the chunks in lanes `0 … 31` (random lanes where there are fewer), the overflow lane `32`, the
+`random` random lanes, then the remaining blocks. The overflow lane holds piece `0` of each block lane's block,
+in lane order, then the chunks' tails, piece by piece. (The Rust asserts the sizes; at the sizes `Supported`
+admits they hold.) -/
 def Layout.hidden (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ)) (random s : ℕ) : Layout :=
   let logLane := logN - laneFold
   let blocks := chunks.flatMap fun (chunk, len) ↦
@@ -121,19 +122,14 @@ def Layout.hidden (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ)) (rando
     let whole := len / 2 ^ logLane
     let tail := len - whole * 2 ^ logLane
     (List.range ((tail + 2 ^ s - 1) / 2 ^ s)).map fun j ↦ (first + whole) * 2 ^ (logLane - s) + j
-  let total := blocks.length + 1 + random
-  let pairs := (total - 2) / 2
-  let randomLanes := (List.range (random - 1)).map fun k ↦ 2 * (k * pairs / (random - 1)) + 1
-  let lanes : List Lane := ((List.range total).foldl
-    (fun (acc : List Lane × ℕ) l ↦
-      if l = total - 1 ∨ randomLanes.contains l then (acc.1 ++ [.random], acc.2)
-      else if l = total - 2 then (acc.1 ++ [.overflow], acc.2)
-      else (acc.1 ++ [.block (blocks.getD acc.2 0)], acc.2 + 1))
-    ([], 0)).1
-  let givenUp := (lanes.zipIdx).filterMap fun (lane, l) ↦ match lane with
-    | .block b => some (b * 2 ^ (logLane - s) + l % 2)
+  let lower := min blocks.length overflowLaneIndex
+  let lanes : List Lane := (blocks.take lower).map .block ++
+    List.replicate (overflowLaneIndex - lower) .random ++ [.overflow] ++ List.replicate random .random ++
+    (blocks.drop lower).map .block
+  let givenUp := lanes.filterMap fun
+    | .block b => some (b * 2 ^ (logLane - s))
     | _ => none
-  ⟨vars, logN, lanes, some s, givenUp ++ tails, some (total - 1)⟩
+  ⟨vars, logN, lanes, some s, givenUp ++ tails⟩
 
 /-- `WITNESS_RANDOM_LANES`, `QUOTIENT_RANDOM_LANES` (`protocol.rs`): seven random lanes each, the fewest with
 which the openings hide the tables (`HIDING.md`). -/
@@ -171,9 +167,8 @@ def quotientLayout (logRows : ℕ) : Layout :=
   Layout.hidden (m + 6) m (m + 4) (quotientChunks m) randomLanes logPiece
 
 /-- **The table's entry `i` read back from a stack** (`Table::read`, `opening.rs`): public layout, from the
-lane holding its block; hidden layout, a held piece's entry is the sum of the overflow and share lanes' there,
-any other from the block lane holding it (its piece pair swapped on an odd lane); zero where the layout holds
-nothing. -/
+lane holding its block; hidden layout, a held piece's entry from the overflow lane, any other from the block
+lane holding it; zero where the layout holds nothing. -/
 def Layout.readEntry (L : Layout) (stack : ℕ → K) (i : ℕ) : K :=
   let lane := 2 ^ L.logLane
   match L.logPiece with
@@ -185,15 +180,13 @@ def Layout.readEntry (L : Layout) (stack : ℕ → K) (i : ℕ) : K :=
     let piece := 2 ^ s
     let p := i / piece
     match L.pieces.findIdx? (· = p) with
-    | some k =>
-      stack (L.overflowLane * lane + (k + 1) * piece + i % piece) +
-        stack (L.share.getD 0 * lane + (k + 1) * piece + i % piece)
+    | some k => stack (L.overflowLane * lane + (k + 1) * piece + i % piece)
     | none =>
       match L.lanes.findIdx? (· = .block (p / 2 ^ (L.logLane - s))) with
-      | some l => stack (l * lane + ((p % 2 ^ (L.logLane - s)) ^^^ (l % 2)) * piece + i % piece)
+      | some l => stack (l * lane + (p % 2 ^ (L.logLane - s)) * piece + i % piece)
       | none => 0
 
-/-! ### A claim's weight on the stack -/
+/-! ### A claim's weight on the stack, and the gadget -/
 
 /-- `eq(point, bits of index)`, the first coordinate the lowest bit (`eq_bits`, `opening.rs`). -/
 def eqBits (point : List E) (index : ℕ) : E :=
@@ -211,32 +204,59 @@ def Layout.scales (L : Layout) (point : List E) : List E × List E :=
 
 /-- **A claim's weight at a stack point** `x` (the closure of `opening::verify`, before the batching): the
 lane's coordinates of `x` first, then the six of the lane's index. Public layout: the claim's `eq` on the
-lane's coordinates times `Σ_l eq(block_l)·eq(l)`. Hidden layout: below the piece, the claim's `eq`; above,
-the block lanes' `eq` with coordinate `s` flipped on odd lanes and the first piece's share taken out, and
-the overflow pieces' `eq` on the overflow and share lanes. -/
+lane's coordinates times `Σ_l eq(block_l)·eq(l)`. Hidden layout: below the piece, the claim's `eq`; above, the
+block lanes' `eq` with the first piece's share taken out, and the overflow pieces' `eq` on the overflow lane.
+-/
 def stackWeight (L : Layout) (c : Claim) (x : List E) : E :=
   let low := x.take L.logLane
   let high := x.drop L.logLane
   let laneEq (l : ℕ) : E := eqBits high l
   let (lanes, pieces) := L.scales c.point
   let partLow := c.point.take L.logLane
-  let on (odd : ℕ) : E := (L.lanes.zipIdx).foldl (fun sum (lane, l) ↦ match lane with
-    | .block _ => if l % 2 = odd then sum + lanes.getD l 0 * laneEq l else sum
+  let onBlocks : E := (L.lanes.zipIdx).foldl (fun sum (lane, l) ↦ match lane with
+    | .block _ => sum + lanes.getD l 0 * laneEq l
     | _ => sum) 0
   match L.logPiece with
-  | none => eqEval partLow low * (on 0 + on 1)
+  | none => eqEval partLow low * onBlocks
   | some s =>
     let below := eqEval (partLow.take s) (low.take s)
-    let above := eqEval (partLow.drop (s + 1)) (low.drop (s + 1))
-    let firstAbove := (partLow.drop (s + 1)).foldl (fun w p ↦ w * (1 + p)) 1
+    let above := eqEval (partLow.drop s) (low.drop s)
+    let firstAbove := (partLow.drop s).foldl (fun w p ↦ w * (1 + p)) 1
     let firstPiece := (low.drop s).foldl (fun w p ↦ w * (1 + p)) 1
-    let block (c : E) : E := above * (1 + c + low.getD s 0) + firstAbove * (1 + c) * firstPiece
-    let even := block (partLow.getD s 0)
-    let odd := block (1 + partLow.getD s 0)
     let held := (pieces.zipIdx).foldl (fun sum (w, k) ↦ sum + w * eqBits (low.drop s) (k + 1)) 0
-    let onOverflow := laneEq L.overflowLane + laneEq (L.share.getD 0)
-    below * (even * on 0 + odd * on 1 + held * onOverflow)
+    below * ((above + firstAbove * firstPiece) * onBlocks + held * laneEq L.overflowLane)
 
+/-- `GADGET` (`opening.rs`): the gadget's entries, nine. -/
+def gadgetSize : ℕ := 9
+
+/-- `gadget_lanes` (`opening.rs`): the lanes of the gadget's pattern `g`. -/
+def gadgetLanes : ℕ → List ℕ
+  | 0 => [0, 31]
+  | 1 => [1, 30]
+  | _ => [overflowLaneIndex]
+
+/-- `gadget_beta` (`opening.rs`): the weight of the gadget's entry `i < 3` of a pattern, the unit of limb `i`. -/
+def gadgetBeta (i : ℕ) : E :=
+  E.ofLimbs (if i = 0 then 1 else 0) (if i = 1 then 1 else 0) (if i = 2 then 1 else 0)
+
+/-- `gadget_entry` (`opening.rs`): entry `i` of pattern `g`, in the last nine of the first piece. -/
+def Layout.gadgetEntry (L : Layout) (g i : ℕ) : ℕ := 2 ^ L.logPiece.getD 0 - gadgetSize + 3 * g + i
+
+/-- **The gadget's weight at a stack point** (`opening::verify`'s closure; `HIDING.md`): for each pattern `g`,
+`Σ_{l ∈ lanes g} eq(l)` times `Σ_i β_i · eq(entry g i)` on the lane's coordinates. A hidden layout's opening
+batches it as one more claim, of value zero, after the table's. -/
+def gadgetWeight (L : Layout) (x : List E) : E :=
+  let low := x.take L.logLane
+  let high := x.drop L.logLane
+  (List.range 3).foldl (fun acc g ↦
+    acc + (gadgetLanes g).foldl (fun s l ↦ s + eqBits high l) 0 *
+      (List.range 3).foldl (fun s i ↦ s + gadgetBeta i * eqBits low (L.gadgetEntry g i)) 0) 0
+
+/-- **The opening's stack claims**: each claim's weight and value, then, in a hidden layout, the gadget, of value
+zero (its scale the challenge's power after the claims', as `opening::verify` batches it). -/
+def stackClaims (L : Layout) (claims : List Claim) : List StackClaim :=
+  claims.map (fun c ↦ (stackWeight L c, c.value)) ++
+    if L.logPiece.isSome then [(gadgetWeight L, 0)] else []
 /-! ### The opening check
 
 **The transcript's seed** (version `2`, `opening.rs`'s `prefix`, `iv`, `PUBLIC_DIGEST`): the IV is the
@@ -258,7 +278,8 @@ def u64Bytes (n : ℕ) : List UInt8 := wordBytes n.toUInt64
 
 /-- `encode_layout` (`opening.rs`): every field of the layout as numbers of eight bytes: the variables, the
 stack's size, the lanes (each its kind, `0` a block, `1` the overflow, `2` random, then its block or `0`),
-the piece (`0`, or `1` then it), the held pieces (their count, then each), the share lane (as the piece). -/
+the piece (`0`, or `1` then it), the held pieces (their count, then each), and the gadget (`0` in a public
+layout; in a hidden one `9`, then each pattern's lanes, their count then each, and its three entries). -/
 def Layout.encoding (L : Layout) : List UInt8 :=
   let option : Option ℕ → List UInt8
     | none => u64Bytes 0
@@ -268,7 +289,12 @@ def Layout.encoding (L : Layout) : List UInt8 :=
       | .block b => u64Bytes 0 ++ u64Bytes b
       | .overflow => u64Bytes 1 ++ u64Bytes 0
       | .random => u64Bytes 2 ++ u64Bytes 0) ++
-    option L.logPiece ++ u64Bytes L.pieces.length ++ L.pieces.flatMap u64Bytes ++ option L.share
+    option L.logPiece ++ u64Bytes L.pieces.length ++ L.pieces.flatMap u64Bytes ++
+    match L.logPiece with
+    | none => u64Bytes 0
+    | some _ => u64Bytes gadgetSize ++ (List.range 3).flatMap fun g ↦
+      u64Bytes (gadgetLanes g).length ++ (gadgetLanes g).flatMap u64Bytes ++
+        (List.range 3).flatMap fun i ↦ u64Bytes (L.gadgetEntry g i)
 
 /-- The eight little-endian bytes of each limb of an element of `E`, limb `0` first. -/
 def eBytes (x : E) : List UInt8 := kBytes (x.limb 0) ++ kBytes (x.limb 1) ++ kBytes (x.limb 2)
@@ -300,7 +326,7 @@ then `verifyWhir` at rate `1/2`) run on the rest of the proof with the root as c
 `64` words at height `logN − 6 + 1`; and nothing of the proof left unread (`Transcript::finish`). -/
 def openingWith (L : Layout) (root : Digest) (claims : List Claim) (proof : Compile.Proof) :
     m Bool := do
-  if claims.all (·.point.length = L.vars) then
+  if claims ≠ [] ∧ claims.all (·.point.length = L.vars) then
     match proof.stream with
     | x0 :: x1 :: rest =>
       let sp ← openingSpongeWith F L claims
@@ -310,7 +336,7 @@ def openingWith (L : Layout) (root : Digest) (claims : List Claim) (proof : Comp
       | some r =>
         if r.toList = root.toList then
           let program := verifyStackedOpening L.logN logInvRate
-            (claims.map fun c ↦ (stackWeight L c, c.value))
+            (stackClaims L claims)
           let height := L.logN - laneFold + logInvRate
           match ← run F program ⟨sp, rest, proof.openings, [(root, height, 2 ^ laneFold)]⟩ with
           | some (_, s) => return s.stream.isEmpty && s.openings.isEmpty

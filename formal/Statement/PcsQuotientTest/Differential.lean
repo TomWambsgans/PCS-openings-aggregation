@@ -284,6 +284,12 @@ def weightTest : IO ℕ := do
         let x := (List.range L.logLane).map (fun k ↦ if y.testBit k then (1 : E) else 0) ++
           (List.range 6).map (fun k ↦ if l.testBit k then (1 : E) else 0)
         if L.weightAt w l y ≠ stackWeight L c x then bad := bad + 1
+      -- The gadget's two forms, at its entries on its lanes and at a few other places.
+      for (l, y) in [(0, 247), (31, 249), (1, 250), (30, 252), (32, 253), (32, 255), (2, 247), (0, 246),
+          (0, 300), (31, 255), (1, 247)] do
+        let x := (List.range L.logLane).map (fun k ↦ if y.testBit k then (1 : E) else 0) ++
+          (List.range 6).map (fun k ↦ if l.testBit k then (1 : E) else 0)
+        if L.gadgetAt l y ≠ gadgetWeight L x then bad := bad + 1
       -- The quotient table's claims are a generic one and one at the sum's point.
       let claims := if L.vars = cellVars 17 + 6 then [c, ⟨sumPoint 17, eFrom (trial + 11)⟩] else [c]
       let stack ← OracleComp.runIO (Simulator.fakeStack L claims)
@@ -292,6 +298,9 @@ def weightTest : IO ℕ := do
         let sum := (List.range stack.size).foldl
           (fun acc p ↦ acc + L.weightAt wd (p / lane) (p % lane) * ofK (stack.getD p 0)) 0
         if sum ≠ d.value then bad := bad + 1
+      let gadget := (List.range stack.size).foldl
+        (fun acc p ↦ acc + L.gadgetAt (p / lane) (p % lane) * ofK (stack.getD p 0)) 0
+      if gadget ≠ 0 then bad := bad + 1
   return bad
 
 /-- Pseudorandom bits for the self-tests. -/

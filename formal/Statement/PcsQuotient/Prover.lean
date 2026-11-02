@@ -54,11 +54,23 @@ hidden stack takes them (`Table::hidden`: the Rust draws them from the lane's ge
 Keccak-256 of the table's seed and the lane; the honest prover of the statement takes them uniform). -/
 abbrev Padding : Type := ℕ → ℕ → K
 
+
+/-- **The gadget's entries cancelled** (`Table::hidden`, `opening.rs`): at each of the nine entries, the second
+lane of a pair takes the first's value and the overflow lane's is zero, so the gadget weighs nothing on the
+stack (characteristic two). The entries are first-piece entries: no claim weighs them. -/
+def Layout.cancelGadget (L : Layout) (stack : Array K) : Array K :=
+  let lane := 2 ^ L.logLane
+  (List.range 3).foldl (fun st g ↦ (List.range 3).foldl (fun st i ↦
+    let y := L.gadgetEntry g i
+    match gadgetLanes g with
+    | [a, b] => st.setIfInBounds (b * lane + y) (st.getD (a * lane + y) 0)
+    | [a] => st.setIfInBounds (a * lane + y) 0
+    | _ => st) st) stack
+
 /-- **The stack of a table** whose entry `i` is `entry i` (`Table::new`, `Table::hidden`, `opening.rs`). Public
-layout: lane `l` holds block `b` whole. Hidden layout, pieces of `2^s`: a block lane's first piece is padding,
-then its block, its pieces in pairs swapped on an odd lane (piece `k` holds the block's piece `k ⊕ 1`); the
-overflow lane's first piece is padding, its pieces `1 … H` the held pieces plus the share lane's padding there
-(`ρ`), the rest padding (its stream continuing); a random lane is padding. -/
+layout: lane `l` holds block `b` whole. Hidden layout, pieces of `2^s`: every lane's first piece is padding; a
+block lane then holds its block's pieces `1, 2, …`; the overflow lane its held pieces, then padding (its stream
+continuing); a random lane padding; and the gadget's entries are cancelled (`cancelGadget`). -/
 def Layout.stackOf (L : Layout) (entry : ℕ → K) (pad : Padding) : Array K :=
   let lane := 2 ^ L.logLane
   let kinds := L.lanes.toArray
@@ -71,28 +83,22 @@ def Layout.stackOf (L : Layout) (entry : ℕ → K) (pad : Padding) : Array K :=
     let piece := 2 ^ s
     let pieces := L.pieces.toArray
     let held := pieces.size
-    let share := L.share.getD 0
-    Array.ofFn (n := kinds.size * lane) fun p ↦
+    L.cancelGadget <| Array.ofFn (n := kinds.size * lane) fun p ↦
       let (l, i) := (p.val / lane, p.val % lane)
-      match kinds.getD l .random with
-      | .block b =>
-        if i < piece then pad l i
-        else if l % 2 = 0 then entry (b * lane + i)
-        else entry (b * lane + ((i / piece) ^^^ 1) * piece + i % piece)
-      | .overflow =>
-        if i < piece then pad l i
-        else if i < (held + 1) * piece then
-          entry (pieces.getD (i / piece - 1) 0 * piece + i % piece) + pad share i
-        else pad l (i - held * piece)
-      | .random => pad l i
+      if i < piece then pad l i
+      else
+        match kinds.getD l .random with
+        | .block b => entry (b * lane + i)
+        | .overflow =>
+          if i < (held + 1) * piece then entry (pieces.getD (i / piece - 1) 0 * piece + i % piece)
+          else pad l (i - held * piece)
+        | .random => pad l i
 
-/-- A claim's weight on a stack, tabulated once (`Layout::tensors`, `opening.rs`): its lane and piece scales
-(`Layout.scales`), and the `eq` tables of its lane coordinates and of its coordinates below a piece. -/
+/-- A claim's weight on a stack, tabulated once (`Layout::tensors`, `opening.rs`): the layout's lanes and
+piece (as arrays: one lookup a position), the claim's lane and piece scales (`Layout.scales`), and the `eq`
+tables of its lane coordinates and of its coordinates below a piece. -/
 structure ClaimWeights where
-  /-- What each lane holds, and the share lane (the layout's, as arrays: one lookup a position). -/
   kinds : Array Lane
-  share : Option ℕ
-  /-- The layout's piece. -/
   logPiece : Option ℕ
   lanes : Array E
   pieces : Array E
@@ -101,14 +107,13 @@ structure ClaimWeights where
 
 /-- The tables of a claim's weight on `L`. -/
 def Layout.claimWeights (L : Layout) (c : Claim) : ClaimWeights :=
-  ⟨L.lanes.toArray, L.share, L.logPiece, (L.scales c.point).1.toArray, (L.scales c.point).2.toArray,
+  ⟨L.lanes.toArray, L.logPiece, (L.scales c.point).1.toArray, (L.scales c.point).2.toArray,
     eqKernelA (c.point.take L.logLane), eqKernelA (c.point.take (L.logPiece.getD 0))⟩
 
 /-- **A claim's weight at entry `y` of lane `l`** (`Layout::weight_at`, `opening.rs`), from its tables
 (`Layout.claimWeights L c`): public layout, its lane scale times its `eq` at `y`; hidden layout, zero on a
-first piece; on a block lane, its lane scale times its `eq` at `y` with the piece pair swapped on an odd lane;
-on the overflow and share lanes, the held piece's scale times its `eq` below the piece; zero on the other
-random lanes. -/
+first piece; on a block lane, its lane scale times its `eq` at `y`; on the overflow lane, the held piece's scale
+times its `eq` below the piece; zero on a random lane. -/
 def Layout.weightAt (_L : Layout) (w : ClaimWeights) (l y : ℕ) : E :=
   match w.logPiece with
   | none => w.lanes.getD l 0 * w.low.getD y 0
@@ -117,11 +122,18 @@ def Layout.weightAt (_L : Layout) (w : ClaimWeights) (l y : ℕ) : E :=
     if piece = 0 then 0
     else
       match w.kinds.getD l .random with
-      | .block _ => w.lanes.getD l 0 * w.low.getD (y ^^^ ((l % 2) <<< s)) 0
+      | .block _ => w.lanes.getD l 0 * w.low.getD y 0
       | .overflow => w.pieces.getD (piece - 1) 0 * w.pieceLow.getD (y % 2 ^ s) 0
-      | .random =>
-        if w.share = some l then w.pieces.getD (piece - 1) 0 * w.pieceLow.getD (y % 2 ^ s) 0 else 0
+      | .random => 0
 
+/-- **The gadget's weight at entry `y` of lane `l`** (`Layout::gadget_at`, `opening.rs`): `β_i` at entry `i`
+of pattern `g` on its lanes, zero elsewhere and in a public layout. -/
+def Layout.gadgetAt (L : Layout) (l y : ℕ) : E :=
+  match L.logPiece with
+  | none => 0
+  | some s =>
+    if 2 ^ s - gadgetSize ≤ y ∧ y < 2 ^ s ∧ (gadgetLanes ((y + gadgetSize - 2 ^ s) / 3)).contains l
+    then gadgetBeta ((y + gadgetSize - 2 ^ s) % 3) else 0
 /-- The witness table's masks: three coefficients of `K` for each of the four row polynomials. -/
 abbrev Masks : Type := Fin 4 → Fin 3 → K
 
@@ -142,26 +154,31 @@ def limbOf (x : E) (l : ℕ) : K := LeanVM.Prover.limbAt x l
 
 /-! ### The WHIR opening -/
 
+
 /-- **The weight table of the batched claims** in WHIR's variable order: entry `i` is the stack position
 `⌊i / 64⌋ + 2^(logN−6)·(i mod 64)`, entry `⌊i / 64⌋` of lane `i mod 64`, where each claim weighs
-`Layout.weightAt` (`open`, `opening.rs`). -/
+`Layout.weightAt`, and in a hidden layout the gadget `Layout.gadgetAt` with the scale after the claims'
+(`open`, `Layout::weight`, `opening.rs`). -/
 def weightTable (L : Layout) (scales : List E) (claims : List Claim) : Array E :=
   let parts := (claims.zip scales).map fun (c, s) ↦ (L.claimWeights c, s)
+  let gadgetScale := scales.getD claims.length 0
   Array.ofFn (n := 2 ^ L.logN) fun i ↦
-    parts.foldl (fun acc (w, s) ↦ acc + s * L.weightAt w (i.val % 64) (i.val / 64)) 0
+    parts.foldl (fun acc (w, s) ↦ acc + s * L.weightAt w (i.val % 64) (i.val / 64))
+      (gadgetScale * L.gadgetAt (i.val % 64) (i.val / 64))
 
 /-- **The honest WHIR opening** of `claims` on the stack `stack`, as a script of the prover's moves
 (mumbai's `openingFast` with this weight table): receive the batching challenge, then run the levels
-from the batched claim with the stack table and the weight table. -/
+from the batched claim (the claims, and the gadget of value zero in a hidden layout: `stackClaims`) with the
+stack table and the weight table. -/
 def openingScript (L : Layout) (stack : Array K) (claims : List Claim) : Script Unit := do
   let c ← Script.sampleE
-  let scales := powers c claims.length
+  let scales := powers c (stackClaims L claims).length
   match Whir.ladder L.logN logInvRate with
   | none => return ()
   | some config =>
     let f₀ := stackTableA L.logN stack
     let W₀ := weightTable L scales claims
-    let target := dot scales (claims.map (·.value))
+    let target := dot scales ((stackClaims L claims).map (·.2))
     let quad ← roundA target W₀ f₀
     levelsA L.logN 0 config ⟨quad, [], []⟩ W₀ f₀
 
@@ -180,7 +197,7 @@ def proveOpeningWith (fuel : ℕ) (L : Layout) (tree : Tree) (stack : Array K) (
   let sp ← absorb F sp r0 dsObserve
   let sp ← absorb F sp r1 dsObserve
   let program := verifyStackedOpening L.logN logInvRate
-    (claims.map fun c ↦ (stackWeight L c, c.value))
+    (stackClaims L claims)
   let r ← runFrom F fuel program (some (openingScript L stack claims)) sp [tree]
   return r.map fun t ↦ ⟨r0 :: r1 :: t.1, t.2⟩
 
