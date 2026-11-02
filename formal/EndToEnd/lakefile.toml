@@ -100,3 +100,9 @@ name = "Bridge"
 name = "E2ECompleteness"
 srcDir = "Completeness"
 globs = ["E2ECompleteness", "E2ECompleteness.+"]
+
+# The deployed EVM contract is the statement's verifier (`Evm.lean`, `Evm/*.lean`): F5's recorded
+# graph, run on the calldata of a statement's proof, calls `PCS_OPEN` exactly as `PcsQuotient.verifyWith`
+# opens its claims.
+[[lean_lib]]
+name = "Evm"
