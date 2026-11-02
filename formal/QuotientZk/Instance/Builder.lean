@@ -1,60 +1,54 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import QuotientZk.Instance.Openings
-import QuotientZk.Instance.RankGood
 
 /-!
 # The simulator's tables, computed
 
 The joint simulator opens, for each secret table, a public table with the verifier's claimed values
-(`hsimT`). This file builds those tables by a computable solver and proves that they meet the claims
-at every challenge the builder needs (`RankGood`, `RankGood.lean`: `ρ ≠ 1`, and `ρ` or the row of
-`t` outside `K`).
+(`hsimT`). The classical choice of such a table is replaced here by **a computable Gaussian
+elimination**, with the classical choice's guarantee: **the built table has the claimed values
+whenever some table has them** (`claims_build`), so the joint model's claims `cl` stay the built
+table's and the honest table's claims give `hT` (`Main.lean`).
 
-**The solver** (`Generic`). A claim is `E`-linear in the table's `K`-valued entries, so over `K` it
-is three linear equations. The builder fixes a few **non-random entries** (the table's own: no
-padding, no gadget entry) and **virtual columns** on them (`K`-combinations of entries, `Fin 3 →
-List`), computes what the claim's weight gives each column (`sparseVal`, three or four evaluations of
-the weight), and solves the `3 × 3` system in `E`'s coordinates over `K` (`rep.coords`: the limbs) by
-Cramer's rule (`solve3`, `det3`). Among candidate column triples it takes the first whose determinant
-is not zero (`pick`); the table is the solution's combination of the columns (`sparse`), zero
-everywhere else. Two claims on one table (the quotient table's) are solved one after the other: the
-second's on a triple where the first may weigh (`solveTwo`), then the first's, less what that gave
-it, on a triple where the second weighs nothing.
+**The elimination** (`Elim`, generic). Each entry `e` of the stack has a **column** `col e`: the
+coordinates over `K` (`rep.coords`; for `F192` the limbs) of the `m` claims' weights at `e`, `r = 3m`
+of them (`colOf`); the claimed values have the **target** `tgtOf val`. The **scan** (`scan`) takes the
+entries in a fixed order (`entryAt k`, `k < N`), reduces each column by the rows found so far
+(`reduce`: one subtraction per row) and, if what is left is not zero, keeps it as a new row,
+normalized at its first nonzero coordinate (`insertE`); **it stops once every coordinate is a
+pivot**. The solution (`solveElim`) is the target reduced by the rows, the entries recorded on the
+way: a table (`sparse`) zero but at most at the `r` rows' entries.
 
-* `solveOne_spec`, `solveTwo_spec`: **the table meets the claims** whenever some candidate triple
-  has a nonzero determinant (and, for two claims, the second weighs nothing on the first's
-  candidates);
-* `colDet_ne_zero`: a triple of independent values has a nonzero determinant.
+* `solveElim_spec`: **whenever the target is a combination of the scanned entries' columns, the
+  solution's columns sum to it**: the rows are in echelon form (`WF`); a combination of them zero at
+  every pivot is zero (`eq_zero_of_mem_span`); every scanned column is a combination of the rows, or
+  every coordinate is a pivot (`scan_spec`);
+* **`claims_build`**: for claims that weigh nothing of the randomness (`WeightsFit`) and a scan
+  that reaches every entry, **if some table has the claimed values, the built table has them**.
 
-**The deployed tables** (`Deployed`).
+**The deployed tables** (`Tables`). The claims' weights and values are compiled (`pointWc`, `valWc`,
+`pointQc`, `valsQc`: the verifier's formulas, the public polynomials evaluated by `Polynomial.eval`;
+equal to `pointW`, `valsW`, `pointQ`, `valsQ`). The scan takes first a few **candidates**, then every
+entry, lane by lane (`enumL`): for the witness claim the overflow lane's entries `256 .. 260, 264`,
+where the weight is `R·eq(ρ, ·)·eq(ρ², ·)·eq(u₂, ·)·eq(u₃, ·)` (`R` never zero), so that their columns
+span `K³` when `ρ ∉ K`, or when `ρ ≠ 1` and the row of `t` is not in `K`; for the quotient table the
+entry `2^22 - 1` of the lanes of blocks `3, 67, 131` (the sum claim weighs `g·(1, Y, Y²)` there) and
+the first entries of the overflow lane's pieces `1, 17, 33, 5, 21, 37` (the quotient claim weighs
+`R(1+z)(1+ρ)g·(1, Y, Y²)` on the first three, `Rz(1+ρ)g·(1, Y, Y²)` on the others, the sum claim
+nothing), so that their columns span `K⁶` when `ρ ≠ 1`. **`claims_simTW`**, **`claims_simTQ`**: the
+claims of `simTW rep Y c v`, `simTQ rep P₀ stmt Y c v` are the verifier's values `valsW c v`,
+`valsQ P₀ stmt Y c v` whenever some table's are.
 
-* **Witness table** (one claim at `pointW = (ρ, ρ², u_2, …, u_24)`): entries `256 + j` of the
-  overflow lane `32` (the first piece of block `0`, held there). On entries `256 + j`, `j < 4`, the
-  weight is `R·eq(ρ, j₀)·eq(ρ², j₁)` (`R` the other coordinates' product, never zero), so the columns
-  `e₀+e₁+e₂+e₃`, `e₁+e₃`, `e₂+e₃` give `R·(1, ρ, ρ²)`: independent when `ρ ∉ K`. On entries
-  `256 + 4j` the weight is `R'·eq(u₂, j₀)·eq(u₃, j₁)`, `u_k = s_k/(1 + s_k)`, `s₃ = s₂² + s₂`, `s₂` the
-  row of `t`; the columns `e₀`, `e₁`, `e₁+e₂` give `R'·D·(1, s₂, s₂²)`: independent when `ρ ≠ 1` and
-  `s₂ ∉ K`.
-* **Quotient table** (claims at `pointQ = (u_0, …, u_25, z, ρ, Y', Y'')`, `z` reading the five values,
-  and at the fixed `pointS = (1, …, 1, 0, 0, 0, 0, Y', Y'')`, `Y' = Y/(1+Y)`, `Y'' = Y²/(1+Y²)`): the
-  sum claim on entry `2^22 - 1` of the lanes holding blocks `3, 67, 131` (`pointS` weighs
-  `g·(1, Y, Y²)` there, `g = (1+Y')(1+Y'')`: always independent); then the first claim on the
-  overflow lane's pieces `1, 17, 33` (blocks `0, 64, 128`: weights `U(1+z)(1+ρ)g·(1, Y, Y²)`) or
-  `5, 21, 37` (blocks `16, 80, 144`: `U z (1+ρ) g·(1, Y, Y²)`), where `pointS` weighs nothing (its
-  first eight coordinates are `1`): one of them is independent when `ρ ≠ 1`.
-
-**`hsimTW`, `hsimTQ`**: at every challenge with `RankGood`, for all five values, the claims of
-`simTW rep Y c v` and `simTQ rep P₀ stmt Y c v` are the verifier's (`valsW`, `valsQ`).
-
-**Cost** (`K`- and `E`-operations; `L = 40` or `63` lanes, `H = 33` or `167` held pieces, `n = 25`
-or `30` coordinates). One evaluation of a claim's weight at an entry (`Layout.claimW`) is
-`O(L·6 + H·n + n)` field operations (the lanes' and pieces' scales, `≈ 4·10^3`). The witness table:
-at most `8` weight evaluations, `2` determinants (`12` products each, on `6` coordinate vectors),
-one Cramer solve (`4` determinants, `3` divisions), `≤ 4` products for the entries. The quotient
-table: `3 + 3 + 6` weight evaluations, `≤ 3` determinants, `2` Cramer solves. In all, `O(m² · f)`
-`K`-operations for `m ≤ 2` claims (`3m` equations) on `f ≤ 6` free entries, plus `O(m·f)` weight
-evaluations, and the verifier's point and values; reading an entry of the table compares it with
-the `≤ 12` listed entries. Nothing here is `noncomputable` (`Test/Builder.lean` runs it).
+**Cost** (field operations; `m ≤ 2` claims, `r = 3m ≤ 6` equations; a stack of `L = 40` or `63`
+lanes of `2^ℓ = 2^19` or `2^22` entries, `H = 33` or `167` held pieces, points of `n = 25` or `30`
+coordinates). A column is `m` evaluations of a claim's weight at an entry (`Layout.claimW`:
+`O(6L + nH)`, about `4·10^3` operations) and `r` coordinates; inserting it is at most `r` reduction
+steps of `O(r)` operations; the solution `O(r²)`. **A scan of `k` entries costs
+`O(k·(4·10^3·m + r²))`**; it stops after the first entries whose columns span `K^r`: after the `6`
+(witness) or `9` (quotient) candidates at the challenges above, after at most
+`N = #candidates + L·2^ℓ` entries in any case (`6 + 40·2^19`, `9 + 63·2^22`). An entry of the table is
+read by comparing it with the `≤ r` listed entries. Nothing here is `noncomputable`
+(`Test/Builder.lean` runs it).
 -/
 
 open Finset Module QuotientSecurity QuotientSecurity.Hiding
@@ -66,104 +60,7 @@ set_option linter.unusedSectionVars false
 
 namespace Builder
 
-/-! ## The solver -/
-
-section Linear
-
-variable {K : Type} [Field K]
-
-/-- **The determinant of a `3 × 3` matrix**, expanded (`Matrix.det_fin_three`). -/
-def det3 (M : Fin 3 → Fin 3 → K) : K :=
-  M 0 0 * M 1 1 * M 2 2 - M 0 0 * M 1 2 * M 2 1 - M 0 1 * M 1 0 * M 2 2 + M 0 1 * M 1 2 * M 2 0 +
-    M 0 2 * M 1 0 * M 2 1 - M 0 2 * M 1 1 * M 2 0
-
-/-- Column `j` of `M` replaced by `b`. -/
-def setCol (M : Fin 3 → Fin 3 → K) (j : Fin 3) (b : Fin 3 → K) : Fin 3 → Fin 3 → K :=
-  fun r c => if c = j then b r else M r c
-
-/-- **Cramer's rule**: `x_j = det(M, column j replaced by b) / det M`. -/
-def solve3 (M : Fin 3 → Fin 3 → K) (b : Fin 3 → K) : Fin 3 → K :=
-  fun j => det3 (setCol M j b) / det3 M
-
-theorem det3_eq (M : Fin 3 → Fin 3 → K) : det3 M = (Matrix.of M).det := by
-  rw [Matrix.det_fin_three]
-  rfl
-
-theorem solve3_eq (M : Fin 3 → Fin 3 → K) (b : Fin 3 → K) :
-    solve3 M b = (det3 M)⁻¹ • (Matrix.of M).cramer b := by
-  funext j
-  simp only [solve3, Pi.smul_apply, smul_eq_mul, Matrix.cramer_apply, det3_eq, div_eq_inv_mul]
-  congr 2
-  ext r c
-  simp [setCol, Matrix.updateCol_apply]
-
-/-- **Cramer's rule solves the system** when the determinant is not zero. -/
-theorem mulVec_solve3 {M : Fin 3 → Fin 3 → K} (b : Fin 3 → K) (h : det3 M ≠ 0) (r : Fin 3) :
-    ∑ c, M r c * solve3 M b c = b r := by
-  have hc : Matrix.mulVec (Matrix.of M) (solve3 M b) = b := by
-    rw [solve3_eq, Matrix.mulVec_smul, Matrix.mulVec_cramer, smul_smul, ← det3_eq,
-      inv_mul_cancel₀ h, one_smul]
-  have := congrFun hc r
-  simpa [Matrix.mulVec, dotProduct] using this
-
-variable {E : Type} [Field E] [Algebra K E] (co : E ≃ₗ[K] (Fin 3 → K))
-
-/-- **The solution of `Σ_i x_i c_i = v`** over `K` (`c_i`, `v` in `E`), in the coordinates `co`. -/
-def solveE (co : E → Fin 3 → K) (c : Fin 3 → E) (v : E) : Fin 3 → K :=
-  solve3 (fun r i => co (c i) r) (co v)
-
-/-- The system's determinant. -/
-def colDet (co : E → Fin 3 → K) (c : Fin 3 → E) : K := det3 fun r i => co (c i) r
-
-theorem co_sum (x : Fin 3 → K) (c : Fin 3 → E) :
-    co (∑ i, x i • c i) = fun r => ∑ i, co (c i) r * x i := by
-  funext r
-  simp [map_sum, map_smul, mul_comm]
-
-theorem solveE_spec {c : Fin 3 → E} (v : E) (h : colDet co c ≠ 0) :
-    ∑ i, solveE co c v i • c i = v := by
-  refine co.injective ?_
-  rw [co_sum]
-  funext r
-  exact mulVec_solve3 (co v) h r
-
-/-- **Independent values have a nonzero determinant.** -/
-theorem colDet_ne_zero {c : Fin 3 → E} (hc : LinearIndependent K c) : colDet co c ≠ 0 := by
-  intro h0
-  rw [colDet, det3_eq, ← Matrix.exists_mulVec_eq_zero_iff] at h0
-  obtain ⟨x, hx, hMx⟩ := h0
-  refine hx (funext fun i => Fintype.linearIndependent_iff.mp hc x ?_ i)
-  refine co.injective ?_
-  rw [co_sum, map_zero]
-  funext r
-  have := congrFun hMx r
-  simpa [Matrix.mulVec, dotProduct] using this
-
-/-- A nonzero multiple of independent values. -/
-theorem indep_mul {v : Fin 3 → E} (hv : LinearIndependent K v) {C : E} (hC : C ≠ 0) :
-    LinearIndependent K fun i => C * v i :=
-  hv.map' (LinearMap.mulLeft K C) (LinearMap.ker_eq_bot.mpr (mul_right_injective₀ hC))
-
-/-- **`C, Ca, Ca²` are independent** when `a ∉ K` and `C ≠ 0` (`[E : K] = 3`). -/
-theorem indep_powers [FiniteDimensional K E] (h3 : finrank K E = 3) {a : E}
-    (ha : a ∉ Set.range (algebraMap K E)) {C : E} (hC : C ≠ 0) :
-    LinearIndependent K ![C, C * a, C * a ^ 2] := by
-  have hdeg := natDegree_minpoly_eq_three h3 ha
-  have hli : LinearIndependent K fun i : Fin 3 => a ^ (i : ℕ) := hdeg ▸ linearIndependent_pow a
-  convert indep_mul hli hC using 1
-  funext i
-  fin_cases i <;> simp
-
-/-- **`C, CY, CY²` are independent** when `1, Y, Y²` are and `C ≠ 0`. -/
-theorem indep_basis {Y : E} (hY : LinearIndependent K ![1, Y, Y ^ 2]) {C : E} (hC : C ≠ 0) :
-    LinearIndependent K ![C, C * Y, C * Y ^ 2] := by
-  convert indep_mul hY hC using 1
-  funext i
-  fin_cases i <;> simp
-
-end Linear
-
-/-! ### Sparse tables -/
+/-! ## Sparse tables -/
 
 section Sparse
 
@@ -177,47 +74,6 @@ def sparse (es : List ((ι × Y) × K)) : ι → Y → K :=
 def sparseVal (w : ι → Y → E) (es : List ((ι × Y) × K)) : E :=
   (es.map fun p => p.2 • w p.1.1 p.1.2).sum
 
-/-- A column scaled. -/
-def scaleCol (a : K) (V : List ((ι × Y) × K)) : List ((ι × Y) × K) :=
-  V.map fun p => (p.1, a * p.2)
-
-/-- **`Σ_i x_i V_i`**, as one list. -/
-def comb (x : Fin 3 → K) (V : Fin 3 → List ((ι × Y) × K)) : List ((ι × Y) × K) :=
-  scaleCol (x 0) (V 0) ++ scaleCol (x 1) (V 1) ++ scaleCol (x 2) (V 2)
-
-theorem sparseVal_append (w : ι → Y → E) (a b : List ((ι × Y) × K)) :
-    sparseVal w (a ++ b) = sparseVal w a + sparseVal w b := by
-  simp [sparseVal]
-
-theorem sparseVal_scaleCol (w : ι → Y → E) (a : K) (V : List ((ι × Y) × K)) :
-    sparseVal w (scaleCol a V) = a • sparseVal w V := by
-  induction V with
-  | nil => simp [sparseVal, scaleCol]
-  | cons p V ih =>
-    simp only [sparseVal, scaleCol, List.map_cons, List.sum_cons] at ih ⊢
-    rw [ih, smul_add, mul_smul]
-
-theorem sparseVal_comb (w : ι → Y → E) (x : Fin 3 → K) (V : Fin 3 → List ((ι × Y) × K)) :
-    sparseVal w (comb x V) = ∑ i, x i • sparseVal w (V i) := by
-  simp only [comb, sparseVal_append, sparseVal_scaleCol, Fin.sum_univ_three]
-
-theorem sparseVal_eq_zero (w : ι → Y → E) {es : List ((ι × Y) × K)}
-    (h : ∀ p ∈ es, w p.1.1 p.1.2 = 0) : sparseVal w es = 0 := by
-  induction es with
-  | nil => simp [sparseVal]
-  | cons p es ih =>
-    simp only [sparseVal, List.map_cons, List.sum_cons] at ih ⊢
-    rw [h p List.mem_cons_self, smul_zero, zero_add,
-      ih fun q hq => h q (List.mem_cons_of_mem _ hq)]
-
-theorem mem_comb {x : Fin 3 → K} {V : Fin 3 → List ((ι × Y) × K)} {p : (ι × Y) × K}
-    (hp : p ∈ comb x V) : ∃ i, ∃ q ∈ V i, q.1 = p.1 := by
-  simp only [comb, scaleCol, List.mem_append, List.mem_map] at hp
-  rcases hp with (⟨q, hq, rfl⟩ | ⟨q, hq, rfl⟩) | ⟨q, hq, rfl⟩
-  · exact ⟨0, q, hq, rfl⟩
-  · exact ⟨1, q, hq, rfl⟩
-  · exact ⟨2, q, hq, rfl⟩
-
 variable [Fintype ι] [Fintype Y]
 
 theorem sparse_cons (p : (ι × Y) × K) (es : List ((ι × Y) × K)) :
@@ -225,10 +81,10 @@ theorem sparse_cons (p : (ι × Y) × K) (es : List ((ι × Y) × K)) :
   funext l y
   simp [sparse]
 
-/-- **The claims of a sparse table on non-random entries**: each claim is what its weight gives
-the list. -/
+/-- **The claims of a sparse table**, for claims that weigh nothing of the randomness: each is
+what its weight gives the list. -/
 theorem claimsMap_stackD_sparse (L : GadgetLayout ι Y) {m : ℕ} (Wc : Fin m → ι → Y → E)
-    (es : List ((ι × Y) × K)) (hes : ∀ p ∈ es, ¬ L.randPos p.1.1 p.1.2) (j : Fin m) :
+    (hW : ∀ j l y, L.randPos l y → Wc j l y = 0) (es : List ((ι × Y) × K)) (j : Fin m) :
     HiddenLayout.claimsMap Wc (L.stackD (sparse es)) j = sparseVal (Wc j) es := by
   induction es with
   | nil =>
@@ -236,15 +92,16 @@ theorem claimsMap_stackD_sparse (L : GadgetLayout ι Y) {m : ℕ} (Wc : Fin m �
     rw [h0, map_zero, map_zero]
     simp [sparseVal]
   | cons p es ih =>
-    rw [sparse_cons, map_add, map_add, Pi.add_apply,
-      ih fun q hq => hes q (List.mem_cons_of_mem _ hq)]
+    rw [sparse_cons, map_add, map_add, Pi.add_apply, ih]
     simp only [sparseVal, List.map_cons, List.sum_cons]
     congr 1
-    have hp := hes p List.mem_cons_self
     show ∑ l, ∑ y, Wc j l y * algebraMap K E
         (if L.randPos l y then 0 else (if p.1 = (l, y) then p.2 else 0)) = p.2 • Wc j p.1.1 p.1.2
     rw [Finset.sum_eq_single p.1.1, Finset.sum_eq_single p.1.2]
-    · rw [if_neg hp, if_pos rfl, Algebra.smul_def, mul_comm]
+    · by_cases hp : L.randPos p.1.1 p.1.2
+      · rw [hW j _ _ hp]
+        simp
+      · rw [if_neg hp, if_pos rfl, Algebra.smul_def, mul_comm]
     · intro y _ hy
       have : p.1 ≠ (p.1.1, y) := fun h => hy (congrArg Prod.snd h).symm
       simp [this]
@@ -255,348 +112,373 @@ theorem claimsMap_stackD_sparse (L : GadgetLayout ι Y) {m : ℕ} (Wc : Fin m �
       simp [this]
     · simp
 
+/-- Claims that fit the layout (`WeightsFit`) weigh nothing of the randomness. -/
+theorem weight_randPos (L : GadgetLayout ι Y) {m : ℕ} {Wc : Fin m → ι → Y → E}
+    (hW : L.WeightsFit Wc) : ∀ j l y, L.randPos l y → Wc j l y = 0 := by
+  rintro j l y (hf | hg | hr | ⟨rfl, hh⟩)
+  · exact hW.first j l y hf
+  · exact hW.gadget j l y hg
+  · exact hW.rand j l y hr
+  · exact hW.off_held j y hh
+
 end Sparse
 
-/-! ### The builder -/
+/-! ## Gaussian elimination -/
 
-section Build
+section Elim
 
-variable {K E ι Y : Type} [Field K] [DecidableEq K] [Field E] [Algebra K E] [DecidableEq ι]
-  [DecidableEq Y]
+variable {K α : Type} [Field K] [DecidableEq K] {r : ℕ}
 
-/-- A triple of virtual columns. -/
-abbrev Cols (ι Y K : Type) := Fin 3 → List ((ι × Y) × K)
+/-- **A row of the echelon basis**: its pivot, its vector, the weighted entries it combines. -/
+structure Row (K α : Type) (r : ℕ) where
+  piv : Fin r
+  vec : Fin r → K
+  comb : List (α × K)
 
-/-- What a weight gives each column of a triple. -/
-def colVals (w : ι → Y → E) (V : Cols ι Y K) : Fin 3 → E := fun i => sparseVal w (V i)
+/-- What weighted entries give through the columns `col`. -/
+def comboVal (col : α → Fin r → K) (x : List (α × K)) : Fin r → K :=
+  (x.map fun p => p.2 • col p.1).sum
 
-/-- **The first candidate triple with a nonzero determinant.** -/
-def pick (co : E → Fin 3 → K) (w : ι → Y → E) : List (Cols ι Y K) → Option (Cols ι Y K)
-  | [] => none
-  | V :: Vs => if colDet co (colVals w V) ≠ 0 then some V else pick co w Vs
+/-- Weighted entries, scaled. -/
+def scaleL (a : K) (x : List (α × K)) : List (α × K) := x.map fun p => (p.1, a * p.2)
 
-/-- **One claim**: the first good candidate's columns, combined by Cramer's solution. -/
-def solveOne (co : E → Fin 3 → K) (w : ι → Y → E) (cands : List (Cols ι Y K)) (v : E) :
-    List ((ι × Y) × K) :=
-  match pick co w cands with
-  | none => []
-  | some V => comb (solveE co (colVals w V) v) V
+/-- **One reduction step**: clear the vector's coordinate at the row's pivot, recording the row's
+entries. -/
+def step (vx : (Fin r → K) × List (α × K)) (row : Row K α r) : (Fin r → K) × List (α × K) :=
+  (vx.1 - vx.1 row.piv • row.vec, vx.2 ++ scaleL (-vx.1 row.piv) row.comb)
 
-/-- **Two claims**: the second's on `S`, then the first's, less what `S`'s part gives it, on a
-candidate where the second weighs nothing. -/
-def solveTwo (co : E → Fin 3 → K) (w₁ w₂ : ι → Y → E) (S : Cols ι Y K)
-    (cands : List (Cols ι Y K)) (v₁ v₂ : E) : List ((ι × Y) × K) :=
-  let xs := comb (solveE co (colVals w₂ S) v₂) S
-  xs ++ solveOne co w₁ cands (v₁ - sparseVal w₁ xs)
+/-- **Reduction** by the rows, in order. -/
+def reduce (B : List (Row K α r)) (vx : (Fin r → K) × List (α × K)) :
+    (Fin r → K) × List (α × K) :=
+  B.foldl step vx
 
-theorem pick_some (co : E → Fin 3 → K) (w : ι → Y → E) {cands : List (Cols ι Y K)}
-    (h : ∃ V ∈ cands, colDet co (colVals w V) ≠ 0) :
-    ∃ V ∈ cands, pick co w cands = some V ∧ colDet co (colVals w V) ≠ 0 := by
-  induction cands with
-  | nil => simp at h
-  | cons V Vs ih =>
-    by_cases hV : colDet co (colVals w V) ≠ 0
-    · exact ⟨V, List.mem_cons_self, by simp [pick, hV], hV⟩
-    · obtain ⟨V', hV', hd⟩ := h
-      rcases List.mem_cons.mp hV' with rfl | hm
-      · exact absurd hd hV
-      · obtain ⟨W, hW, hp, hdW⟩ := ih ⟨V', hm, hd⟩
-        exact ⟨W, List.mem_cons_of_mem _ hW, by simp [pick, hV, hp], hdW⟩
+/-- The first nonzero coordinate. -/
+def firstNZ (v : Fin r → K) : Option (Fin r) := (List.finRange r).find? fun i => v i ≠ 0
 
-theorem mem_of_pick (co : E → Fin 3 → K) (w : ι → Y → E) {cands : List (Cols ι Y K)}
-    {V : Cols ι Y K} (h : pick co w cands = some V) : V ∈ cands := by
-  induction cands with
-  | nil => simp [pick] at h
-  | cons W Ws ih =>
-    by_cases hW : colDet co (colVals w W) ≠ 0
-    · simp only [pick, hW, ne_eq, not_false_eq_true, ↓reduceIte, Option.some.injEq] at h
-      exact h ▸ List.mem_cons_self
-    · simp only [pick, hW, ↓reduceIte] at h
-      exact List.mem_cons_of_mem _ (ih h)
+/-- **Insert an entry**: its column reduced; unless zero, a new row at its first nonzero coordinate,
+normalized there. -/
+def insertE (col : α → Fin r → K) (B : List (Row K α r)) (e : α) : List (Row K α r) :=
+  let vx := reduce B (col e, [(e, 1)])
+  match firstNZ vx.1 with
+  | none => B
+  | some p => B ++ [⟨p, (vx.1 p)⁻¹ • vx.1, scaleL (vx.1 p)⁻¹ vx.2⟩]
 
-/-- **One claim is met** when some candidate has a nonzero determinant. -/
-theorem solveOne_spec (co : E ≃ₗ[K] (Fin 3 → K)) (w : ι → Y → E) {cands : List (Cols ι Y K)}
-    (h : ∃ V ∈ cands, colDet co (colVals w V) ≠ 0) (v : E) :
-    sparseVal w (solveOne co w cands v) = v := by
-  obtain ⟨V, -, hp, hd⟩ := pick_some co w h
-  simp only [solveOne, hp, sparseVal_comb]
-  exact solveE_spec co v hd
+/-- **The scan**: `n` entries from the `k`-th, stopping once every coordinate is a pivot. -/
+def scan (col : α → Fin r → K) (entryAt : ℕ → α) : ℕ → ℕ → List (Row K α r) → List (Row K α r)
+  | 0, _, B => B
+  | n + 1, k, B =>
+    if B.length = r then B else scan col entryAt n (k + 1) (insertE col B (entryAt k))
 
-/-- The entries `solveOne` lists are its candidates'. -/
-theorem mem_solveOne (co : E → Fin 3 → K) (w : ι → Y → E) {cands : List (Cols ι Y K)} {v : E}
-    {p : (ι × Y) × K} (hp : p ∈ solveOne co w cands v) :
-    ∃ V ∈ cands, ∃ i, ∃ q ∈ V i, q.1 = p.1 := by
-  unfold solveOne at hp
-  split at hp
-  · simp at hp
-  · rename_i V hV
-    exact ⟨V, mem_of_pick co w hV, mem_comb hp⟩
+/-- **The solution** for the target `t`: `t` reduced by the rows of the scan of the first `N`
+entries; the entries recorded, negated. -/
+def solveElim (col : α → Fin r → K) (entryAt : ℕ → α) (N : ℕ) (t : Fin r → K) : List (α × K) :=
+  scaleL (-1) (reduce (scan col entryAt N 0 []) (t, [])).2
 
-/-- **Two claims are met**: the second's triple has a nonzero determinant, some candidate for the
-first has one, and the second weighs nothing on the candidates. -/
-theorem solveTwo_spec (co : E ≃ₗ[K] (Fin 3 → K)) (w₁ w₂ : ι → Y → E) {S : Cols ι Y K}
-    {cands : List (Cols ι Y K)} (hS : colDet co (colVals w₂ S) ≠ 0)
-    (h : ∃ V ∈ cands, colDet co (colVals w₁ V) ≠ 0)
-    (hz : ∀ V ∈ cands, ∀ i, ∀ q ∈ V i, w₂ q.1.1 q.1.2 = 0) (v₁ v₂ : E) :
-    sparseVal w₁ (solveTwo co w₁ w₂ S cands v₁ v₂) = v₁ ∧
-      sparseVal w₂ (solveTwo co w₁ w₂ S cands v₁ v₂) = v₂ := by
-  simp only [solveTwo, sparseVal_append]
-  constructor
-  · rw [solveOne_spec co w₁ h]
-    ring
-  · rw [sparseVal_eq_zero w₂ (es := solveOne co w₁ cands _) fun p hp => ?_, add_zero,
-      sparseVal_comb]
-    · exact solveE_spec co v₂ hS
-    · obtain ⟨V, hV, i, q, hq, hqp⟩ := mem_solveOne co w₁ hp
-      rw [← hqp]
-      exact hz V hV i q hq
+/-! ### Correctness -/
 
-theorem mem_solveTwo (co : E → Fin 3 → K) (w₁ w₂ : ι → Y → E) {S : Cols ι Y K}
-    {cands : List (Cols ι Y K)} {v₁ v₂ : E} {p : (ι × Y) × K}
-    (hp : p ∈ solveTwo co w₁ w₂ S cands v₁ v₂) :
-    (∃ i, ∃ q ∈ S i, q.1 = p.1) ∨ ∃ V ∈ cands, ∃ i, ∃ q ∈ V i, q.1 = p.1 := by
-  simp only [solveTwo, List.mem_append] at hp
-  rcases hp with hp | hp
-  · exact Or.inl (mem_comb hp)
-  · exact Or.inr (mem_solveOne co w₁ hp)
+variable (col : α → Fin r → K)
 
-end Build
+theorem comboVal_nil : comboVal col ([] : List (α × K)) = 0 := by simp [comboVal]
 
-/-! ## The deployed weights on a few entries -/
+theorem comboVal_append (x y : List (α × K)) :
+    comboVal col (x ++ y) = comboVal col x + comboVal col y := by
+  simp [comboVal]
 
-section Weights
+theorem comboVal_scaleL (a : K) (x : List (α × K)) :
+    comboVal col (scaleL a x) = a • comboVal col x := by
+  induction x with
+  | nil => simp [comboVal, scaleL]
+  | cons p x ih =>
+    simp only [comboVal, scaleL, List.map_cons, List.sum_cons] at ih ⊢
+    rw [ih, smul_add, mul_smul]
 
-open QuotientSecurity.Hiding.Deployed
+/-- **Echelon form**: each row's vector is its entries' combination and is one at its pivot, and
+the later rows are zero there. -/
+def WF : List (Row K α r) → Prop
+  | [] => True
+  | row :: B => comboVal col row.comb = row.vec ∧ row.vec row.piv = 1 ∧
+      (∀ row' ∈ B, row'.vec row.piv = 0) ∧ WF B
 
-variable {E : Type} [Field E]
+/-- The rows' vectors. -/
+def vecs (B : List (Row K α r)) : Set (Fin r → K) := {w | ∃ row ∈ B, row.vec = w}
 
-/-- `eq` on one coordinate: `a` at a one, `1 + a` at a zero. -/
-def eqB (a : E) (b : Bool) : E := if b then a else 1 + a
+variable {col}
 
-theorem eqBits_nil (idx : ℕ) : eqBits ([] : List E) idx = 1 := by simp [eqBits]
+theorem WF.one : ∀ {B : List (Row K α r)}, WF col B → ∀ row ∈ B, row.vec row.piv = 1
+  | [], _, _, h => by simp at h
+  | _ :: _, h, _, hm => by
+    rcases List.mem_cons.mp hm with rfl | hm
+    · exact h.2.1
+    · exact WF.one h.2.2.2 _ hm
 
-/-- **`eqBits`, one coordinate off**: the first coordinate reads the index's low bit. -/
-theorem eqBits_cons (a : E) (l : List E) (idx : ℕ) :
-    eqBits (a :: l) idx = (if idx % 2 = 1 then a else 1 + a) * eqBits l (idx / 2) := by
-  unfold eqBits
-  rw [List.length_cons, Finset.prod_range_succ', mul_comm]
-  congr 1
-  · simp [Nat.testBit_zero]
-  · refine Finset.prod_congr rfl fun k _ => ?_
-    rw [List.getD_cons_succ, Nat.testBit_succ]
+theorem WF.append : ∀ {B : List (Row K α r)} (n : Row K α r), WF col B →
+    (∀ row ∈ B, n.vec row.piv = 0) → comboVal col n.comb = n.vec → n.vec n.piv = 1 →
+    WF col (B ++ [n])
+  | [], n, _, _, h1, h2 => ⟨h1, h2, by simp, trivial⟩
+  | row :: B, n, h, hz, h1, h2 => by
+    refine ⟨h.1, h.2.1, fun row' hm => ?_, WF.append n h.2.2.2
+      (fun row' hm => hz row' (List.mem_cons_of_mem _ hm)) h1 h2⟩
+    rcases List.mem_append.mp hm with hm | hm
+    · exact h.2.2.1 row' hm
+    · rw [List.mem_singleton.mp hm]
+      exact hz row List.mem_cons_self
 
-/-- `eqBits` reads the index's low bits only. -/
-theorem eqBits_mod (l : List E) (idx : ℕ) : eqBits l idx = eqBits l (idx % 2 ^ l.length) := by
-  unfold eqBits
-  refine Finset.prod_congr rfl fun k hk => ?_
-  rw [Nat.testBit_mod_two_pow, decide_eq_true (Finset.mem_range.mp hk), Bool.true_and]
+theorem reduce_cons (row : Row K α r) (B : List (Row K α r)) (vx : (Fin r → K) × List (α × K)) :
+    reduce (row :: B) vx = reduce B (step vx row) := rfl
 
-theorem eqBits_append (l₁ l₂ : List E) (idx : ℕ) :
-    eqBits (l₁ ++ l₂) idx = eqBits l₁ idx * eqBits l₂ (idx / 2 ^ l₁.length) := by
-  induction l₁ generalizing idx with
-  | nil => simp [eqBits_nil]
-  | cons a l ih =>
-    rw [List.cons_append, eqBits_cons, eqBits_cons, ih, List.length_cons, mul_assoc,
-      Nat.div_div_eq_div_mul, pow_succ, mul_comm (2 ^ l.length) 2]
+/-- **Reduction keeps the vector less its recorded combination.** -/
+theorem reduce_inv : ∀ {B : List (Row K α r)}, WF col B → ∀ vx : (Fin r → K) × List (α × K),
+    (reduce B vx).1 - comboVal col (reduce B vx).2 = vx.1 - comboVal col vx.2
+  | [], _, _ => rfl
+  | row :: B, h, vx => by
+    rw [reduce_cons, reduce_inv h.2.2.2]
+    simp only [step, comboVal_append, comboVal_scaleL, h.1]
+    rw [neg_smul]
+    abel
 
-/-- No coordinate is `1`. -/
-def NZ (l : List E) : Prop := ∀ x ∈ l, 1 + x ≠ 0
+/-- Reduction keeps a coordinate where every row is zero. -/
+theorem reduce_zero_of : ∀ {B : List (Row K α r)} {q : Fin r}, (∀ row ∈ B, row.vec q = 0) →
+    ∀ vx : (Fin r → K) × List (α × K), vx.1 q = 0 → (reduce B vx).1 q = 0
+  | [], _, _, _, h => h
+  | row :: B, q, hB, vx, h => by
+    rw [reduce_cons]
+    refine reduce_zero_of (fun row' hm => hB row' (List.mem_cons_of_mem _ hm)) _ ?_
+    simp [step, h, hB row List.mem_cons_self]
 
-theorem eqBits_zero_ne {l : List E} (hl : NZ l) : eqBits l 0 ≠ 0 := by
-  induction l with
-  | nil => simp [eqBits_nil]
-  | cons a l ih =>
-    rw [eqBits_cons]
-    simp only [Nat.zero_mod, zero_ne_one, ↓reduceIte, Nat.zero_div]
-    exact mul_ne_zero (hl a List.mem_cons_self) (ih fun x hx => hl x (List.mem_cons_of_mem _ hx))
+/-- **The reduced vector is zero at every pivot.** -/
+theorem reduce_piv : ∀ {B : List (Row K α r)}, WF col B → ∀ vx : (Fin r → K) × List (α × K),
+    ∀ row ∈ B, (reduce B vx).1 row.piv = 0
+  | [], _, _, _, h => by simp at h
+  | row₀ :: B, h, vx, row, hm => by
+    rw [reduce_cons]
+    rcases List.mem_cons.mp hm with rfl | hm
+    · refine reduce_zero_of h.2.2.1 _ ?_
+      simp [step, h.2.1]
+    · exact reduce_piv h.2.2.2 _ row hm
 
-theorem NZ.take {l : List E} (h : NZ l) (n : ℕ) : NZ (l.take n) :=
-  fun x hx => h x (List.mem_of_mem_take hx)
+/-- The reduction subtracts a combination of the rows. -/
+theorem reduce_sub_mem : ∀ (B : List (Row K α r)) (vx : (Fin r → K) × List (α × K)),
+    (reduce B vx).1 - vx.1 ∈ Submodule.span K (vecs B)
+  | [], vx => by simp [reduce]
+  | row :: B, vx => by
+    rw [reduce_cons]
+    have h1 := reduce_sub_mem B (step vx row)
+    have hmono : Submodule.span K (vecs B) ≤ Submodule.span K (vecs (row :: B)) :=
+      Submodule.span_mono fun w ⟨row', hm, hw⟩ => ⟨row', List.mem_cons_of_mem _ hm, hw⟩
+    have h2 : (step vx row).1 - vx.1 ∈ Submodule.span K (vecs (row :: B)) := by
+      simp only [step, sub_sub_cancel_left]
+      exact Submodule.neg_mem _ (Submodule.smul_mem _ _
+        (Submodule.subset_span ⟨row, List.mem_cons_self, rfl⟩))
+    have := Submodule.add_mem _ (hmono h1) h2
+    rwa [sub_add_sub_cancel] at this
 
-theorem NZ.drop {l : List E} (h : NZ l) (n : ℕ) : NZ (l.drop n) :=
-  fun x hx => h x (List.mem_of_mem_drop hx)
+/-- **A combination of the rows that is zero at every pivot is zero.** -/
+theorem eq_zero_of_mem_span : ∀ {B : List (Row K α r)}, WF col B → ∀ {w : Fin r → K},
+    w ∈ Submodule.span K (vecs B) → (∀ row ∈ B, w row.piv = 0) → w = 0
+  | [], _, w, hw, _ => by
+    have : vecs ([] : List (Row K α r)) = ∅ := by ext; simp [vecs]
+    rw [this, Submodule.span_empty, Submodule.mem_bot] at hw
+    exact hw
+  | row :: B, h, w, hw, hz => by
+    have hv : vecs (row :: B) = insert row.vec (vecs B) := by
+      ext u
+      simp [vecs, eq_comm]
+    rw [hv, Submodule.mem_span_insert] at hw
+    obtain ⟨a, z, hzm, rfl⟩ := hw
+    have hzp : z row.piv = 0 := by
+      have hle : Submodule.span K (vecs B) ≤ LinearMap.ker (LinearMap.proj (R := K)
+          (φ := fun _ : Fin r => K) row.piv) :=
+        Submodule.span_le.mpr fun u ⟨row', hm, hu⟩ => by
+          rw [← hu]
+          exact h.2.2.1 row' hm
+      exact hle hzm
+    have ha : a = 0 := by
+      have := hz row List.mem_cons_self
+      simpa [h.2.1, hzp] using this
+    subst ha
+    rw [zero_smul, zero_add] at hz ⊢
+    exact eq_zero_of_mem_span h.2.2.2 hzm fun row' hm => hz row' (List.mem_cons_of_mem _ hm)
 
-theorem take_bits (n m y : ℕ) (hm : m ≤ n) : (bits n y : List E).take m = bits m y := by
-  unfold bits
-  rw [← List.map_take, List.take_range, min_eq_left hm]
+theorem piv_nodup : ∀ {B : List (Row K α r)}, WF col B → (B.map Row.piv).Nodup
+  | [], _ => List.nodup_nil
+  | row :: B, h => by
+    refine List.nodup_cons.mpr ⟨fun hm => ?_, piv_nodup h.2.2.2⟩
+    obtain ⟨row', hm', he⟩ := List.mem_map.mp hm
+    have h1 := WF.one h.2.2.2 row' hm'
+    rw [he, h.2.2.1 row' hm'] at h1
+    exact zero_ne_one h1
 
-theorem getD_map_of_lt {α β : Type} (f : α → β) (l : List α) {k : ℕ} (hk : k < l.length)
-    (d : β) (d' : α) : (l.map f).getD k d = f (l.getD k d') := by
-  rw [List.getD_eq_getElem _ _ (by simpa using hk), List.getD_eq_getElem _ _ hk, List.getElem_map]
+/-- **The residual is zero** when the rows span the target or every coordinate is a pivot. -/
+theorem reduce_eq_zero {B : List (Row K α r)} (h : WF col B) {t : Fin r → K}
+    (ht : B.length = r ∨ t ∈ Submodule.span K (vecs B)) (x : List (α × K)) :
+    (reduce B (t, x)).1 = 0 := by
+  rcases ht with hl | ht
+  · funext q
+    have hall : ∀ q : Fin r, ∃ row ∈ B, row.piv = q := by
+      intro q
+      have hc : ((B.map Row.piv).toFinset).card = r := by
+        rw [List.toFinset_card_of_nodup (piv_nodup h), List.length_map, hl]
+      have hu := Finset.eq_univ_of_card _ (hc.trans (Fintype.card_fin r).symm)
+      have : q ∈ (B.map Row.piv).toFinset := hu ▸ Finset.mem_univ q
+      simpa using this
+    obtain ⟨row, hm, rfl⟩ := hall q
+    exact reduce_piv h _ row hm
+  · refine eq_zero_of_mem_span h ?_ (reduce_piv h _)
+    have := Submodule.add_mem _ (reduce_sub_mem B (t, x)) ht
+    rwa [sub_add_cancel] at this
 
-variable (h2 : (2 : E) = 0)
-include h2
+/-- **Insertion keeps the echelon form.** -/
+theorem WF.insertE {B : List (Row K α r)} (h : WF col B) (e : α) : WF col (insertE col B e) := by
+  have hinv : comboVal col (reduce B (col e, [(e, 1)])).2 = (reduce B (col e, [(e, 1)])).1 := by
+    have := reduce_inv h (col e, [(e, 1)])
+    simp only [comboVal, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero,
+      one_smul, sub_self] at this
+    exact (sub_eq_zero.mp this).symm
+  rcases hp : firstNZ (reduce B (col e, [(e, 1)])).1 with _ | p
+  · simp only [Builder.insertE, hp]
+    exact h
+  · simp only [Builder.insertE, hp]
+    have hne : (reduce B (col e, [(e, 1)])).1 p ≠ 0 := by
+      have := List.find?_some hp
+      simpa using this
+    refine WF.append _ h (fun row hm => ?_) ?_ ?_
+    · simp [reduce_piv h _ row hm]
+    · simp only [comboVal_scaleL, hinv]
+    · simp [inv_mul_cancel₀ hne]
 
-/-- `w / (1 + w)` is never `1` (characteristic 2; `w / 0 = 0`). -/
-theorem one_add_div_ne (w : E) : 1 + w / (1 + w) ≠ 0 := by
-  by_cases hw : 1 + w = 0
-  · rw [hw, div_zero, add_zero]
-    exact one_ne_zero
-  · intro h
-    have e : (1 + w / (1 + w)) * (1 + w) = 1 := by
-      rw [add_mul, div_mul_cancel₀ w hw]
-      linear_combination w * h2
-    rw [h, zero_mul] at e
-    exact zero_ne_one e
+/-- **After insertion, the entry's column is a combination of the rows**, and so is every
+combination of the earlier rows. -/
+theorem insertE_span (B : List (Row K α r)) (e : α) :
+    Submodule.span K (vecs B) ≤ Submodule.span K (vecs (insertE col B e)) ∧
+      col e ∈ Submodule.span K (vecs (insertE col B e)) := by
+  have hsub : col e - (reduce B (col e, [(e, 1)])).1 ∈ Submodule.span K (vecs B) := by
+    have := Submodule.neg_mem _ (reduce_sub_mem B (col e, [(e, 1)]))
+    rwa [neg_sub] at this
+  rcases hp : firstNZ (reduce B (col e, [(e, 1)])).1 with _ | p
+  · simp only [Builder.insertE, hp]
+    have h0 : (reduce B (col e, [(e, 1)])).1 = 0 := by
+      funext i
+      have := List.find?_eq_none.mp hp i (List.mem_finRange i)
+      simpa using this
+    refine ⟨le_rfl, ?_⟩
+    simpa [h0] using hsub
+  · simp only [Builder.insertE, hp]
+    set v := (reduce B (col e, [(e, 1)])).1
+    have hne : v p ≠ 0 := by
+      have := List.find?_some hp
+      simpa using this
+    have hmono : Submodule.span K (vecs B) ≤ Submodule.span K
+        (vecs (B ++ [⟨p, (v p)⁻¹ • v, scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩])) :=
+      Submodule.span_mono fun w ⟨row, hm, hw⟩ => ⟨row, List.mem_append_left _ hm, hw⟩
+    refine ⟨hmono, ?_⟩
+    have hv : v ∈ Submodule.span K
+        (vecs (B ++ [⟨p, (v p)⁻¹ • v, scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩])) := by
+      have hrow := Submodule.smul_mem _ (v p) (Submodule.subset_span (R := K)
+        (s := vecs (B ++ [⟨p, (v p)⁻¹ • v, scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩]))
+        ⟨_, List.mem_append_right _ (List.mem_singleton_self _), rfl⟩)
+      rwa [smul_smul, mul_inv_cancel₀ hne, one_smul] at hrow
+    have := Submodule.add_mem _ (hmono hsub) hv
+    rwa [sub_add_cancel] at this
 
-/-- `w / (1 + w) = w (1 + w / (1 + w))` when `1 + w ≠ 0`. -/
-theorem div_eq_mul_one_add {w : E} (hw : 1 + w ≠ 0) : w / (1 + w) = w * (1 + w / (1 + w)) := by
-  apply mul_right_cancel₀ hw
-  rw [div_mul_cancel₀ w hw, mul_assoc, add_mul, one_mul, div_mul_cancel₀ w hw]
-  linear_combination (-(w * w)) * h2
+/-- **The scan's invariant**: echelon rows, and every scanned column a combination of them unless
+every coordinate is a pivot. -/
+theorem scan_spec (entryAt : ℕ → α) : ∀ (n k : ℕ) (B : List (Row K α r)), WF col B →
+    (B.length = r ∨ ∀ i < k, col (entryAt i) ∈ Submodule.span K (vecs B)) →
+    WF col (scan col entryAt n k B) ∧ ((scan col entryAt n k B).length = r ∨
+      ∀ i < k + n, col (entryAt i) ∈ Submodule.span K (vecs (scan col entryAt n k B)))
+  | 0, k, B, h, hs => ⟨h, hs⟩
+  | n + 1, k, B, h, hs => by
+    unfold scan
+    split
+    · rename_i hl
+      exact ⟨h, Or.inl hl⟩
+    · rename_i hl
+      have hall := hs.resolve_left hl
+      obtain ⟨hmono, he⟩ := insertE_span (col := col) B (entryAt k)
+      have := scan_spec entryAt n (k + 1) (insertE col B (entryAt k)) (h.insertE _)
+        (Or.inr fun i hi => by
+          rcases Nat.lt_succ_iff_lt_or_eq.mp hi with hi | rfl
+          · exact hmono (hall i hi)
+          · exact he)
+      rwa [show k + 1 + n = k + (n + 1) by omega] at this
 
-theorem nz_ofFn {n : ℕ} (f : Fin n → E) (hf : ∀ i, ∃ w, f i = w / (1 + w)) : NZ (List.ofFn f) := by
-  intro x hx
-  obtain ⟨i, rfl⟩ := List.mem_ofFn.mp hx
-  obtain ⟨w, hw⟩ := hf i
-  rw [hw]
-  exact one_add_div_ne h2 w
+/-- **The solution meets the target** whenever the target is a combination of the columns of
+entries the scan reaches. -/
+theorem solveElim_spec (entryAt : ℕ → α) (N : ℕ) (t : Fin r → K) (U : Set α)
+    (hU : ∀ e ∈ U, ∃ i < N, entryAt i = e) (ht : t ∈ Submodule.span K (col '' U)) :
+    comboVal col (solveElim col entryAt N t) = t := by
+  obtain ⟨hWF, hs⟩ := scan_spec (col := col) entryAt N 0 [] trivial
+    (Or.inr fun i hi => absurd hi (Nat.not_lt_zero i))
+  have hres : (reduce (scan col entryAt N 0 []) (t, [])).1 = 0 := by
+    refine reduce_eq_zero hWF (hs.imp_right fun hall => ?_) []
+    refine (Submodule.span_le.mpr ?_) ht
+    rintro _ ⟨e, he, rfl⟩
+    obtain ⟨i, hi, rfl⟩ := hU e he
+    exact hall i (by omega)
+  have hinv := reduce_inv hWF (t, [])
+  rw [hres, comboVal_nil, zero_sub, sub_zero] at hinv
+  rw [solveElim, comboVal_scaleL, neg_one_smul]
+  exact hinv
 
-open QuotientSecurity.Hiding.Deployed.Layout
+end Elim
 
-variable {L : Layout}
+/-! ## Tables meeting claims -/
 
-/-- **The weight on the overflow lane's held pieces**: `eq` of the point's first eight coordinates
-at the entry's low byte, times the held piece's scale. -/
-theorem claimW_ov (h : L.OK) {m : ℕ} (points : Fin m → List E) (c : Fin m)
-    (y : Fin (2 ^ L.logLane)) (hy1 : 2 ^ 8 ≤ (y : ℕ))
-    (hy2 : (y : ℕ) < (L.pieces.length + 1) * 2 ^ 8) :
-    L.claimW points c ⟨32, h.n32⟩ y = eqBits ((points c).take 8) y *
-      eqBits ((points c).drop 8) (L.pieces.getD ((y : ℕ) / 2 ^ 8 - 1) 0) := by
-  have hs : L.logPiece = 8 := h.piece
-  have hl8 : 8 < L.logLane := h.lane
-  have hov : L.overflow = 32 := h.overflow
-  have hat : L.lanes[32]? = some .overflow := h.at_ov
-  set pt := points c
-  set Yv := (y : ℕ) / 2 ^ 8 with hYdef
-  have hy := y.isLt
-  have hY1 : 1 ≤ Yv := (Nat.le_div_iff_mul_le (by norm_num)).mpr (by simpa using hy1)
-  have hYH : Yv ≤ L.pieces.length := by
-    have := (Nat.div_lt_iff_lt_mul (show 0 < 2 ^ 8 by norm_num)).mpr hy2
-    omega
-  have hfit : L.pieces.length + 1 ≤ 2 ^ (L.logLane - logPieceD) := by
-    have hf := h.fits
-    have hl := h.lane
-    rw [show L.logLane = (L.logLane - logPieceD) + logPieceD by omega, pow_add] at hf
-    exact le_of_mul_le_mul_right hf (by norm_num [logPieceD])
-  change L.pieces.length + 1 ≤ 2 ^ (L.logLane - 8) at hfit
-  have hYlt : Yv < 2 ^ (L.logLane - 8) := by omega
-  have hb : (L.lanes.getD 32 .random).isBlock = false := by
-    rw [List.getD_eq_getElem?_getD, hat]
-    rfl
-  have hpl : (L.part 1 pt).pieces.length = L.pieces.length := by simp [part, pieceScales]
-  have hpt : piecesTerm 8 (bits L.logLane y) (L.part 1 pt) =
-      eqBits (pt.drop 8) (L.pieces.getD (Yv - 1) 0) := by
-    unfold piecesTerm
-    rw [drop_bits, Nat.shiftRight_eq_div_pow, ← hYdef, Finset.sum_eq_single (Yv - 1)]
-    · rw [eqBits_bits_eq h2 hYlt (by omega), if_pos (by omega), mul_one]
-      show ((L.pieceScales pt).map (1 * ·)).getD (Yv - 1) 0 = _
-      rw [getD_map_mul, one_mul]
-      unfold pieceScales
-      rw [hs]
-      exact getD_map_of_lt _ _ (by omega) 0 0
-    · intro k hk hne
-      rw [hpl, Finset.mem_range] at hk
-      rw [eqBits_bits_eq h2 hYlt (by omega), if_neg (by omega), mul_zero]
-    · intro hni
-      rw [hpl, Finset.mem_range] at hni
-      omega
-  simp only [claimW, claimTerm, hs]
-  rw [onBlocks_zero h2 h _ h.n32 hb, hov, getD_laneEqAt_eq h2 h h.n32 h.n32, if_pos rfl, hpt]
-  have hlow : (L.part 1 pt).low = pt.take L.logLane := rfl
-  rw [hlow, List.take_take, min_eq_left hl8.le, take_bits _ _ _ hl8.le,
-    eqZ_bits h2 (pt.take 8) 8 _ (List.length_take_le _ _)]
-  ring
+section Claims
 
-/-- **The weight on a block lane**, past the first piece: `eq` of the point's lane coordinates at
-the entry, times the lane's block scale. -/
-theorem claimW_block (h : L.OK) {m : ℕ} (points : Fin m → List E) (c : Fin m)
-    (l : Fin L.lanes.length) {b : ℕ} (hb : L.lanes[(l : ℕ)]? = some (.block b))
-    (y : Fin (2 ^ L.logLane)) (hy1 : 2 ^ 8 ≤ (y : ℕ)) :
-    L.claimW points c l y = eqBits ((points c).take 8) y *
-      eqBits (((points c).take L.logLane).drop 8) ((y : ℕ) / 2 ^ 8) *
-      eqBits ((points c).drop L.logLane) b := by
-  have hs : L.logPiece = 8 := h.piece
-  have hl8 : 8 < L.logLane := h.lane
-  have hov : L.overflow = 32 := h.overflow
-  set pt := points c
-  have hy := y.isLt
-  have hl32 : (l : ℕ) ≠ 32 := by
-    intro he
-    have hat : L.lanes[32]? = some .overflow := h.at_ov
-    rw [← he, hb] at hat
-    simp at hat
-  have hYlt : (y : ℕ) / 2 ^ 8 < 2 ^ (L.logLane - 8) := by
-    rw [Nat.div_lt_iff_lt_mul (by norm_num), ← pow_add, Nat.sub_add_cancel hl8.le]
-    exact hy
-  have hY1 : 1 ≤ (y : ℕ) / 2 ^ 8 := (Nat.le_div_iff_mul_le (by norm_num)).mpr (by simpa using hy1)
-  have hfp : onePlusProd ((bits L.logLane y : List E).drop 8) = 0 := by
-    rw [onePlusProd_eq, drop_bits, Nat.shiftRight_eq_div_pow,
-      eqBits_bits_eq h2 hYlt (Nat.two_pow_pos _), if_neg (by omega)]
-  have hon : L.onBlocks (L.laneEqAt l) (L.part 1 pt) = eqBits (pt.drop L.logLane) b := by
-    unfold onBlocks
-    rw [Finset.sum_eq_single (l : ℕ)]
-    · have hgb : L.lanes.getD l .random = .block b := by
-        rw [List.getD_eq_getElem?_getD, hb]
-        rfl
-      rw [hgb, getD_laneEqAt_eq h2 h l.isLt l.isLt, if_pos rfl]
-      simp only [Lane.isBlock, ↓reduceIte, mul_one]
-      show ((L.laneScales pt).map (1 * ·)).getD l 0 = _
-      rw [getD_map_mul, one_mul]
-      unfold laneScales
-      rw [List.getD_eq_getElem?_getD, List.getElem?_map, hb]
-      rfl
-    · intro k hk hne
-      rw [getD_laneEqAt_eq h2 h l.isLt (Finset.mem_range.mp hk), if_neg hne]
-      simp
-    · intro hni
-      exact absurd (Finset.mem_range.mpr l.isLt) hni
-  simp only [claimW, claimTerm, hs]
-  rw [hon, hfp, hov, getD_laneEqAt_eq h2 h l.isLt h.n32, if_neg (fun e => hl32 e.symm)]
-  have hlow : (L.part 1 pt).low = pt.take L.logLane := rfl
-  rw [hlow, List.take_take, min_eq_left hl8.le, take_bits _ _ _ hl8.le,
-    eqZ_bits h2 (pt.take 8) 8 _ (List.length_take_le _ _), drop_bits, Nat.shiftRight_eq_div_pow,
-    eqZ_bits h2 ((pt.take L.logLane).drop 8) (L.logLane - 8) _ (by simp; omega)]
-  ring
+variable {K E ι Y : Type} [Field K] [DecidableEq K] [Field E] [Algebra K E]
+  [Fintype ι] [DecidableEq ι] [Fintype Y] [DecidableEq Y]
 
-/-- Entries of the overflow lane's held pieces are the table's. -/
-theorem not_randPos_ov (h : L.OK) (y : Fin (2 ^ L.logLane)) (hy1 : 2 ^ 8 ≤ (y : ℕ))
-    (hy2 : (y : ℕ) < (L.pieces.length + 1) * 2 ^ 8) :
-    ¬ (L.toGadget h).randPos ⟨32, h.n32⟩ y := by
-  intro hr
-  unfold GadgetLayout.randPos GadgetLayout.AtGadget at hr
-  rcases hr with hf | ⟨p, hp⟩ | hr | ⟨-, hh⟩
-  · simp [toGadget, firstFree] at hf
-    omega
-  · have := (atPat_iff h p y).mp hp
-    have := p.isLt
-    omega
-  · exact (L.toGadget h).not_rand_ov hr
-  · apply hh
-    show y ∈ L.heldSet
-    exact Finset.mem_filter.mpr ⟨Finset.mem_univ _, hy1, hy2⟩
+/-- **The columns**: claim `j`'s weight at the entry, its coordinate `k`, at `(j, k)`. -/
+def colOf (co : E → Fin 3 → K) {m : ℕ} (Wc : Fin m → ι → Y → E) (e : ι × Y) :
+    Fin (m * 3) → K :=
+  fun i => co (Wc (finProdFinEquiv.symm i).1 e.1 e.2) (finProdFinEquiv.symm i).2
 
-/-- Entries of a block lane past the first piece are the table's. -/
-theorem not_randPos_block (h : L.OK) (l : Fin L.lanes.length) {b : ℕ}
-    (hb : L.lanes[(l : ℕ)]? = some (.block b)) (y : Fin (2 ^ L.logLane)) (hy1 : 2 ^ 8 ≤ (y : ℕ)) :
-    ¬ (L.toGadget h).randPos l y := by
-  intro hr
-  unfold GadgetLayout.randPos GadgetLayout.AtGadget at hr
-  rcases hr with hf | ⟨p, hp⟩ | hr | ⟨hl, -⟩
-  · simp [toGadget, firstFree] at hf
-    omega
-  · have := (atPat_iff h p y).mp hp
-    have := p.isLt
-    omega
-  · change L.lanes[(l : ℕ)]? = some .random at hr
-    rw [hb] at hr
-    simp at hr
-  · have h32 : (l : ℕ) = 32 := congrArg Fin.val hl
-    have hat : L.lanes[32]? = some .overflow := h.at_ov
-    rw [← h32, hb] at hat
-    simp at hat
+/-- **The target**: the claimed values' coordinates. -/
+def tgtOf (co : E → Fin 3 → K) {m : ℕ} (val : Fin m → E) : Fin (m * 3) → K :=
+  fun i => co (val (finProdFinEquiv.symm i).1) (finProdFinEquiv.symm i).2
 
-end Weights
+/-- **The table built for the claimed values `val`**, by the scan of `entryAt k`, `k < N`. -/
+def build (co : E → Fin 3 → K) {m : ℕ} (Wc : Fin m → ι → Y → E) (entryAt : ℕ → ι × Y) (N : ℕ)
+    (val : Fin m → E) : ι → Y → K :=
+  sparse (solveElim (colOf co Wc) entryAt N (tgtOf co val))
+
+theorem co_sparseVal (co : E ≃ₗ[K] (Fin 3 → K)) {m : ℕ} (Wc : Fin m → ι → Y → E) (j : Fin m)
+    (k : Fin 3) (x : List ((ι × Y) × K)) :
+    co (sparseVal (Wc j) x) k = comboVal (colOf co Wc) x (finProdFinEquiv (j, k)) := by
+  induction x with
+  | nil => simp [sparseVal, comboVal]
+  | cons p x ih =>
+    simp only [sparseVal, comboVal, List.map_cons, List.sum_cons] at ih ⊢
+    rw [map_add, Pi.add_apply, ih, map_smul, Pi.add_apply, Pi.smul_apply, Pi.smul_apply]
+    simp [colOf]
+
+/-- **The built table has the claimed values whenever some table has them**, for claims that
+weigh nothing of the randomness and a scan that reaches every entry. -/
+theorem claims_build (co : E ≃ₗ[K] (Fin 3 → K)) (L : GadgetLayout ι Y) {m : ℕ}
+    (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc) (entryAt : ℕ → ι × Y) (N : ℕ)
+    (hcov : ∀ e, ∃ i < N, entryAt i = e) (val : Fin m → E) {d : ι → Y → K}
+    (hd : HiddenLayout.claimsMap Wc (L.stackD d) = val) :
+    HiddenLayout.claimsMap Wc (L.stackD (build co Wc entryAt N val)) = val := by
+  have hspan : tgtOf co val ∈ Submodule.span K (colOf co Wc '' Set.univ) := by
+    have he : tgtOf co val = ∑ e : ι × Y, L.stackD d e.1 e.2 • colOf co Wc e := by
+      funext i
+      rw [Finset.sum_apply, Fintype.sum_prod_type, tgtOf, ← hd]
+      show co (∑ l, ∑ y, Wc _ l y * algebraMap K E (L.stackD d l y)) _ = _
+      simp only [map_sum, Finset.sum_apply, Pi.smul_apply, smul_eq_mul, colOf]
+      refine Finset.sum_congr rfl fun l _ => Finset.sum_congr rfl fun y _ => ?_
+      rw [mul_comm, ← Algebra.smul_def, map_smul, Pi.smul_apply, smul_eq_mul]
+    rw [he]
+    exact Submodule.sum_mem _ fun e _ => Submodule.smul_mem _ _
+      (Submodule.subset_span ⟨e, Set.mem_univ _, rfl⟩)
+  have hsol := solveElim_spec entryAt N (tgtOf co val) Set.univ (fun e _ => hcov e) hspan
+  funext j
+  rw [build, claimsMap_stackD_sparse L Wc (weight_randPos L hW)]
+  refine co.injective (funext fun k => ?_)
+  rw [co_sparseVal, hsol]
+  simp [tgtOf]
+
+end Claims
 
 /-! ## The verifier's points and values, compiled -/
 
@@ -711,55 +593,112 @@ section Tables
 
 variable {K E : Type} [Field K] [DecidableEq K] [Field E] [Algebra K E] [DecidableEq E] [CharP E 2]
 
-/-- The witness stack's overflow lane `32`. -/
-def ovW : ιW := ⟨32, by rw [lanes_W]; norm_num⟩
+/-- **Every entry of a layout's stack**, lane by lane: `k ↦ (k / 2^ℓ mod L, k mod 2^ℓ)`. -/
+def enumL (L : QuotientSecurity.Hiding.Deployed.Layout) (h : L.OK) (k : ℕ) :
+    Fin L.lanes.length × Fin (2 ^ L.logLane) :=
+  (⟨k / 2 ^ L.logLane % L.lanes.length, Nat.mod_lt _ (by have := h.lanes_ge; omega)⟩,
+    ⟨k % 2 ^ L.logLane, Nat.mod_lt _ (Nat.two_pow_pos _)⟩)
 
-/-- Entry `y` of the overflow lane of the witness stack. -/
-def eW (y : ℕ) (hy : y < 2 ^ 19 := by norm_num) : ιW × YW := (ovW, ⟨y, by rw [logLane_W]; exact hy⟩)
+/-- **The scan's order**: the candidates, then every entry. -/
+def entryAt {α : Type} (cands : List α) (enum : ℕ → α) (k : ℕ) : α :=
+  match cands[k]? with
+  | some e => e
+  | none => enum (k - cands.length)
 
-/-- **The witness table's candidates**: entries `256 .. 260` of the overflow lane (the point's
-coordinates `ρ`, `ρ²`), columns `e₀+e₁+e₂+e₃`, `e₁+e₃`, `e₂+e₃`; then entries `256, 260, 264`
-(`u₂`, `u₃`), columns `e₀`, `e₁`, `e₁+e₂`. -/
-def candsW : List (Builder.Cols ιW YW K) :=
-  [![[(eW 256, 1), (eW 257, 1), (eW 258, 1), (eW 259, 1)], [(eW 257, 1), (eW 259, 1)],
-      [(eW 258, 1), (eW 259, 1)]],
-    ![[(eW 256, 1)], [(eW 260, 1)], [(eW 260, 1), (eW 264, 1)]]]
+/-- The scan reaches every entry. -/
+theorem entryAt_cover (L : QuotientSecurity.Hiding.Deployed.Layout) (h : L.OK)
+    (cands : List (Fin L.lanes.length × Fin (2 ^ L.logLane))) {N : ℕ}
+    (hN : cands.length + L.lanes.length * 2 ^ L.logLane ≤ N)
+    (e : Fin L.lanes.length × Fin (2 ^ L.logLane)) :
+    ∃ i < N, entryAt cands (enumL L h) i = e := by
+  have h1 := e.1.isLt
+  have h2 := e.2.isLt
+  have hp : 0 < 2 ^ L.logLane := Nat.two_pow_pos _
+  refine ⟨cands.length + ((e.1 : ℕ) * 2 ^ L.logLane + e.2), ?_, ?_⟩
+  · have : (e.1 : ℕ) * 2 ^ L.logLane + e.2 < L.lanes.length * 2 ^ L.logLane :=
+      calc (e.1 : ℕ) * 2 ^ L.logLane + e.2 < (e.1 : ℕ) * 2 ^ L.logLane + 2 ^ L.logLane := by omega
+        _ = ((e.1 : ℕ) + 1) * 2 ^ L.logLane := by ring
+        _ ≤ L.lanes.length * 2 ^ L.logLane := Nat.mul_le_mul_right _ h1
+    omega
+  · have hn : cands[cands.length + ((e.1 : ℕ) * 2 ^ L.logLane + e.2)]? = none :=
+      List.getElem?_eq_none (by omega)
+    simp only [entryAt, hn, Nat.add_sub_cancel_left, enumL]
+    refine Prod.ext (Fin.ext ?_) (Fin.ext ?_)
+    · show ((e.1 : ℕ) * 2 ^ L.logLane + e.2) / 2 ^ L.logLane % L.lanes.length = e.1
+      rw [Nat.add_comm, Nat.add_mul_div_right _ _ hp, Nat.div_eq_of_lt h2, zero_add,
+        Nat.mod_eq_of_lt h1]
+    · show ((e.1 : ℕ) * 2 ^ L.logLane + e.2) % 2 ^ L.logLane = e.2
+      rw [Nat.add_comm, Nat.add_mul_mod_self_right, Nat.mod_eq_of_lt h2]
 
-/-- The witness claim's weight (`openW`'s). -/
-def wW (c : DChal E) : ιW → YW → E := Lw.claimW (fun _ : Fin 1 => pointWc c) 0
-
-/-- **The simulator's witness table**: zero but on the first candidate triple of `candsW` with a
-nonzero determinant, where it is Cramer's solution for the verifier's claimed value. -/
-def simTW (rep : Rep K E) (_Y : E) (c : DChal E) (v : Vals E) : ιW → YW → K :=
-  sparse (solveOne rep.coords (wW c) candsW (valWc c v))
-
-/-- The quotient stack's overflow lane. -/
-def ovQ : ιQ := ⟨32, by rw [lanes_Q]; norm_num⟩
+/-- Entry `y` of the overflow lane `32` of the witness stack. -/
+def eW (y : ℕ) (hy : y < 2 ^ 19 := by norm_num) : ιW × YW :=
+  (⟨32, by rw [lanes_W]; norm_num⟩, ⟨y, by rw [logLane_W]; exact hy⟩)
 
 /-- Lane `l` and entry `y` of the quotient stack. -/
 def eQ (l y : ℕ) (hl : l < 63 := by norm_num) (hy : y < 2 ^ 22 := by norm_num) : ιQ × YQ :=
   (⟨l, by rw [lanes_Q]; exact hl⟩, ⟨y, by rw [logLane_Q]; exact hy⟩)
 
-/-- **The sum claim's triple**: entry `2^22 - 1` of the lanes `3, 19, 43` (blocks `3, 67, 131`). -/
-def colsS : Builder.Cols ιQ YQ K :=
-  ![[(eQ 3 (2 ^ 22 - 1), 1)], [(eQ 19 (2 ^ 22 - 1), 1)], [(eQ 43 (2 ^ 22 - 1), 1)]]
+/-- **The witness table's candidates**: entries `256 .. 260, 264` of the overflow lane. -/
+def candsW : List (ιW × YW) := [eW 256, eW 257, eW 258, eW 259, eW 260, eW 264]
 
-/-- **The quotient claim's candidates**: the overflow lane's pieces `1, 17, 33` (blocks `0, 64, 128`),
-then `5, 21, 37` (blocks `16, 80, 144`), their first entries. -/
-def candsQ : List (Builder.Cols ιQ YQ K) :=
-  [![[(eQ 32 256, 1)], [(eQ 32 (256 * 17), 1)], [(eQ 32 (256 * 33), 1)]],
-    ![[(eQ 32 (256 * 5), 1)], [(eQ 32 (256 * 21), 1)], [(eQ 32 (256 * 37), 1)]]]
+/-- **The quotient table's candidates**: entry `2^22 - 1` of the lanes `3, 19, 43` (blocks `3, 67,
+131`), the first entries of the overflow lane's pieces `1, 17, 33, 5, 21, 37`. -/
+def candsQ : List (ιQ × YQ) :=
+  [eQ 3 (2 ^ 22 - 1), eQ 19 (2 ^ 22 - 1), eQ 43 (2 ^ 22 - 1), eQ 32 256, eQ 32 (256 * 17),
+    eQ 32 (256 * 33), eQ 32 (256 * 5), eQ 32 (256 * 21), eQ 32 (256 * 37)]
 
-/-- The quotient table's claims' weights (`openQ`'s). -/
+/-- The witness claim's weight (`openW`'s), compiled. -/
+def wW (c : DChal E) : Fin 1 → ιW → YW → E := Lw.claimW fun _ : Fin 1 => pointWc c
+
+/-- The quotient table's claims' weights (`openQ`'s), compiled. -/
 def wQ (P₀ : Params E) (Y : E) (c : DChal E) (v : Vals E) : Fin 2 → ιQ → YQ → E :=
   Lq.claimW ![pointQc P₀ Y c v, pointSc Y]
 
-/-- **The simulator's quotient table**: the sum claim solved on `colsS`, then the quotient claim,
-less what that gave it, on the first candidate of `candsQ` with a nonzero determinant. -/
+/-- **The simulator's witness table**: the elimination over the candidates, then every entry, for
+the verifier's claimed value. -/
+def simTW (rep : Rep K E) (_Y : E) (c : DChal E) (v : Vals E) : ιW → YW → K :=
+  build rep.coords (wW c) (entryAt candsW (enumL Lw okW)) (candsW.length + 40 * 2 ^ 19)
+    (fun _ => valWc c v)
+
+/-- **The simulator's quotient table**: likewise, for the two claimed values. -/
 def simTQ (rep : Rep K E) (P₀ : Params E) (stmt : Fin P₀.words → E) (Y : E) (c : DChal E)
     (v : Vals E) : ιQ → YQ → K :=
-  sparse (solveTwo rep.coords (wQ P₀ Y c v 0) (wQ P₀ Y c v 1) colsS candsQ
-    (valsQc P₀ stmt Y c v 0) (valsQc P₀ stmt Y c v 1))
+  build rep.coords (wQ P₀ Y c v) (entryAt candsQ (enumL Lq okQ)) (candsQ.length + 63 * 2 ^ 22)
+    (valsQc P₀ stmt Y c v)
+
+/-- **The simulator's witness table has the verifier's claimed value whenever some table has
+it.** -/
+theorem claims_simTW {rep : Rep K E} {Y : E} {c : DChal E} {v : Vals E} {d : ιW → YW → K}
+    (hd : (openW rep Y).claims (c, v) d = valsW c v) :
+    (openW rep Y).claims (c, v) (simTW rep Y c v) = valsW c v :=
+  claims_build rep.coords (Lw.toGadget okW) (wW c)
+    (QuotientSecurity.Hiding.Deployed.Layout.weightsFit two_eq_zero_E okW _) _ _
+    (entryAt_cover Lw okW candsW (le_of_eq (by
+      have : Lw.lanes.length * 2 ^ Lw.logLane = 40 * 2 ^ 19 := by rw [lanes_W, logLane_W]
+      rw [this]))) _ hd
+
+/-- **The simulator's quotient table has the verifier's claimed values whenever some table has
+them.** -/
+theorem claims_simTQ {rep : Rep K E} {P₀ : Params E} {stmt : Fin P₀.words → E} {Y : E}
+    {c : DChal E} {v : Vals E} {d : ιQ → YQ → K}
+    (hd : (openQ rep P₀ Y).claims (c, v) d = valsQ P₀ stmt Y c v) :
+    (openQ rep P₀ Y).claims (c, v) (simTQ rep P₀ stmt Y c v) = valsQ P₀ stmt Y c v := by
+  have hW : (openQ rep P₀ Y).Wc (c, v) = wQ P₀ Y c v := by
+    show Lq.claimW ![pointQ P₀ Y c v, pointS Y] = Lq.claimW ![pointQc P₀ Y c v, pointSc Y]
+    rw [pointQc_eq, pointSc_eq]
+  have hd' : HiddenLayout.claimsMap (wQ P₀ Y c v) ((Lq.toGadget okQ).stackD d) =
+      valsQc P₀ stmt Y c v := by
+    rw [← hW, valsQc_eq]
+    exact hd
+  rw [← valsQc_eq]
+  show HiddenLayout.claimsMap ((openQ rep P₀ Y).Wc (c, v))
+    ((Lq.toGadget okQ).stackD (simTQ rep P₀ stmt Y c v)) = valsQc P₀ stmt Y c v
+  rw [hW]
+  exact claims_build rep.coords (Lq.toGadget okQ) (wQ P₀ Y c v)
+    (QuotientSecurity.Hiding.Deployed.Layout.weightsFit two_eq_zero_E okQ _) _ _
+    (entryAt_cover Lq okQ candsQ (le_of_eq (by
+      have : Lq.lanes.length * 2 ^ Lq.logLane = 63 * 2 ^ 22 := by rw [lanes_Q, logLane_Q]
+      rw [this]))) _ hd'
 
 end Tables
 
