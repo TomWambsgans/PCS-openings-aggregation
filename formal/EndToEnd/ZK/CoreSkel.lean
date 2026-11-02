@@ -311,6 +311,117 @@ theorem middle_run {β : Type} (R : List Render.Ev) (K Fin : OSt → OracleComp 
     rw [List.length_cons, e]
     exact ho2
 
+/-- The skeleton's opening from the batching draw on (`Deployed.opening` after the seed and the root). -/
+def openTail (sh : QuotientZk.Deployed.OpenShape) (o : OSt) :
+    OracleComp DSpec (List QuotientRpm.Limbs × List Multi) := do
+  let (_, o) ← drawO o
+  let o ← sendK o 2
+  let o ← rounds o 6
+  let o ← commitNext o sh.depth₁
+  let o ← ood o sh.ood₀
+  let o ← queryPhase o 0 (sh.queries.headD 0)
+  let o ← middle o 1 sh.levels (sh.queries.drop 1)
+  let o ← rounds o sh.lastFolds
+  let o ← sendK o (2 ^ sh.residualVars)
+  let o ← queryPhase o (sh.levels.length + 1) (sh.queries.getLastD 0)
+  let o ← rounds o (sh.residualVars - 1)
+  let (_, o) ← drawO o
+  return (o.stream, o.merkle)
+
+/-- The opening's last level and end, on their events. -/
+theorem tail_run (sh : QuotientZk.Deployed.OpenShape) (o : OSt)
+    (hb : (o.trees.getD (sh.levels.length + 1) []).length =
+      QuotientZk.Instance.lastDepth sh.depth₁ sh.levels + 1) (hist : List Out) :
+    runDet P G s (do
+      let o ← rounds o sh.lastFolds
+      let o ← sendK o (2 ^ sh.residualVars)
+      let o ← queryPhase o (sh.levels.length + 1) (sh.queries.getLastD 0)
+      let o ← rounds o (sh.residualVars - 1)
+      let (_, o) ← drawO o
+      return (o.stream, o.merkle)) hist =
+    runDet P G s (skelEv (roundsEv sh.lastFolds ++ (.send (2 ^ sh.residualVars) ::
+        (queryEv (sh.levels.length + 1) (sh.queries.getLastD 0)
+          (QuotientZk.Instance.lastDepth sh.depth₁ sh.levels) ++
+          (roundsEv (sh.residualVars - 1) ++ [.draw])))) o [] >>=
+        fun o ↦ pure (o.stream, o.merkle)) hist := by
+  rw [← rounds_skelEv, bind_assoc]
+  refine runDet_bind_congr P G s _ _ _ hist ?_
+  have t1 := trees_rounds P G s sh.lastFolds o hist
+  generalize runDet P G s (rounds o sh.lastFolds) hist = r1 at t1 ⊢
+  obtain ⟨o1, h1⟩ := r1
+  simp only at t1 ⊢
+  show _ = runDet P G s ((sendK o1 _ >>= fun o ↦ skelEv _ o []) >>= _) h1
+  rw [bind_assoc]
+  refine runDet_bind_congr P G s _ _ _ h1 ?_
+  have t2 := trees_sendK P G s o1 (2 ^ sh.residualVars) h1
+  generalize runDet P G s (sendK o1 (2 ^ sh.residualVars)) h1 = r2 at t2 ⊢
+  obtain ⟨o2, h2⟩ := r2
+  simp only at t2 ⊢
+  have hb2 : (o2.trees.getD (sh.levels.length + 1) []).length =
+      QuotientZk.Instance.lastDepth sh.depth₁ sh.levels + 1 := by rw [t2, t1, hb]
+  rw [← queryPhase_skelEv _ _ _ _ o2 hb2, bind_assoc]
+  refine runDet_bind_congr P G s _ _ _ h2 ?_
+  generalize runDet P G s (queryPhase o2 (sh.levels.length + 1) (sh.queries.getLastD 0)) h2 = r3
+  obtain ⟨o3, h3⟩ := r3
+  simp only
+  rw [← rounds_skelEv, bind_assoc]
+  refine runDet_bind_congr P G s _ _ _ h3 ?_
+  generalize runDet P G s (rounds o3 (sh.residualVars - 1)) h3 = r4
+  obtain ⟨o4, h4⟩ := r4
+  simp only [skelEv, bind_assoc, pure_bind]
+
+/-- **The skeleton's opening on its events**, against the oracle: from the batching draw, the
+level-0 tree `lv₀` (of depth `depth₀`) the only one, every later level with its queries. -/
+theorem openTail_run (sh : QuotientZk.Deployed.OpenShape) (o : OSt) (lv₀ : List (List
+    QuotientRpm.Bytes32)) (ht : o.trees = [lv₀]) (hlv : lv₀.length = sh.depth₀ + 1)
+    (hq : sh.levels.length ≤ (sh.queries.drop 1).length) (hist : List Out) :
+    runDet P G s (openTail sh o) hist =
+      runDet P G s (skelEv (Render.openingEv sh) o [] >>= fun o ↦ pure (o.stream, o.merkle)) hist := by
+  simp only [openTail, Render.openingEv, List.append_assoc, List.cons_append, List.nil_append]
+  simp only [skelEv, bind_assoc]
+  refine runDet_bind_congr P G s _ _ _ hist ?_
+  have t1 := trees_drawO P G s o hist
+  generalize runDet P G s (drawO o) hist = r1 at t1 ⊢
+  obtain ⟨⟨c1, o1⟩, h1⟩ := r1
+  simp only at t1 ⊢
+  refine runDet_bind_congr P G s _ _ _ h1 ?_
+  have t2 := trees_sendK P G s o1 2 h1
+  generalize runDet P G s (sendK o1 2) h1 = r2 at t2 ⊢
+  obtain ⟨o2, h2⟩ := r2
+  simp only at t2 ⊢
+  rw [← rounds_skelEv, bind_assoc]
+  refine runDet_bind_congr P G s _ _ _ h2 ?_
+  have t3 := trees_rounds P G s 6 o2 h2
+  generalize runDet P G s (rounds o2 6) h2 = r3 at t3 ⊢
+  obtain ⟨o3, h3⟩ := r3
+  simp only at t3 ⊢
+  rw [skelEv_commit, bind_assoc]
+  refine runDet_bind_congr P G s _ _ _ h3 ?_
+  obtain ⟨lv₁, t4, hlv₁⟩ := trees_commitNext P G s o3 sh.depth₁ h3
+  generalize runDet P G s (commitNext o3 sh.depth₁) h3 = r4 at t4 ⊢
+  obtain ⟨o4, h4⟩ := r4
+  simp only at t4 ⊢
+  rw [← ood_skelEv, bind_assoc]
+  refine runDet_bind_congr P G s _ _ _ h4 ?_
+  have t5 := trees_ood P G s o4 sh.ood₀ h4
+  generalize runDet P G s (ood o4 sh.ood₀) h4 = r5 at t5 ⊢
+  obtain ⟨o5, h5⟩ := r5
+  simp only at t5 ⊢
+  have htr : o5.trees = [lv₀, lv₁] := by rw [t5, t4, t3, t2, t1, ht]; rfl
+  have hb5 : (o5.trees.getD 0 []).length = sh.depth₀ + 1 := by rw [htr]; exact hlv
+  rw [← queryPhase_skelEv _ _ _ _ o5 hb5, bind_assoc]
+  refine runDet_bind_congr P G s _ _ _ h5 ?_
+  have t6 := trees_queryPhase P G s 0 (sh.queries.headD 0) sh.depth₀ o5 hb5 h5
+  generalize runDet P G s (queryPhase o5 0 (sh.queries.headD 0)) h5 = r6 at t6 ⊢
+  obtain ⟨o6, h6⟩ := r6
+  simp only at t6 ⊢
+  refine middle_run P G s _ _ _ sh.levels (sh.queries.drop 1) 1 sh.depth₁ o6 h6 hq
+    (by rw [t6, htr]; rfl) (by rw [t6, htr]; exact hlv₁) ?_
+  intro o' h' ho1 ho2
+  have e : 1 + sh.levels.length = sh.levels.length + 1 := by ring
+  rw [e] at ho2
+  exact tail_run P G s sh o' ho2 h'
+
 end Run
 
 end PcsQuotient.EndToEnd.Core
