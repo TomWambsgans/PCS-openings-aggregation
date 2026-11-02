@@ -80,7 +80,7 @@ the witness and quotient openings of `witnessLayoutNew 22` and `quotientLayoutNe
 `2^8`), whose honest stacks `HiddenFill.lean` builds. -/
 theorem completeness_hidden (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) (M : MembershipCircuit) {x Y : E}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (tr : Transcript)
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (tr : Transcript)
     (OW : HiddenOpening (witnessLayoutNew WhirBridge.logRows) 8 witnessHeld)
     (OQ : HiddenOpening (quotientLayoutNew WhirBridge.logRows) 8 quotientHeld)
     (H : Bytes → Digest) (F : KeccakState → KeccakState) (fuel : ℕ) (s : Secret)
@@ -112,7 +112,7 @@ when it returns one, is accepted by the deployed verifier unless the run's `(α,
 `Bad`. -/
 theorem completeness_bad_set (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) (M : MembershipCircuit) {x Y : E}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (s : Secret)
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (s : Secret)
     (m : Fin 4 → Fin 3 → K) :
     ∃ Bad : Finset (E × E × E),
       (Bad.card : ℝ≥0∞) / (Fintype.card (E × E × E) : ℝ≥0∞) ≤ (17 * 2 ^ 24 + 8 : ℝ≥0∞) / 2 ^ 192 ∧

@@ -22,6 +22,8 @@ import QuotientSecurity.CircuitLayout
 import QuotientSecurity.Pinning
 import QuotientSecurity.Deployed
 import QuotientSecurity.DeployedConcrete
+import QuotientSecurity.DeployedHonest
+import QuotientSecurity.DeployedBasis
 import QuotientSecurity.Hiding
 
 /-- info: 'QuotientSecurity.verifier_rbrKnowledgeSoundness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
