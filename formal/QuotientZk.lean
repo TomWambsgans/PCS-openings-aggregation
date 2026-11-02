@@ -29,6 +29,7 @@ import QuotientZk.RpmAxioms
 import QuotientZk.RpmDiscipline
 import QuotientZk.Deployed.Fresh
 import QuotientZk.FreshJoint
+import QuotientZk.Instance.Main
 
 /-!
 # Zero knowledge of the non-interactive proof (layer F3b)
