@@ -246,11 +246,6 @@ fn table_part<S: Scalar + PartialEq, C: Channel<S>>(
     })
 }
 
-/// The padding instance's limbs and the rest of `padRow`: what a table's padding rows hold.
-fn padding_row(table: &Table) -> Vec<E> {
-    table.padding.clone()
-}
-
 /// Where `q_flock` keeps limb column `name` of BLAKE2S: its slot.
 fn qflock_slot(name: &str) -> Option<usize> {
     BLAKE2S_SLOTS.iter().position(|&s| s == Some(name))
@@ -390,7 +385,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     // 5. The constraint quotient's identity, on C1 but for Q_W(t), which is sent.
     let mut quotient_degree: u64 = 0;
     {
-        let _phase = enter("constraints: Q_W identity (padding, counters, JUMP, copies, public input)");
+        let _phase = enter("constraints: Q_W identity (counters, JUMP, limb copies, public input)");
         let mut known = S::zero();
         let mut terms: Vec<Term<S>> = Vec::new();
         let mut power = S::one();
@@ -404,7 +399,6 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
             let n = 1u64 << r;
             let rows = shape.table_rows[table.opcode];
             let lift = vanishing_ratio(&w, r, r_w);
-            let active = prefix_vanishing(&w, rows);
             let padding = suffix_vanishing(&w, rows, r);
             let at = |column| Column::Table {
                 table: table.opcode,
@@ -421,20 +415,6 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                 known += g2 * cond * (flag + one);
                 quotient_degree = quotient_degree.max(n - 2);
             }
-            // padRow on the padding rows: (col + pad) Z_act.
-            let pad = padding_row(table);
-            let lift_active = lift * active;
-            for column in 0..table.width() {
-                let g = next(&mut power) * lift_active;
-                match part.sent[column] {
-                    Some(value) => known += g * (value + c(pad[column])),
-                    None => {
-                        terms.push(term(at(column), &w[..r], g));
-                        known += g * c(pad[column]);
-                    }
-                }
-            }
-            quotient_degree = quotient_degree.max(rows - 1);
             // Counters nonzero on the active rows: (z Π c + 1) Z_pad.
             let mut counters = one;
             for column in table.count_columns() {
@@ -514,9 +494,13 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                 Leaves::Memory => (memory_pull, memory_push, 2 * (n - 1) - n),
                 Leaves::Bytecode => (bytecode_pull, bytecode_push, 2 * (n - 1) - n),
                 Leaves::Table(t) => {
+                    // Padding rows' leaves are 1, whatever they hold: (R P_pull + P_push) Z_pad + (R + 1) Z_act.
                     let part = &parts[t];
-                    let d = (part.pull_degree.max(part.push_degree) as u64) * (n - 1) - n;
-                    (part.pull, part.push, d)
+                    let rows = shape.table_rows[t];
+                    let active = prefix_vanishing(&w, rows);
+                    let padding = suffix_vanishing(&w, rows, block.r);
+                    let d = (part.pull_degree.max(part.push_degree) as u64) * (n - 1) + (n - rows) - n;
+                    (part.pull * padding + active, part.push * padding + active, d)
                 }
             };
             let sizes = chunks(degree + 1);
