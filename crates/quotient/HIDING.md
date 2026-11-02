@@ -114,10 +114,11 @@ then pin across both proofs' positions (about 446 > 256), and two that share the
 state in the process and so does not repeat in a fork), from which `protocol::Randomness::derive` makes both by
 Keccak-256 with distinct tags, a key binding the seed, the circuit's commitment, the statement and a digest of
 the witness's cells: a seed that repeats anyway (a restored snapshot) gives unrelated randomness for another
-witness or statement, and the same proof again for the same ones. `protocol::prove_with_randomness` takes the
-randomness, deterministic, for tests and reproducible benchmarks, with the same requirement.
-A table's seed is Keccak-256(`"pcs-quotient-pad-" ‖ table ‖ seed`); lane `l` is filled by ChaCha12 (`rand`'s
-`StdRng`) keyed by Keccak-256(table seed ‖ `l`), so the prover is deterministic given the seed and fills lanes in
+witness or statement, and the same proof again for the same ones. `protocol::prove_with_seed` takes the seed,
+deterministic, for tests and reproducible benchmarks, with the same requirement; randomness given directly
+(`prove_with_randomness`) is crate-private, for the tests that show what reuse reveals.
+A table's seed is Keccak-256(`"pcs-quotient-pad-" ‖ table ‖ seed`); lane `l` is filled by ChaCha12 (`rand_chacha`'s
+`ChaCha12Rng`, by name) keyed by Keccak-256(table seed ‖ `l`), so the prover is deterministic given the seed and fills lanes in
 parallel; then each gadget pair's second lane takes its first lane's values there, and the overflow lane's
 pattern-2 entries are set to zero. Tests and the benchmark draw the proof's seed from `primitives::test_rng`.
 
@@ -319,8 +320,8 @@ layouts (not hiding, `2e2d17d`), the hidden ones cost about +9% of prover time a
 ## What remains open
 
 - The theorem's conditions now hold outside `B`, by the argument above, checked in its parts exactly; its Lean
-  formalization proves the argument's core for every challenge (below), and what is left is plumbing and the
-  solvers' span.
+  formalization proves the argument's core and the solvers' span for every challenge (below), and what is left
+  is plumbing.
 - The Fiat–Shamir transfer (programmable random oracle) and the reduction's own hiding are taken from
   `membership-zk.md` and the protocol's analysis, not redone.
 - The exact test of the whole view is on scaled-down layouts; at full size the argument rests on the steps above
@@ -330,52 +331,35 @@ layouts (not hiding, `2e2d17d`), the hidden ones cost about +9% of prover time a
 ## The Lean statement
 
 Proven in `formal/QuotientSecurity/Hiding` (no `sorry`; axioms `propext`, `Classical.choice`, `Quot.sound`,
-guarded in `Hiding.lean`), for any fields `K ⊆ E`, for one entry (a column of the stack, tables on the 64 lane
-indices):
+guarded in `Hiding.lean`):
 
-- `Sumcheck.lean`: `rounds_lower_upper` (the solvers: a weight on one half against a table on the other moves
-  only the last quadratic coefficient), `last_fst_lower`, `last_fst_upper`, `lastClaim_upper` (the last round on
-  each half), `kernel_move`, `two_weights_reach`, `two_weights_reach_zero` (the sumcheck lemma, by induction on
-  the rounds), and `reach_all` (two lower weights and one upper move reach every value but `c_5`).
-- `Gadget.lean`: `deployed_nd` (the pairs `(0, 31)`, `(1, 30)` are nondegenerate for every `φ` with no
-  coordinate in `{0, 1}` and `2φ_0 ≠ 1`), `runClaim_move2` (the upper pattern against lane 33), `deployed_reach_all`,
-  `piv_inj` (forgetting `c_5` is injective on `ker lastMap`), `reach_multiple` (the `β` entries and the twisted
-  completions), `reach_table`, and
+- `Sumcheck.lean`, one entry (a column of the stack, tables on the 64 lane indices): `rounds_lower_upper` (the
+  solvers: a weight on one half against a table on the other moves only the last quadratic coefficient),
+  `last_fst_lower`, `last_fst_upper`, `lastClaim_upper` (the last round on each half), `kernel_move`,
+  `two_weights_reach`, `two_weights_reach_zero` (the sumcheck lemma, by induction on the rounds), `reach_all`, and
+  the bridge from a stack change on one entry to that entry (`laneRounds_column`, `laneRounds_smul_left`).
+- `Gadget.lean`: `deployed_nd` (the pairs `(0, 31)`, `(1, 30)` are nondegenerate for every `φ` with no coordinate in
+  `{0, 1}` and `2φ_0 ≠ 1`), `runClaim_move2`, `deployed_reach_all`, `piv_inj` (forgetting `c_5` is injective on
+  `ker lastMap`), `reach_multiple` (the `β` entries and the twisted completions), `reach_table`, `column_reach`.
+- `Solve.lean` (another agent): the solvers' span from the cube lemma (`hsolve_of_cube`, `span_cube_erase`: the
+  eight eq-values of a cube of lanes span `E` unless two of `φ_0, φ_1, φ_2` lie in `K`, `E` having no quadratic
+  subfield over `K`), and `prob_not_solvable_le`: `Pr[some φ_i ∈ {0,1} or two of φ_0, φ_1, φ_2 in K] ≤
+  (12·|E| + 3·|K|²)/|E|²`.
+- `GadgetLayout.lean`: the model of the layouts with the gadget (`GadgetLayout`: the weightless first entries
+  `0 .. D`, the gadget's entries `gent p i` with the pairs' copies and the overflow lane's zeros, the random lanes,
+  the overflow lane; `stackR`, `stackD`, `gadgetW`, `WeightsFit`, the gadget as the last claim `withGadget`), and
+  **`GadgetLayout.roundsReached`: condition (R) for every `φ` with no coordinate in `{0, 1}`**, any claims, any
+  `μ ≠ 0`, given the lanes the argument uses and the solvers' span; `claims_stackR` (the randomness weighs nothing in
+  the claims nor in the gadget, characteristic 2), `combinedW_gent`, `onFirst_mem_range`, `foldSpans_moves`.
+- `GadgetTheorem.lean`: **`GadgetLayout.view_evalDistEq`**, `HIDING.md`'s theorem for the gadget layouts at every
+  challenge with `μ ≠ 0`, no coordinate of `φ` in `{0, 1}` and at most one of `φ_0, φ_1, φ_2` in `K` ((S) and (R)
+  proven, (Q) a hypothesis), and **`GadgetLayout.prEvent_le_bound`**: averaged over uniform challenges, the two
+  tables' experiments differ on any event by at most `Pr[μ = 0] + (12·|E| + 3·|K|²)/|E|²`.
 
-```lean
-theorem column_reach (Φ : Fin 6 → E) (hΦ : ∀ i, Φ i ≠ 0 ∧ Φ i ≠ 1) (h2 : 2 * Φ 0 ≠ 1) (μ : E)
-    (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E)
-    (hsolve : ∀ (p : Fin 3) (e : E), ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK s) ∧
-      (∑ b, eqW Φ b * algebraMap K E (s b)) = e) :
-    LinearMap.ker (lastMap (K := K) Φ) ≤ Submodule.span K (gadgetMoves Φ μ β)
-```
-
-  `gadgetMoves Φ μ β`: the rounds of the changes the gadget's randomness allows at one of its entries (pattern
-  `p`, entry `i`, weight `μ·β_i` on the pattern): `K`-values `c` on the pattern's half weighing zero against it,
-  `s` on the other half, folding to zero together. This is condition (R) through the gadget's nine entries, for
-  every challenge with no coordinate in `{0, 1}` (`2φ_0 ≠ 1` holds in characteristic 2), whatever the claims.
-
-What the end theorem (`hidden_prEvent_le_bound`, `Layout.lean`) still needs to use it, in place of the hypothesis
-`RoundsReached`:
-
-1. **The layout.** A `GadgetLayout` in place of `HiddenLayout`: no share; the randomness is the entries below
-   `D` of every lane, the random lanes, the overflow lane past its held pieces, and at the gadget's entries every
-   lane but pair copies (lane 31 holds lane 0's value at pattern 0's entries, lane 30 lane 1's at pattern 1's) and
-   the overflow lane's zeros (pattern 2's); `WeightsFit` without the share; the gadget as one more claim of value
-   zero, its weight at entry `(p, i)` being `β_i·patE p`, its power of `λ` being `μ = λ^m`.
-2. **The bridge** from stacks to entries: a stack change supported on one entry `y` has
-   `roundsMap pos Φ W T = colRounds 6 Φ (W(·, y)) (T(·, y))` (the lane rounds decompose over entries), so
-   `gadgetMoves Φ μ β ⊆ roundsMap '' kerMoves` and `column_reach` gives `RoundsReached`.
-3. **The solvers' span** `hsolve`: the fold weights of a cube of lanes in each half (`32 .. 40`, `0 .. 8`) span
-   `E` over `K` unless two of `φ_0, φ_1, φ_2` lie in `K` (the cube lemma above, which needs `[E : K] = 3`: no
-   quadratic subfield); or, with the existing `card_not_span_four_le`, four lanes of each cube in its pattern,
-   e.g. `(35, 34, 33, 39)` and `(3, 2, 1, 7)` with `a, b, c = 0, 1, 2`, at its bound `2^-127 + 13·2^-192` each.
-4. **(S)** for the random lanes `33 .. 40` (`witness_lane_pattern` and `quotient_lane_pattern` name the previous
-   design's lanes, which are now blocks): the same cube lemma, or `card_not_span_four_le` on `(35, 34, 33, 39)`.
-5. Unchanged gaps: (Q) for WHIR's novel basis at `|Q| ≤ 225 < D` (`Interp.lean` proves it for a degree-graded
-   basis), and the instantiation with the deployed layouts' constants.
-
-The F2 mirror of the layouts (`formal/WhirBridge`: `Layout.hidden`, `readHidden`, `HiddenOK`, `Layouts.lean`,
-the weight closure) transcribes the share design and must follow: no share lane, the lanes of `hidden_with`
-above, `readHidden` without the share's sum, the weight closure with the gadget's term scaled by `λ^m` and no
-parity split, and the layout id's encoding of the gadget.
+What remains for the deployed end-to-end statement: (Q) for WHIR's novel basis at `|Q| ≤ 225 < D = 247`
+(`Interp.lean` proves (Q) for a degree-graded basis), and the instantiation with the deployed layouts (a concrete
+`GadgetLayout` and `pos` per table and size, its lane facts by `decide`, `WeightsFit` for the deployed claims);
+both are being done in parallel (`Deployed*.lean`). The F2 mirror of the layouts (`formal/WhirBridge`:
+`Layout.hidden`, `readHidden`, `HiddenOK`, `Layouts.lean`, the weight closure with the gadget's term, the layout id's
+encoding) follows the gadget layout (`gadget_holds_iff`; `Test/Check.lean` accepts real proofs of both hidden openings
+and rejects the honest proof checked without the gadget's term).

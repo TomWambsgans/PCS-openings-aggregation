@@ -18,6 +18,7 @@ pcs.workspace = true
 verifier.workspace = true
 tracing.workspace = true
 rand.workspace = true
+rand_chacha.workspace = true
 
 [dev-dependencies]
 primitives = { workspace = true, features = ["test-util"] }

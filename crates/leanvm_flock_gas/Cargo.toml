@@ -1,0 +1,14 @@
+# Part of this repository. Vendors and adapts leanVM (https://github.com/leanEthereum/leanVM), commit 42422001,
+# crates/verifier, MIT OR Apache-2.0. See NOTICE.md.
+[package]
+name = "leanvm_flock_gas"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Gas of leanVM 42422001's PIOP verifier (BLAKE2s proven with Flock) as an EVM contract whose PCS openings go to PCS_OPEN"
+
+[lints]
+workspace = true
+
+[dependencies]
+revm.workspace = true

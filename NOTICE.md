@@ -27,11 +27,22 @@ option. Every file says where it comes from in its first lines.
   - `formal/`: the Lean proofs of `formal/quotient` (sorry-free for the original circuit), being ported to
     this circuit; each file names its source. Dependency revisions are those of
     [leanerVM](https://github.com/Verified-zkEVM/leanerVM)'s `mumbai` branch (MIT OR Apache-2.0).
+- **Adapted from leanVM, commit `42422001`** (branch `main`, the parent of `4af2cddd` "Replace BLAKE2S by
+  KECCAK-256"): `crates/leanvm_flock_gas`, the gas of that leanVM's verifier as a contract. Its `src/field.rs`,
+  `src/hash.rs`, `src/merkle.rs`, `src/bytecode.rs` and `src/whir.rs` are leanVM's `crates/verifier` files, unchanged
+  but for a header and the small changes each header lists; `src/lib.rs`, `src/bus.rs`, `src/layout.rs`,
+  `src/flock.rs`, `src/multilinear.rs` and `src/transcript.rs` adapt the files of the same names (the same protocol,
+  generic over the scalar it computes on); `src/matrices.rs` takes `matrix_values` from `deferred.rs`.
+  `src/keccak_gkr.rs` adapts `crates/verifier/src/keccak.rs` of leanVM commit `4af2cddd`, for an estimate. New there:
+  the Keccak-256 chain (after `crates/quotient/src/transcript.rs`), the stack's batching sumcheck, the matrices'
+  reduction, the EVM recorder, code generator and machine (after `crates/evm`), and the `gas-dump` command it adds to
+  a leanVM checkout (`dump/`). Each file says where it comes from in its first lines.
 - **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
   Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
   proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's
   assembly of leanVM's verifier (`lean_vm/LeanVM/Protocol/EndToEnd/Sound/`, `Verifier/Cost.lean`). Each
   file says so in its header.
+- **Lean dependencies** (pinned in `formal/lakefile.toml`, at the revisions leanerVM `mumbai` uses): [CompPoly](https://github.com/Verified-zkEVM/CompPoly) `572f9973` (Apache-2.0), whose `BF64` and `BF64.Ext3` (GF(2^64) and GF(2^192) with their irreducibility proofs) `formal/Field` builds on; [ArkLib](https://github.com/Verified-zkEVM/ArkLib), [VCVio](https://github.com/dtumad/VCV-io), [Mathlib](https://github.com/leanprover-community/mathlib4) (Apache-2.0); leanerVM `mumbai`'s `statement`, `common` and `lean_vm` packages (`formal/QuotientRpm`, `formal/Compose`, `formal/QuotientZk`, `formal/Circuit` import them). Files adapted from any of them say so in their header.
 - **Third-party credits carried by the vendored files** (each file names its own):
   [succinctlabs/flock](https://github.com/succinctlabs/flock) (MIT OR Apache-2.0),
   [Plonky3](https://github.com/Plonky3/Plonky3) (MIT OR Apache-2.0),

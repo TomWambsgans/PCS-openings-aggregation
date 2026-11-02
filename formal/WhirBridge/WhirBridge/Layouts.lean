@@ -10,7 +10,7 @@ import WhirBridge.Hidden
 /-!
 # Our layouts
 
-`wiringLayout r`, `witnessLayout r`, `quotientLayout r` transcribe `protocol.rs:84-144` at
+`wiringLayout r`, `witnessLayout r`, `quotientLayout r` transcribe `protocol.rs:90-145` at
 `2^r` rows: the wiring table public (`Layout::new`), the witness and quotient tables hidden
 (`Layout::hidden`, `7` random lanes, pieces of `2^8`). For every supported size
 (`MIN_LOG_ROWS = 17 ≤ r ≤ MAX_LOG_ROWS = 22`), decided by kernel evaluation (`decide +kernel`, no
@@ -19,9 +19,11 @@ import WhirBridge.Hidden
 * `layouts_ok`: their stacks (`log_n = m`, `m + 1`, `m + 4`, `m = r + 2`) are admissible at rate
   `1/2`, the shapes mumbai's deployed WHIR codes cover;
 * `layouts_valid`: each is `Layout.Valid` (the wiring layout a valid public stacking, the other two
-  `HiddenOK` with pieces of `2^8`), what `Layout.holds_iff` needs;
-* `layouts_shape`: `40`, `64`, `63` lanes, the overflow and share lanes `38, 39` and `61, 62`,
-  `33` and `167` pieces, as `review_f2f3.rs` checks of the Rust.
+  `HiddenOK` with pieces of `2^8`, the gadget's entries and lanes included), what
+  `Layout.holds_iff` and `gadget_holds_iff` need;
+* `layouts_shape`: `40`, `64`, `63` lanes, the overflow lane `32`, the random lanes `33..39`, the
+  gadget's lanes `0, 1, 30, 31` blocks, `33` and `167` overflow pieces, as `review_f2f3.rs` checks
+  of the Rust (`f3_design_facts_hold_at_every_size`).
 
 The Rust's constructors are transcribed, not trusted: `Test/Check.lean` recomputes the 76-byte
 prefix of each of the 18 layouts (its id is Keccak-256 of every field) and compares it with the
@@ -32,29 +34,29 @@ namespace WhirBridge
 
 open LeanVM.Parameters LeanVM.Protocol LeanVM.Protocol.Verifier
 
-/-- `cell_vars(log_rows) = log_rows + 2` (`protocol.rs:84-87`). -/
+/-- `cell_vars(log_rows) = log_rows + 2` (`protocol.rs:86-88`). -/
 def cellVars (logRows : ℕ) : ℕ := logRows + 2
 
-/-- `MIN_LOG_ROWS` (`protocol.rs:104`). -/
+/-- `MIN_LOG_ROWS` (`protocol.rs:105`). -/
 def minLogRows : ℕ := 17
 
-/-- `MAX_LOG_ROWS` (`protocol.rs:107`). -/
+/-- `MAX_LOG_ROWS` (`protocol.rs:108`). -/
 def maxLogRows : ℕ := 22
 
-/-- `LOG_PIECE` (`opening.rs:52`). -/
+/-- `LOG_PIECE` (`opening.rs:56`). -/
 def logPieceDeployed : ℕ := 8
 
-/-- `WITNESS_RANDOM_LANES` (`protocol.rs:97`). -/
+/-- `WITNESS_RANDOM_LANES` (`protocol.rs:98`). -/
 def witnessRandomLanes : ℕ := 7
 
-/-- `QUOTIENT_RANDOM_LANES` (`protocol.rs:100`). -/
+/-- `QUOTIENT_RANDOM_LANES` (`protocol.rs:101`). -/
 def quotientRandomLanes : ℕ := 7
 
-/-- `wiring_layout` (`protocol.rs:90-93`): the stack is the table, public. -/
+/-- `wiring_layout` (`protocol.rs:91-94`): the stack is the table, public. -/
 def wiringLayout (logRows : ℕ) : Layout :=
   Layout.new (cellVars logRows) (cellVars logRows) (cellVars logRows) [(0, 2 ^ cellVars logRows)]
 
-/-- `witness_layout` (`protocol.rs:116-119`): the four row polynomials, then their masks, sixteen
+/-- `witness_layout` (`protocol.rs:117-120`): the four row polynomials, then their masks, sixteen
 entries of the next chunk; hidden. -/
 def witnessLayout (logRows : ℕ) : Layout :=
   Layout.hidden (cellVars logRows + 1) (cellVars logRows) (cellVars logRows + 1)
@@ -63,7 +65,7 @@ def witnessLayout (logRows : ℕ) : Layout :=
 /-- `Q_SPILL = PUBLIC_EXCESS + 64` (`protocol.rs:34-37`). -/
 def qSpill : ℕ := 9216 + 64
 
-/-- `quotient_chunks(m, spill, tail)` (`protocol.rs:133-144`). -/
+/-- `quotient_chunks(m, spill, tail)` (`protocol.rs:134-145`). -/
 def quotientChunks (m spill tail : ℕ) : List (ℕ × ℕ) :=
   let n := 2 ^ m
   ((List.range 3).flatMap fun e ↦
@@ -71,7 +73,7 @@ def quotientChunks (m spill tail : ℕ) : List (ℕ × ℕ) :=
         [(16 * e + 7, spill)]) ++
     [(8, n), (9, 3 * n / 4 + tail)]
 
-/-- `quotient_layout` (`protocol.rs:126-129`): `m + 6` variables, stacked in lanes of a quarter
+/-- `quotient_layout` (`protocol.rs:127-130`): `m + 6` variables, stacked in lanes of a quarter
 chunk; hidden. -/
 def quotientLayout (logRows : ℕ) : Layout :=
   Layout.hidden (cellVars logRows + 6) (cellVars logRows) (cellVars logRows + 4)
@@ -84,20 +86,20 @@ def logRows : ℕ := 22
 def HiddenOKb (L : Layout) (s : ℕ) : Prop :=
   L.logPiece = some s ∧ laneFold ≤ L.logN ∧ s < L.logLane ∧ L.logLane ≤ L.vars ∧
     L.lanes.length ≤ 2 ^ laneFold ∧ L.pieces.length < 2 ^ (L.logLane - s) ∧
-    L.lanes[L.overflow]? = some .overflow ∧ L.lanes[L.share.getD 0]? = some .random ∧
+    L.lanes[L.overflow]? = some .overflow ∧
     L.pieces.Nodup ∧ (∀ p ∈ L.pieces, p < 2 ^ (L.vars - s)) ∧
     (L.blockLanes.map Prod.fst).Nodup ∧
-    ∀ bi ∈ L.blockLanes, bi.1 < 2 ^ (L.vars - L.logLane) ∧
-      bi.2 % 2 + 2 ^ (L.logLane - s) * bi.1 ∈ L.pieces ∧
-      ∀ p ∈ L.pieces, p / 2 ^ (L.logLane - s) = bi.1 → p % 2 ^ (L.logLane - s) = bi.2 % 2
+    (∀ bi ∈ L.blockLanes, bi.1 < 2 ^ (L.vars - L.logLane) ∧
+      2 ^ (L.logLane - s) * bi.1 ∈ L.pieces ∧
+      ∀ p ∈ L.pieces, p / 2 ^ (L.logLane - s) = bi.1 → p % 2 ^ (L.logLane - s) = 0) ∧
+    gadget < 2 ^ s ∧ ∀ g < 3, ∀ l ∈ gadgetLanes g, l < L.lanes.length
 
 instance (L : Layout) (s : ℕ) : Decidable (HiddenOKb L s) := by
   unfold HiddenOKb; infer_instance
 
-theorem HiddenOKb.toHiddenOK {L : Layout} {s : ℕ} (h : HiddenOKb L s) : L.HiddenOK s :=
-  ⟨h.1, h.2.1, h.2.2.1, h.2.2.2.1, h.2.2.2.2.1, h.2.2.2.2.2.1, h.2.2.2.2.2.2.1,
-    h.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.2.1,
-    h.2.2.2.2.2.2.2.2.2.2.2⟩
+theorem HiddenOKb.toHiddenOK {L : Layout} {s : ℕ} (h : HiddenOKb L s) : L.HiddenOK s := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13⟩ := h
+  exact ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13⟩
 
 /-- The public shape's conditions as one decidable conjunction. -/
 def PublicOKb (L : Layout) : Prop :=
@@ -128,19 +130,34 @@ theorem layouts_okb : ∀ r, minLogRows ≤ r → r ≤ maxLogRows →
   decide +kernel
 
 /-- **Our layouts are valid**, for every supported size: the meaning of their claims
-(`Layout.holds_iff`) holds of them. -/
+(`Layout.holds_iff`) and of the gadget (`gadget_holds_iff`) holds of them. -/
 theorem layouts_valid (r : ℕ) (h1 : minLogRows ≤ r) (h2 : r ≤ maxLogRows) :
     (witnessLayout r).Valid ∧ (wiringLayout r).Valid ∧ (quotientLayout r).Valid :=
   have h := layouts_okb r h1 h2
   ⟨Or.inr ⟨_, h.1.toHiddenOK⟩, h.2.1.toValid, Or.inr ⟨_, h.2.2.toHiddenOK⟩⟩
 
-/-- **Our layouts' shape** (what `review_f2f3.rs` checks of the Rust): `40`, `64`, `63` lanes;
-the overflow and share lanes `L − 2`, `L − 1`; `33` and `167` pieces. -/
+/-- The random lanes of a layout, in order. -/
+def Layout.randomLanes (L : Layout) : List ℕ :=
+  (L.lanes.zipIdx.filter fun ll ↦ ll.1 == .random).map (·.2)
+
+/-- Lane `l` holds a block. -/
+def Layout.isBlockLane (L : Layout) (l : ℕ) : Bool :=
+  match L.lanes[l]? with
+  | some (.block _) => true
+  | _ => false
+
+/-- **Our layouts' shape** (what `review_f2f3.rs` checks of the Rust,
+`f3_design_facts_hold_at_every_size`): `40`, `64`, `63` lanes; the overflow lane `32`; the random
+lanes `33..39` (with the overflow lane, the cube of lanes `32..40`); the gadget's pair lanes
+`0, 31, 1, 30` blocks; `33` and `167` overflow pieces. -/
 theorem layouts_shape : ∀ r, minLogRows ≤ r → r ≤ maxLogRows →
     (witnessLayout r).lanes.length = 40 ∧ (wiringLayout r).lanes.length = 64 ∧
       (quotientLayout r).lanes.length = 63 ∧
-      (witnessLayout r).overflow = 38 ∧ (witnessLayout r).share = some 39 ∧
-      (quotientLayout r).overflow = 61 ∧ (quotientLayout r).share = some 62 ∧
+      (witnessLayout r).overflow = 32 ∧ (quotientLayout r).overflow = 32 ∧
+      (witnessLayout r).randomLanes = List.range' 33 7 ∧
+      (quotientLayout r).randomLanes = List.range' 33 7 ∧
+      [0, 31, 1, 30].all (witnessLayout r).isBlockLane ∧
+      [0, 31, 1, 30].all (quotientLayout r).isBlockLane ∧
       (witnessLayout r).pieces.length = 33 ∧ (quotientLayout r).pieces.length = 167 := by
   decide +kernel
 
