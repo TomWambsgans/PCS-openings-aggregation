@@ -41,8 +41,6 @@ theorem bits_getD (count r : ℕ) {b : ℕ} (hb : b ≤ r) :
   rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range (by omega), Option.map_some,
     Option.getD_some, intBits_one]
 
-theorem two_eq_zero_E : (2 : E) = 0 := CharTwo.two_eq_zero
-
 /-- **The verifier's `Z_act(t)` is `zActP` at `t`** (`r ≤ 31`, `count ≤ 2^r`, `n ≥ r + 1` digits). -/
 theorem activeVanishingFromBits_eq {count r n : ℕ} (hc : count ≤ 2 ^ r) (hn : r + 1 ≤ n) (t : E) :
     activeVanishingFromBits (digits t n) ((List.range (r + 1)).map fun b ↦ intBits count b 1) r =

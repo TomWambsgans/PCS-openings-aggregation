@@ -103,6 +103,9 @@ theorem embed_one : ofK (1 : K) = 1 := map_one (algebraMap K E)
 theorem embed_sum {ι : Type*} (s : Finset ι) (f : ι → K) : ofK (∑ i ∈ s, f i) = ∑ i ∈ s, ofK (f i) :=
   map_sum (algebraMap K E) f s
 
+/-- `E` has characteristic two. -/
+theorem two_eq_zero_E : (2 : E) = 0 := CharTwo.two_eq_zero
+
 /-! ### The basis -/
 
 /-- **The verifier's Cantor basis of `K`**: `β_k = beta.getD k 0`, `32` vectors. -/
