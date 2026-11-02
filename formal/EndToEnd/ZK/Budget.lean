@@ -654,7 +654,7 @@ variable {K E : Type} [Field K] [Field E] [Algebra K E] [DecidableEq E] [CharP E
   (stmt : Fin P₀.words → E) (Y : E) (TW : (Fin 4 → Fin 3 → K) → ιW → YW → K)
   (TQ : E × E × E → (Fin 4 → Fin 3 → K) → ιQ → YQ → K)
 
-omit [Algebra K E] [DecidableEq E] [CharP E 2] [Fintype E] in
+omit [DecidableEq E] [CharP E 2] [Fintype E] in
 theorem length_scalarsLE (l : List E) : (scalarsLE rep l).length = 24 * l.length := by
   unfold scalarsLE
   induction l with
@@ -663,7 +663,7 @@ theorem length_scalarsLE (l : List E) : (scalarsLE rep l).length = 24 * l.length
     rw [List.flatMap_cons, List.length_append, length_scalarLE, ih, List.length_cons]
     ring
 
-omit [Algebra K E] [CharP E 2] [Fintype E] in
+omit [CharP E 2] [Fintype E] in
 /-- **The claims' bytes**: `26`, `25` and `62` scalars, at most `1488` bytes. -/
 theorem msgOK_claimMsg (k : ℕ) (c : DChal E) (v : Vals E) :
     MsgOK 1536 1488 (claimMsg rep P₀ stmt Y k c v) := by
