@@ -1,4 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+-- Uses leanerVM `mumbai`'s cube-point lemmas (https://github.com/Verified-zkEVM/leanerVM, commit
+-- 6175f1a0, MIT OR Apache-2.0): `bitsEquiv`, `bitsEquiv_val`, `boolPoint_bitsToNat`,
+-- `eqEval_bitsL`, `eqEval_comm`.
 import Compose.Reduce
 import Compose.WiringSetup
 import LeanVM.Protocol.Whir.Sound.Start
@@ -6,11 +9,13 @@ import LeanVM.Protocol.Whir.Sound.Weights
 import LeanVM.Protocol.Whir.Complete.Tables
 
 /-!
-# The deployed claims: `WitnessClaims`, `QuotientClaims`, discharged
+# The deployed claims: `WitnessClaims`, `QuotientClaims`, `WiringClaims`, discharged
 
-`DecoderDeployed.lean`'s `knowledgeSoundness_deployed_decoded` leaves the claims on tables:
-`WitnessClaims D read₁` and `QuotientClaims W D read₂`, for the claim maps `D.clW`, `D.clσ`,
-`D.clQ` of a `Deploy` and reads of a table as F1's messages. Here all of them are concrete:
+`WiringSetup.lean`'s `knowledgeSoundness_wired_setup_bits` leaves three statements about the claim
+maps `D.clW`, `D.clσ`, `D.clQ` of a `Deploy`: `WitnessClaims D read₁`, `QuotientClaims W D read₂`
+(a table satisfying the opening's claims reads, through `read₁`/`read₂`, as a message satisfying
+F1's claim) and `WiringClaims D q₀` (the wiring stack's table satisfying the wiring opening's claim
+gives F1's wiring claim). Here all of them are concrete and discharged:
 
 * **`deployD c r`**: the deployed openings at `2^r` rows (`witnessLayout r`, `wiringLayout r`,
   `quotientLayout r`, rate `1/2`), each handed the claims `reduce` computes from the proof and
@@ -33,11 +38,20 @@ import LeanVM.Protocol.Whir.Complete.Tables
   `row_vanishing`'s system (`Reduce.matches_params`), and the wire reads the statement as its
   halves then `1, 0, 0, 0` (`hdec`); through `quotient_mle`, `sum_mle` (`claims_iff_accepts`'s
   steps).
-* **`wiringClaim_deployD`**: for the wiring term: a wiring table satisfying the wiring opening's
-  claim has its polynomial take the fifth value at `t` (`Reduce.wiring_iff`).
-* **`knowledgeSoundness_deployed_concrete`**: `knowledgeSoundness_deployed_decoded_bits` at
-  `log_rows = 22` with these: what remains is the wiring term `εσ` and the hypotheses on the
-  constants and the wire.
+* **`wiringClaim_deployD`**: a wiring table satisfying the wiring opening's claim has its
+  polynomial take the fifth value at `t` (`Reduce.wiring_iff`); **`wiringClaims_deployD`**:
+  `WiringClaims` for F1's instance and a stack `q₀` whose table's polynomial carries the instance's
+  wiring on the cells (`hq₀`), the wiring polynomial being that table's
+  (`CantorBasis.tablePoly_ext`).
+* **`knowledgeSoundness_deployed_concrete`**: `knowledgeSoundness_wired_setup_bits` at
+  `log_rows = 22` with these three discharged: what remains are the hypotheses on the constants
+  (`hβ`, `hc`, `hτ`), on the wire (`hdec`) and on the wiring stack (`hq₀`).
+* **Not vacuous** (`rustInstance`, `wiringStack`): the instance of `beta()` and `coordinate_weight`
+  meets `hβ`, `hc`; the honest wiring stack (`Index::new`'s table, its coefficients in `K`:
+  `CantorBasis.exists_table` over `K`, mapped to `E`, `map_tablePoly`), committed by the public
+  wiring layout as itself (`wiring_table`), meets `hq₀` (`wiringStack_carries`); so
+  **`knowledgeSoundness_deployed_rust`** leaves only that `beta()` is a Cantor basis (`IsCantor`),
+  that `tau` solves `row_vanishing`'s system (`RowVanishing`) and the wire's `hdec`.
 -/
 
 set_option linter.unusedSectionVars false

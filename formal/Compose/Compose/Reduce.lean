@@ -1,4 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+-- Uses leanerVM `mumbai`'s field lemmas (https://github.com/Verified-zkEVM/leanerVM, commit
+-- 6175f1a0, MIT OR Apache-2.0): `ofLimbs_eq`, `limb_ofLimbs`.
 import Compose.DecoderDeployed
 import QuotientSecurity.Setup
 
