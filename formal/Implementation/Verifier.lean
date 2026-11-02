@@ -166,4 +166,50 @@ theorem run_words (hfr : FrobOK limbs) (ws : List Nat) (h : run H idx CD = some 
     exact hQ.trans (quotient_eq hK _ le24 σ (basis_hb0 hF) (basis_hb hF))
   · exact hS.trans (sum_eq _ le24 σ (basis_hb0 hF) (basis_hb hF) hK.scale)
 
+/-- **The contract accepts exactly what the model accepts.** With `PCS_OPEN` attesting the claims
+it is handed exactly when they hold of the tables `cW` (the witness table under `r₁`), `cF` (the
+circuit's wiring table under the index root, a table of `σ`) and `cQ` (under `r₂`) — the claims
+being the model's (`run_words`) — the contract reaches its calls and they hold exactly when no
+`1 + w_k(t)` vanishes and `Params.Accepts` holds of the polynomials the tables hold
+(`witnessOfTable`, `quotientsOfTable`), at the model chain's challenges and values
+(`modelVals`). -/
+theorem run_accepts_iff (hfr : FrobOK limbs) (cW : (Fin (22 + 1 + 1 + 1) → Bool) → F)
+    (cF : (Fin (22 + 2) → Bool) → F)
+    (hcF : ∀ x, (tablePoly cF).eval ((basis hF).point x) = (basis hF).point (σ x))
+    (cQ : (Fin (22 + 2 + 1 + 1 + 1 + 1 + 1 + 1) → Bool) → F) :
+    ((run H idx CD).isSome ∧
+      (mle cW (Fin.cons (I).ρ (Fin.cons ((I).ρ ^ 2) (claimPoint 2 (22 + 1) (I).t)))
+          = (∑ j, Params.opening (I).ρ j * (I).a j) / claimScale 2 (22 + 1) (I).t ∧
+        mle cF (claimPoint 0 (22 + 2) (I).t) = (I).next / claimScale 0 (22 + 2) (I).t ∧
+        mle cQ (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (claimPoint 0 (22 + 2 + 1 + 1) (I).t)
+            ((params hF σ).vCells.eval (I).t /
+              (params hF σ).claimDen (I).α (I).β (I).t (I).a (I).next)) (I).ρ)
+              (yConst limbs / (1 + yConst limbs))) (yConst limbs ^ 2 / (1 + yConst limbs ^ 2)))
+          = (params hF σ).claimValue (I).α (I).β (I).γ (I).t (I).ρ (I).a (I).next /
+              ((1 + yConst limbs) * (1 + yConst limbs ^ 2)) /
+            claimScale 0 (22 + 2 + 1 + 1) (I).t ∧
+        mle cQ (sumPoint (22 + 2) (yConst limbs)) =
+          (params hF σ).target ![(I).s 0, (I).s 1, (I).s 2, (I).s 3, 1, 0, 0, 0] (I).γ /
+            ((1 + yConst limbs) * (1 + yConst limbs ^ 2)))) ↔
+      ((∀ i : Fin (22 + 2 + 1 + 1), 1 + SQ^[(i : ℕ)] (I).t ≠ 0) ∧
+        (params hF σ).Accepts ![(I).s 0, (I).s 1, (I).s 2, (I).s 3, 1, 0, 0, 0] (witnessOfTable cW)
+          (quotientsOfTable (yConst limbs) cQ) (I).α (I).β (I).γ (I).t (I).a (I).next (I).ρ) := by
+  have hK := consts hF
+  have hiff := claims_iff_accepts_ofCantor (basis hF) le24 σ 8 _ _
+    (membershipPub_hPub (basis hF) (bConst limbs) (cConst limbs) le24 (basis_hb0 hF) (basis_hb hF))
+    cF hcF cW cQ (yConst limbs) hK.hY hK.hY2 ![(I).s 0, (I).s 1, (I).s 2, (I).s 3, 1, 0, 0, 0]
+    (I).α (I).β (I).γ (I).t (I).ρ (I).next (I).a
+  rw [run_isSome_iff hF H idx sb r₁ r₂ x0 x1 x2 x3 x4 hfr,
+    check_eq hK (I) le24 σ (basis_hb0 hF) (basis_hb hF)]
+  constructor
+  · rintro ⟨hc, hcl⟩
+    have ht : ∀ i : Fin (22 + 2 + 1 + 1), 1 + SQ^[(i : ℕ)] (I).t ≠ 0 := fun i h0 => by
+      apply hc
+      rw [Finset.prod_eq_zero (Finset.mem_range.mpr i.2) h0, zero_mul]
+    exact ⟨ht, (hiff ht (right_ne_zero_of_mul hc)).mp hcl⟩
+  · rintro ⟨ht, hacc⟩
+    have hnz := hacc.2.2.1
+    refine ⟨mul_ne_zero (Finset.prod_ne_zero_iff.mpr fun i hi => ht ⟨i, Finset.mem_range.mp hi⟩)
+      hnz, (hiff ht hnz).mpr hacc⟩
+
 end Implementation
