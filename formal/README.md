@@ -204,9 +204,16 @@ step 4, per query one step of `S₂` (lookups in its edges and rooted states, th
 one cache lookup or uniform answer and one uniform state).
 
 **The theorem** (`zeroKnowledge_deployed_end`, `ZK/End.lean`; `zeroKnowledge_end` for any valid joint model):
-`ζ Q = εR Q + 2^-113 + 2^-165 + 2^24 (2^24 + 2^70 + 2^23 + Q) 2^-2368 + 2^48 2^-2368 + (Qp + 2^23 + Q)² / 2^508`
-for a distinguisher of `Q` calls of `π` and `π⁻¹` (coins free), at most
-`εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + 2^23 + Q)² / 2^508` for `Q ≤ 2^126` (`zkBoundEnd_le`). Proved: the
+`ζ Q = εR Q + 2^-113 + epsHV + 2^24 (2^24 + 2^70 + 2^23 + Q) 2^-2368 + 2^48 2^-2368 + (Qp + 2^23 + Q)² / 2^508`,
+`epsHV = 2^-165 + 2^-125 + 2/2^192`, for a distinguisher of `Q` calls of `π` and `π⁻¹` (coins free), at most
+`εR Q + 2^-113 + epsHV + 2^-2200 + (Qp + 2^23 + Q)² / 2^508` for `Q ≤ 2^126` (`zkBoundEnd_le`). **The
+degenerate challenges and masks** (`QuotientZk/Instance/Nondeg.lean`): the honest tables meet the verifier's
+claims only where it divides by no zero (`1 + w_k(t)`, `k < 26`; the copy denominator `claimDen · vRows(t)`
+of the masked values), so the joint model asks `hT₁`, `hT₂` only under `ClaimsND`; its good challenges are
+`goodT` (`good` and `TND`: the scales and the row `t^4 + t` outside `K`, failing with probability at most
+`(26·2^25 + 4|K|)/|E| ≤ 2^-125`), and at a `goodT` challenge the masks fail `ClaimsND` with probability at
+most `2/|E|` (`claimDen` a monic quadratic in a value uniform in `E`, F1); the honest view is then within
+`2/|E|` of the simulator's (`view_vclose`, `VClose`; `zk_rom_approx`, `zk_rpm_skel_approx`). Proved: the
 distinguisher's coins removed (`ZK/Coins.lean`, a tape drawn first), the ideal experiment of `zkSimulator`
 equal to `QuotientZk`'s simulated game (`rpmIdeal_eq`), `QuotientZk`'s closeness from the joint model
 (`coreClose_of_joint`: `zk_rpm_skel`, `jointHVZK_of_link`, `factors_single`, `factors_pair`), `skelSetup`'s
@@ -216,11 +223,26 @@ Statement's coins `decodeCoins` of uniform words (`sampleCoinsP_eq`, `coinsMatch
 of the deployed prover (`deployedJointData_valid`; its public part and view simulator the simulator's by
 definition, `pub_deployed`, `simV_deployed`).
 **Named**: the field and F1's facts on the statement and the witness, the simulator's public functions, the
-honest tables' claims (`deployedJointData_valid`'s hypotheses); the prover's permutation budget `Qp`; a bijection
-`e` of the skeleton model's randomness onto the Statement's coins' words; `ProverBridge` (`εR`: the Statement's
+honest tables' claims off the degenerate challenges and masks (`deployedJointData_valid`'s hypotheses); the
+prover's permutation budget `Qp`; a bijection `e` of the skeleton model's randomness onto the Statement's coins'
+words; `ProverBridge` (`εR`: the Statement's
 prover at the coins `decodeCoins (e s)` against the skeleton's prover `proverJ` on `skelSetup` at `s`, then
 `fmt`: the proof-of-work fuel `2^25` with no proof on failure, the replayed chain and the order of public queries,
 the proof's format; the skeleton trace test's list of differences is the checklist).
+
+**The deployed instance plugged in** (`zeroKnowledge_deployed_final`, `ZK/Final.lean`): the fields `K = F64`,
+`E = F192` (`[E : K] = 3`, the cards, `1, Y, Y²` independent, the words and limbs: `ZK/FactsField.lean`), F1's
+facts on the deployed instance (`beta()`'s basis, the deployed σ, `coordinate_weight`'s weights; the statement's
+words `statement::halves`; the witness the cells of F0b's honest assignment of the secret, `w_22`; the relation:
+`ZK/FactsF1.lean`), the simulator's public functions (`inKD`, the limbs `y`, `y²` zero; the wiring polynomial),
+the honest tables' claims (Completeness's witness and quotient tables placed on `witness_layout(22)`,
+`quotient_layout(22)`; the layouts' claims on a placed table are its multilinear claims, `ZK/FactsLayout.lean`;
+F1's completeness passed to the tables, `ZK/FactsClaims.lean`: `hTWD`, `hTQD`) and the coins' bijection
+(`eD`: the masks' words, each lane's padding words, the overflow lane's stream shifted past its held pieces as
+`Layout.stackOf` reads it) discharged. **Named**: the renderer `R`, the prover's permutation budget `Qp`
+(`hprover`: the skeleton hashes the renderer's rows, so it depends on `R`), `ProverBridge` at
+`decodeCoins ∘ eD`. The simulator's tables `simTW`, `simTQ` (`QuotientZk.Instance.solve`, a classical choice)
+and its wiring value (`P₀D.sigmaPoly.eval`) are noncomputable.
 
 ## End-to-end completeness (`Completeness/`)
 
