@@ -133,10 +133,12 @@ structure FillState where
   out : List Opening
 
 /-- **`Compile.run`, the openings produced**: every challenge squeezed and every scalar absorbed as
-the verifier does, a query's openings produced from the next multiproof (no check). -/
-def fillRun {α : Type} : Prog α → FillState → OracleComp PermSpec (Option (α × FillState))
-  | .ret a, s => pure (some (a, s))
-  | .fail, _ => pure none
+the verifier does, a query's openings produced from the next multiproof (no check). The program's end,
+`ret` or `fail`, ends the production as the prover's run ends there (mumbai's `runFrom`): a rejection
+of the claims is the verifier's to make, not the formatting's. -/
+def fillRun {α : Type} : Prog α → FillState → OracleComp PermSpec (Option FillState)
+  | .ret _, s => pure (some s)
+  | .fail, s => pure (some s)
   | .read k, s => match s.stream with
     | [] => pure none
     | x :: xs => do
@@ -179,7 +181,7 @@ def fillOpening (L : Layout) (root : Digest) (claims : List Claim)
     let program := verifyStackedOpening L.logN logInvRate (stackClaims L claims)
     let height := L.logN - laneFold + logInvRate
     let r ← fillRun program ⟨sp, rest, o.2, [(root, height, 2 ^ laneFold)], []⟩
-    pure (r.map fun z ↦ ⟨x0 :: x1 :: rest, z.2.out⟩)
+    pure (r.map fun z ↦ ⟨x0 :: x1 :: rest, z.out⟩)
   | _ => pure none
 
 /-- **The statement's proof of the skeleton's**, unbudgeted: the reduction's proof; the claims as the
