@@ -302,14 +302,19 @@ most `|Bad| / 2^576 + 2 / 2^256`, for any challenge map with at most `2^64` dige
 `challengeOf` is such a map (`Regular.lean`); the transfer from the random permutation to the two random oracles
 for any honest computation following the duplex discipline (`Transfer.lean`, `rpm_le_rom`, mumbai's
 indifferentiability, `N² / 2^508`); `Bad` is `completeness_deployed_concrete`'s set for the secret and the masks
-(`badSet`, density `badSet_density`). **The hypothesis left**, `Staged.Holds` for the Statement's experiment: it
-is, in distribution, the coins then a two-call computation of the chain's shape (`staged`: the setup's, index and
-witness trees and the label's hash; `s₁ … s₃`; the quotient tree; `s₄`; the rest) whose permutation calls follow
-the duplex discipline, of at most `N` block calls, hashing before `α` and between `γ` and `t` nothing of `32` or
-`96` bytes; and in the two-call random-oracle model its honest proof is rejected at non-degenerate challenges
-with probability at most `εpow` (`completeness_deployed_concrete` for every hash and permutation, given the
-Statement's prover and verifier as `honestProve`, `deployedVerify` (`EndToEnd/Bridge`), and mumbai's
-proof-of-work potential for the openings' grinding, `ours_romComplete`'s `2^-277` per opening).
+(`badSet`, density `badSet_density`; `completeness_bad_set`'s set on the deployed instance). **The staged form
+for the Statement's experiment, proved** (`Staged.Holds`, `Assemble.lean`): the Statement's setup, prover and
+verifier with Keccak-256 an explicit call (`WithHash.lean`: `setupWithH`, `proverWithH`, `verifyWithH`, equal to
+the Statement's at `keccak256With F` and commuting with simulation); the experiment coins first (the raw coin
+words swapped with the setup, `Experiment.lean`, `completenessExperiment_eq_expH`); the run in the chain's shape
+(`Staging.lean`, `expH_eq_staged`, generic in the circuit so that no definitional check evaluates the deployed
+circuit); nothing of `32` or `96` bytes hashed before `α` or between `γ` and `t` (`HashLen.lean`: 512-byte
+leaves, 64-byte nodes, the 112-byte label); the duplex discipline (`Duplex.lean`, `duplexVm_stagedRun`: every
+opening, prover's and verifier's, starts its own duplex at a zero capacity). **The hypotheses left**
+(`completeness_deployed_cost_rej`): the deployed staged run makes at most `2^48` block calls (`hashBlocks`), and
+`RejectGood (3 · 2^-277)`: in the two-call random-oracle model it is rejected at non-degenerate challenges with
+probability at most `3 · 2^-277` (the Statement's prover accepted at non-degenerate challenges when its proofs of
+work succeed, the prover bridge; mumbai's proof-of-work potential for the openings' grinding).
 
 ## The port to this protocol (F1)
 

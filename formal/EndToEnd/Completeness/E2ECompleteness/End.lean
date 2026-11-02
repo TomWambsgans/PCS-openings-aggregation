@@ -55,15 +55,31 @@ def secretOf (w : PcsQuotient.Secret) : Completeness.Secret where
   siblings i j := (w.siblings.get ⟨i, by simp [PcsQuotient.depth]⟩)[j]
   directions i := w.directions.get ⟨i, by simp [PcsQuotient.depth]⟩
 
+/-- The honest first message of a witness and masks on the deployed instance
+(`formal/Completeness`'s `honestG`). -/
+noncomputable def honestMsg (w : PcsQuotient.Secret) (m : PcsQuotient.Masks) :
+    Fin 4 → Polynomial E :=
+  Completeness.honestG QuotientSecurity.deployedBasis Completeness.deployedMembership (secretOf w) m
+
+open Classical in
 /-- **The degenerate challenges** of a witness and masks: `formal/Completeness`'s set
-(`completeness_deployed_concrete`), outside which the honest proof is accepted for every hash
-function and permutation whenever its proofs of work succeed. -/
+(`completeness_bad_set`'s, on the deployed instance): a denominator of the sum vanishes at a cell
+(`BadAB`), or the Rust's check fails at `t` (`Degenerate`). Outside it the honest proof is accepted
+for every hash function and permutation whenever its proofs of work succeed
+(`completeness_deployed_concrete`). -/
 noncomputable def badSet (w : PcsQuotient.Secret) (m : PcsQuotient.Masks) : Finset (E × E × E) :=
-  (Completeness.completeness_deployed_concrete (secretOf w) m).choose
+  Finset.univ.filter fun z : E × E × E ↦
+    Completeness.Reduction.BadAB Completeness.deployedInstanceE (honestMsg w m) z.1 z.2.1 ∨
+      Completeness.Reduction.Degenerate Completeness.deployedInstanceE (honestMsg w m) z.1 z.2.1
+        z.2.2
 
 theorem badSet_density (w : PcsQuotient.Secret) (m : PcsQuotient.Masks) :
     ((badSet w m).card : ℝ≥0∞) / 2 ^ 576 ≤ (17 * 2 ^ 24 + 8 : ℝ≥0∞) / 2 ^ 192 := by
-  have h := (Completeness.completeness_deployed_concrete (secretOf w) m).choose_spec.1
+  have h := Completeness.Reduction.bad_fraction_le Completeness.deployedInstanceE
+    LeanVM.Protocol.card_E (honestMsg w m) fun j ↦
+      (Completeness.natDegree_witnessOfTable_le (algebraMap K E) QuotientSecurity.deployedBasis
+        (Completeness.cellBitsK Completeness.deployedMembership (secretOf w)) m j).trans
+        (by norm_num)
   have hc : (Fintype.card (E × E × E) : ℝ≥0∞) = 2 ^ 576 := by
     rw [Fintype.card_prod, Fintype.card_prod, LeanVM.Protocol.card_E, ← pow_add, ← pow_add,
       Nat.cast_pow, Nat.cast_ofNat]
