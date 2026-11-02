@@ -13,6 +13,12 @@ starting point is leanVM's `formal/quotient` (branch `PCS-openings-aggregation`)
 [`README.upstream.md`](README.upstream.md): sorry-free proofs of the reduction for the BLAKE2s/full-adder
 circuit, with ideal commitments.
 
+**The statement** is [`Statement/`](Statement/README.md), a Lake package of definitions and end statements
+only, on leanerVM `mumbai`'s `Statement/`: the relation, the proof format, the verifier (computable,
+differential-tested against the Rust), the honest prover, the extractor and the simulator, and
+`KnowledgeSoundness`, `Completeness`, `ZeroKnowledge` in the random-permutation model. The proofs here are
+to prove it.
+
 ## Layers
 
 | | What | Source | Status |
