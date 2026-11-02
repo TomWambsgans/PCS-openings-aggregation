@@ -360,14 +360,14 @@ theorem hfOf_cacheQuery_inl (c : (Inp →ₒ Out).QueryCache) (m : List UInt8) (
     · rw [QueryCache.cacheQuery_of_ne _ _ (by simpa using h)]
       simp [hfOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inl m' : Inp) ≠ .inl m by simpa using h)]
   · rw [QueryCache.cacheQuery_of_ne _ _ (by simp)]
-    simp [hfOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inr (stateEquiv.symm xb) : Inp) ≠ .inl m by simp)]
+    simp [hfOf]
 
 theorem hfOf_cacheQuery_inr (c : (Inp →ₒ Out).QueryCache) (x : KSt) (o : Out) :
     hfOf (c.cacheQuery (.inr x) o) = (hfOf c).cacheQuery (.inr (stateEquiv x)) (stateEquiv o.2) := by
   refine QueryCache.ext fun t ↦ ?_
   rcases t with m | xb
   · rw [QueryCache.cacheQuery_of_ne _ _ (by simp)]
-    simp [hfOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inl m : Inp) ≠ .inr x by simp)]
+    simp [hfOf]
   · by_cases h : xb = stateEquiv x
     · subst h
       rw [QueryCache.cacheQuery_self, hfOf_inr, QueryCache.cacheQuery_self]
@@ -387,12 +387,12 @@ theorem jOf_cacheQuery_inl (c : (Inp →ₒ Out).QueryCache) (m : List UInt8) (o
     · subst h; simp [jOf, QueryCache.cacheQuery_self]
     · rw [QueryCache.cacheQuery_of_ne _ _ h]
       simp [jOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inl m' : Inp) ≠ .inl m by simpa using h)]
-  · simp [jOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inr x : Inp) ≠ .inl m by simp)]
+  · simp [jOf]
 
 theorem jOf_cacheQuery_inr (c : (Inp →ₒ Out).QueryCache) (x : KSt) (o : Out) :
     jOf (c.cacheQuery (.inr x) o) = ((jOf c).1, (jOf c).2.cacheQuery x o.1) := by
   refine Prod.ext (QueryCache.ext fun m ↦ ?_) (QueryCache.ext fun x' ↦ ?_)
-  · simp [jOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inl m : Inp) ≠ .inr x by simp)]
+  · simp [jOf]
   · by_cases h : x' = x
     · subst h; simp [jOf, QueryCache.cacheQuery_self]
     · rw [QueryCache.cacheQuery_of_ne _ _ h]

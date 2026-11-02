@@ -119,16 +119,20 @@ theorem isWeightBound_of_toOne {α : Type} (G : OracleComp DS2 α) :
     rw [simulateQ_query_bind] at h
     rw [isWeightBound_query_bind_iff]
     rcases t with n | m | qq | x
-    · change QueryCostAtMost (liftM (KSpecB.query (.inl n)) >>= fun u ↦ simulateQ (toOne (E := KRest) (C := KCap)) (k u)) _ q at h
+    · change QueryCostAtMost (liftM (KSpecB.query (.inl n)) >>= fun u ↦
+        simulateQ (toOne (E := KRest) (C := KCap)) (k u)) _ q at h
       rw [isWeightBound_query_bind_iff] at h
       exact ⟨h.1, fun u ↦ ih u _ (h.2 u)⟩
-    · change QueryCostAtMost (liftM (KSpecB.query (.inr (.inl m))) >>= fun u ↦ simulateQ (toOne (E := KRest) (C := KCap)) (k u)) _ q at h
+    · change QueryCostAtMost (liftM (KSpecB.query (.inr (.inl m))) >>= fun u ↦
+        simulateQ (toOne (E := KRest) (C := KCap)) (k u)) _ q at h
       rw [isWeightBound_query_bind_iff] at h
       exact ⟨h.1, fun u ↦ ih u _ (h.2 u)⟩
-    · change QueryCostAtMost (liftM (KSpecB.query (.inr (.inr qq))) >>= fun u ↦ simulateQ (toOne (E := KRest) (C := KCap)) (k u)) _ q at h
+    · change QueryCostAtMost (liftM (KSpecB.query (.inr (.inr qq))) >>= fun u ↦
+        simulateQ (toOne (E := KRest) (C := KCap)) (k u)) _ q at h
       rw [isWeightBound_query_bind_iff] at h
       exact ⟨h.1, fun u ↦ ih u _ (h.2 u)⟩
-    · change QueryCostAtMost (liftM (KSpecB.query (.inr (.inr (.forward x)))) >>= fun u ↦ simulateQ (toOne (E := KRest) (C := KCap)) (k u)) _ q at h
+    · change QueryCostAtMost (liftM (KSpecB.query (.inr (.inr (.forward x)))) >>= fun u ↦
+        simulateQ (toOne (E := KRest) (C := KCap)) (k u)) _ q at h
       rw [isWeightBound_query_bind_iff] at h
       exact ⟨h.1, fun u ↦ ih u _ (h.2 u)⟩
 

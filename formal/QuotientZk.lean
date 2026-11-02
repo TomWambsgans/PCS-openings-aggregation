@@ -21,6 +21,10 @@ import QuotientZk.JointAxioms
 import QuotientZk.RpmTape
 import QuotientZk.RpmProver
 import QuotientZk.RpmMain
+import QuotientZk.RpmDuplex
+import QuotientZk.RpmDuplexProver
+import QuotientZk.RpmDeployed
+import QuotientZk.RpmJoint
 import QuotientZk.RpmAxioms
 
 /-!

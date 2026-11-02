@@ -52,11 +52,11 @@ coins and `zk_rom`'s distinguisher has none: `simulator_tape` draws `S`'s `QD` u
 first, and for each tape `D` through `S` is a coin-free distinguisher of the random oracle with
 at most `QD` queries (`zk_rom_perm`), the bound averaged over the tape.
 
-**Scope.** Every hash of the prover is Keccak-256 over `π` (the Merkle nodes and leaves, the chain
-of `transcript.rs`): the openings' duplex over Keccak-f[1600] (`fiat_shamir`), which calls `π`
-directly, is not covered (with it, `S` must also know the simulator's programmed duplex edges;
-see the end of this file). `D` has no coins (statistical zero knowledge: a distinguisher with coins
-is an average of coin-free ones over its coin tape).
+**Scope.** Here every hash of the prover is Keccak-256 over `π` (one oracle `List UInt8 →ₒ 32
+bytes`); the deployed prover, whose openings' duplex calls Keccak-f[1600] directly, on
+`zk_deployed`'s oracle, is `RpmDeployed.lean` / `RpmJoint.lean` (see the end of this file). `D` has
+no coins (statistical zero knowledge: a distinguisher with coins is an average of coin-free ones
+over its coin tape).
 -/
 
 open OracleComp OracleSpec Common
@@ -394,21 +394,13 @@ theorem zk_rpm [Fintype (K × X)] (skel : OracleComp (OpSpec (List UInt8) Digest
 
 end Keccak
 
-/-! ## The openings' duplex (not covered)
+/-! ## The openings' duplex
 
-The openings' Fiat–Shamir duplex (`crates/fiat_shamir`) calls Keccak-f[1600] directly: `π` on a
-state that overwrites the rate of the previous output and keeps its capacity. Its challenges are
-the first three lanes of `π`'s outputs, and the verifier, hence `D`, recomputes the duplex from the
-proof: a simulator that programs these challenges must answer `D`'s queries of `π` on the duplex
-states with the programmed outputs. The route, with `common`'s two-oracle model (`H` and a random
-function `F` for the direct calls, `Common.Indiff2`): (1) the chain of `Common.transfer2`
-(`indifferentiability` of the unfolded game, `ideal1_evalDistEq_ideal1F`, `ideal1F_le_shadow`,
-`prEvent_disagree_le`) holds for any game whose direct calls follow the duplex discipline
-(`Common.DuplexOK`), the prover's coming first, at `indiffBound2` (`Q² / 2^508` for Keccak); (2) in
-its shadow world the prover's direct calls are recorded in `S`'s state, so the distinguisher is
-`S` (`Common.simulator2`) from the replay of the prover's direct calls with their answers: the
-simulator replays its programmed ones; (3) `zk_rom` with `I` the Keccak-256 inputs and the duplex
-states, `O` a state, for a skeleton that also outputs its direct calls with their answers, and a
-prover whose Keccak-256 answers are read through the digest. -/
+The openings' Fiat–Shamir duplex (`crates/fiat_shamir`) calls Keccak-f[1600] directly; the
+verifier, hence `D`, recomputes it from the proof, so a simulator that programs its challenges must
+answer `D`'s queries of `π` on the duplex states with the programmed outputs. That is
+`RpmDeployed.lean` (`zk_rpm_deployed`, and `RpmJoint.lean` for the end statements): `common`'s
+two-oracle model for the whole game (`transfer2_game`, `Q² / 2^508`), the shadow world's record of
+the prover's permutation calls replayed by the simulator (`skelRec`), on `zk_deployed`'s oracle. -/
 
 end QuotientZk
