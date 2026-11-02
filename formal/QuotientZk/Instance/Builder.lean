@@ -530,19 +530,21 @@ def claimScaleC (first m : ℕ) (t : E) : E := ∏ k : Fin m, (1 + sq^[(k : ℕ)
 
 theorem claimScaleC_eq (first m : ℕ) (t : E) : claimScaleC first m t = claimScale first m t := rfl
 
-/-- `sumPoint`, compiled. -/
-def sumPointC (m : ℕ) (Y : E) : Fin (m + 1 + 1 + 1 + 1 + 1 + 1) → E :=
-  Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (fun _ => 1) 0) 0) 0) 0)
-    (Y / (1 + Y))) (Y ^ 2 / (1 + Y ^ 2))
+theorem ofFn_snoc' {α : Type} {n : ℕ} (f : Fin n → α) (a : α) :
+    List.ofFn (Fin.snoc f a : Fin (n + 1) → α) = List.ofFn f ++ [a] := by
+  rw [List.ofFn_succ', List.concat_eq_append, Fin.snoc_last]
+  congr 2
+  funext i
+  exact Fin.snoc_castSucc (α := fun _ => α) a f i
 
-theorem sumPointC_eq (m : ℕ) (Y : E) : sumPointC m Y = sumPoint m Y := rfl
-
-/-- **The witness claim's point** (`pointW`), compiled. -/
+/-- **The witness claim's point** (`pointW`), compiled (as a list: `ρ, ρ², u_2, …, u_24`). -/
 def pointWc (c : DChal E) : List E :=
-  List.ofFn (Fin.cons c.1.2 (Fin.cons (c.1.2 ^ 2) (claimPointC 2 (22 + 1) c.1.1.2)) :
-    Fin (22 + 1 + 1 + 1) → E)
+  c.1.2 :: c.1.2 ^ 2 :: List.ofFn (claimPointC 2 (22 + 1) c.1.1.2)
 
-theorem pointWc_eq (c : DChal E) : pointWc c = pointW c := rfl
+theorem pointWc_eq (c : DChal E) : pointWc c = pointW c := by
+  unfold pointWc pointW
+  rw [List.ofFn_succ, List.ofFn_succ]
+  rfl
 
 /-- **The witness claim's value** (`valsW`), compiled. -/
 def valWc (c : DChal E) (v : Vals E) : E :=
@@ -587,19 +589,25 @@ theorem claimValueC_eq (P : Params E) (α β γ t ρ : E) (a : Fin 4 → E) (s :
 
 /-- **The quotient claim's point** (`pointQ`), compiled. -/
 def pointQc (P₀ : Params E) (Y : E) (c : DChal E) (v : Vals E) : List E :=
-  List.ofFn (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (claimPointC 0 (22 + 2 + 1 + 1) c.1.1.2)
-      (P₀.vCells.eval c.1.1.2 / claimDenC P₀ c.1.1.1.1 c.1.1.1.2.1 c.1.1.2 v.1 v.2)) c.1.2)
-      (Y / (1 + Y))) (Y ^ 2 / (1 + Y ^ 2)) :
-    Fin (22 + 2 + 1 + 1 + 1 + 1 + 1 + 1) → E)
+  List.ofFn (claimPointC 0 (22 + 2 + 1 + 1) c.1.1.2) ++
+    [P₀.vCells.eval c.1.1.2 / claimDenC P₀ c.1.1.1.1 c.1.1.1.2.1 c.1.1.2 v.1 v.2, c.1.2,
+      Y / (1 + Y), Y ^ 2 / (1 + Y ^ 2)]
 
 theorem pointQc_eq (P₀ : Params E) (Y : E) (c : DChal E) (v : Vals E) :
     pointQc P₀ Y c v = pointQ P₀ Y c v := by
-  simp only [pointQc, pointQ, claimDenC_eq, claimPointC_eq]
+  unfold pointQc pointQ
+  rw [ofFn_snoc', ofFn_snoc', ofFn_snoc', ofFn_snoc', claimDenC_eq, claimPointC_eq]
+  simp
 
-/-- The sum claim's point (`pointS`), compiled. -/
-def pointSc (Y : E) : List E := List.ofFn (sumPointC (22 + 2) Y)
+/-- The sum claim's point (`pointS`), compiled: `1` on the cells' `24` digits, four zeros, then
+`Y/(1+Y)`, `Y²/(1+Y²)`. -/
+def pointSc (Y : E) : List E :=
+  List.replicate (22 + 2) 1 ++ [0, 0, 0, 0, Y / (1 + Y), Y ^ 2 / (1 + Y ^ 2)]
 
-theorem pointSc_eq (Y : E) : pointSc Y = pointS Y := rfl
+theorem pointSc_eq (Y : E) : pointSc Y = pointS Y := by
+  unfold pointSc pointS sumPoint
+  rw [ofFn_snoc', ofFn_snoc', ofFn_snoc', ofFn_snoc', ofFn_snoc', ofFn_snoc', List.ofFn_const]
+  simp
 
 /-- **The quotient table's claimed values** (`valsQ`), compiled. -/
 def valsQc (P₀ : Params E) (stmt : Fin P₀.words → E) (Y : E) (c : DChal E) (v : Vals E) :
