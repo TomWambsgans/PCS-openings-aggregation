@@ -87,7 +87,7 @@ theorem run_recOps {ι : Type} {spec : OracleSpec.{0, 0} ι} {τ α : Type}
   | query_bind op k ih =>
     simp only [simulateQ_bind, simulateQ_query, OracleQuery.input_query, OracleQuery.cont_query,
       id_map, StateT.run_bind, recOps_run, bind_map_left, map_bind]
-    exact bind_congr fun z ↦ ih z.1 _ z.2
+    apply bind_congr; intro z; exact ih z.1 _ z.2
 
 theorem isTotalQueryBound_skelRec {Pf : Type} (skel : OracleComp DSpec Pf) (n : ℕ)
     (h : IsTotalQueryBound skel n) : IsTotalQueryBound (skelRec skel) n :=
@@ -194,5 +194,134 @@ theorem simulateQ_proverJ {ι ι' : Type} {spec : OracleSpec.{0, 0} ι}
   unfold proverJ
   rw [StateT.run'_eq, StateT.run'_eq, simulateQ_map, QueryImpl.simulateQ_mapStateTBase_run,
     mapStateTBase_implJ]
+
+/-! ## The two-oracle random-oracle model and its shadow world -/
+
+/-- `common`'s two oracles for Keccak: `H` (a digest) and `F` (a byte state). -/
+abbrev HF := hfSpec (List UInt8) DigestBytes KState
+
+/-- A query of an oracle of a sum with coins, simulated. -/
+theorem simulateQ_hq {ι : Type} [DecidableEq ι] {hs : OracleSpec.{0, 0} ι}
+    [∀ t : hs.Domain, SampleableType (hs.Range t)] {m : Type → Type} [Monad m] [LawfulMonad m]
+    (impl : QueryImpl (unifSpec + hs) m) (t : ι) :
+    simulateQ impl (hq (hs := hs) t) = impl (.inr t) := by
+  change simulateQ impl (liftM ((unifSpec + hs).query (.inr t))) = _
+  rw [simulateQ_spec_query]
+
+/-- Keccak-256 in the two-oracle model. -/
+noncomputable abbrev hH2 (m : List UInt8) : OracleComp (unifSpec + HF) DigestBytes :=
+  hQuery (E := KRest) (C := KCap) m
+
+/-- The permutation on lanes in the two-oracle model: `F` on the bytes. -/
+noncomputable abbrev hF2 (x : KSt) : OracleComp (unifSpec + HF) KSt :=
+  stateEquiv.symm <$> fQuery (Msg := List UInt8) (Dg := DigestBytes) (stateEquiv x)
+
+/-- Coins in the two-oracle model. -/
+noncomputable abbrev coin2 (α : Type) [SampleableType α] : OracleComp (unifSpec + HF) α :=
+  liftM ($ᵗ α)
+
+/-- **The prover of the two-oracle model**: `H`, `F`, and coins for the completions. -/
+noncomputable abbrev implHF (s : S) :=
+  implJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s
+
+/-- The two oracles and coins, a permutation call's edge recorded in the simulator's state, as in
+`common`'s shadow world (`Common.shadowImpl` through `Common.hfEmbed`). -/
+noncomputable abbrev recImpl :
+    QueryImpl (unifSpec + HF) (StateT SimSt (OracleComp (unifSpec + HF))) :=
+  shadowImpl keccakPadding ∘ₛ hfEmbed (Msg := List UInt8)
+
+theorem recImpl_coin {α : Type} [SampleableType α] (σ : SimSt) :
+    (simulateQ recImpl (coin2 α)).run σ = (·, σ) <$> coin2 α :=
+  run_simulateQ_liftM_of_coins recImpl (fun n s ↦ by
+    simp [recImpl, hfEmbed, shadowImpl, QueryImpl.apply_compose]; rfl) _ σ
+
+theorem recImpl_hH2 (m : List UInt8) (σ : SimSt) :
+    (simulateQ recImpl (hH2 m)).run σ = (·, σ) <$> hH2 m := by
+  rw [hH2, hQuery, simulateQ_hq]
+  simp [recImpl, hfEmbed, shadowImpl, QueryImpl.apply_compose, hQuery]
+
+theorem recImpl_fQuery (x : KState) (σ : SimSt) :
+    (simulateQ recImpl (fQuery (Msg := List UInt8) (Dg := DigestBytes) x)).run σ =
+      (fun y ↦ (y, replayStep σ (.forward x, y))) <$>
+        fQuery (Msg := List UInt8) (Dg := DigestBytes) x := by
+  rw [fQuery, simulateQ_hq]
+  simp [recImpl, hfEmbed, shadowImpl, QueryImpl.apply_compose, fQuery]
+
+theorem recImpl_hashJ (t : Inp) (J : JTab) (σ : SimSt) :
+    (simulateQ recImpl ((hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes) t).run J)).run σ =
+      (fun z ↦ (z, recStep σ t z.1)) <$>
+        (hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes) t).run J := by
+  rcases t with m | x
+  · change (simulateQ recImpl (hH2 m >>= _)).run σ = _ <$> (hH2 m >>= _)
+    rw [simulateQ_bind, StateT.run_bind, recImpl_hH2, bind_map_left, map_bind]
+    refine bind_congr fun d ↦ ?_
+    rcases J.1 m with _ | j
+    · simp only [simulateQ_bind, StateT.run_bind, recImpl_coin, bind_map_left, map_bind,
+        simulateQ_pure, StateT.run_pure, map_pure]
+      rfl
+    · simp [recStep]
+  · change (simulateQ recImpl (hF2 x >>= _)).run σ = _ <$> (hF2 x >>= _)
+    rw [simulateQ_bind, StateT.run_bind, hF2, simulateQ_map, StateT.run_map, recImpl_fQuery,
+      Functor.map_map, bind_map_left, map_bind, bind_map_left]
+    refine bind_congr fun y ↦ ?_
+    rcases J.2 x with _ | j
+    · simp only [simulateQ_bind, StateT.run_bind, recImpl_coin, bind_map_left, map_bind,
+        simulateQ_pure, StateT.run_pure, map_pure, recStep, stateEquiv_apply,
+        stateEquiv_symm_apply, toRpm_ofRpm]
+    · simp [recStep, toRpm_ofRpm]
+
+theorem recImpl_implHF_step (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m) (s : S)
+    (op : Op Inp Tbl Pos) (st : List Out × JTab) (σ : SimSt) :
+    (simulateQ recImpl ((implHF P s op).run st)).run σ =
+      (fun z ↦ (z, opRec σ op z.1)) <$> (implHF P s op).run st := by
+  cases op with
+  | pub t =>
+    change (simulateQ recImpl ((fun z ↦ (z.1, (st.1, z.2))) <$>
+      (hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes) t).run st.2)).run σ =
+      _ <$> ((fun z ↦ (z.1, (st.1, z.2))) <$>
+        (hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes) t).run st.2)
+    rw [simulateQ_map, StateT.run_map, recImpl_hashJ, Functor.map_map, Functor.map_map]
+    rfl
+  | msg => rfl
+  | leaf k x =>
+    by_cases hk : st.1.length < P.cK k
+    · change (simulateQ recImpl (if st.1.length < P.cK k then pure (default, st) else _)).run σ =
+        _ <$> (if st.1.length < P.cK k then pure (default, st) else _)
+      simp only [hk, ↓reduceIte, simulateQ_pure, StateT.run_pure, map_pure]
+      rfl
+    · obtain ⟨m, hm⟩ := hrow s (st.1.take (P.cK k)) k x
+      change (simulateQ recImpl (if st.1.length < P.cK k then pure (default, st) else
+        (fun z ↦ (z.1, (st.1, z.2))) <$> (hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes)
+          (P.rowFn s (st.1.take (P.cK k)) k x)).run st.2)).run σ =
+        _ <$> (if st.1.length < P.cK k then pure (default, st) else
+        (fun z ↦ (z.1, (st.1, z.2))) <$> (hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes)
+          (P.rowFn s (st.1.take (P.cK k)) k x)).run st.2)
+      simp only [hk, ↓reduceIte, hm]
+      rw [simulateQ_map, StateT.run_map, recImpl_hashJ, Functor.map_map, Functor.map_map]
+      rfl
+  | chal t =>
+    change (simulateQ recImpl ((fun z ↦ (z.1, (if st.1.length < P.n then st.1 ++ [z.1]
+      else st.1, z.2))) <$> (hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes) t).run st.2)).run σ =
+      _ <$> ((fun z ↦ (z.1, (if st.1.length < P.n then st.1 ++ [z.1]
+      else st.1, z.2))) <$> (hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes) t).run st.2)
+    rw [simulateQ_map, StateT.run_map, recImpl_hashJ, Functor.map_map, Functor.map_map]
+    rfl
+
+/-- **In the shadow world, the prover's permutation calls are recorded as the skeleton's
+bookkeeping**: the prover run with its permutation calls recorded from `σ` is the skeleton with
+its bookkeeping from `σ`, run by the prover. -/
+theorem recImpl_implHF (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m) (s : S) {α : Type}
+    (oa : OracleComp DSpec α) (σ : SimSt) (st : List Out × JTab) :
+    (simulateQ recImpl ((simulateQ (implHF P s) oa).run st)).run σ =
+      (fun z ↦ ((z.1.1, z.2), z.1.2)) <$>
+        (simulateQ (implHF P s) ((simulateQ recOps oa).run σ)).run st := by
+  induction oa using OracleComp.inductionOn generalizing σ st with
+  | pure a => simp
+  | query_bind op k ih =>
+    simp only [simulateQ_bind, simulateQ_query, OracleQuery.input_query, OracleQuery.cont_query,
+      id_map, StateT.run_bind, recOps_run]
+    rw [recImpl_implHF_step P hrow s op st σ, bind_map_left]
+    simp only [simulateQ_map, StateT.run_map, bind_map_left, map_bind, simulateQ_spec_query]
+    apply bind_congr; intro z; exact ih z.1 _ z.2
 
 end QuotientZk.DRpm
