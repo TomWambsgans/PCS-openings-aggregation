@@ -9,14 +9,16 @@ import E2ECompleteness.Chain
 and Keccak-f[1600] the calls) is the chain's shape `staged challengeOf A B C` (`Chain.lean`), its
 verdict the first component (`expH_eq_staged`):
 
-* `stageA`: the setup's tree, the prover's index and witness trees, the label's hash `s₀`; it
-  returns the witness root's two scalars;
+* `stageA`: the setup, the prover's index and witness trees, the label's hash `s₀`; it returns the
+  witness root's two scalars;
 * `stageB`: from `α, β, γ` (the low bits of `s₁, s₂, s₃`) the quotient table and its tree; it
   returns the quotient root's two scalars;
 * `stageC`: from `t` (the low bits of `s₄`) the values, the reduction, the three openings, and the
   verifier on the proof.
 
-Each stage is the corresponding stretch of `proveWithH` copied verbatim.
+Each stage is the corresponding stretch of `proveWithH` copied verbatim. Everything is stated for
+**any circuit, cells and setup** (`…G`) and then instantiated: the deployed circuit's tables are
+never exposed to a definitional check (its builder would be evaluated).
 -/
 
 open OracleComp OracleSpec
@@ -29,33 +31,30 @@ set_option autoImplicit false
 
 namespace E2ECompleteness
 
-section Stages
-
-variable (stmt : Statement) (w : Secret) (coins : Masks × Padding × Padding)
-
 /-- What the first stage hands on: the setup's root, the index and witness trees, the witness
 table's coefficients, the masks' entries and the witness stack. -/
 abbrev AuxA : Type := Digest × Tree × Tree × Array K × Array K × Array K
 
+section Stages
+
+variable (setup : OracleComp KeccakCalls Digest) (circuit : Circuit) (cells : Array K)
+  (masks : Masks) (witnessPad quotientPad : Padding) (fuel vLogRows : ℕ) (stmt : Statement)
+
 /-- **Stage A**: the setup, the prover's index and witness trees, and the label's hash `s₀`. -/
-def stageA : OracleComp KeccakCalls (AuxA × Digest × (E × E)) := do
-  let idx ← setupWithH callKeccak256
-  let circuit := membership logRows
-  let cells := circuit.cells (membershipInputs w)
+def stageAG : OracleComp KeccakCalls (AuxA × Digest × (E × E)) := do
+  let idx ← setup
   let mv := cellVars circuit.logRows
   let sigmaHat := circuit.wiringTable
   let indexTree ← commitWithH callKeccak256 mv sigmaHat
   let wHat := coefficients mv 0 cells
-  let mask := maskEntries coins.1
-  let wStack := witnessStack circuit.logRows wHat mask coins.2.1
+  let mask := maskEntries masks
+  let wStack := witnessStack circuit.logRows wHat mask witnessPad
   let witnessTree ← commitWithH callKeccak256 (mv + 1) wStack
   let s₀ ← callKeccak256 (label indexTree.root stmt)
   return ((idx, indexTree, witnessTree, wHat, mask, wStack), s₀, digestScalars witnessTree.root)
 
 /-- The quotient stack from `α, β, γ` (`proveWithH` between `γ` and the quotient tree). -/
 def quotientStackOf (wHat mask : Array K) (α β γ : E) : Array K :=
-  let circuit := membership logRows
-  let cells := circuit.cells (membershipInputs w)
   let mv := cellVars circuit.logRows
   let n := 2 ^ mv
   let big := 4 * n
@@ -108,67 +107,100 @@ def quotientStackOf (wHat mask : Array K) (α β γ : E) : Array K :=
     (v + x + cc + y * cc) * rowInv.getD (i.val % 4) 0
   let qHat := coefficients (mv + 2) offset qValues
   let qGateHat := coefficients (mv + 2) offset qGateValues
-  quotientStack circuit.logRows hHat qHat qGateHat coins.2.2
+  quotientStack circuit.logRows hHat qHat qGateHat quotientPad
 
 /-- **Stage B**: from `s₁, s₂, s₃` the quotient stack and its tree. -/
-def stageB (a : AuxA) (s₁ s₂ s₃ : Digest) : OracleComp KeccakCalls ((Tree × Array K) × (E × E)) := do
-  let qStack := quotientStackOf w coins a.2.2.2.1 a.2.2.2.2.1 (challengeOf s₁) (challengeOf s₂)
-    (challengeOf s₃)
-  let quotientTree ← commitWithH callKeccak256 (cellVars (membership logRows).logRows + 4) qStack
+def stageBG (a : AuxA) (s₁ s₂ s₃ : Digest) :
+    OracleComp KeccakCalls ((Tree × Array K) × (E × E)) := do
+  let qStack := quotientStackOf circuit cells quotientPad a.2.2.2.1 a.2.2.2.2.1 (challengeOf s₁)
+    (challengeOf s₂) (challengeOf s₃)
+  let quotientTree ← commitWithH callKeccak256 (cellVars circuit.logRows + 4) qStack
   return ((quotientTree, qStack), digestScalars quotientTree.root)
 
 /-- The prover's last stretch from `t`: the values, the reduction, the three openings. -/
 def proverTail (a : AuxA) (bq : Tree × Array K) (t : E) :
     OracleComp KeccakCalls (Option PcsQuotient.Proof) := do
-  let circuit := membership logRows
   let mv := cellVars circuit.logRows
   let sigmaHat := circuit.wiringTable
-  let indexTree := a.2.1
-  let witnessTree := a.2.2.1
-  let wHat := a.2.2.2.1
-  let mask := a.2.2.2.2.1
-  let wStack := a.2.2.2.2.2
-  let quotientTree := bq.1
-  let qStack := bq.2
-  let witnessRoot := digestScalars witnessTree.root
-  let quotientRoot := digestScalars quotientTree.root
+  let witnessRoot := digestScalars a.2.2.1.root
+  let quotientRoot := digestScalars bq.1.root
   let digits := digitsOf t mv
   let av : Vector E 4 := Vector.ofFn fun j ↦
-    novelEval wHat j.val 4 ((digits.drop 2).take (mv - 2)) +
-      digits.getD mv 0 * novelEval mask j.val 4 ((digits.drop 2).take 2)
+    novelEval a.2.2.2.1 j.val 4 ((digits.drop 2).take (mv - 2)) +
+      digits.getD mv 0 * novelEval a.2.2.2.2.1 j.val 4 ((digits.drop 2).take 2)
   let next := novelEval sigmaHat 0 1 (digits.take mv)
   let proof : ReductionProof := ⟨witnessRoot, quotientRoot, av, next⟩
-  match ← reduceWithH callKeccak256 circuit.logRows indexTree.root stmt proof with
+  match ← reduceWithH callKeccak256 circuit.logRows a.2.1.root stmt proof with
   | none => return none
   | some r =>
-    let some witness ← proveOpeningWithH callKeccak256 callKeccakF1600 nonceFuel
-      (witnessLayout circuit.logRows) witnessTree wStack [r.claims.witness] | return none
-    let some wiring ← proveOpeningWithH callKeccak256 callKeccakF1600 nonceFuel
-      (wiringLayout circuit.logRows) indexTree sigmaHat [r.claims.wiring] | return none
-    let some quotient ← proveOpeningWithH callKeccak256 callKeccakF1600 nonceFuel
-      (quotientLayout circuit.logRows) quotientTree qStack [r.claims.quotient, r.claims.sum]
-      | return none
+    let some witness ← proveOpeningWithH callKeccak256 callKeccakF1600 fuel
+      (witnessLayout circuit.logRows) a.2.2.1 a.2.2.2.2.2 [r.claims.witness] | return none
+    let some wiring ← proveOpeningWithH callKeccak256 callKeccakF1600 fuel
+      (wiringLayout circuit.logRows) a.2.1 sigmaHat [r.claims.wiring] | return none
+    let some quotient ← proveOpeningWithH callKeccak256 callKeccakF1600 fuel
+      (quotientLayout circuit.logRows) bq.1 bq.2 [r.claims.quotient, r.claims.sum] | return none
     return some ⟨proof, witness, wiring, quotient⟩
 
 /-- **Stage C**: the prover's tail from `t = challengeOf s₄`, then the verifier. -/
-def stageC (a : AuxA) (bq : Tree × Array K) (_s₁ _s₂ _s₃ s₄ : Digest) :
+def stageCG (a : AuxA) (bq : Tree × Array K) (_s₁ _s₂ _s₃ s₄ : Digest) :
     OracleComp KeccakCalls Bool := do
-  match ← proverTail stmt w a bq (challengeOf s₄) with
+  match ← proverTail circuit fuel stmt a bq (challengeOf s₄) with
   | none => return false
-  | some proof => verifyWithH callKeccak256 callKeccakF1600 logRows a.1 stmt proof
+  | some proof => verifyWithH callKeccak256 callKeccakF1600 vLogRows a.1 stmt proof
 
-/-- **The staged run** of the two-call experiment. -/
-def stagedRun : OracleComp KeccakCalls (Bool × (E × E × E)) :=
-  staged challengeOf (stageA stmt w coins) (stageB w coins) (stageC stmt w)
+/-- The two-call experiment for any setup, circuit and cells. -/
+def expHG : OracleComp KeccakCalls Bool := do
+  let idx ← setup
+  match ← proveWithH callKeccak256 callKeccakF1600 fuel circuit stmt cells masks witnessPad
+      quotientPad with
+  | none => return false
+  | some proof => verifyWithH callKeccak256 callKeccakF1600 vLogRows idx stmt proof
+
+/-- The staged run for any setup, circuit and cells. -/
+def stagedRunG : OracleComp KeccakCalls (Bool × (E × E × E)) :=
+  staged challengeOf (stageAG setup circuit cells masks witnessPad stmt)
+    (stageBG circuit cells quotientPad) (stageCG circuit fuel vLogRows stmt)
+
+/-- **For any setup, circuit and cells, the two-call experiment is the staged run's verdict.** -/
+theorem expHG_eq_staged :
+    expHG setup circuit cells masks witnessPad quotientPad fuel vLogRows stmt =
+      (·.1) <$> stagedRunG setup circuit cells masks witnessPad quotientPad fuel vLogRows stmt := by
+  simp only [expHG, proveWithH, stagedRunG, staged, stageAG, stageBG, stageCG, proverTail,
+    quotientStackOf, startWithH, squeezeWithH, bind_assoc, pure_bind, map_bind, map_pure, chainIn,
+    Chain.absorb, List.nil_append, List.append_nil, List.flatMap_nil, List.cons_append,
+    List.flatMap_cons, bind_pure]
+  refine bind_congr fun idx ↦ ?_
+  refine bind_congr fun indexTree ↦ ?_
+  refine bind_congr fun witnessTree ↦ ?_
+  refine bind_congr fun s₀ ↦ ?_
+  refine bind_congr fun s₁ ↦ ?_
+  refine bind_congr fun s₂ ↦ ?_
+  refine bind_congr fun s₃ ↦ ?_
+  refine bind_congr fun qt ↦ ?_
+  refine bind_congr fun s₄ ↦ ?_
+  rfl
 
 end Stages
 
+/-! ## The deployed instance -/
+
+/-- The deployed circuit's cells for a secret. -/
+def cellsOf (w : Secret) : Array K := (membership logRows).cells (membershipInputs w)
+
+/-- **The staged run** of the deployed experiment. -/
+def stagedRun (stmt : Statement) (w : Secret) (coins : Masks × Padding × Padding) :
+    OracleComp KeccakCalls (Bool × (E × E × E)) :=
+  stagedRunG (setupWithH callKeccak256) (membership logRows) (cellsOf w) coins.1 coins.2.1
+    coins.2.2 nonceFuel logRows stmt
+
+theorem expH_eq_expHG (stmt : Statement) (w : Secret) (coins : Masks × Padding × Padding) :
+    expH stmt w coins = expHG (setupWithH callKeccak256) (membership logRows) (cellsOf w) coins.1
+      coins.2.1 coins.2.2 nonceFuel logRows stmt := rfl
+
 /-- **The two-call experiment is the staged run's verdict.** -/
-set_option maxHeartbeats 400000 in
 theorem expH_eq_staged (stmt : Statement) (w : Secret) (coins : Masks × Padding × Padding) :
     expH stmt w coins = (·.1) <$> stagedRun stmt w coins := by
-  simp only [expH, proverWithH, proveWithH, stagedRun, staged, stageA, stageB, stageC, proverTail,
-    quotientStackOf, startWithH, squeezeWithH, bind_assoc, pure_bind, map_bind, map_pure]
+  rw [expH_eq_expHG, expHG_eq_staged]
   rfl
 
 end E2ECompleteness
