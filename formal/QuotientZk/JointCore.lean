@@ -27,7 +27,7 @@ already determine: this is what lets F1's zero knowledge, proved for ideal commi
 **The simulator** (`simulate`) reads only public things: the challenges, the reduction's simulator
 `simRed`, the public tables `simT₁`, `simT₂` it builds from the simulated messages, the honest
 opening algorithms `open₁`, `open₂` (run on those tables with fresh paddings), and the wiring
-opening. It is a plain definition (`#print axioms` in `Joint.lean`).
+opening. It is a plain, compiled definition (`JointAxioms.lean` runs it).
 -/
 
 open OracleComp

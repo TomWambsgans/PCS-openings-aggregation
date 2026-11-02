@@ -40,12 +40,16 @@ lists `Classical.choice`; the compiler's acceptance of the `def` is the check, a
 **Hypotheses, named.** F1's: `h3` (`[E : K] = 3`), `hE` (`P.Exact`), `hvan`, `hsat` (the witness
 satisfies the relation), `hvan0`. The simulator's public functions: `hinK`, `hsig`. Each secret
 opening's `SecretOpening.Conditions`: **(Q)** `condQ`, **`WeightsFit`** `weightsFit`, and the
-layout's lanes (`placed`, `lowHalf`, `cubeRand`: the gadget's pairs and overflow lane, the lower half
-of the lane indices and the cube `32 .. 40` on the stack, its lanes but `32` random). The claims:
+layout's facts (`placed`: the gadget's pairs `(0, 31)`, `(1, 30)` and overflow lane `32`;
+`pairANotRand`; `lowHalf`, `cubeOn`: the lower half and lanes `32 .. 40` on the stack; `cubeRand`:
+lanes `33 .. 40` random; `basis`: the gadget's coefficients a basis of `E` over `K`). The claims:
 `hT₁`, `hT₂` (the honest tables meet the verifier's claims `cl₁`, `cl₂`, computed from the five
 values: completeness of the layouts) and `hsimT₁`, `hsimT₂` (the simulator's tables meet them).
 Condition (S) and condition (R) are **not** hypotheses: they hold at every good challenge
-(`Gadget.view_evalDistEq_of_good`, from `GadgetLayout.roundsReached` and the cube lemma).
+(`GadgetLayout.view_evalDistEq`, `Hiding/GadgetTheorem.lean`).
+
+`JointDeployed.lean` carries this to `zk_deployed`: `JointHVZK` and `Factors` for a prover that is
+the joint model, and `zk_deployed_joint`.
 -/
 
 open OracleComp Polynomial Module QuotientSecurity QuotientSecurity.Hiding
