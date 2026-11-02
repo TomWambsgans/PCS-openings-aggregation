@@ -7,10 +7,11 @@
 //!   deployed witness and quotient openings use `Layout::hidden` (`protocol.rs:116-129`): a proof of the deployed
 //!   witness opening is rejected by the check the bridge transcribes.
 //! * F3: the facts `formal/QuotientSecurity/Hiding` takes from the design (the random lanes its (S) patterns
-//!   name, the lane counts behind `64(L-3)`, `|Q| < 2^s`) hold of `Layout::hidden` at every supported size; the
-//!   padding the Lean theorems draw uniformly is a function of 32 bytes.
+//!   name, the lane counts behind `64(L-3)`, the overflow lane's room) hold of `Layout::hidden` at every
+//!   supported size; the padding the Lean theorems draw uniformly is a function of 32 bytes.
 //!
-//! `cargo test --release -p quotient --test review_f2f3`; with `REVIEW_F2_VECTOR=<file>` the second test also
+//! `cargo test --release -p quotient --test review_f2f3`; with `REVIEW_F2_VECTOR=<file>`,
+//! `f2_deployed_openings_are_not_the_bridge_check` also
 //! writes the deployed witness opening in the form `formal/WhirBridge/Test/Check.lean` reads, laid out as the
 //! bridge's `witnessLayout 17`:
 //! `cd formal/WhirBridge && lake env lean --run Test/Check.lean <file>` prints `honest proof accepted: false`;

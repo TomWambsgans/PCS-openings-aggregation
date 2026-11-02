@@ -87,8 +87,7 @@ example : WhirBridge.witnessLayout 17 =
     ⟨20, 20, (List.range 32) ++ [32]⟩ := by
   decide +kernel
 
-/-- The bridge's `weight` at a point is the public layout's closure: on the cube it reads lane `l`'s
-entry `o` with `eq(p_high, block_l) · eq(p_low, o)`, so a weight that is zero on every lane's first
-piece (the hidden layouts' `first_share` correction, `opening.rs:705-710`) is not among the weights the
-bridge's `openingCheck` builds for a nonzero claim point. -/
-example : WhirBridge.Layout.logLane (WhirBridge.witnessLayout 17) = 14 := by decide
+/-! What follows on executing the two checks on deployed proofs: `Test/Check.lean` (the bridge's
+`openingCheck`, `witnessLayout 17` / `quotientLayout 17`) rejects a deployed witness and a deployed
+quotient opening, and `Review/HiddenWeight.lean` (mumbai's `verifyWhir` with the hidden branch of the
+closure) accepts both (`crates/quotient/tests/review_f2f3.rs` writes the vectors). -/
