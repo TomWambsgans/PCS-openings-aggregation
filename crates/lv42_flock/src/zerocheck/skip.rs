@@ -209,6 +209,146 @@ pub fn round1(a: &[u8], b: &[u8], c: &[u8], m: usize, k: usize, r_rest: &[F192])
     if k == MIN_SKIP && super::bit_fold::GFNI {
         return round1_bytes(a, b, c, m, r_rest);
     }
+    if (4..=5).contains(&k) && super::bit_fold::GFNI {
+        return round1_words(a, b, c, m, k, r_rest);
+    }
+    round1_folded(a, b, c, m, k, r_rest)
+}
+
+/// Round 1 at a skip of 4 or 5 (a group of `nc = 2` or 4 bytes, `8 nc` lanes), as [`round1_bytes`] is at 3: per
+/// medium position and per 8 lanes, the 8 groups' extension is `nc` affines (byte `j` of every group broadcast, against
+/// lane `λ`'s matrix of bits `8 j..8 j + 8`), XORed; then the products, the powers `X^K`, the fold over `K`; the C row
+/// is `nc` bit transposes; the medium positions a [`BitFold`] of 16-byte rows.
+#[cfg(all(target_arch = "x86_64", target_feature = "gfni", target_feature = "avx512bw", target_feature = "avx512vbmi"))]
+pub fn round1_words(a: &[u8], b: &[u8], c: &[u8], m: usize, k: usize, r_rest: &[F192]) -> Vec<F192> {
+    use core::arch::x86_64::*;
+    assert!((4..=5).contains(&k));
+    assert_eq!(r_rest.len(), m - k);
+    let ell = 1usize << k;
+    let nc = ell / 8;
+    let ntt_s = AdditiveNttGf8::new(k, F8::ZERO);
+    let ntt_l = AdditiveNttGf8::new(k, F8(ell as u8));
+    let table = InvNttTableByteSingleGf8::new(&ntt_s, &ntt_l);
+    // Column s (input bit s of a group, byte s / 8) at every lane.
+    let columns: Vec<Vec<F8>> = (0..ell)
+        .map(|s| {
+            let mut bytes = vec![0u8; nc];
+            bytes[s / 8] = 1 << (s % 8);
+            let mut out = vec![F8::ZERO; ell];
+            table.apply(&bytes, &mut out);
+            out
+        })
+        .collect();
+    // matrices[j][g]: the 8 qwords of lanes 8 g..8 g + 8 for the group's byte j (input bit i is bit 8 j + i).
+    let matrices: Vec<Vec<[u64; 8]>> = (0..nc)
+        .map(|j| {
+            (0..nc)
+                .map(|g| {
+                    std::array::from_fn(|q| {
+                        let lane = 8 * g + q;
+                        (0..8).fold(0u64, |acc, bit| {
+                            let row = (0..8).fold(0u64, |r, i| r | u64::from(columns[8 * j + i][lane].0 >> bit & 1) << i);
+                            acc | row << (8 * (7 - bit))
+                        })
+                    })
+                })
+                .collect()
+        })
+        .collect();
+    let eq_small = build_eq(&r_rest[..3]);
+    let cs = c_s();
+    for (kk, &e) in eq_small.iter().enumerate() {
+        assert_eq!(e, cs * PHI_8_TABLE[1 << kk], "the small coordinates' eq is C_s X^K");
+    }
+    let eq_med = build_eq(&r_rest[3..N_INNER]);
+    let weights: Vec<F192> = (0..128).map(|w| eq_med[w / 8] * cs * PHI_8_TABLE[1 << (w % 8)]).collect();
+    let fold = BitFold::new(&weights);
+    let eq = SplitEq::new(&r_rest[N_INNER..]);
+    let lo_size = 1usize << eq.n_lo;
+    let block = GROUPS * nc;
+    assert_eq!(a.len(), (lo_size << eq.n_hi) * block);
+
+    // Byte j of the 8 groups at `at` (group K at at + K nc), one byte a group.
+    let gather = |data: &[u8], at: usize, j: usize| (0..8).fold(0u64, |w, kk| w | u64::from(data[at + kk * nc + j]) << (8 * kk));
+    // SAFETY: the target features are enabled at compile time; the matrices are 8 qwords each.
+    let ab_row = |x: &[u64], y: &[u64], g: usize| -> u64 {
+        unsafe {
+            let (mut ea, mut eb) = (_mm512_setzero_si512(), _mm512_setzero_si512());
+            for j in 0..nc {
+                let mj = _mm512_loadu_si512(matrices[j][g].as_ptr().cast());
+                ea = _mm512_xor_si512(ea, _mm512_gf2p8affine_epi64_epi8::<0>(_mm512_set1_epi64(x[j] as i64), mj));
+                eb = _mm512_xor_si512(eb, _mm512_gf2p8affine_epi64_epi8::<0>(_mm512_set1_epi64(y[j] as i64), mj));
+            }
+            let powers = _mm512_set1_epi64(0x8040_2010_0804_0201u64 as i64);
+            let t = _mm512_gf2p8mul_epi8(_mm512_gf2p8mul_epi8(ea, eb), powers);
+            let t = _mm512_xor_si512(t, _mm512_srli_epi64::<32>(t));
+            let t = _mm512_xor_si512(t, _mm512_srli_epi64::<16>(t));
+            let t = _mm512_xor_si512(t, _mm512_srli_epi64::<8>(t));
+            _mm_cvtsi128_si64(_mm512_cvtepi64_epi8(t)) as u64
+        }
+    };
+    let zero = || (vec![F192::ZERO; ell], vec![F192::ZERO; ell]);
+    let (ab, c_s_part) = parallel::fold_reduce(
+        1usize << eq.n_hi,
+        zero,
+        |acc, x_hi| {
+            let (mut part_ab, mut part_c) = zero();
+            let mut rows = vec![[0u8; 16]; 2 * ell];
+            let mut folded = vec![F192::ZERO; 2 * ell];
+            let mut out = [F192::ZERO; super::bit_fold::BLOCK];
+            let (mut xa, mut xb) = (vec![0u64; nc], vec![0u64; nc]);
+            for x_lo in 0..lo_size {
+                let at = (x_hi * lo_size + x_lo) * block;
+                for medium in 0..16 {
+                    let o = at + 8 * nc * medium;
+                    for j in 0..nc {
+                        xa[j] = gather(a, o, j);
+                        xb[j] = gather(b, o, j);
+                    }
+                    for g in 0..nc {
+                        let row = ab_row(&xa, &xb, g);
+                        let crow = transpose_8x8(gather(c, o, g));
+                        for q in 0..8 {
+                            rows[8 * g + q][medium] = (row >> (8 * q)) as u8;
+                            rows[ell + 8 * g + q][medium] = (crow >> (8 * q)) as u8;
+                        }
+                    }
+                }
+                for (chunk, dst) in rows.chunks(64).zip(folded.chunks_mut(64)) {
+                    fold.fold_block(chunk, &mut out);
+                    dst.copy_from_slice(&out[..dst.len()]);
+                }
+                let e = eq.lo[x_lo];
+                for l in 0..ell {
+                    part_ab[l] += e * folded[l];
+                    part_c[l] += e * folded[ell + l];
+                }
+            }
+            let e = eq.hi[x_hi];
+            for l in 0..ell {
+                acc.0[l] += e * part_ab[l];
+                acc.1[l] += e * part_c[l];
+            }
+        },
+        |mut x, y| {
+            for l in 0..ell {
+                x.0[l] += y.0[l];
+                x.1[l] += y.1[l];
+            }
+            x
+        },
+    );
+    let c_lifted = ntt_extend_vec(&c_s_part, &table);
+    ab.iter().zip(&c_lifted).map(|(&x, &y)| x + y).collect()
+}
+
+#[cfg(not(all(
+    target_arch = "x86_64",
+    target_feature = "gfni",
+    target_feature = "avx512bw",
+    target_feature = "avx512vbmi"
+)))]
+pub fn round1_words(a: &[u8], b: &[u8], c: &[u8], m: usize, k: usize, r_rest: &[F192]) -> Vec<F192> {
     round1_folded(a, b, c, m, k, r_rest)
 }
 
