@@ -441,3 +441,8 @@ Each entry says what changed, why, and what the prover must change (none if the 
 3. **Lever 1b: the tower's leaves as an `XOR` network** (Paar's greedy common subexpressions, `ring_tower::Tower`):
    1,938 slice terms become 767 `XOR`s (251 shared). Measured, main line straight: 203,829 → 196,524 (target
    26,832 → 19,542). Prover: nothing.
+
+4. **Lever 1c: the batch's other weights share their work** (`verifier::weight_at`): a column's limbs share its row
+   (`Σ_limb basis · selector` once per column), terms on one row add `coefficient · part` before the row multiplies
+   them, and `q_flock`'s 18 slots share the eq of their 18 instance coordinates (only their 8 slot bits' factors
+   differ). Measured, main line straight: 196,524 → 185,541 (the batch's weights 33,165 → 22,660). Prover: nothing.

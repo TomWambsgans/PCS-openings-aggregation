@@ -97,6 +97,21 @@ impl<'a, S: Scalar> EqCache<'a, S> {
         product
     }
 
+    /// `Π_k (1 + p_k + r_(from + k))` over the whole point, for the point numbered `id`: its eq on the stack's
+    /// coordinates `from..`.
+    pub fn row_from(&mut self, id: usize, point: &[S], from: usize) -> S {
+        let key = (id, usize::MAX - from, 0);
+        if let Some(&v) = self.rows.get(&key) {
+            return v;
+        }
+        let product = point
+            .iter()
+            .zip(&self.one_plus_r[from..])
+            .fold(S::one(), |acc, (&p, &a)| acc * (a + p));
+        self.rows.insert(key, product);
+        product
+    }
+
     fn twisted_point(&mut self, id: usize, point: &[S], twist: u8) -> Vec<S> {
         if twist == 0 {
             return point.to_vec();

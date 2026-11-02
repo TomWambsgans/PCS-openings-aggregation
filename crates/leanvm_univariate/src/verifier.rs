@@ -716,6 +716,10 @@ fn layouts(shape: &Shape, c2_columns: &[(Column, usize, bool)]) -> Vec<(Commitme
 
 /// A combined claim's weight at the stack point `r`: every term's eq weight on its column's blocks; the ring-switch
 /// term ([`RING_TWIST`]) by its map.
+///
+/// Shared work: a column's limbs share its row, so a column's part is `Σ_limb basis_limb · selector_limb` once; terms
+/// on one row (point, length, twist) add their `coefficient · part` before the row multiplies them; `q_flock`'s slots
+/// at one point share the instance coordinates' eq, and differ only in their 8 slot bits' factors.
 fn weight_at<S: Scalar>(
     claim: &Combined<S>,
     layout: &StackLayout,
@@ -725,31 +729,63 @@ fn weight_at<S: Scalar>(
 ) -> S {
     let mut cache = EqCache::new(r);
     let basis = limb_basis::<S>();
-    let mut total = S::zero();
-    for &(column, p, twist, coefficient) in &claim.terms {
-        let point = &claim.points[p];
-        let (column, row_len, id, row): (Column, usize, usize, Vec<S>) = match column {
-            Column::QflockSlot(j) => {
-                // q_flock's word `slot + 256 · instance`: the slot's bits, then the instance's coordinates.
-                let bits = (0..8).map(|b| S::constant(E::new((j >> b & 1) as u64, 0, 0)));
-                let row: Vec<S> = bits.chain(point.iter().copied()).collect();
-                (Column::Qflock, row.len(), base_id + 1000 + j, row)
-            }
-            _ => (column, 0, base_id + p, point.clone()),
-        };
-        for (limb, vars, offset) in layout.limbs(column) {
-            let len = if row_len > 0 { row_len } else { vars };
-            let row_weight = if twist == RING_TWIST {
-                let map = ring_map.expect("the ring map of a ring-switch term");
-                let _phase = enter("claims: the ring switch's weight at the batch's point");
-                ring_tower::weight_at(&row[..len], &cache.one_plus_r()[..len], map)
-            } else {
-                cache.row(id, &row, len, twist)
-            };
-            let eq = row_weight * cache.selector(vars, offset);
-            let scale = if limb == 0 { coefficient } else { coefficient * basis[limb] };
-            total += scale * eq;
+    let mut parts: Vec<(Column, usize, S)> = Vec::new();
+    let mut part = |cache: &mut EqCache<S>, column: Column| -> (usize, S) {
+        if let Some(&(_, vars, sum)) = parts.iter().find(|(c, ..)| *c == column) {
+            return (vars, sum);
         }
+        let limbs = layout.limbs(column);
+        let vars = limbs[0].1;
+        let mut sum = S::zero();
+        for (limb, v, offset) in limbs {
+            assert_eq!(v, vars, "a column's limbs are blocks of one size");
+            let selector = cache.selector(vars, offset);
+            sum += if limb == 0 { selector } else { basis[limb] * selector };
+        }
+        parts.push((column, vars, sum));
+        (vars, sum)
+    };
+    // Σ coefficient · part, by row: (point, length, twist).
+    let mut rows: Vec<((usize, usize, u8), S)> = Vec::new();
+    // q_flock's slots, by point: Σ coefficient · eq(slot bits, r_(<8)).
+    let mut slots: Vec<(usize, S)> = Vec::new();
+    for &(column, p, twist, coefficient) in &claim.terms {
+        if let Column::QflockSlot(j) = column {
+            // q_flock's word `slot + 256 · instance`: the slot's bits, then the instance's coordinates.
+            let bits = (0..8).fold(S::one(), |acc, b| {
+                acc * if j >> b & 1 == 1 { r[b] } else { cache.one_plus_r()[b] }
+            });
+            let c = coefficient * bits;
+            match slots.iter_mut().find(|(q, _)| *q == p) {
+                Some((_, sum)) => *sum += c,
+                None => slots.push((p, c)),
+            }
+            continue;
+        }
+        let (vars, sum) = part(&mut cache, column);
+        let c = coefficient * sum;
+        match rows.iter_mut().find(|(key, _)| *key == (p, vars, twist)) {
+            Some((_, total)) => *total += c,
+            None => rows.push(((p, vars, twist), c)),
+        }
+    }
+    let mut total = S::zero();
+    for ((p, len, twist), sum) in rows {
+        let point = &claim.points[p];
+        let row = if twist == RING_TWIST {
+            let map = ring_map.expect("the ring map of a ring-switch term");
+            let _phase = enter("claims: the ring switch's weight at the batch's point");
+            ring_tower::weight_at(&point[..len], &cache.one_plus_r()[..len], map)
+        } else {
+            cache.row(base_id + p, point, len, twist)
+        };
+        total += row * sum;
+    }
+    for (p, sum) in slots {
+        let point = &claim.points[p];
+        let (_, qflock) = part(&mut cache, Column::Qflock);
+        let instance = cache.row_from(base_id + 1000 + p, point, 8);
+        total += sum * instance * qflock;
     }
     total
 }
