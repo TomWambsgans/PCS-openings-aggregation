@@ -17,7 +17,8 @@ import WhirBridge.LargeParams
 (`largeList_le`).
 
 * **The batching challenge** of one opening with `J` claims escapes with probability at most
-  `(J − 1) · L₀ / 2^192` (`eBatch_large`): `2^-165.4` for `J ≤ 2^14`.
+  `(J − 1) · L₀ / 2^192` (`eBatch_large`): at most `2^-164` for `J ≤ 2^14` (`eBatch_large_le`;
+  `2^-164.7` with `L₀ = 9952`).
 * **After root 1** a challenge whose bad set has at most `d` elements per candidate is bad for
   some candidate with probability at most `L₁ · d / 2^192`; **after root 2**, at most
   `L₁ L₂ · d / 2^192` (`ncard_bad_pairs_le`, the count; `union_one_root_le`,

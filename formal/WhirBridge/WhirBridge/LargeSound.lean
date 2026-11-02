@@ -33,8 +33,8 @@ whose blocks are a valid public stacking.
 `(QA + QO) · (2^-128 + 5 (QA + QO) / 2^256)` (`openingBoundAt`).
 
 **`joint_public_large`**: what the composition reads off an opening that is not doomed: one
-candidate among the root's at most `L₀ = largeList log_n` (`9952 ..= 3564`) whose table satisfies
-all of its claims.
+candidate among the root's at most `L₀ = largeList log_n` (`9952, 7908, 6296, 4473, 3564` at
+`log_n = 24 ..= 28`) whose table satisfies all of its claims.
 -/
 
 namespace WhirBridge
