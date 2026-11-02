@@ -11,8 +11,9 @@ import Heap.Cantor
 of `s(x) = x² + x`) is computed, not assumed. Here:
 
 * `beta_lanes`: its `32` words (`betaWords`, by kernel evaluation of `sPivots` and the `31` solves,
-  `decide +kernel`, about 5 s; no `native_decide`). The first `24` are `QuotientSecurity.betaWords`, the first
-  `28` the statement's `PcsQuotient.Domain.beta` (`beta_getD_eq_betaAt`, also by kernel evaluation);
+  `decide +kernel`, about 5 s; no `native_decide`). The first `28` are the statement's `PcsQuotient.Domain.beta`
+  (`beta_getD_eq_betaAt`, also by kernel evaluation; the first `24` are `QuotientSecurity.betaWords`, by
+  inspection);
 * `beta_zero`, `beta_succ`: the Cantor property `β₀ = 1`, `sK β_{k+1} = β_k` (`k < 31`), checked on the literal
   words (`betaWords_succ`, `31` products in `K`, as `QuotientSecurity.DeployedBasis` does in `F64`);
 * `basisK`, `basisE`: hence a `QuotientSecurity.CantorBasis` of `32` vectors in `K` and in `E` (`ofK` of the

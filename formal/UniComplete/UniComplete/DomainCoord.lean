@@ -16,14 +16,16 @@ import UniComplete.DomainBasis
   `coordinateFunctionals r`.
 
 **The instance `r = 18`** (the reference BLAKE2S height) is left as the named proposition
-`CoordinateFunctionalsBasis 18`, not proved here. The evidence: `crates/leanvm_univariate`'s unit tests
-(`y_l(ω_i) = i_l`, `domain.rs`), and an independent recomputation (this milestone's review script, Python over
-`GF(2^64)`: the Gauss–Jordan inverse of `M[j][m] = β_j^(2^m)` and the check `Σ_m a_{l,m} β_j^(2^m) = δ_{lj}`
-for all `l, j < 18`). The kernel does not do it in a few minutes: `decide +kernel` of `coordinateFunctionals 8`
-against its `64` words takes 28 s (about `1,700` products in `K`, each a CompPoly carry-less product evaluated
-on `BitVec`s, about 16 ms), and of `coordinateFunctionals 18` against its `324` words ran for more than 30
-minutes at more than 10 GB without finishing (about `13,000` products for the elimination alone, plus about
-`6,000` for the check itself); see the report of milestone 4's domain facts.
+`CoordinateFunctionalsBasis 18`, not proved here. The evidence: `crates/leanvm_univariate`'s unit test
+`coordinate_functionals_read_bits` (`domain.rs`: `y_l(ω_i) = i_l` at `r = 18` for 100 random `i`), and an
+independent recomputation when this file was written (Python over `GF(2^64)`: the Gauss–Jordan inverse of
+`M[j][m] = β_j^(2^m)` and the check `Σ_m a_{l,m} β_j^(2^m) = δ_{lj}` for all `l, j < 18`). The kernel does not
+do it in a few minutes: `decide +kernel` of `coordinateFunctionals 8` against its `64` words takes 28 s (about
+`1,700` products in `K`, each a CompPoly carry-less product evaluated on `BitVec`s, about 16 ms), and of
+`coordinateFunctionals 18` against its `324` words ran for 30 minutes at more than 10 GB without finishing (about
+`13,000` products for the elimination alone, plus about `6,000` for the check itself; the elimination's entries
+stay unevaluated terms that the kernel re-reads). A proof would cut the elimination into its `18` column steps,
+each checked against literal words.
 -/
 
 namespace UniComplete.Domain
