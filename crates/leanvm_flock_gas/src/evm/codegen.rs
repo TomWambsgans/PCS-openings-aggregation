@@ -82,7 +82,7 @@ impl Dag for Nodes<'_> {
     fn operands(&self, id: u32) -> Vec<u32> {
         match self.graph.nodes[id as usize] {
             Node::Add(a, b) | Node::Mul(a, b) => vec![a, b],
-            Node::Hash(state, _, _) | Node::Low(state) => vec![state],
+            Node::Hash(state, _, _) | Node::Low(state) | Node::Bits(state, _, _) => vec![state],
             _ => vec![],
         }
     }
@@ -141,6 +141,18 @@ impl Dag for Nodes<'_> {
                 code
             }
             Node::Low(_) => front::code([&push(&[0xff; 24])[..], &[AND]].concat()),
+            Node::Bits(_, shift, width) => {
+                let mut code = Vec::new();
+                if shift > 0 {
+                    code.extend(push_usize(shift as usize));
+                    code.push(SHR);
+                }
+                if width < 64 {
+                    code.extend(push_usize((1usize << width) - 1));
+                    code.push(AND);
+                }
+                front::code(code)
+            }
         }
     }
 

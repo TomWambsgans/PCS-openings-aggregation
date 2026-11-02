@@ -148,6 +148,26 @@ pub fn prefix_vanishing<S: Scalar>(w: &[S], rows: u64) -> S {
     product
 }
 
+/// [`prefix_vanishing`] at `t` for a count known only by its bits `bits[b]` (the scalars 0 or 1, `b ≤ r`, so up to
+/// `2^r`): `Π_b (1 + bit_b · d_b)`, `d` the digits of `t + ω_rows`. A set bit `b` contributes the coset
+/// `ω_start + V_b`, `start` the bits above `b`: its factor `w_b(t) + ω_(start >> b)` is `d_b + 1`, since `w_b` is
+/// GF(2)-linear and `ω_(rows >> b) = ω_(start >> b) + 1` (SPEC.md §13).
+pub fn prefix_vanishing_from_bits<S: Scalar>(t: S, bits: &[S]) -> S {
+    let omega = bits
+        .iter()
+        .enumerate()
+        .fold(S::zero(), |acc, (b, &bit)| acc + bit * S::constant(point_e(1 << b)));
+    let mut digit = t + omega;
+    let mut product = S::one();
+    for (b, &bit) in bits.iter().enumerate() {
+        if b > 0 {
+            digit = digit * digit + digit;
+        }
+        product *= S::one() + bit * digit;
+    }
+    product
+}
+
 /// The vanishing polynomial of `[rows, 2^r)` in `V_r`, likewise.
 pub fn suffix_vanishing<S: Scalar>(w: &[S], rows: u64, r: usize) -> S {
     let mut product = S::one();
@@ -234,6 +254,20 @@ mod tests {
         let w = digits(t, r + 1);
         assert_eq!(prefix_vanishing(&w, rows) * suffix_vanishing(&w, rows, r), w[r]);
         assert_eq!(vanishing_ratio(&digits(t, 22), 17, 21) * w_at(t, 17), w_at(t, 21));
+    }
+
+    /// From the count's bits, the prefix vanishing polynomial is the one from the count, up to `2^r` included.
+    #[test]
+    fn prefix_vanishing_from_the_bits() {
+        let mut next = rng(11);
+        for r in [2usize, 5, 12, 18] {
+            for rows in [1u64, (1 << (r - 1)) + 1, (1 << r) - 1, 1 << r, next() % (1 << r) + 1] {
+                let t = E::new(next(), next(), next());
+                let bits: Vec<E> = (0..=r).map(|b| E::new(rows >> b & 1, 0, 0)).collect();
+                let w = digits(t, r + 2);
+                assert_eq!(prefix_vanishing_from_bits(t, &bits), prefix_vanishing(&w, rows), "r {r}, rows {rows}");
+            }
+        }
     }
 
     fn w_at(t: E, r: usize) -> E {

@@ -33,6 +33,8 @@ pub enum Node {
     Hash(u32, u32, u32),
     /// The low 192 bits of a state: a challenge.
     Low(u32),
+    /// `(v >> shift) mod 2^width` of an integer `v` (an [`Node::Input`] of at most 8 bytes, or bits of one).
+    Bits(u32, u8, u8),
 }
 
 #[derive(Default)]
@@ -131,6 +133,13 @@ impl Scalar for Sym {
     fn constant(value: E) -> Self {
         Self::new(Node::Const([value.c0, value.c1, value.c2]))
     }
+
+    fn bits(self, shift: usize, width: usize) -> Self {
+        match self.value() {
+            Some(v) => Self::constant(v.bits(shift, width)),
+            None => Self::new(Node::Bits(self.0, shift as u8, width.min(255) as u8)),
+        }
+    }
 }
 
 /// The proof as the recorder reads it: every read and every challenge is a node of the graph the contract is
@@ -214,5 +223,10 @@ impl Channel<Sym> for Recorder {
     fn require_nonzero(&mut self, value: Sym, error: VerifierError) -> Result<(), VerifierError> {
         GRAPH.with_borrow_mut(|graph| graph.nonzero.push((value.0, error)));
         Ok(())
+    }
+
+    fn next_integer(&mut self, bytes: usize) -> Result<Sym, VerifierError> {
+        assert!((1..=8).contains(&bytes));
+        Ok(self.input(bytes as u8))
     }
 }

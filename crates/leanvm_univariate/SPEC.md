@@ -461,3 +461,26 @@ Each entry says what changed, why, and what the prover must change (none if the 
    batch plus `λ^3` times the matrices' product sum (its tables zero-extended by `δ_0` on variables 9..27), and `a`,
    `b` follow the three stack values. `flock_min::tests::the_pending_matrices_reduction_merges_into_a_longer_sumcheck`
    is an honest prover of this merge.
+
+6. **F1 (review M1): the row counts are announced.** The contract is built for the heights (one contract per shape
+   class: heights, `log_memory`, `log_bytecode`), not for the row counts. The stream starts with the six tables'
+   row counts, 32-bit big-endian integers (24 bytes, `Channel::next_integer`), before `C1`'s root; the first
+   challenge's hash absorbs them with the root. The contract requires each count `c ≤ 2^r` (`c >> (r+1) = 0`, and
+   `c`'s low `r` bits zero if bit `r` is set) and computes `Z_act(t) = Π_(b ≤ r) (1 + c_b d_b)`, `d` the digits of
+   `t + ω_c` (`domain::prefix_vanishing_from_bits`). `Z_pad` is no longer computed:
+   - the leaf identity is checked times `Z_act(t)`: `R (P w_r + Z_act²) + Q w_r Z_act = P' w_r + Z_act²` (since
+     `Z_pad Z_act = w_r`), a polynomial identity of degree `deg + 2^r`;
+   - the counters' constraint `z_T Π_j c_j = 1` holds on **every** row, padding rows included (they are free, so the
+     prover sets their counters nonzero).
+   Each leaf quotient is sized for its height's fewest rows, `2^(r-1) + 1`; with fewer rows an honest quotient does
+   not fit (a smaller shape class), and soundness does not depend on it. Measured, main line: calldata 7,084 →
+   7,108 B; straight 184,417 → 195,246 (`Z_act` from the bits 9,371, the bits and the range 3,396); deployed
+   197,610 → 209,072; tx (EIP-7623, `c = 0`, deployed) 310,642 → 322,488.
+   Prover: write the six counts (`KeccakWriter::send_integer(rows, 4)`, table order XOR, MUL, SET, DEREF, JUMP,
+   BLAKE2S) before `C1`'s root; set padding rows' counter columns nonzero (e.g. 1) and `z_T = (Π_j c_j)^(-1)` on
+   every row; drop `Z_pad` from the counters' constraint in `Q_W`; size each table's leaf quotient for
+   `n - (2^(r-1) + 1)` padding rows (`Shape::least_rows`). The committed leaf quotients are unchanged.
+7. **F5 (review M1): small shapes.** Every quotient degree is `verifier::degree(plus, minus)`, saturating, so no
+   height wraps (the review's panicking shapes are recorded now, `review_honest::small_heights_are_recorded`).
+   `Shape::validate` rejects only a memory of one cell, a height of 32 or more, and with Flock a BLAKE2S height
+   below 7 (`VerifierError::InvalidShape`). Prover: nothing.

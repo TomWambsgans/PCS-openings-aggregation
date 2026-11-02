@@ -23,7 +23,7 @@ use leanvm_univariate::contract::{NAME, calldata, compile_verifier, record_verif
 use leanvm_univariate::domain::{coordinate_functionals, point_e};
 use leanvm_univariate::heap::Leaves;
 use leanvm_univariate::stacks::{StackLayout, limb_basis};
-use leanvm_univariate::verifier::{chunks, sent_columns};
+use leanvm_univariate::verifier::{chunks, degree, sent_columns};
 use leanvm_univariate::{Blake2s, Claims, Opening, Shape, reduce};
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -430,8 +430,14 @@ fn execution(rng: &mut Rng) -> Witness {
             .map(|row| table.count_columns().fold(ONE, |acc, c| acc * row[c]).inv())
             .collect();
         while all.len() < n {
-            all.push(table.padding.clone());
-            z.push(ZERO);
+            // Padding rows are free, but the counters' constraint holds on every row (SPEC.md §13): nonzero
+            // counters, here 1.
+            let mut row = table.padding.clone();
+            for c in table.count_columns() {
+                row[c] = ONE;
+            }
+            all.push(row);
+            z.push(ONE);
         }
         rows.push(all);
         inverse.push(z);
@@ -673,7 +679,11 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
             c1.push(Column::Table { table: table.opcode, column: c }, r, coefficients);
             polys.push(mono);
         }
-        let (coefficients, mono) = bases.b[r].from_values(&witness.inverse[table.opcode]);
+        let z: Vec<E> = witness.rows[table.opcode]
+            .iter()
+            .map(|row| table.count_columns().fold(ONE, |acc, c| acc * row[c]).inv())
+            .collect();
+        let (coefficients, mono) = bases.b[r].from_values(&z);
         c1.push(Column::Inverse(table.opcode), r, coefficients);
         inverse.push(mono);
         columns.push(polys);
@@ -706,6 +716,10 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
     }
     setup.push(Column::BytecodeTuple, lb() + 4, tuple_words);
 
+    // The tables' row counts (iteration 2, review M1's F1): six 32-bit integers before C1's root.
+    for &rows in &witness.active {
+        writer.send_integer(rows, 4);
+    }
     writer.send_root([E::new(0x1111, 0x2222, 0), E::new(0x3333, 0x4444, 0)]);
     let alphas: Vec<E> = (0..4).map(|_| writer.sample()).collect();
     let beta = writer.sample();
@@ -814,20 +828,18 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
         let t = table.opcode;
         let r = heights[t];
         let n = 1u64 << r;
-        let rows = witness.active[t];
         let l = lift(w, r, r_w);
-        let padding = vanishing(w, rows, r, false);
         let cols = &columns[t];
         if t == OP_JUMP {
             let [cond, inverse_column, flag] = ["v_cond", "w", "b"].map(|name| col(table, name));
             add_constraint(cols[flag].add(&cols[cond].mul(&cols[inverse_column])), &l, &mut power);
             add_constraint(cols[cond].mul(&cols[flag].add(&Poly::constant(ONE))), &l, &mut power);
-            quotient_degree = quotient_degree.max(n - 2);
+            quotient_degree = quotient_degree.max(degree(n, 2));
         }
         let counters = table.count_columns().fold(inverse[t].clone(), |acc, c| acc.mul(&cols[c]));
-        add_constraint(counters.add(&Poly::constant(ONE)).mul(&padding), &l, &mut power);
+        add_constraint(counters.add(&Poly::constant(ONE)), &l, &mut power);
         let counts = table.count_columns().count() as u64;
-        quotient_degree = quotient_degree.max((n - 1) * (1 + counts) + (n - rows) - n);
+        quotient_degree = quotient_degree.max(degree((n - 1) * (1 + counts), n));
         if t == OP_BLAKE2S {
             let functionals = coordinate_functionals(r);
             let y: Vec<Poly> = functionals
@@ -851,7 +863,7 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
                     add_constraint(cols[c].add(&composed), &l, &mut power);
                 }
             }
-            quotient_degree = quotient_degree.max((r as u64) * (n / 2) - n);
+            quotient_degree = quotient_degree.max(degree((r as u64) * (n / 2), n));
         }
     }
     let [w0, w1, w2, w3] = witness.public.map(|v| E::new(v, 0, 0));
@@ -861,7 +873,7 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
         let line = Poly::constant(low).add(&Poly::x().scale(low + high));
         add_constraint(memory[k].add(&line), &l, &mut power);
     }
-    quotient_degree = quotient_degree.max((1 << lm()) - 3);
+    quotient_degree = quotient_degree.max(degree(1 << lm(), 3));
     let (constraint_quotient, rem) = constraint.divmod(&w[r_w]);
     exact &= rem == Poly::zero();
     let constraint_chunks = chunks(quotient_degree + 1);
@@ -877,8 +889,8 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
         let (_, restriction) = bases.b[block.r].from_values(&values);
         let (a, b, degree) = match block.leaves {
             Leaves::Unused => continue,
-            Leaves::Memory => (memory_pull_poly.clone(), memory_push_poly.clone(), 2 * (n - 1) - n),
-            Leaves::Bytecode => (bytecode_pull_poly.clone(), bytecode_push_poly.clone(), 2 * (n - 1) - n),
+            Leaves::Memory => (memory_pull_poly.clone(), memory_push_poly.clone(), degree(2 * (n - 1), n)),
+            Leaves::Bytecode => (bytecode_pull_poly.clone(), bytecode_push_poly.clone(), degree(2 * (n - 1), n)),
             Leaves::Table(t) => {
                 let table = &tables[t];
                 let rows = witness.active[t];
@@ -887,7 +899,8 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
                 let (p, q) = &table_products[t];
                 let pull_degree = 1 + table.flushes.pull.iter().map(|f| tuple_degree(f)).sum::<usize>();
                 let push_degree = table.flushes.push.iter().map(|f| tuple_degree(f)).sum::<usize>();
-                let d = (pull_degree.max(push_degree) as u64) * (n - 1) + (n - rows) - n;
+                // The capacity is the height's fewest rows', 2^(r-1) + 1 (iteration 2).
+                let d = degree((pull_degree.max(push_degree) as u64) * (n - 1) + (n - Shape::least_rows(block.r)), n);
                 (p.mul(&padding).add(&active), q.mul(&padding).add(&active), d)
             }
         };
@@ -1104,19 +1117,17 @@ fn honest_proofs_at_other_sizes() {
     }
 }
 
-/// Finding (shape validation): `Shape` takes any rows, but the verifier's quotient degrees are u64 expressions that
-/// wrap for small heights (`r (n / 2) - n` for BLAKE2S at height <= 1, `n - 2` for JUMP at height 0, `2 (n - 1) - n` for
-/// a one-cell memory). The chunks then come out empty and `reduce` panics on an empty relation, for the recorder
-/// (no contract can be built) and for the Rust verifier alike. No measured shape is affected (every height >= 14).
+/// Finding (shape validation), fixed in iteration 2: the quotients' degrees no longer wrap at small heights
+/// (`verifier::degree`), so the shapes that made `reduce` panic (BLAKE2S at 2 rows, JUMP at 1) are recorded.
 #[test]
-fn small_heights_make_reduce_panic() {
+fn small_heights_are_recorded() {
     for rows in [[3u64, 3, 3, 0, 3, 2], [3, 3, 3, 0, 1, 3]] {
         let outcome = std::panic::catch_unwind(|| {
             let shape = shape_of(rows);
             leanvm_univariate::contract::record_verifier(&shape, Blake2s::Omitted, Claims::Point).stream_len
         });
         println!("rows {rows:?}: {}", if outcome.is_err() { "reduce panics" } else { "recorded" });
-        assert!(outcome.is_err(), "rows {rows:?}");
+        assert!(outcome.is_ok(), "rows {rows:?}");
     }
 }
 
@@ -1274,7 +1285,7 @@ fn verifying_contract_accepts_the_honest_proof_and_rejects_mutations() {
             let value = element_of(words[3 + layout.vars]);
             assert_eq!(multilinear_eval(&stack(layout, committed), &point).unwrap(), value, "{commitment:?}");
         }
-        assert_eq!(&outcome.pcs_calls[0][..32], &proof.stream[..32], "C1's root word is the stream's");
+        assert_eq!(&outcome.pcs_calls[0][..32], &proof.stream[24..56], "C1's root word is the stream's");
         let mut block = PcsOpen::default();
         for input in &outcome.pcs_calls {
             block.register(input.clone());
@@ -1291,8 +1302,10 @@ fn verifying_contract_accepts_the_honest_proof_and_rejects_mutations() {
         }
         // Each scalar (and each root half) of the stream changed in turn: rejected, even with every call attested.
         let header = 4 + 32;
-        let mut offsets: Vec<usize> = vec![15, 31, 32 + 15, 32 + 31];
-        offsets.extend((64..proof.stream.len()).step_by(24).map(|at| at + 23));
+        // The six row counts (4 bytes each), C1's root halves, then the scalars.
+        let mut offsets: Vec<usize> = (0..6).map(|k| 4 * k + 3).collect();
+        offsets.extend([24 + 15, 24 + 31, 24 + 32 + 15, 24 + 32 + 31]);
+        offsets.extend((24 + 64..proof.stream.len()).step_by(24).map(|at| at + 23));
         let mut rejected = 0;
         for &at in &offsets {
             let mut mutated = data.clone();
