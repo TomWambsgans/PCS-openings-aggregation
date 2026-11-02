@@ -5,6 +5,8 @@ import Bridge.Chain
 import Bridge.Verifier
 import Bridge.Extractor
 import Bridge.Claims.Reduce
+import Bridge.Ntt
+import Bridge.Setup
 import Bridge.Facts
 
 /-!
@@ -27,6 +29,10 @@ definitions equal to the proofs' (see `README.md` of this package):
   `verifierBridge_of_claims`: `Soundness.VerifierBridge`).
 * `Bridge/Extractor.lean`: the extractor's read-back of the witness table is F4's table of the stack
   (`witnessEntries_eq`).
+* `Bridge/Ntt.lean`: the statement's additive transform (`Domain.values`, `Domain.coefficients`)
+  evaluates and interpolates F1's novel-basis table polynomial on the Cantor points, for every size.
+* `Bridge/Setup.lean`: the circuit's commitment (`setupWith`, `setupTreeWith`) is mumbai's tree of the
+  wiring column's `stackWord`, and that column's polynomial carries `σ` (`setupBridge`).
 * `Bridge/Claims/*.lean`: the statement's reduction claims `claimsAt 22` are `Compose.Reduce.reduce`
   at the statement's constants `statementConsts` (`claimsAt_eq_reduce`), and those constants are
   `beta()`'s and `row_vanishing(24)`'s (kernel evaluation, stepwise).
