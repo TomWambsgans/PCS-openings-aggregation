@@ -771,4 +771,158 @@ theorem adv_cache (A : Bytes32 → OracleComp Common.RandomPermutationOracles
     · rw [hrep] at h
       exact Or.inr h
 
+/-- **The setup's log records the cache it fills**, on bytes. -/
+theorem consB_run {α : Type} (v : OracleComp KeccakCalls α) (hv : HOnly v) :
+    ∀ (tr : Transcript) (c : HFS.QueryCache), Consistent tr (cmap c) →
+      ∀ z ∈ support ((simulateQ HFS.romImpl (simulateQ
+        (Common.hInF (E := Common.KRest) (C := Common.KCap))
+          (simulateQ toRH ((simulateQ logImplKC v).run tr)))).run c),
+        Consistent z.1.2 (cmap z.2) := by
+  induction v using OracleComp.inductionOn with
+  | pure a =>
+    intro tr c hc z hz
+    simp only [simulateQ_pure, StateT.run_pure, support_pure, Set.mem_singleton_iff] at hz
+    subst hz
+    exact hc
+  | query_bind t k ih =>
+    rw [LeanVM.Rpm.hOnly_query_bind] at hv
+    rcases t with x | s
+    · intro tr c hc z hz
+      rw [loggedKC_run_query_bind] at hz
+      simp only [simulateQ_bind, simulateQ_spec_query, toRH, bind_map_left,
+        Common.hInF, StateT.run_bind, mem_support_bind_iff] at hz
+      obtain ⟨⟨d, c'⟩, hd, hz⟩ := hz
+      refine ih (LeanVM.Digest.ofRpm d) (hv _) _ c' (consistent_step hc (.inl x) _ ?_) z hz
+      rw [OracleSpec.romImpl_apply_inr, randomOracle.run_eq] at hd
+      rcases hcx : c.toFn (.inl x) with _ | u
+      · rw [hcx] at hd
+        simp only [mem_support_bind_iff, support_pure, Set.mem_singleton_iff, Prod.mk.injEq]
+          at hd
+        obtain ⟨u, -, rfl, rfl⟩ := hd
+        refine Or.inr ⟨?_, LeanVM.Rpm.cmap_cacheQuery_inl c x _⟩
+        show (c (.inl x)).map LeanVM.Digest.ofRpm = none
+        rw [show c (.inl x) = c.toFn (.inl x) from rfl, hcx]
+        rfl
+      · rw [hcx] at hd
+        simp only [support_pure, Set.mem_singleton_iff, Prod.mk.injEq] at hd
+        obtain ⟨h1, h2⟩ := hd
+        refine Or.inl ⟨?_, by rw [h2]⟩
+        show (c (.inl x)).map LeanVM.Digest.ofRpm = some (LeanVM.Digest.ofRpm d)
+        rw [show c (.inl x) = c.toFn (.inl x) from rfl, hcx, h1]
+        rfl
+    · exact hv.elim
+
+/-- The prefix of the transfer's random-oracle game: the setup, then the adversary with the
+simulator. -/
+noncomputable def romPrefix (setup : OracleComp KeccakCalls Bytes32)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs)) :
+    OracleComp HFSpec ((Bytes32 × Transcript) × ((RootProof F × OpenProofs) × PermutationTranscript)) :=
+  simulateQ (Common.hInF (E := Common.KRest) (C := Common.KCap)) (preB setup) >>= fun x =>
+    (x, ·) <$> Common.advS2 Common.keccakPadding Common.KState.zero (advB A x)
+
+/-- **After the setup and the adversary, the cache's Keccak-256 answers are those the setup's log
+and the Keccak-256 evaluations of the adversary's transcript record.** -/
+theorem consistent_romPrefix (setup : OracleComp KeccakCalls Bytes32) (hS : HOnly setup)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs))
+    {p : ((Bytes32 × Transcript) × ((RootProof F × OpenProofs) × PermutationTranscript)) ×
+      HFS.QueryCache}
+    (hp : p ∈ support ((simulateQ HFS.romImpl (romPrefix setup A)).run ∅)) :
+    Consistent (p.1.1.2 ++ evalTr p.1.2.2) (cmap p.2) := by
+  rw [romPrefix, simulateQ_bind, StateT.run_bind, mem_support_bind_iff] at hp
+  obtain ⟨⟨x, c₁⟩, h1, hp⟩ := hp
+  rw [simulateQ_map, StateT.run_map, support_map] at hp
+  obtain ⟨⟨a, c₂⟩, h2, rfl⟩ := hp
+  have hc1 : Consistent x.2 (cmap c₁) := consB_run setup hS [] ∅
+    (by rw [LeanVM.Rpm.cmap_empty]; exact consistent_nil) (x, c₁) h1
+  obtain ⟨hle, hpaths, hrel⟩ := adv_cache A x c₁ h2
+  intro m
+  show cmap c₂ (.inl m) = lookTr (x.2 ++ evalTr a.2) m
+  rw [lookTr_append', lookTr_evalTr, LeanVM.Rpm.hashesOf_transcriptPaths, ← hc1 m,
+    LeanVM.Rpm.cmap_inl, LeanVM.Rpm.cmap_inl]
+  rcases h : c₁ (.inl m) with _ | d
+  · simp only [Option.map_none]
+    unfold LeanVM.Rpm.hashesOfB
+    rcases hf : (LeanVM.Rpm.transcriptPathsB a.2).find? (·.1 = m) with _ | e
+    · rw [hf]
+      rcases h2' : c₂ (.inl m) with _ | d'
+      · rfl
+      · exfalso
+        rcases hrel m d' h2' with h3 | h3
+        · rw [h] at h3
+          cases h3
+        · rw [List.find?_eq_none] at hf
+          exact hf _ h3 (by simp)
+    · have he := List.find?_some hf
+      have hmem := List.mem_of_find?_eq_some hf
+      simp only [decide_eq_true_eq] at he
+      rw [hf, ← he, hpaths e hmem]
+      rfl
+  · simp only [Option.map_some]
+    rw [hle h]
+    rfl
+
+theorem romRun2_split (setup : OracleComp KeccakCalls Bytes32)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs)) :
+    Common.romRun2 (simulateQ (Common.hInF (E := Common.KRest) (C := Common.KCap)) (preB setup) >>=
+      fun x => Common.advS2 Common.keccakPadding Common.KState.zero (advB A x) >>= fun a =>
+        postB W D x a) =
+      (simulateQ HFS.romImpl (romPrefix setup A)).run ∅ >>= fun p =>
+        (simulateQ HFS.romImpl (postB W D p.1.1 p.1.2)).run' p.2 := by
+  simp only [Common.romRun2, romPrefix, simulateQ_bind, simulateQ_map, StateT.run'_eq,
+    StateT.run_bind, StateT.run_map, map_bind, bind_map_left, bind_assoc]
+
+/-- **The transfer's random-oracle game, on lanes, with the event on the cache**: the verifier
+from the cache after the adversary with the simulator (with coins), the extractor reading any
+transcript of that cache's answers. -/
+theorem rom_le (c₁ : TableCode B.Msg₁) (setup : OracleComp KeccakCalls Bytes32) (hS : HOnly setup)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs)) :
+    Pr{let z ← Common.romRun2 (simulateQ (Common.hInF (E := Common.KRest) (C := Common.KCap))
+        (preB setup) >>= fun x => Common.advS2 Common.keccakPadding Common.KState.zero
+          (advB A x) >>= fun a => postB W D x a)}[BreaksT W c₁ z] ≤
+      Pr{let y ← (simulateQ KeccakCalls.romImpl (simulateQ liftKC setup >>= fun ir =>
+          (ir, ·) <$> romAdvC A ir)).run ∅ >>= gL W D}[BreaksC W c₁ y] := by
+  rw [romRun2_split]
+  have hpost : ∀ p : ((Bytes32 × Transcript) × ((RootProof F × OpenProofs) ×
+      PermutationTranscript)) × HFS.QueryCache,
+      Pr{let z ← (simulateQ HFS.romImpl (postB W D p.1.1 p.1.2)).run' p.2}[BreaksT W c₁ z] =
+        Pr{let v ← (simulateQ randomOracle
+            (verifyD W D (withIr p.1.1.1 p.1.2.1))).run' (cmap p.2)}[
+          BreaksT W c₁ ((withIr p.1.1.1 p.1.2.1, v), p.1.1.2, p.1.2.2)] := by
+    intro p
+    rw [postB, simulateQ_map, StateT.run'_eq, StateT.run_map, Functor.map_map, prEvent_map]
+    have h := (LeanVM.Rpm.run'_toRHF (verifyD W D (withIr p.1.1.1 p.1.2.1)) p.2).prEvent_eq
+      (fun v => BreaksT W c₁ ((withIr p.1.1.1 p.1.2.1, v), p.1.1.2, p.1.2.2))
+    rw [StateT.run'_eq, prEvent_map] at h
+    exact h
+  have h := LeanVM.Rpm.run_ofRHF (romPrefix setup A) ∅
+  rw [LeanVM.Rpm.cmap_empty] at h
+  have hX : (fun r => (r.1.1, r.2.1)) <$> simulateQ ofRHF (romPrefix setup A) =
+      simulateQ liftKC setup >>= fun ir => (ir, ·) <$> romAdvC A ir := by
+    rw [romPrefix, simulateQ_bind, preB,
+      ofRHF_hInF_toRH (loggedKC setup) (hOnly_loggedKC_run setup hS [])]
+    conv_rhs => rw [← fst_loggedKC_run setup [], simulateQ_map, bind_map_left]
+    simp only [simulateQ_map, map_bind, Functor.map_map]
+    refine bind_congr fun x => ?_
+    simp only [romAdvC, romAdvT, Functor.map_map]
+    rfl
+  have hJ : (fun p : ((Bytes32 × Transcript) × ((RootProof F × OpenProofs) ×
+      PermutationTranscript)) × HFS.QueryCache => ((p.1.1.1, p.1.2.1), cmap p.2)) <$>
+        (simulateQ HFS.romImpl (romPrefix setup A)).run ∅ =ᵈ
+      (simulateQ KeccakCalls.romImpl (simulateQ liftKC setup >>= fun ir =>
+        (ir, ·) <$> romAdvC A ir)).run ∅ := by
+    rw [← hX, simulateQ_map, StateT.run_map]
+    refine EvalDistEq.trans ?_ (h.symm.map _)
+    rw [Functor.map_map]
+    exact EvalDistEq.rfl
+  calc _ ≤ Pr{let y ← (simulateQ HFS.romImpl (romPrefix setup A)).run ∅ >>= fun p =>
+              gL W D ((p.1.1.1, p.1.2.1), cmap p.2)}[BreaksC W c₁ y] := by
+        refine prEvent_bind_mono_of_forall_le_of_support _ _ _ _ _ fun p hp => ?_
+        rw [hpost, gL, prEvent_map]
+        refine prEvent_mono _ _ _ fun v hv => ⟨hv.1, fun tr htr g hg => hv.2 g ?_⟩
+        have hcons := consistent_romPrefix setup hS A hp
+        rwa [adversaryExtractor_congr c₁ (fun x => (htr x).symm.trans (hcons x)) _] at hg
+    _ = _ := by
+        rw [← bind_map_left]
+        exact (EvalDistEq.bind_left hJ _).prEvent_eq _
+
 end Compose
