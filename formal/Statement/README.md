@@ -32,7 +32,7 @@ behaves as a random permutation is the assumption. The adversary is classical, i
 is sampled.
 
 **The sources.** Each definition cites the Rust it transcribes (`protocol.rs`, `opening.rs`,
-`circuit.rs:N`, …) of `crates/quotient` at `keccak-quotient` `fafeab7` (the hidden layouts of
+`circuit.rs:N`, …) of `crates/quotient` at `main` `f4319d6` (the hidden layouts of
 `crates/quotient/HIDING.md`, the sizes `2^17` to `2^22` rows, the opening transcript of version `2`), and each
 file names what it takes from leanerVM in its first lines.
 
@@ -57,7 +57,8 @@ file names what it takes from leanerVM in its first lines.
    (`reduceWith`, `claimsAt`: `reduce` of `protocol.rs` line by line, with its constants: the label, the
    bit weights `bitWeight`, the coordinate weights, the extension's coordinates, the sum's point).
 5. [`Opening.lean`](PcsQuotient/Opening.lean): the tables' layouts (the public `wiringLayout`; the
-   **hidden** `witnessLayout`, `quotientLayout`: padded lanes, an overflow lane and its share,
+   **hidden** `witnessLayout`, `quotientLayout`: padded first pieces, an overflow lane, random lanes, and the
+   gadget weight `gadgetWeight`, a claim of value zero,
    `Layout.hidden`), a claim's weight on a stack (`stackWeight`), the read-back of a table from its stack
    (`Layout.readEntry`), and **the opening check** (`openingWith`): mumbai's WHIR verifier
    `verifyStackedOpening`, which is generic in the weight, run with the root given as commitment `0` and
@@ -92,6 +93,27 @@ and one pinned and the statement embedding `statementWords`; `formal/Circuit`'s 
 compute Keccak-256 membership) plugs in here: its circuit must be this `membership` (or be proved equal to
 it), its embedding this `statementWords`. Nothing in the statements quantifies over the circuit, the
 wiring or the constants: they are the computed ones.
+
+## How the proofs plug in
+
+The package stays proof-free and imports only mumbai's `statement` (Mathlib, VCVio, CompPoly through it); the
+proofs in `formal/` are to import it and prove its statements about its definitions:
+
+* **The circuit**: F0b's `formal/Circuit` `membership` is a second transcription of the same builder (its
+  wiring checked against the Rust's by hash); this package's `PcsQuotient.membership` is checked against the
+  Rust's by the circuit's commitment. One must be proved equal to the other (or one package import the other)
+  for F0b's theorem to speak about `setupWith`'s circuit.
+* **The extractor**: `transcriptExtractorFor` is mumbai's `committedLeaves` and list decoder on the witness
+  table, then the hidden layout's read-back and the cells; `formal/Compose`'s Merkle-climbing extractor is
+  proved equal to mumbai's `extract` on injective histories (`wordOfMerkle_eq_extract`), the link to this one.
+* **The simulator**: `Simulator.simulateFor` is the strategy of `formal/QuotientZk`'s `jointSim` made concrete
+  in the random-permutation model: its step 3 is `simRed` (`inK`, `sigmaAt`), its `fakeStack` is a `simT`, its
+  openings are the honest prover's on them, and its programmed roots are the random-oracle programming the
+  ZK-RPM lift does. `ZeroKnowledge ζ` is about this `simulator` and its `Simulator.simOracle`; the proof would
+  show they are (in distribution) the instance of QuotientZk's lifted simulator at these types, or the two
+  definitions are replaced by that instance once it is stated over mumbai's `RandomPermutationOracles` and
+  `PcsQuotient.Proof` (the statement's shape takes any simulator `Statement → StateT S ProbComp (Option Proof)`
+  with an oracle `QueryImpl RandomPermutationOracles (StateT S ProbComp)`).
 
 ## The end statements
 
