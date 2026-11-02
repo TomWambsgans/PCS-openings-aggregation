@@ -173,7 +173,7 @@ info: 'Compose.candidates_wordOfMerkle' depends on axioms: [propext, Classical.c
 #guard_msgs in
 #print axioms Compose.listHi_ours
 
-/-- info: 'Compose.listHi_deployed' depends on axioms: [propext, Quot.sound] -/
+/-- info: 'Compose.listHi_deployed' depends on axioms: [propext] -/
 #guard_msgs in
 #print axioms Compose.listHi_deployed
 
