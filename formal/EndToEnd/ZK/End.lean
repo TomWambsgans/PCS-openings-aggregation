@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import ZK.Main
 import ZK.Joint
+import ZK.Format
 
 /-!
 # Zero knowledge of the membership proof, the joint model instantiated
@@ -9,7 +10,8 @@ import ZK.Joint
 deployed prover instantiated (`deployedJointData`, valid by `deployedJointData_valid`, `ZK/Joint.lean`):
 
 `ZeroKnowledgeWith s₀ (zkSimulator (fun _ ↦ deployedPub rep) (deployedSimV …) skelOf fmt) rpmSimOracle
-(zkBoundEnd Qp Qfmt εR)`.
+(zkBoundEnd Qp fmtBudget εR)`, `fmt` the public translation of the skeleton's proof into the statement's
+(`ZK/Format.lean`, at most `fmtBudget = 2^23` calls of `π`).
 
 **The simulator, concretely.** Its public part `deployedPub rep` is the deployed prover's (`nRaw`
 challenges, the witness table committed first and the quotient table after three, the opened
@@ -21,8 +23,7 @@ for every witness by definition (`pub_deployed`, `simV_deployed`).
 
 **Named**: the fields (`h3`, `hq`, `hK`, `hY`), F1's facts on the statement and the witness (`hE`, `hN`,
 `hvan`, `hsat`, `hvan0`, `hdeg`), the simulator's public functions (`hinK`, `hsig`), the honest tables'
-claims (`hTW`, `hTQ`); the prover's and the formatting's permutation budgets; `CoinsMatch`;
-`ProverBridge`.
+claims (`hTW`, `hTQ`); the prover's permutation budget `Qp`; `CoinsMatch`; `ProverBridge`.
 -/
 
 open OracleComp OracleSpec Common Polynomial Module QuotientSecurity QuotientSecurity.Hiding
@@ -73,8 +74,8 @@ theorem simV_deployed (rep : QuotientZk.Instance.Rep K E) (P₀ : Params E) (stm
 representations `rep`, the reduction's parameters `P₀`, the statement's words `stmtE stmt`, the
 extension's `Y`, the witness's polynomials `gK stmt w`, `van stmt w`, the honest tables
 `TW stmt w`, `TQ stmt w`, the public renderer `R` and the simulator's public functions `inK`, `sigmaAt`:
-`ZeroKnowledgeWith` for `zkSimulator` at `deployedPub rep` and `deployedSimV`, on `skelSetup`, at
-`zkBoundEnd Qp Qfmt εR`. -/
+`ZeroKnowledgeWith` for `zkSimulator` at `deployedPub rep` and `deployedSimV`, on `skelSetup`, the
+proof formatted by `fmt`, at `zkBoundEnd Qp fmtBudget εR`. -/
 theorem zeroKnowledge_deployed_end (rep : QuotientZk.Instance.Rep K E) (P₀ : Params E) (Y : E)
     (R : Renderer K E) (inK : E → Bool) (sigmaAt : E → E) (stmtE : Statement → Fin P₀.words → E)
     (gK : Statement → Secret → Fin 4 → K[X]) (van : Statement → Secret → K[X])
@@ -98,10 +99,8 @@ theorem zeroKnowledge_deployed_end (rep : QuotientZk.Instance.Rep K E) (P₀ : P
         valsQ P₀ (stmtE stmt) Y c (redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m))
     (stmtBytes : Statement → Vector UInt8 64) (idW idσ idQ : QuotientRpm.Bytes32)
     (rowsW : List (List UInt8)) (hrows : rowsW.length = 2 ^ 19)
-    (fmt : QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof))
     (coinsOf : Rand K ιW YW ιQ YQ → Masks × Padding × Padding)
-    (Qp Qfmt : ℕ) (εR : ℕ → ℝ≥0∞) (s₀ : RpmSimState)
-    (hfmt : ∀ pf, IsTotalQueryBound (fmt pf) Qfmt)
+    (Qp : ℕ) (εR : ℕ → ℝ≥0∞) (s₀ : RpmSimState)
     (hprover : ∀ stmt w, Relation stmt w → ∀ s,
       QueryCostAtMost (QuotientZk.DRpm.proverJ (deployedJointData rep P₀ (stmtE stmt) Y (gK stmt w)
           (van stmt w) (TW stmt w) (TQ stmt w) R inK sigmaAt).P keccak256OverPermutation
@@ -110,17 +109,17 @@ theorem zeroKnowledge_deployed_end (rep : QuotientZk.Instance.Rep K E) (P₀ : P
     (hcoins : CoinsMatch coinsOf)
     (hbridge : ∀ stmt w, Relation stmt w →
       ProverBridge stmt w (deployedJointData rep P₀ (stmtE stmt) Y (gK stmt w) (van stmt w)
-        (TW stmt w) (TQ stmt w) R inK sigmaAt).P (skelSetup (stmtBytes stmt) idW idσ idQ rowsW) fmt
-        coinsOf εR) :
+        (TW stmt w) (TQ stmt w) R inK sigmaAt).P (skelSetup (stmtBytes stmt) idW idσ idQ rowsW)
+        (fmt stmt) coinsOf εR) :
     ZeroKnowledgeWith s₀
       (zkSimulator (fun _ ↦ deployedPub rep)
         (fun stmt ↦ deployedSimV rep P₀ (stmtE stmt) Y R inK sigmaAt)
         (fun stmt ↦ skelSetup (stmtBytes stmt) idW idσ idQ rowsW) fmt)
-      rpmSimOracle (zkBoundEnd Qp Qfmt εR) :=
+      rpmSimOracle (zkBoundEnd Qp fmtBudget εR) :=
   zeroKnowledge_end (fun stmt w ↦ deployedJointData rep P₀ (stmtE stmt) Y (gK stmt w) (van stmt w)
       (TW stmt w) (TQ stmt w) R inK sigmaAt) (fun _ ↦ deployedPub rep)
     (fun stmt ↦ deployedSimV rep P₀ (stmtE stmt) Y R inK sigmaAt) stmtBytes idW idσ idQ rowsW hrows
-    fmt coinsOf Qp Qfmt εR s₀ hfmt
+    fmt coinsOf Qp fmtBudget εR s₀ fmt_queryBound
     (fun stmt w hw ↦ deployedJointData_valid rep P₀ (stmtE stmt) Y (gK stmt w) (van stmt w)
       (TW stmt w) (TQ stmt w) R inK sigmaAt h3 hq hK hY hE (hvan stmt w hw) (hsat stmt w hw)
       (hvan0 stmt w hw) hN (hdeg stmt w hw) hinK hsig (hTW stmt w hw) (hTQ stmt w hw))

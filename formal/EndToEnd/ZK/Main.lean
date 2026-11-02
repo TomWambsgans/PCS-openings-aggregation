@@ -109,10 +109,10 @@ theorem zeroKnowledge_end
     (pp : Statement → PubProto) (simV : Statement → List Out → ProbComp (View Msg Inp Tbl Pos))
     (stmtBytes : Statement → Vector UInt8 64) (idW idσ idQ : QuotientRpm.Bytes32)
     (rowsW : List (List UInt8)) (hrows : rowsW.length = 2 ^ 19)
-    (fmt : QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof))
+    (fmt : Statement → QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof))
     (coinsOf : Rand K ι₁ Y₁ ι₂ Y₂ → Masks × Padding × Padding)
     (Qp Qfmt : ℕ) (εR : ℕ → ℝ≥0∞) (s₀ : RpmSimState)
-    (hfmt : ∀ pf, IsTotalQueryBound (fmt pf) Qfmt)
+    (hfmt : ∀ stmt pf, IsTotalQueryBound (fmt stmt pf) Qfmt)
     (hvalid : ∀ stmt w, Relation stmt w → (J stmt w).Valid)
     (hpub : ∀ stmt w, Relation stmt w → PubProto.of (J stmt w).P = pp stmt)
     (hsimV : ∀ stmt w, Relation stmt w → (J stmt w).simV = simV stmt)
@@ -122,8 +122,8 @@ theorem zeroKnowledge_end
         (skelSetup (stmtBytes stmt) idW idσ idQ rowsW)) permutationCallCost Qp)
     (hcoins : CoinsMatch coinsOf)
     (hbridge : ∀ stmt w, Relation stmt w →
-      ProverBridge stmt w (J stmt w).P (skelSetup (stmtBytes stmt) idW idσ idQ rowsW) fmt coinsOf
-        εR) :
+      ProverBridge stmt w (J stmt w).P (skelSetup (stmtBytes stmt) idW idσ idQ rowsW) (fmt stmt)
+        coinsOf εR) :
     ZeroKnowledgeWith s₀
       (zkSimulator pp simV (fun stmt ↦ skelSetup (stmtBytes stmt) idW idσ idQ rowsW) fmt)
       rpmSimOracle (zkBoundEnd Qp Qfmt εR) := by
@@ -136,12 +136,12 @@ theorem zeroKnowledge_end
   have h := zeroKnowledgeWith_of_core (fun stmt w ↦ (J stmt w).P) pp simV
     (fun stmt ↦ skelSetup (stmtBytes stmt) idW idσ idQ rowsW) fmt s₀ εR
     (fun Q ↦ zkBound (2 ^ 24 + 2 ^ 70) Qp Qfmt ((2 : ℝ≥0∞) ^ 113)⁻¹ (fun _ ↦ 0) (fun _ ↦ 0) Q) hpub
-    (fun stmt w hw ↦ realBridge_of stmt w _ _ fmt coinsOf εR hcoins (hbridge stmt w hw))
+    (fun stmt w hw ↦ realBridge_of stmt w _ _ (fmt stmt) coinsOf εR hcoins (hbridge stmt w hw))
     (fun stmt w hw ↦ by
       rw [← hsimV stmt w hw]
-      exact coreClose_of_joint (J stmt w) (hvalid stmt w hw) _ fmt (2 ^ 24 + 2 ^ 70) Qp Qfmt
+      exact coreClose_of_joint (J stmt w) (hvalid stmt w hw) _ (fmt stmt) (2 ^ 24 + 2 ^ 70) Qp Qfmt
         ((2 : ℝ≥0∞) ^ 113)⁻¹
-        (skelSetup_queryBound (stmtBytes stmt) idW idσ idQ rowsW hrows) hfmt (hFS stmt w hw)
+        (skelSetup_queryBound (stmtBytes stmt) idW idσ idQ rowsW hrows) (hfmt stmt) (hFS stmt w hw)
         (duplexDiscipline_skelSetup _ (QuotientZk.DRpm.rowFn_ofBytes (J stmt w).Pb) _ _ _ _ _)
         (hprover stmt w hw))
   have he : (fun Q ↦ εR Q + zkBound (2 ^ 24 + 2 ^ 70) Qp Qfmt ((2 : ℝ≥0∞) ^ 113)⁻¹ (fun _ ↦ 0)

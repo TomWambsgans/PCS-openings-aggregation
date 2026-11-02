@@ -71,6 +71,10 @@ import ZK.End
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zeroKnowledge_end
 
+/-- info: 'PcsQuotient.EndToEnd.fmt_queryBound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.fmt_queryBound
+
 /-- info: 'PcsQuotient.EndToEnd.zeroKnowledge_deployed_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zeroKnowledge_deployed_end

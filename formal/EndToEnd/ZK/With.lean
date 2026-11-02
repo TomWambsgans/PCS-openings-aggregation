@@ -75,9 +75,9 @@ definition. -/
 def zkSimulator (pp : Statement → PubProto)
     (simV : Statement → List Out → ProbComp (View Msg Inp Tbl Pos))
     (skel : Statement → OracleComp DSpec QuotientZk.Deployed.Proof)
-    (fmt : QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof)) :
+    (fmt : Statement → QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof)) :
     Statement → StateT RpmSimState ProbComp (Option Proof) :=
-  fun stmt ↦ rpmSimulator (pp stmt).toProto (simV stmt) (skel stmt) fmt
+  fun stmt ↦ rpmSimulator (pp stmt).toProto (simV stmt) (skel stmt) (fmt stmt)
 
 theorem coinsUniform_rpmSimOracle : CoinsUniform rpmSimOracle := fun _ ↦ rfl
 
@@ -100,19 +100,20 @@ theorem zeroKnowledgeWith_of_core {S : Type} [SampleableType S]
     (P : Statement → Secret → Proto S Inp Out Msg Tbl Pos) (pp : Statement → PubProto)
     (simV : Statement → List Out → ProbComp (View Msg Inp Tbl Pos))
     (skel : Statement → OracleComp DSpec QuotientZk.Deployed.Proof)
-    (fmt : QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof)) (s₀ : RpmSimState)
-    (εR ε : ℕ → ℝ≥0∞)
+    (fmt : Statement → QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof))
+    (s₀ : RpmSimState) (εR ε : ℕ → ℝ≥0∞)
     (hpub : ∀ stmt w, Relation stmt w → PubProto.of (P stmt w) = pp stmt)
-    (hreal : ∀ stmt w, Relation stmt w → RealBridge stmt w (P stmt w) (skel stmt) fmt εR)
-    (hcore : ∀ stmt w, Relation stmt w → CoreClose (P stmt w) (simV stmt) (skel stmt) fmt ε) :
+    (hreal : ∀ stmt w, Relation stmt w → RealBridge stmt w (P stmt w) (skel stmt) (fmt stmt) εR)
+    (hcore : ∀ stmt w, Relation stmt w →
+      CoreClose (P stmt w) (simV stmt) (skel stmt) (fmt stmt) ε) :
     ZeroKnowledgeWith s₀ (zkSimulator pp simV skel fmt) rpmSimOracle fun Q ↦ εR Q + ε Q := by
   apply zeroKnowledgeWith_of_coinFree _ _ _ coinsUniform_rpmSimOracle
   intro stmt w hw D₀ Q hD₀
   have hI : idealExperimentWith s₀ (zkSimulator pp simV skel fmt) rpmSimOracle stmt
       (fun pf ↦ simulateQ liftPerm (D₀ pf)) =
-      QuotientZk.DRpm.simGameRpmD (P stmt w) (simV stmt) (skel stmt) fun pf ↦ fmt pf >>= D₀ := by
+      QuotientZk.DRpm.simGameRpmD (P stmt w) (simV stmt) (skel stmt) fun pf ↦ fmt stmt pf >>= D₀ := by
     rw [simGameRpmD_pub, hpub stmt w hw]
-    exact rpmIdeal_eq (pp stmt).toProto (simV stmt) (skel stmt) fmt s₀ D₀
+    exact rpmIdeal_eq (pp stmt).toProto (simV stmt) (skel stmt) (fmt stmt) s₀ D₀
   rw [hI]
   exact (hreal stmt w hw D₀ Q hD₀).trans (hcore stmt w hw D₀ Q hD₀)
 
