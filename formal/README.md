@@ -5,8 +5,9 @@ builds and `crates/evm` verifies, in Lean 4. **The statement** is [`Statement/`]
 package of definitions and end statements only, on leanerVM `mumbai`'s `Statement/`: the relation, the proof
 format, the verifier (computable, differential-tested against the Rust), the honest prover, the extractor and
 the simulator, and `KnowledgeSoundness`, `Completeness`, `ZeroKnowledge(With)` in the random-permutation model.
-The extractor and the simulator are explicit, computable definitions in the statements, so that a reviewer can
-check what they read and that they are efficient. Lean has no running-time theorem; the convention is
+The extractor is an explicit, computable definition in the statements, so that a reviewer can check what it
+reads and that it is efficient; the simulator the zero-knowledge theorem covers is named in its statement: an
+explicit simulator; its computable form is in progress. Lean has no running-time theorem; the convention is
 leanerVM's: a fixed straight-line extractor, its cost read off its loops. Here the extractor reads the
 statement, the proof, the adversary's transcript and the public setup tree (the circuit commitment's Merkle
 tree). **The proofs** of the statements are in [`EndToEnd/`](#end-to-end-theorems), from the layers F0–F5 below.
@@ -54,8 +55,12 @@ Statement's own definitions. Every theorem below is sorry-free and depends only 
   (· ↦ deltaNone))` (`EndToEnd/ZK/CoreMain.lean`, library `ZK`). For every statement and secret of the relation and
   every distinguisher of at most `Q` calls of π and π⁻¹ fixed after them, its verdicts on the honest proof and on
   the simulator's proof (the permutation programmable) differ in probability by at most `ζ Q ≈ 2^-113` for
-  `Q ≤ 2^126`. The simulator is explicit and named in the statement (`zkSimulator`, `rpmSimOracle`); it reads no
-  witness; its full computability is in progress (its tables are computed, `QuotientZk/Instance/Builder.lean`).
+  `Q ≤ 2^126`. The simulator is named in the statement (`zkSimulator`, `rpmSimOracle`) and reads no witness: an
+  explicit simulator; its computable form is in progress (its tables are computed,
+  `QuotientZk/Instance/Builder.lean`). **Scope: single-proof zero knowledge.** `realExperiment` starts from an
+  empty permutation, the prover goes first, and the distinguisher queries `π`, `π⁻¹` only after the proof; not
+  covered are oracle queries before the proof (precomputation, auxiliary input depending on `π`) and several
+  proofs under one `π` (a pre-proof phase is planned).
   The largest term of `ζ` is Fiat–Shamir freshness, `2^-113` (`6 Q'(c + Q')/2^256 ≈ 2^-113.4` for the honest
   prover's `Q' = 2^24 + 2^70` oracle operations, worst-case grinding counted, and `c = 2^19` public rows); the
   others are `epsHV = 2^-165 + 2^-125 + 2/2^192` (bad challenges, degenerate scales and masks), `deltaNone <
@@ -107,8 +112,9 @@ Statement's own definitions. Every theorem below is sorry-free and depends only 
   opening; the index root in the contract's storage (the theorems hold for whatever root is stored; a fixed owner
   may change it). The Rust prover is not trusted for soundness. Completeness and zero knowledge are about the
   Statement's prover; the deployed Rust prover is trusted for completeness (the tests above are its only link).
-- **Not covered**: simulation-extractability; the Statement's own heuristic `simulator` (`ZeroKnowledge ζ`);
-  `StatementBinds` (immediate, not proved in Lean).
+- **Not covered**: simulation-extractability; zero knowledge against a distinguisher that queries `π` before
+  the proof, or for several proofs under one `π` (the theorem is single-proof); the Statement's own heuristic
+  `simulator` (`ZeroKnowledge ζ`); `StatementBinds` (immediate, not proved in Lean).
 
 **Building.** As [`WhirBridge/`](WhirBridge/README.md#building), against a built leanerVM `6175f1a0` at
 `formal/leanervm` (on h1 a link to `/root/pcs-quotient-fv/leanervm`):
@@ -172,9 +178,10 @@ pinned in `lakefile.toml`) lifts the reduction's knowledge soundness from an abs
 `QuotientZk/` (library `QuotientZk`, sorry-free, `propext`, `Classical.choice`, `Quot.sound`) proves
 statistical zero knowledge of the proof the Rust prover outputs (calldata and the three openings: roots,
 multiproofs and opened rows, the stream, grinding nonces) in the random-oracle model, with the simulator an
-explicit computable definition in the statement. The prover's randomness is uniform (the deployed masks and
-padding come from ChaCha12 keyed by a Keccak KDF of a 32-byte OS seed: the deployed statement is computational
-in that PRG).
+explicit definition in the statement (`sim` is compiled for any compiled view simulator, `Check.lean` runs it;
+the deployed simulator's computable form is in progress). The prover's randomness is uniform (the deployed
+masks and padding come from ChaCha12 keyed by a Keccak KDF of a 32-byte OS seed: the deployed statement is
+computational in that PRG).
 
 - **The model** (`Rom/Defs.lean`): the prover is a public *skeleton* of four operations, a random-oracle query
   (`pub`), a Fiat–Shamir query (`chal`, its answer the next challenge), the next message (`msg`) and the digest of
@@ -219,16 +226,23 @@ in that PRG).
   through the root, fresh because the first leaf is (`|c₀| δ₀`); each later chain input through the previous
   state; each opening's seed through the claims' window (the IV hashes public data, so its freshness is the
   claims' challenge: the inherent `|c₀| · 2^-191`); every draw through the duplex's fresh capacity, grinding
-  included (tries differ in the nonce lane; an exhausted grind leaves a fresh draw input). **`zk_deployed_fs`**,
-  **`zk_deployed_fs_bits`**: `2^-54 + εhv + 2^-2200`; with the joint model **`zk_deployed_joint_fs`**:
-  `2^-54 + 2^-165 + 2^-2200`, and in the random-permutation model **`zk_rpm_deployed_joint_fs`**,
-  **`zk_rpm_deployed_joint_fs'`** (`QuotientZk/FreshJoint.lean`; the latter also without `hrow`, `hduplex`):
-  `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`.
+  included (tries differ in the nonce lane; an exhausted grind leaves a fresh draw input). The inherent
+  `|c₀| · 2^-191` is identically `0` in the end theorem: `c₀ = []` there (`fsFresh_setup_deployed_bits`, from an
+  empty cache before the proof; `epsFS`'s first argument holds only the setup's `2^19` public rows); a pre-proof
+  phase for the distinguisher is planned, which will make it nonzero. **`zk_deployed_fs`**,
+  **`zk_deployed_fs_bits`**: `2^-54 + εhv + 2^-2200`; with the joint model `zk_deployed_joint_fs`:
+  `2^-54 + 2^-165 + 2^-2200`, and in the random-permutation model `zk_rpm_deployed_joint_fs`,
+  `zk_rpm_deployed_joint_fs'` (`QuotientZk/FreshJoint.lean`; the latter also without `hrow`, `hduplex`):
+  `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`. **These three joint-model theorems are superseded** (as are
+  `zk_deployed_joint`, `jointHVZK_of_link`, `joint_hzk`, `zk_rpm_deployed_joint(')`): they ask the honest
+  tables' claims (`hT₁`, `hT₂`) at every mask with no `ClaimsND`, which the honest tables do not meet at
+  degenerate challenges and masks; the deployed result goes through `jointHVZKε_of_linkV` (below).
 - **The joint model instantiated** (`QuotientZk/Instance/`). The deployed quotient claim's point reads the
   five values (`vCells(t)/claimDen(α, β, t, a, s)`), so `Joint.lean`'s openings (weights from the challenges
   alone) cannot carry it: `JointV.lean` is the same chain over `ChV = Chal × Vals` (`modelV`, `jointSimV`,
-  `LinkV`, **`zk_rpm_deployed_jointV_fs'`**, same bound). For the deployed prover: the schedule (`394` steps:
-  `5 + 123 + 114 + 152` draws, `openDraws`) and the challenges of the oracle's answers (`chOf`, an
+  `LinkV`, `factors_singleV`, `factors_pairV`; its `joint_hzkV`, `jointHVZK_of_linkV`,
+  `zk_rpm_deployed_jointV_fs'`, same bound, are superseded, as above). For the deployed prover: the schedule
+  (`394` steps: `5 + 123 + 114 + 152` draws, `openDraws`) and the challenges of the oracle's answers (`chOf`, an
   equivalence with what no challenge reads, so **`hch`** `chOf_uniform`; causality `chOf_take_*`,
   `Challenges.lean`); the two openings at `2^22` rows (`openW`, `openQ`: `witness_layout(22)`,
   `quotient_layout(22)` with the gadget `1, Y, Y²`, the verifier's claims `modelWitness`, `modelQuotient`,
@@ -239,12 +253,24 @@ in that PRG).
   from the novel basis's degrees, `Prover.lean`); **`FSFresh`'s conditions** (`Fresh.lean`: `hcw` at `2^-191`,
   `hrow₀` at `2^-2368`, the three `ClaimsAt`, long rows, `hcK`, `hn`); the simulator's tables `simTW`, `simTQ`
   built by a computable Gaussian elimination (`Instance/Builder.lean`: the claimed values met whenever some
-  table meets them, `claims_simTW`, `claims_simTQ`; the scan stops at full rank, at most every entry). **`zk_rpm_deployed_instance`** (`Instance/Main.lean`) and, for the end
-  statement, `deployedJointData`, `deployedJointData_valid` (`EndToEnd/ZK/Joint.lean`): their hypotheses are the
-  field, F1's, and **the honest tables meeting the verifier's claims** (`hTW`, `hTQ`), all discharged for the
-  deployed instance in `EndToEnd/ZK/Final.lean` (`hTWD`, `hTQD`, from `Completeness/`'s tables); every renderer
+  table meets them, `claims_simTW`, `claims_simTQ`; the scan stops at full rank, at most every entry).
+  `zk_rpm_deployed_instance` (`Instance/Main.lean`) assembles these with `zk_rpm_deployed_jointV_fs'`, and is
+  **superseded**: its `hTW`, `hTQ` ask the honest tables' claims at every mask, which they do not meet (where
+  `claimScale 2 23 t = 0` the verifier's witness value `valsW` is `0`, `EndToEnd/Review/E2EZkNondeg.lean`). For the
+  end statement, `deployedJointData`, `deployedJointData_valid` (`EndToEnd/ZK/Joint.lean`) take the same pieces
+  with `hTW`, `hTQ` under `ClaimsND` only: their hypotheses are the field, F1's, and **the honest tables meeting the
+  verifier's claims off the degenerate challenges and masks**, all discharged for the deployed instance in
+  `EndToEnd/ZK/Final.lean` (`hTWD`, `hTQD`, `ZK/FactsClaims.lean`, from `Completeness/`'s tables); every renderer
   `R` (WHIR's honest prover is one) and every pair of such tables is covered. The simulator's tables are computed
   (`Test/Builder.lean` runs the builder on `F192`).
+- **The degenerate challenges and masks** (`QuotientZk/Instance/Nondeg.lean`), the chain the end theorem uses:
+  the honest tables meet the verifier's claims only under `ClaimsND` (the claims' scales `1 + w_k(t)`, `k < 26`,
+  nonzero, the row `t^4 + t` outside `K`, the copy denominator `claimDen · vRows(t)` nonzero at the masks' five
+  values); **`joint_hzkV_nd`**, **`jointHVZKε_of_linkV`**: `joint_hzkV` and `jointHVZK_of_linkV` with `hT₁`,
+  `hT₂` required only there, at `goodT` challenges (`prob_not_goodT_bits`: `2^-165 + 2^-125`), the masks
+  failing `ClaimsND` with probability at most `2/|E|` (`prob_not_claimsND_le`), the views then within it
+  (`view_vclose`); with `QuotientZk.DRpm.zk_rpm_skel_approx` (`RpmDeployed.lean`, from `zk_rom_approx`):
+  `epsHV = 2^-165 + 2^-125 + 2/2^192` in the end theorem.
 - **What stays a hypothesis here**: the honest tables' claims and F1's facts on the witness (discharged end to
   end, above); that `skel` and `Pb` are the Rust prover (transcribed; `skel` equal by test, not by proof: see the
   next item; the Statement's prover against the skeleton is `ProverBridge`, "Zero knowledge end to end"). The
@@ -276,12 +302,19 @@ simOracle ζ` (`Statement/PcsQuotient/Security.lean`); `ZeroKnowledge ζ` is tha
 library `ZK`; `propext`, `Classical.choice`, `Quot.sound`, guarded in `ZK/Axioms.lean`) proves
 `ZeroKnowledgeWith s₀ (zkSimulator pp simV skelOf fmt) rpmSimOracle ζ` under named hypotheses: the simulator
 the theorem covers is in its statement. The hypotheses are discharged step by step below;
-**`zeroKnowledge_closed`** (`ZK/CoreMain.lean`) has none.
+**`zeroKnowledge_closed`** (`ZK/CoreMain.lean`) has none. **Scope**: single-proof zero knowledge.
+`realExperiment` runs the prover first in an empty, lazily sampled `π`, and the distinguisher queries `π` and
+`π⁻¹` only after it has the proof; a distinguisher's queries before the proof (precomputation, auxiliary input
+depending on `π`) and several proofs under one `π` are not covered. So the Fiat–Shamir freshness bound is taken
+with an empty cache before the proof (`c₀ = []`, `fsFresh_setup_deployed_bits`), and `FSFresh`'s inherent
+`|c₀| · 2^-191` term is `0` here; a pre-proof phase is planned, which will make it nonzero.
 
-**The simulator** (`zkSimulator`, `ZK/With.lean`; `rpmSimulator`, `rpmSimOracle`, `ZK/Simulator.lean`; compiled
-definitions). It reads the statement and public data, never the witness: `pp stmt`, the skeleton model's public
-part (the number `n` of Fiat–Shamir challenges, when each secret table is committed, which positions are opened:
-functions of the challenges), `simV stmt`, the joint honest-verifier simulator (`jointSim`: the four values
+**The simulator** (`zkSimulator`, `ZK/With.lean`; `rpmSimulator`, `rpmSimOracle`, `ZK/Simulator.lean`; an
+explicit simulator; its computable form is in progress: the generic definitions are compiled, the deployed
+view simulator `deployedSimV` and wiring value `sigmaAtD` are still `noncomputable`). It reads the statement
+and public data, never the witness: `pp stmt`, the skeleton model's public part (the number `n` of
+Fiat–Shamir challenges, when each secret table is committed, which positions are opened: functions of the
+challenges), `simV stmt`, the joint honest-verifier simulator (`jointSim`: the four values
 uniform in `K` or `E` and the wiring value `σ(t)`, the two secret tables built from them with the verifier's
 claims, opened by the honest WHIR algorithm with fresh paddings, the wiring table's opening), and the skeleton
 `skelOf stmt` (`skelSetup`: the circuit's commitment, then `Deployed.skel`). Its state is the indifferentiability
@@ -323,12 +356,12 @@ most `2/|E|` (`claimDen` a monic quadratic in a value uniform in `E`, F1); the h
 `2/|E|` of the simulator's (`view_vclose`, `VClose`; `zk_rom_approx`, `zk_rpm_skel_approx`). Proved: the
 distinguisher's coins removed (`ZK/Coins.lean`, a tape drawn first), the ideal experiment of `zkSimulator`
 equal to `QuotientZk`'s simulated game (`rpmIdeal_eq`), `QuotientZk`'s closeness from the joint model
-(`coreClose_of_joint`: `zk_rpm_skel`, `jointHVZK_of_link`, `factors_single`, `factors_pair`), `skelSetup`'s
-operations, duplex discipline and Fiat–Shamir freshness (`fsFresh_setup_deployed_bits`, `2^-113`), the real
-experiment's coins drawn outside the model (`realExperiment_coins`), `fmt`'s budget (`fmt_queryBound`), the
-Statement's coins `decodeCoins` of uniform words (`sampleCoinsP_eq`, `coinsMatch_of_bijective`), the joint model
-of the deployed prover (`deployedJointData_valid`; its public part and view simulator the simulator's by
-definition, `pub_deployed`, `simV_deployed`).
+(`coreClose_of_joint`: `zk_rpm_skel_approx`, `jointHVZKε_of_linkV`, `factors_singleV`, `factors_pairV`),
+`skelSetup`'s operations, duplex discipline and Fiat–Shamir freshness (`fsFresh_setup_deployed_bits`,
+`2^-113`), the real experiment's coins drawn outside the model (`realExperiment_coins`), `fmt`'s budget
+(`fmt_queryBound`), the Statement's coins `decodeCoins` of uniform words (`sampleCoinsP_eq`,
+`coinsMatch_of_bijective`), the joint model of the deployed prover (`deployedJointData_valid`; its public part
+and view simulator the simulator's by definition, `pub_deployed`, `simV_deployed`).
 **Named**: the field and F1's facts on the statement and the witness, the simulator's public functions, the
 honest tables' claims off the degenerate challenges and masks (`deployedJointData_valid`'s hypotheses); the
 prover's permutation budget `Qp`; a bijection `e` of the skeleton model's randomness onto the Statement's coins'

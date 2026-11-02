@@ -22,8 +22,10 @@ import ZK.End
     skeleton model's randomness;
 * **`zeroKnowledge_deployed_whir`**: `zeroKnowledge_end` (`ZK/Main.lean`) with that joint model, the
   renderer per statement (the simulator knows the statement), and the bridge from `CoreWhir` and
-  `hnone`: `ZeroKnowledgeWith` at `zkBoundEnd Qp fmtBudget (fun _ ↦ δ)`, that is
-  `δ + 2^-113 + 2^-165 + 2^-2200 + (Qp + 2^23 + Q)² / 2^508` for `Q ≤ 2^126`.
+  `hnone`: `ZeroKnowledgeWith` at `zkBoundEnd Qp fmtBudget (fun _ ↦ δ)`, that is at most
+  `δ + 2^-113 + epsHV + 2^-2200 + (Qp + 2^23 + Q)² / 2^508` for `Q ≤ 2^126` (`zkBoundEnd_le`),
+  `epsHV = 2^-165 + 2^-125 + 2/2^192` (the joint model's bad challenges, `goodT`, and degenerate
+  masks, `ClaimsND`).
 
 What `CoreWhir` contains (the skeleton trace test's list of differences, `formal/README.md`, made a
 statement about programs; the random permutation, the repeated queries, the queries' order and the

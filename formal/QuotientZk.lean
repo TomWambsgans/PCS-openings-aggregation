@@ -61,6 +61,14 @@ import QuotientZk.Instance.Nondeg
   the deployed prover follows the duplex discipline for every shape (`duplexDiscipline_skel`), and
   its rows are byte strings (`ofBytes`); **`zk_rpm_deployed_bits'`**, **`zk_rpm_deployed_joint'`**
   are the statements without `hrow` and `hduplex`.
+* `Joint*`, `FreshJoint.lean`, `Instance/`: the joint honest-verifier model (the reduction's masks with
+  the two hidden openings) and its instance for the deployed prover. The theorems that ask the honest
+  tables' claims at every mask (`joint_hzk`, `jointHVZK_of_link`, `zk_deployed_joint(_fs)`,
+  `zk_rpm_deployed_joint(_fs)(')`, `joint_hzkV`, `jointHVZK_of_linkV`, `zk_rpm_deployed_jointV_fs'`,
+  `zk_rpm_deployed_instance`) are **superseded**: the honest tables do not meet those hypotheses at
+  degenerate challenges and masks. The chain the end theorem (`PcsQuotient.EndToEnd.zeroKnowledge_closed`)
+  uses is `Instance/Nondeg.lean`'s `jointHVZKε_of_linkV` (the claims under `ClaimsND` only) with
+  `zk_rpm_skel_approx` (`RpmDeployed.lean`).
 -/
 
 /-- info: 'QuotientZk.zk_rom' depends on axioms: [propext, Classical.choice, Quot.sound] -/

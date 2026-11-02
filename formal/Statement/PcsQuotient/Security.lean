@@ -35,7 +35,8 @@ deployed Keccak-f[1600], independent of `π`.
   is the same for any simulator (`sim`, its oracle `simOracle`, its state from `s₀`):
   `ZeroKnowledge ζ` is it at this package's `simulator`, a tested heuristic; the end theorem
   (`formal/EndToEnd/ZK`) proves `ZeroKnowledgeWith` for `formal/QuotientZk`'s simulator in this shape
-  (`README.md`, "The simulator").
+  (`README.md`, "The simulator"). One proof, from an empty `π`, the distinguisher's queries after it: no
+  query before the proof, no second proof under the same `π` (`ZeroKnowledgeWith`).
 
 **The bounds are parameters** (`ε`, `δ`, `ζ`). A bound is part of what is proved: `KnowledgeSoundness ε`
 for `ε = 1` says nothing. The end theorems (`formal/EndToEnd`) fix them: `KnowledgeSoundness
@@ -249,7 +250,13 @@ def idealExperiment (stmt : Statement) (D : Distinguisher) : ProbComp Bool :=
 `sim` with its oracle `simOracle` (from the state `s₀`), with the error `ζ Q` for a distinguisher of at
 most `Q` calls of `π` and `π⁻¹` (its coins free): its verdicts in the real experiment and in the ideal
 experiment of `sim` differ in probability by at most `ζ Q`. The simulator is a parameter so that the end
-theorem can name the simulator it proves (`README.md`, "The simulator"). -/
+theorem can name the simulator it proves (`README.md`, "The simulator").
+
+**Scope: one proof, the distinguisher after it.** `realExperiment` starts from an empty, lazily sampled
+`π`; the prover goes first and makes every query before the distinguisher's; the distinguisher, quantified
+after the statement and the witness, queries `π` and `π⁻¹` only after it is given the proof (`Distinguisher`
+is a function of the proof). Not covered: oracle queries before the proof (a distinguisher's precomputation,
+or auxiliary input that depends on `π`), and several proofs under one `π`. -/
 def ZeroKnowledgeWith {S : Type} (s₀ : S) (sim : Statement → StateT S ProbComp (Option Proof))
     (simOracle : QueryImpl RandomPermutationOracles (StateT S ProbComp)) (ζ : ℕ → ℝ≥0∞) : Prop :=
   ∀ (stmt : Statement) (w : Secret), Relation stmt w →

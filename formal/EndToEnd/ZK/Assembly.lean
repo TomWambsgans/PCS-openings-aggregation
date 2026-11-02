@@ -30,8 +30,10 @@ deployed shape, `2^22` rows), where both are proved (`fsFresh_deployed` from no 
   prover `Pb` of `QuotientZk`'s skeleton model (its rows byte strings, `ofBytes`), the reduction's
   parameters, the two secret openings `S₁`, `S₂` (`SecretOpening` over `ChV`: the challenges and the
   five values), the honest and simulated tables and their claims, the `LinkV` between the prover and
-  the joint model, and `fsFresh_deployed`'s conditions on the prover — exactly
-  `QuotientZk.Instance.zk_rpm_deployed_jointV_fs'`'s hypotheses, which the joint-model instance
+  the joint model, and `fsFresh_deployed`'s conditions on the prover — the hypotheses of
+  `QuotientZk.Instance.zk_rpm_deployed_jointV_fs'` but with the honest tables' claims (`hT₁`, `hT₂`)
+  asked only under `ClaimsND`, as `jointHVZKε_of_linkV` takes them (that theorem asks them at every
+  mask, which the honest tables do not meet: it is superseded), which the joint-model instance
   provides for the deployed prover (`ZK/Joint.lean`: `deployedJointData`, `deployedJointData_valid`);
 * the prover's **permutation budget** (`hprover`: at most `Qp` calls of `π` in the real game's proof);
 * **the two bridges** between the statement's experiments and `QuotientZk`'s games, for every

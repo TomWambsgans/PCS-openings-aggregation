@@ -15,6 +15,10 @@ challenge through windows of min-entropy `2^-191`, `242 ≤ P.n`):
 * **`zk_rpm_deployed_joint_fs`**: `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508` (random-permutation
   model, an empty cache before the proof); **`zk_rpm_deployed_joint_fs'`**: the same with
   `RpmDiscipline.lean`'s `hrow` and `hduplex` discharged too (a prover `ofBytes Pb`).
+
+**Superseded**: the three ask the honest tables' claims (`hT₁`, `hT₂`) at every mask, which the
+honest tables do not meet at degenerate challenges and masks; the deployed result is
+`zeroKnowledge_closed` through `jointHVZKε_of_linkV` (`Instance/Nondeg.lean`).
 -/
 
 open OracleComp OracleSpec Polynomial Module QuotientSecurity QuotientSecurity.Hiding Common
@@ -33,7 +37,12 @@ variable {K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂ : Type
   [SampleableType (ι₁ → Y₁ → K)] [SampleableType (ι₂ → Y₂ → K)]
   [SampleableType Γ₁] [Fintype Γ₁] [SampleableType Γ₂] [Fintype Γ₂] [SampleableType Γw]
 
-/-- **Zero knowledge of the deployed proof with the joint model, `FSFresh` discharged**: for the
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`). (`hT₁`, `hT₂` ask the honest tables' claims at every mask, with no
+`ClaimsND`.)
+
+**Zero knowledge of the deployed proof with the joint model, `FSFresh` discharged**: for the
 deployed skeleton and a prover that is the joint model and meets `fsFresh_deployed`'s conditions,
 every distinguisher of at most `QD` queries (`|c₀| + QD ≤ 2^127`) has advantage at most
 `2^-54 + 2^-165 + 2^-2200`. -/
@@ -103,7 +112,12 @@ variable {K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂ : Type
   [SampleableType (ι₁ → Y₁ → K)] [SampleableType (ι₂ → Y₂ → K)]
   [SampleableType Γ₁] [Fintype Γ₁] [SampleableType Γ₂] [Fintype Γ₂] [SampleableType Γw]
 
-/-- **Zero knowledge of the deployed proof in the random-permutation model, with the joint model,
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`). (`hT₁`, `hT₂` ask the honest tables' claims at every mask, with no
+`ClaimsND`.)
+
+**Zero knowledge of the deployed proof in the random-permutation model, with the joint model,
 `FSFresh` discharged** (`fsFresh_deployed_bits` with an empty cache before the proof): advantage at
 most `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`. -/
 theorem zk_rpm_deployed_joint_fs (stmtD : Deployed.Statement) (idW idσ idQ : QuotientRpm.Bytes32)
@@ -158,7 +172,12 @@ theorem zk_rpm_deployed_joint_fs (stmtD : Deployed.Statement) (idW idσ idQ : Qu
     hS₁ hS₂ T₁ T₂ cl₁ cl₂ hT₁ hT₂ simT₁ simT₂ hsimT₁ hsimT₂ lk hch
     (fun s h k x => by obtain ⟨b, hb, -⟩ := hrowL s h k x; exact ⟨b, hb⟩) hduplex D hD hQ
 
-/-- **`zk_rpm_deployed_joint'` with `FSFresh` discharged** (`RpmDiscipline.lean`: no `hrow`, no
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`). (`hT₁`, `hT₂` ask the honest tables' claims at every mask, with no
+`ClaimsND`.)
+
+**`zk_rpm_deployed_joint'` with `FSFresh` discharged** (`RpmDiscipline.lean`: no `hrow`, no
 `hduplex`): for a prover whose leaf rows are byte strings longer than 192 bytes (`ofBytes Pb`) and
 that meets `fsFresh_deployed_bits`'s other conditions and is the joint model, advantage at most
 `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`. -/

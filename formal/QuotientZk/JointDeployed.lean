@@ -31,6 +31,12 @@ masks, and this table's level-0 view, and the row keeps `L - 3` elements of `K` 
 
 **`zk_deployed_joint`**: `zk_deployed_bits` with both discharged: the real and simulated games are
 within `εFS + 2^-165 + 2^-2200`, given `FSFresh` and the joint model's named hypotheses.
+
+**Superseded**: `jointHVZK_of_link` and `zk_deployed_joint` ask the honest tables' claims (`hT₁`,
+`hT₂`) at every mask, which the honest tables do not meet at degenerate challenges and masks; the
+deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV` (`Instance/Nondeg.lean`).
+`factors_single`, `factors_pair` have their counterparts `factors_singleV`, `factors_pairV`
+(`Instance/JointV.lean`), which that chain uses.
 -/
 
 open OracleComp OracleSpec Polynomial Module QuotientSecurity QuotientSecurity.Hiding
@@ -338,7 +344,12 @@ variable {K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂ : Type
   [SampleableType (ι₁ → Y₁ → K)] [SampleableType (ι₂ → Y₂ → K)]
   [SampleableType Γ₁] [Fintype Γ₁] [SampleableType Γ₂] [Fintype Γ₂] [SampleableType Γw]
 
-/-- **`zk_deployed`'s `JointHVZK`** for a prover that is the joint model, at our sizes:
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`). (`hT₁`, `hT₂` ask the honest tables' claims at every mask, with no
+`ClaimsND`.)
+
+**`zk_deployed`'s `JointHVZK`** for a prover that is the joint model, at our sizes:
 `εhv = 2^-165`, the simulator `out σ <$> jointSim … (chOf σ)`. -/
 theorem jointHVZK_of_link {I Ob Mm Xt : Type} [DecidableEq I] [Inhabited I] [SampleableType Ob]
     [Inhabited Ob] [DecidableEq Xt] (P : Proto (Rand K ι₁ Y₁ ι₂ Y₂) I Ob Mm (Fin 2) Xt)
@@ -375,7 +386,12 @@ theorem jointHVZK_of_link {I Ob Mm Xt : Type} [DecidableEq I] [Inhabited I] [Sam
     hgood_of_uniform P.n lk.chOf hch (good P₀ gK van) _
       (joint_hgood_bits P₀ gK van hvan0 hq hK hN hdeg)⟩
 
-/-- **Zero knowledge of the deployed proof, with the joint model**: `zk_deployed_bits` with
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`). (`hT₁`, `hT₂` ask the honest tables' claims at every mask, with no
+`ClaimsND`.)
+
+**Zero knowledge of the deployed proof, with the joint model**: `zk_deployed_bits` with
 `JointHVZK` (`jointHVZK_of_link`) and `Factors` (`factors_single`, `factors_pair`) discharged. For
 the deployed skeleton and a prover that is the joint model, every distinguisher of at most `QD`
 queries (with `|c₀| + QD ≤ 2^127`) tells the real game from the simulated one with advantage at most

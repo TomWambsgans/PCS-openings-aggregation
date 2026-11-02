@@ -50,6 +50,12 @@ Condition (S) and condition (R) are **not** hypotheses: they hold at every good 
 
 `JointDeployed.lean` carries this to `zk_deployed`: `JointHVZK` and `Factors` for a prover that is
 the joint model, and `zk_deployed_joint`.
+
+**Superseded**: `hT₁`, `hT₂` ask the honest tables' claims at every mask of every good challenge,
+which the honest tables do not meet at degenerate challenges and masks (`Instance/Nondeg.lean`'s
+header), so `joint_hzk` and the theorems built on it are not the deployed result. That is
+`PcsQuotient.EndToEnd.zeroKnowledge_closed` through `jointHVZKε_of_linkV` (`Instance/Nondeg.lean`:
+the claims under `ClaimsND` only, the openings reading the five values as `Instance/JointV.lean`'s).
 -/
 
 open OracleComp Polynomial Module QuotientSecurity QuotientSecurity.Hiding
@@ -186,7 +192,13 @@ def good (P : Params E) (gK : Fin 4 → K[X]) (van : K[X]) (c : Chal E Γ₁ Γ�
 variable [Fintype K] [DecidableEq K] [FiniteDimensional K E] [SampleableType K] [SampleableType E]
   [SampleableType (ι₁ → Y₁ → K)] [SampleableType (ι₂ → Y₂ → K)]
 
-/-- **Joint honest-verifier zero knowledge** (`zk_rom`'s `hzk`): at every good challenge, the whole
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`). (`hT₁`, `hT₂` ask the honest tables' claims at every mask, with no
+`ClaimsND`; where `claimScale 2 23 t = 0` the verifier's witness value is `0`,
+`EndToEnd/Review/E2EZkNondeg.lean`.)
+
+**Joint honest-verifier zero knowledge** (`zk_rom`'s `hzk`): at every good challenge, the whole
 honest view — the five field elements, the wiring opening, the two secret openings — under uniform
 masks and paddings has the distribution of `jointSim`. -/
 theorem joint_hzk (h3 : finrank K E = 3) (P : Params E) (hE : P.Exact) (stmt : Fin P.words → E)

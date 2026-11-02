@@ -8,7 +8,10 @@ import QuotientZk.Deployed.Bound
 `zk_rom` for the deployed prover: the skeleton `skel sh` of `Skeleton.lean` (the reduction's
 Keccak-256 chain, leanVM's Merkle trees, the three openings' duplex with grinding), the oracle
 `G = (Keccak-256, Keccak-f[1600])` of `Skeleton.lean`, and a prover `P` (its messages and its
-secret tables' rows). Three hypotheses remain, each named:
+secret tables' rows). Three hypotheses remain here, each named (for the deployed prover, the
+end theorem `zeroKnowledge_closed` discharges them: `JointHVZK` in its approximate form by
+`Instance/Nondeg.lean`'s `jointHVZKε_of_linkV`, `FSFresh` below, `Factors` by `Instance/JointV.lean`'s
+`factors_singleV`, `factors_pairV`):
 
 * **`JointHVZK P simV good εhv`**: the honest-verifier zero knowledge of the whole interactive
   protocol (the reduction's masks, F1; each secret table's hidden layout, F3 with the gadget's
@@ -16,7 +19,9 @@ secret tables' rows). Three hypotheses remain, each named:
   bad challenges have probability at most `εhv`;
 * **`FSFresh P (skel sh) c₀ εFS`**: the honest prover's Fiat–Shamir queries find their inputs
   unanswered but with probability `εFS` (every Fiat–Shamir input holds the previous answer or a
-  fresh root: a collision bound, not proved here);
+  fresh root: a collision bound, a hypothesis of this file, proved for the deployed skeleton in
+  `Deployed/Fresh.lean`: `fsFresh_deployed`, `fsFresh_deployed_bits`; with the setup and an empty
+  cache before the proof, `Deployed/Fresh/Setup.lean`'s `fsFresh_setup_deployed_bits`, `2^-113`);
 * **`Factors`**, for every challenge vector and unopened leaf (and pair of leaves): the joint view
   is a function of the rest of the randomness and of the leaf's table's F3 view, the table's
   padding being independent (the deployed prover's structure). With it the entropy hypotheses of
