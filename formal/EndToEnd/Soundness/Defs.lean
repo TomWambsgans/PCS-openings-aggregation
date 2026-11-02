@@ -12,7 +12,7 @@ an abstract field `F`, parameters `P`, a `Wire` and a `Deploy`; the Statement
 (`formal/Statement`, `PcsQuotient`) about the deployed membership proof. Here the first is
 instantiated at the second:
 
-* the field is mumbai's `E` (`F192`), F1's instance `rustInstance c h deployedSigma` (the Cantor
+* the field is mumbai's `E` (`F192`), F1's instance `inst c h` (`Hypotheses.lean`: the Cantor
   basis of `beta()`'s words, `coordinate_weight`'s weights, the deployed wiring), the openings
   `deployD c 22` (`reduce`'s claims, `Compose/Claims.lean`);
 * **the wire** `deployedWire c h`: the statement's 64 bytes read as their halves then `1, 0, 0, 0`
