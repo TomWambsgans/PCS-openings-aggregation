@@ -135,7 +135,7 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
             tag_of.resize(code.len(), tag);
         };
         // A check: jump to the revert if the top of the stack is nonzero, or, measuring, to the next instruction.
-        let check = |code: &mut Vec<u8>, tag_of: &mut Vec<Tag>, tag: Tag| {
+        let check_at = |code: &mut Vec<u8>, tag_of: &mut Vec<Tag>, tag: Tag| {
             if options.measure {
                 let next = code.len() + w + 2;
                 code.extend([&push_fixed(next, w)[..], &[JUMPI]].concat());
@@ -203,9 +203,9 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                         &[XOR, OR],
                     ];
                     put(&mut code, &mut tag_of, &call.concat(), tag);
-                    check(&mut code, &mut tag_of, tag);
+                    check_at(&mut code, &mut tag_of, tag);
                 }
-                Item::FailIf => check(&mut code, &mut tag_of, tag),
+                Item::FailIf => check_at(&mut code, &mut tag_of, tag),
                 Item::OtherIf => put(&mut code, &mut tag_of, &[&push_fixed(other, w)[..], &[JUMPI]].concat(), tag),
                 Item::Seam => {}
             }
@@ -255,7 +255,7 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                     patches.push(code.len());
                     put(&mut code, &mut tag_of, &[0; 20], tags.call);
                     put(&mut code, &mut tag_of, &[GAS, DELEGATECALL, ISZERO], tags.call);
-                    check(&mut code, &mut tag_of, tags.call);
+                    check_at(&mut code, &mut tag_of, tags.call);
                     if call.returns > 0 {
                         // `RETURNDATACOPY(values + 32 values, 0, 32 returns)`.
                         let keep = [
@@ -267,20 +267,41 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                         put(&mut code, &mut tag_of, &keep.concat(), tags.pass);
                     }
                 }
-                // What the last part returned, returned.
-                let forward = [RETURNDATASIZE, PUSH0, PUSH0, RETURNDATACOPY, RETURNDATASIZE, PUSH0, RETURN];
-                put(&mut code, &mut tag_of, &forward, tags.ending);
+                match program.ending {
+                    // What the last part returned (the outputs), returned.
+                    Ending::Return => {
+                        let forward = [RETURNDATASIZE, PUSH0, PUSH0, RETURNDATACOPY, RETURNDATASIZE, PUSH0, RETURN];
+                        put(&mut code, &mut tag_of, &forward, tags.ending);
+                    }
+                    // The word 1, if the last part returned exactly it (an account without code returns nothing,
+                    // and copying 32 bytes of less halts), as it does once every call of `PCS_OPEN` attested.
+                    Ending::Attest => {
+                        let check = [
+                            &push_usize(32)[..],
+                            &[PUSH0, PUSH0, RETURNDATACOPY, RETURNDATASIZE],
+                            &push_usize(32),
+                            &[XOR, PUSH0, MLOAD],
+                            &push_usize(1),
+                            &[XOR, OR],
+                        ];
+                        put(&mut code, &mut tag_of, &check.concat(), tags.ending);
+                        check_at(&mut code, &mut tag_of, tags.ending);
+                        put(&mut code, &mut tag_of, &[&push_usize(32)[..], &[PUSH0, RETURN]].concat(), tags.ending);
+                    }
+                }
             }
         }
         (code, tag_of, patches)
     };
+    // The other entry is the contract's that calls are sent to: the one contract, or the driver; not a part's.
+    let other_entry = options.other.filter(|_| frame.window.is_none());
     let body = lay(0, 0, 0).0.len();
-    let tail_len = options.other.as_ref().map_or(0, |other| other(0).0.len());
+    let tail_len = other_entry.map_or(0, |other| other(0).0.len());
     let fail = body + tail_len;
-    let other = if options.other.is_some() { body } else { fail };
+    let other = if other_entry.is_some() { body } else { fail };
     let (mut code, mut tag_of, chunk_patches) = lay(other, fail, fail + REVERT_CODE.len());
     let mut other_patch = None;
-    if let Some(make) = &options.other {
+    if let Some(make) = other_entry {
         let (tail, patch) = make(fail);
         other_patch = patch.map(|at| code.len() + at);
         code.extend(tail);

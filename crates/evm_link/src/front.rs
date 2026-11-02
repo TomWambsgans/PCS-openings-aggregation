@@ -30,6 +30,9 @@ pub fn code(bytes: Vec<u8>) -> Vec<Piece> {
 /// A recorded graph: nodes, each after its operands.
 pub trait Dag {
     fn len(&self) -> usize;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     /// The node's operands, which its code finds on the stack, the last on top. A node of two equal operands is
     /// computed from one (its value duplicated).
     fn operands(&self, id: u32) -> Vec<u32>;

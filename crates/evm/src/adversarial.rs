@@ -23,11 +23,14 @@ use revm::interpreter::interpreter_types::{InterpreterTypes, StackTr};
 use revm::interpreter::{CallInput, Gas, InputsImpl, InstructionContext, InstructionResult, InterpreterResult, gas};
 use revm::primitives::hardfork::SpecId;
 use revm::primitives::{Address, Bytes, TxKind, U256};
-use revm::state::{AccountInfo, Bytecode};
+
 
 use crate::codegen::INDEX_ROOT_SLOT;
 use crate::machine::{Chain, FIELD_MUL, FIELD_MUL_GAS, LOG_ROWS, Outcome, PCS_OPEN, PcsOpen, root_word};
-use crate::quotient::{Contract, VERIFIED, VERIFY, calldata, claims_contract, contract, decode, init_code, openings};
+use crate::quotient::{
+    Contract, VERIFIED, VERIFY, calldata, claims_contract, claims_contract_linked, contract, contract_linked, decode,
+    openings,
+};
 
 /// The selector, then the statement, the commitments and the proof's five scalars.
 const CALLDATA_LEN: usize = 4 + 64 + 64 + 5 * 24;
@@ -114,8 +117,9 @@ struct Deployed {
 
 fn deploy(contract: &Contract, index_root: &Hash) -> Deployed {
     let mut chain = Chain::default();
-    let init = init_code(contract, index_root, Address::ZERO);
-    let address = chain.deploy(&init).0.expect("a deployment");
+    let address = crate::quotient::deploy(&mut chain, contract, index_root, Address::ZERO)
+        .0
+        .expect("a deployment");
     Deployed {
         chain,
         address,
@@ -159,20 +163,54 @@ fn agree(index_root: &Hash, log_rows: usize, codes: &(Deployed, Deployed), data:
 }
 
 /// The claims contract and the contract, deployed for `index_root`.
-fn codes(index_root: &Hash, log_rows: usize) -> (Deployed, Deployed) {
+fn codes(index_root: &Hash, log_rows: usize, limit: usize) -> (Deployed, Deployed) {
     (
-        deploy(&claims_contract(log_rows), index_root),
-        deploy(&contract(log_rows), index_root),
+        deploy(&claims_contract_linked(log_rows, limit), index_root),
+        deploy(&contract_linked(log_rows, limit), index_root),
     )
+}
+
+/// The builds every test below runs on: the one contract (it fits EIP-170's limit), and the same program linked into
+/// contracts of at most [`LINKED`] bytes, a driver and the parts it `DELEGATECALL`s (`evm_link`).
+const LIMITS: [usize; 2] = [24_576, LINKED];
+const LINKED: usize = 2_048;
+
+/// The linked build is a driver and parts, each of at most [`LINKED`] bytes, the driver holding the entry and
+/// `setIndexRoot`, and each deployed by a transaction.
+#[test]
+fn linked_builds_are_parts() {
+    for log_rows in LOG_ROWS {
+        for contract in [claims_contract_linked(log_rows, LINKED), contract_linked(log_rows, LINKED)] {
+            assert!(contract.parts.len() >= 2, "{} parts", contract.parts.len());
+            assert!(contract.code.len() <= LINKED && contract.parts.iter().all(|part| part.len() <= LINKED));
+            let owner = contract.owner_at.expect("the driver holds setIndexRoot");
+            assert!(owner < contract.code.len());
+            // No part stores anything, nor calls anything but `PCS_OPEN` (`STATICCALL`).
+            for part in &contract.parts {
+                let mut pc = 0;
+                while pc < part.len() {
+                    let op = part[pc];
+                    assert!(![0x55, 0xf0, 0xf1, 0xf2, 0xf4, 0xf5, 0xff].contains(&op), "opcode {op:#04x} in a part");
+                    pc += 1 + if (0x60..=0x7f).contains(&op) { (op - 0x5f) as usize } else { 0 };
+                }
+            }
+            let deployed = deploy(&contract, &[7; 32]);
+            assert_eq!(deployed.chain.code(deployed.address).len(), contract.code.len());
+        }
+    }
 }
 
 /// Random calldata, at every size of circuit `PCS_OPEN` knows, with random and extreme index roots.
 #[test]
 fn random_calldata_agrees() {
+    LIMITS.into_iter().for_each(random_calldata_agrees_at);
+}
+
+fn random_calldata_agrees_at(limit: usize) {
     let mut rng = Rng::new(0xADD);
     for log_rows in LOG_ROWS {
         for index_root in [[0; 32], [0xff; 32], random_bytes(&mut rng)] {
-            let codes = codes(&index_root, log_rows);
+            let codes = codes(&index_root, log_rows, limit);
             let mut extremes: Vec<Vec<u8>> = [0u8, 0xff, 0x80, 0x01]
                 .iter()
                 .map(|&b| [&VERIFY[..], &[b; CALLDATA_LEN - 4]].concat())
@@ -196,10 +234,14 @@ fn random_calldata_agrees() {
 /// change of the selector reverts.
 #[test]
 fn bit_flips_agree() {
+    LIMITS.into_iter().for_each(bit_flips_agree_at);
+}
+
+fn bit_flips_agree_at(limit: usize) {
     let mut rng = Rng::new(0xF11);
     for log_rows in [*LOG_ROWS.start(), *LOG_ROWS.end()] {
         let index_root = random_bytes(&mut rng);
-        let codes = codes(&index_root, log_rows);
+        let codes = codes(&index_root, log_rows, limit);
         let base = random_calldata(&mut rng);
         let honest = block_for(&index_root, &base, log_rows);
         assert_eq!(call(&codes.1, &base, &honest).output, Some(VERIFIED.to_vec()));
@@ -223,10 +265,14 @@ fn bit_flips_agree() {
 /// `POP`), every other test of the crate passes.
 #[test]
 fn degenerate_proofs_revert() {
+    LIMITS.into_iter().for_each(degenerate_proofs_revert_at);
+}
+
+fn degenerate_proofs_revert_at(limit: usize) {
     let mut rng = Rng::new(0xDE6);
     for log_rows in [*LOG_ROWS.start(), 20, *LOG_ROWS.end()] {
         let index_root = random_bytes(&mut rng);
-        let codes = codes(&index_root, log_rows);
+        let codes = codes(&index_root, log_rows, limit);
         let other = PcsOpen::default();
         for _ in 0..8 {
             let data = degenerate(&index_root, log_rows, &mut rng);
@@ -251,9 +297,13 @@ fn degenerate_proofs_revert() {
 /// Calldata of any other length reverts, whatever it holds and whatever `PCS_OPEN` says.
 #[test]
 fn other_lengths_revert() {
+    LIMITS.into_iter().for_each(other_lengths_revert_at);
+}
+
+fn other_lengths_revert_at(limit: usize) {
     let mut rng = Rng::new(0x1E2);
     let index_root = random_bytes(&mut rng);
-    let codes = codes(&index_root, 22);
+    let codes = codes(&index_root, 22, limit);
     let full = random_calldata(&mut rng);
     for len in (0..=CALLDATA_LEN + 64).filter(|&len| len != CALLDATA_LEN) {
         let mut data = full.clone();
@@ -404,21 +454,20 @@ fn field_mul<W: InterpreterTypes, H: ?Sized>(context: InstructionContext<'_, H, 
 struct Called {
     output: Option<Vec<u8>>,
     inputs: Vec<Vec<u8>>,
+    /// Its execution gas: the transaction's without its base and calldata.
+    execution: u64,
 }
 
-/// [`call`], with `PCS_OPEN` answering as `reply` says: the deployed contract's code and stored root, in an
-/// account of their own.
+/// [`call`], with `PCS_OPEN` answering as `reply` says: on the deployment's accounts (its parts', if any), its
+/// stored root checked.
 fn call_with(deployed: &Deployed, data: &[u8], reply: Reply) -> Called {
-    let code = deployed.chain.code(deployed.address);
-    let (contract, caller) = (Address::with_last_byte(0xc0), Address::with_last_byte(0xca));
-    let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(
-        contract,
-        AccountInfo::from_bytecode(Bytecode::new_legacy(Bytes::from(code))),
+    let (contract, caller) = (deployed.address, Address::with_last_byte(0xca));
+    let db: CacheDB<EmptyDB> = deployed.chain.db();
+    let root = U256::from(INDEX_ROOT_SLOT);
+    assert_eq!(
+        db.cache.accounts[&contract].storage.get(&root).copied(),
+        Some(U256::from_be_bytes(deployed.index_root))
     );
-    let root = U256::from_be_bytes(deployed.index_root);
-    db.insert_account_storage(contract, U256::from(INDEX_ROOT_SLOT), root)
-        .expect("an account");
     let mut evm = Context::mainnet()
         .with_db(db)
         .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
@@ -438,6 +487,7 @@ fn call_with(deployed: &Deployed, data: &[u8], reply: Reply) -> Called {
         .build()
         .expect("a transaction");
     let result = evm.transact_one(tx).expect("a valid transaction");
+    let execution = result.gas_used() - crate::machine::transaction_gas(data, 0, 0);
     let output = match result {
         ExecutionResult::Success {
             output: Output::Call(output),
@@ -448,6 +498,90 @@ fn call_with(deployed: &Deployed, data: &[u8], reply: Reply) -> Called {
     Called {
         output,
         inputs: std::mem::take(&mut evm.precompiles.inputs),
+        execution,
+    }
+}
+
+/// A driver whose parts are not where it calls them reverts, whatever `PCS_OPEN` says: with every part missing, the
+/// last only, or one before it (an account without code runs nothing and returns nothing); with them all it passes.
+#[test]
+fn a_driver_without_its_parts_reverts() {
+    let mut rng = Rng::new(0xD21);
+    let index_root = random_bytes(&mut rng);
+    let data = random_calldata(&mut rng);
+    let contract = contract_linked(22, LINKED);
+    let count = contract.parts.len();
+    assert!(count >= 2);
+    for missing in [vec![true; count], vec![false; count - 1].into_iter().chain([true]).collect(), {
+        let mut first = vec![false; count];
+        first[0] = true;
+        first
+    }] {
+        let mut chain = Chain::default();
+        let addresses: Vec<[u8; 20]> = contract
+            .parts
+            .iter()
+            .zip(&missing)
+            .map(|(part, &missing)| {
+                if missing {
+                    [0x99; 20]
+                } else {
+                    chain.deploy(&evm_link::creation_code(part, &[])).0.expect("a part").into_array()
+                }
+            })
+            .collect();
+        let init = crate::quotient::init_code(&contract.calling(&addresses), &index_root, Address::ZERO);
+        let address = chain.deploy(&init).0.expect("a driver");
+        let deployed = Deployed {
+            chain,
+            address,
+            index_root,
+        };
+        let passes = missing.iter().all(|&m| !m);
+        assert_eq!(call_with(&deployed, &data, Reply::Attest).output.is_some(), passes, "{missing:?}");
+    }
+    let deployed = deploy(&contract, &index_root);
+    assert_eq!(call_with(&deployed, &data, Reply::Attest).output, Some(VERIFIED.to_vec()));
+}
+
+/// What linking costs the membership verifier, which fits one contract: linked into contracts of at most 8, 4 and 2
+/// KB, its execution on calldata every check of which passes, with `PCS_OPEN` attesting every call at no gas (the
+/// gas does not depend on the values: straight-line code), and its deployment, each contract by a transaction:
+/// `cargo test --release -p evm -- --ignored --nocapture linked_gas_report`.
+#[test]
+#[ignore]
+fn linked_gas_report() {
+    let mut rng = Rng::new(0x6A7);
+    let index_root = random_bytes(&mut rng);
+    let data = random_calldata(&mut rng);
+    let log_rows = *LOG_ROWS.end();
+    let straight = call_with(&deploy(&contract(log_rows), &index_root), &data, Reply::Attest).execution;
+    println!("| limit | contracts | code bytes (driver; parts) | execution | added | deployment gas (EIP-7623, without 21,000 a transaction) |");
+    println!("|---:|---:|---|---:|---:|---:|");
+    for limit in [24_576, 8_192, 4_096, 2_048] {
+        let contract = contract_linked(log_rows, limit);
+        let mut chain = Chain::default();
+        let (address, transactions) = crate::quotient::deploy(&mut chain, &contract, &index_root, Address::ZERO);
+        let deployed = Deployed {
+            chain,
+            address: address.expect("a deployment"),
+            index_root,
+        };
+        let called = call_with(&deployed, &data, Reply::Attest);
+        assert_eq!(called.output, Some(VERIFIED.to_vec()));
+        let deployment: u64 = transactions
+            .iter()
+            .map(|(init, execution)| crate::machine::transaction_gas(init, *execution, 40) - 21_000)
+            .sum();
+        let sizes: Vec<String> = contract.parts.iter().map(|part| part.len().to_string()).collect();
+        println!(
+            "| {limit} | {} | {}; {} | {} | +{} | {deployment} |",
+            1 + contract.parts.len(),
+            contract.code.len(),
+            sizes.join(", "),
+            called.execution,
+            called.execution - straight,
+        );
     }
 }
 
@@ -455,9 +589,13 @@ fn call_with(deployed: &Deployed, data: &[u8], reply: Reply) -> Called {
 /// call carrying the word 1, two words, 31 bytes, nothing and an absent precompile all revert, at the first call.
 #[test]
 fn only_the_word_one_passes() {
+    LIMITS.into_iter().for_each(only_the_word_one_passes_at);
+}
+
+fn only_the_word_one_passes_at(limit: usize) {
     let mut rng = Rng::new(0x0DA7A);
     let index_root = random_bytes(&mut rng);
-    let deployed = deploy(&contract(22), &index_root);
+    let deployed = deploy(&contract_linked(22, limit), &index_root);
     let data = random_calldata(&mut rng);
     for (reply, passes) in [
         (Reply::Attest, true),
@@ -483,10 +621,14 @@ fn only_the_word_one_passes() {
 /// in order: no more calls, no other bytes. The wiring table's is against the root in storage.
 #[test]
 fn inputs_are_the_rust_openings() {
+    LIMITS.into_iter().for_each(inputs_are_the_rust_openings_at);
+}
+
+fn inputs_are_the_rust_openings_at(limit: usize) {
     let mut rng = Rng::new(0x1A9);
     for log_rows in LOG_ROWS {
         let index_root = random_bytes(&mut rng);
-        let deployed = deploy(&contract(log_rows), &index_root);
+        let deployed = deploy(&contract_linked(log_rows, limit), &index_root);
         for _ in 0..20 {
             let data = random_calldata(&mut rng);
             let (statement, proof) = parse(&data);
@@ -746,9 +888,13 @@ fn gas_by_opcode() {
 /// A call `PCS_OPEN` cannot pay for fails, returning nothing, and the contract reverts.
 #[test]
 fn out_of_gas_in_the_call_reverts() {
+    LIMITS.into_iter().for_each(out_of_gas_in_the_call_reverts_at);
+}
+
+fn out_of_gas_in_the_call_reverts_at(limit: usize) {
     let mut rng = Rng::new(0x006);
     let index_root = random_bytes(&mut rng);
-    let deployed = deploy(&contract(22), &index_root);
+    let deployed = deploy(&contract_linked(22, limit), &index_root);
     let data = random_calldata(&mut rng);
     let mut block = block_for(&index_root, &data, 22);
     block.claim_gas = 4_000_000;

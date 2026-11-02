@@ -278,6 +278,12 @@ pub struct Chain {
 }
 
 impl Chain {
+    /// The accounts, for an EVM of another kind.
+    #[cfg(test)]
+    pub(crate) fn db(&self) -> CacheDB<EmptyDB> {
+        self.db.clone()
+    }
+
     /// Run a transaction from `from`, sending `value` wei, in a block whose openings are `pcs_open`'s, and keep
     /// what it changes; and the address of the contract it created, if any. Each transaction starts cold
     /// (EIP-2929): its first `SLOAD` of a slot costs 2,100.

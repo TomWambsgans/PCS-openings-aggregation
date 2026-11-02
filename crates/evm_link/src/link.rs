@@ -170,10 +170,10 @@ impl<'a> Cutter<'a> {
                 Item::Load(id) if self.stored[&id] < a => {
                     imports.insert(id, 32 * position[&id]);
                 }
-                Item::Store(id) if !last && self.last_load.get(&id).is_some_and(|&at| at >= b) => {
-                    if !pinned.contains(&id) {
-                        pinned.push(id);
-                    }
+                Item::Store(id)
+                    if !last && self.last_load.get(&id).is_some_and(|&at| at >= b) && !pinned.contains(&id) =>
+                {
+                    pinned.push(id);
                 }
                 _ => {}
             }
@@ -285,11 +285,11 @@ impl<'a> Cutter<'a> {
         }
     }
 
-    /// Among the cuts `candidates` (the last the latest that fits), those in the last [`WINDOW`] bytes of code, the
-    /// cheapest: the fewest values live across it and words on the stack (about [`CROSSING_GAS`] a word: what a cut
-    /// through short-lived values adds), against the code it leaves unused ([`UNUSED_GAS`] hundredths of gas a byte:
-    /// a cold call a part, 2,600 gas, for 24,576 bytes).
-    fn cheapest(&self, candidates: &[usize]) -> usize {
+    /// Among the cuts `candidates` (the last the latest that fits), those in the last twelfth of a part of `limit`
+    /// bytes, the cheapest: the fewest values live across it and words on the stack (about [`CROSSING_GAS`] a word:
+    /// what a cut through short-lived values adds), against the code it leaves unused (a cold call a part,
+    /// [`CALL_GAS`], for `limit` bytes).
+    fn cheapest(&self, candidates: &[usize], limit: usize) -> usize {
         let items = &self.program.items;
         let latest = *candidates.last().expect("a cut");
         let (mut unused, mut at, mut best) = (0, latest, (u64::MAX, latest));
@@ -298,11 +298,11 @@ impl<'a> Cutter<'a> {
                 at -= 1;
                 unused += Self::bytes(&items[at].0);
             }
-            if unused > WINDOW {
+            if 12 * unused > limit {
                 break;
             }
             let words = (self.live[cut] + self.heights[cut]) as u64;
-            let cost = CROSSING_GAS * 100 * words + UNUSED_GAS * unused as u64;
+            let cost = CROSSING_GAS * words * limit as u64 + CALL_GAS * unused as u64;
             if cost < best.0 {
                 best = (cost, cut);
             }
@@ -330,10 +330,8 @@ const GAP: usize = 128;
 /// Gas a word passed between parts costs, about: written to the part's returned region (memory), copied by the driver
 /// (`RETURNDATACOPY`, and its memory).
 const CROSSING_GAS: u64 = 12;
-/// Hundredths of gas a byte of a part left unused costs, about: 2,600 gas (a cold `DELEGATECALL`) for 24,576 bytes.
-const UNUSED_GAS: u64 = 11;
-/// Bytes of code before the latest cut that fits within which a cut is chosen.
-const WINDOW: usize = 2048;
+/// Gas a part costs, about: a cold `DELEGATECALL`.
+const CALL_GAS: u64 = 2_600;
 
 /// What a word of the values region holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -398,17 +396,18 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
         let values = (run.range.start > 0).then_some(1 << 11);
         assemble_frame(&cutter.frame(run, values, end), program, &wide).code.len() <= limit
     };
-    // The driver's calls are laid out for `reserve` parts, values at the widest offsets, until it has that many.
+    // The driver's calls are laid out for `reserve` parts (values and calldata at offsets of two bytes, each part's
+    // calldata one range), until it has that many; `link_at` lays it out as it is.
     let mut reserve = whole.code.len().div_ceil(limit);
     loop {
         let provisional = |stack_out: usize| End::Drive {
             stack_out,
             calls: (0..reserve)
                 .map(|_| Call {
-                    values: 1 << 11,
-                    returns: 1 << 11,
-                    at: 1 << 11,
-                    ranges: vec![1 << 16..1 << 17],
+                    values: 1 << 8,
+                    returns: 1 << 8,
+                    at: 1 << 8,
+                    ranges: std::iter::once(1 << 8..1 << 9).collect(),
                 })
                 .collect(),
         };
@@ -440,8 +439,15 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
                     hi = mid - 1;
                 }
             }
-            assert!(lo > 0, "no cut after item {a} gives a part of at most {limit} bytes");
-            let b = cutter.cheapest(&candidates[..lo]);
+            if lo == 0 {
+                let first = candidates.first().map(|&b| {
+                    let r = cutter.run(a..b, &region.position, region.stack_at, false);
+                    let code = assemble_frame(&cutter.frame(&r, (a > 0).then_some(1 << 11), end_of(&r)), program, &wide);
+                    (b, code.code.len(), r.pinned.len(), r.imports.len(), r.stack_out)
+                });
+                panic!("no cut after item {a} gives a part of at most {limit} bytes: the first, (cut, bytes, kept, read, stack) {first:?}, of {} cuts", candidates.len());
+            }
+            let b = cutter.cheapest(&candidates[..lo], limit);
             let run = cutter.run(a..b, &region.position, region.stack_at, false);
             cutter.place(&mut region, starts.len(), &run);
             starts.push(b);
@@ -451,10 +457,11 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
         let fit = std::iter::once(&linked.driver)
             .chain(&linked.parts)
             .all(|part| part.code.code.len() <= limit);
-        if starts.len() <= reserve && fit {
+        if fit {
             return linked;
         }
-        reserve = starts.len().max(reserve + 1);
+        assert!(starts.len() != reserve || reserve < 1 << 10, "no driver fits {limit} bytes");
+        reserve = if starts.len() > reserve { starts.len() } else { reserve + 1 };
     }
 }
 
@@ -527,4 +534,90 @@ pub fn creation_code(runtime: &[u8], slots: &[u8]) -> Vec<u8> {
     };
     let prefix = build(4).len();
     [build(prefix), runtime.to_vec()].concat()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::op::{POP, push_usize};
+    use crate::{Ending, Tag};
+
+    const TAG: Tag = "";
+
+    /// A program of `blocks` blocks of `k` values each, every value read by the next block only, then a check.
+    fn chain_of_blocks(blocks: usize, k: usize) -> Program {
+        let mut items: Vec<(Item, Tag)> = vec![(Item::Code(vec![PUSH0]), TAG), (Item::FailIf, TAG)];
+        let id = |b: usize, j: usize| (b * k + j) as u32;
+        for b in 0..blocks {
+            for j in 0..k {
+                // The value: the previous block's j-th, or a constant.
+                if b > 0 {
+                    items.push((Item::Load(id(b - 1, j)), TAG));
+                } else {
+                    items.push((Item::Code(push_usize(j + 1)), TAG));
+                }
+                items.push((Item::Code(vec![crate::op::DUP1, crate::op::XOR]), TAG));
+                items.push((Item::Store(id(b, j)), TAG));
+                items.push((Item::Code(vec![POP]), TAG));
+                items.push((Item::Seam, TAG));
+            }
+        }
+        for j in 0..k {
+            items.push((Item::Load(id(blocks - 1, j)), TAG));
+            items.push((Item::FailIf, TAG));
+        }
+        Program {
+            items,
+            data: Vec::new(),
+            scratch: 0,
+            outputs: 0,
+            ending: Ending::Attest,
+            calldata_len: 4,
+        }
+    }
+
+    #[test]
+    fn close_reads_are_one_range() {
+        assert_eq!(ranges(vec![300..332, 0..32, 40..64]), vec![0..64, 300..332]);
+        assert_eq!(ranges(vec![0..32, 32 + GAP..64 + GAP]), vec![0..64 + GAP]);
+        assert_eq!(ranges(vec![]), Vec::<Range<usize>>::new());
+    }
+
+    /// A program that fits is the one contract `assemble` makes; one that does not, contracts that each fit, the
+    /// values each block passes to the next placed in words the block before freed.
+    #[test]
+    fn programs_are_linked_into_parts_that_fit() {
+        let options = Options::default();
+        let program = chain_of_blocks(40, 8);
+        let one = assemble(&program, &options);
+        let linked = link(&program, &options, one.code.len());
+        assert!(linked.parts.is_empty() && linked.driver.code.code == one.code);
+
+        let limit = 1_000;
+        let linked = link(&program, &options, limit);
+        assert!(linked.parts.len() >= 3, "{} parts", linked.parts.len());
+        let sizes = std::iter::once(&linked.driver).chain(&linked.parts).map(|part| part.code.code.len());
+        assert!(sizes.clone().all(|size| size <= limit), "{:?}", sizes.collect::<Vec<_>>());
+        // Each part passes on at most two blocks' values (and the stack, empty at a seam here): words are reused.
+        let exported: usize = std::iter::once(&linked.driver).chain(&linked.parts).map(|part| part.exports).sum();
+        assert!(linked.values <= 2 * 8 && linked.values < exported, "{} words for {exported}", linked.values);
+        // Cut where it was cut, it is the same.
+        let again = link_at(&program, &options, &linked.starts());
+        assert_eq!(again.driver.code.code, linked.driver.code.code);
+        assert!(again.parts.iter().zip(&linked.parts).all(|(a, b)| a.code.code == b.code.code));
+    }
+
+    /// The stack's height before every item: a seam may hold words on it, which a cut passes.
+    #[test]
+    fn heights_follow_the_stack() {
+        let items: Vec<(Item, Tag)> = vec![
+            (Item::Code(push_usize(1)), TAG),
+            (Item::Seam, TAG),
+            (Item::Calldata { offset: 0, len: 32 }, TAG),
+            (Item::Code(vec![crate::op::CALLDATALOAD, crate::op::XOR]), TAG),
+            (Item::Store(0), TAG),
+            (Item::FailIf, TAG),
+        ];
+        assert_eq!(heights(&items), vec![0, 1, 1, 2, 1, 1, 0]);
+    }
 }

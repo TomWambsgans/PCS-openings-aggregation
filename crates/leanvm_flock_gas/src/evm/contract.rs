@@ -533,10 +533,12 @@ fn measure_run(shape: &Shape, recorded: &Recorded, installed: &Deployed, counts:
     let total: u64 = phases.iter().map(|p| p.gas).sum();
     assert_eq!(total, outcome.execution, "the instructions' gas is the execution's");
     let measured = phases.iter().find(|p| p.phase == MEASURE).map_or(0, |p| p.gas);
+    // The driver checks the word the last part returns, as the contract checks each call of `PCS_OPEN`.
+    let returned = (parts > 0) as usize;
     assert_eq!(
         measured,
-        (counts.checks + claims + parts) as u64,
-        "one JUMPDEST a check, a call of PCS_OPEN and a call of a part"
+        (counts.checks + claims + parts + returned) as u64,
+        "one JUMPDEST a check, a call of PCS_OPEN, a call of a part and the last part's word"
     );
     phases.retain(|p| p.phase != MEASURE);
     phases.sort_by_key(|p| std::cmp::Reverse(p.gas));

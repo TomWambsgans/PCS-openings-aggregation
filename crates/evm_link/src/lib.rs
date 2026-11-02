@@ -6,39 +6,47 @@
 //! is straight-line, the cheapest code to run, so it grows with what the verifier computes: the membership verifier
 //! is 6,308 bytes, leanVM's 117 KB. This crate takes the compiled program, a list of [`Item`]s (code, and the values
 //! kept in memory slots), and either assembles it into one contract ([`assemble`], as the code generators always
-//! did), or **links** it into contracts that each fit ([`link`]), computing exactly the same.
+//! did, byte for byte), or **links** it into contracts that each fit ([`link`]), computing exactly the same.
 //!
 //! # Linking
 //!
-//! The program is cut at [`Item::Seam`]s, which a code generator puts between two nodes' evaluations, into runs of
-//! at most [`Limits::code`] bytes each. The first run is the **driver**, the contract a verifying call is sent to: it
-//! starts the program (the entry's checks, then as much of the verifier as fits), then `DELEGATECALL`s each other run,
-//! a contract of its own, in order, and returns what the last returns. A run's calldata is the call's calldata, copied
-//! once by the driver, followed by the **values region**: every value a run computes that a later run reads (and the
-//! words left on the stack at the cut), which each run returns and the driver appends. So:
+//! The program is cut at [`Item::Seam`]s, which a code generator puts after each node's evaluation, into runs of at
+//! most `limit` bytes of code each. The first run is the **driver**, the contract a verifying call is sent to: it
+//! starts the program (the entry's checks, the other entry such as `setIndexRoot`, then as much of the verifier as
+//! fits), then `DELEGATECALL`s each other run, a **part**, a contract of its own, in order. A part's calldata is the
+//! **values region** the driver keeps (every value a run computes that a later run reads, and the words left on the
+//! stack at a cut), then the ranges of the call's calldata the part reads, which the driver copies after it
+//! ([`Item::Calldata`] marks every calldata offset, so that a part reads them where they are). A part returns the
+//! values it computes for later parts, which the driver keeps in the region, in words no later part reads any more.
+//! The last part writes the outputs and ends as the program does (its calls of `PCS_OPEN`); the driver then returns
+//! the word 1 only if the last part returned exactly that, or else (a returning program) what it returned. So:
 //!
-//! - a value read from another run costs what a value from a slot costs: `CALLDATALOAD` at a constant offset, as
-//!   `MLOAD`; a value a later run reads is kept in the returned region rather than a reused slot;
-//! - every run sees the call's calldata at the offsets the program reads it at, and the driver's storage
-//!   (`DELEGATECALL`): a commitment kept in storage is read as in one contract;
-//! - the extra cost is one cold `DELEGATECALL` a run (2,600 gas), the copy of calldata (3 gas a word, and memory), and
-//!   3 gas a word of values returned; and each run's memory is its own, which makes the memory's quadratic cost less.
+//! - a value read from another part costs what a value from a slot costs (`CALLDATALOAD` at a constant offset, as
+//!   `MLOAD`), and calldata is read as in one contract, at constant offsets;
+//! - every part runs on the driver's storage (`DELEGATECALL`): a commitment in storage is read as in one contract;
+//! - what linking adds is one cold `DELEGATECALL` a part (2,600 gas), the copies (3 gas a word of calldata a part
+//!   reads, and of values returned) and memory: each part's own (its slots, and the values it returns), and the
+//!   driver's (the region and the copies). A cut is chosen among the last twelfth of the code that fits where the
+//!   fewest values are live, at about 12 gas a value passed against 2,600 gas a part.
 //!
-//! A run is a pure function of its calldata: the driver does not trust it with anything but what it computes, its
-//! address is in the driver's code, and its code has no `SSTORE` (it may be called by anyone, to no effect). The
-//! program's checks revert in the run that makes them, which reverts the driver.
-//!
-//! Each run is assembled by the same assembler as a whole program, so a program that fits is assembled into the same
-//! code whichever function is called.
+//! A part is a pure function of its calldata: the driver trusts it with nothing but what it computes, its address is
+//! in the driver's code (written at deployment, after the parts are deployed), and its code has no `SSTORE`, no
+//! `CREATE` and no call but `PCS_OPEN`'s (it may be called by anyone, to no effect). The program's checks revert in
+//! the part that makes them, which reverts the driver; a part not there (an address without code) returns nothing,
+//! which reverts the driver too.
 //!
 //! # Using it from a verifier's code generator
 //!
-//! A code generator turns its graph into items: for each node, its operands' evaluation, its code, a
-//! [`Item::Store`] if it is read again, and a [`Item::Seam`]; checks with [`Item::FailIf`]; the outputs with
-//! [`Item::Output`] and [`Item::CopyConst`] and the calls of `PCS_OPEN` with [`Item::PcsOpen`], which must come after
-//! the last seam (the outputs region is the last run's). [`front`] is such a generator for any graph of nodes whose
-//! code works on their operands on the stack ([`front::Dag`]), which `crates/leanvm_flock_gas` uses; its
-//! `evm::contract` shows the whole path, from the recorded verifier to deployed contracts and their gas.
+//! A code generator turns its graph into items: for each node, its operands' evaluation, its code (calldata offsets
+//! as [`Item::Calldata`]), a [`Item::Store`] if it is read again, and a [`Item::Seam`]; checks with
+//! [`Item::FailIf`]; the outputs with [`Item::Output`] and [`Item::CopyConst`] and the calls of `PCS_OPEN` with
+//! [`Item::PcsOpen`], all after the last seam (the outputs region is the last part's: a linkable program computes
+//! every output's node before it writes the first). [`front`] is such a generator for any graph of nodes whose code
+//! works on their operands on the stack ([`front::Dag`]): `crates/leanvm_flock_gas` (`src/evm/codegen.rs`) gives it
+//! its nodes' code, entry and outputs, and its `src/evm/contract.rs` goes from the recorded verifier to deployed
+//! contracts (`deploy`), their gas measured per phase across contracts (`measure_deployable`) and checked against
+//! the Rust verifier (`parity_deployable`). `crates/evm` keeps a generator of its own and calls [`assemble`] and
+//! [`link`] the same way.
 
 mod assemble;
 pub mod front;

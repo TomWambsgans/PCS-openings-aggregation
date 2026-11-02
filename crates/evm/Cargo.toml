@@ -10,6 +10,7 @@ publish = false
 workspace = true
 
 [dependencies]
+evm_link.workspace = true
 fiat_shamir.workspace = true
 quotient.workspace = true
 primitives.workspace = true
