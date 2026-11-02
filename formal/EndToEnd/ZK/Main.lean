@@ -25,6 +25,7 @@ for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`).
 
 open OracleComp OracleSpec Common Polynomial Module QuotientSecurity QuotientSecurity.Hiding
 open QuotientZk.Joint
+open QuotientZk.Instance (ChV LinkV jointSimV jointHVZK_of_linkV factors_singleV factors_pairV)
 open QuotientZk.Deployed (Inp Out Msg Tbl Pos KSt DSpec)
 open scoped ENNReal
 
@@ -81,11 +82,11 @@ theorem coreClose_of_joint (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ 
   have hQ : ∀ s, QueryCostAtMost (QuotientZk.DRpm.zkGameRpmD J.P skel D s)
       permutationCallCost (Qp + (Qfmt + Q)) := fun s ↦
     Common.QueryCostAtMost.bind (hprover s) fun pf ↦ queryCost_liftPerm _ _ (hD pf)
-  have hHV := jointHVZK_of_link J.P hv.h3 J.P₀ hv.hE J.stmtE J.gK J.van hv.hvan hv.hsat
+  have hHV := jointHVZK_of_linkV J.P hv.h3 J.P₀ hv.hE J.stmtE J.gK J.van hv.hvan hv.hsat
     hv.hvan0 hv.hq hv.hK hv.hN hv.hdeg J.inK hv.hinK J.sigmaAt hv.hsig J.wir J.S₁ J.S₂ hv.hS₁
     hv.hS₂ J.T₁ J.T₂ J.cl₁ J.cl₂ hv.hT₁ hv.hT₂ J.simT₁ J.simT₂ hv.hsimT₁ hv.hsimT₂ J.lk hv.hch
-  have hfac := factors_single hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ J.lk
-  have hfac₂ := factors_pair hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ J.lk
+  have hfac := factors_singleV hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ J.lk
+  have hfac₂ := factors_pairV hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ J.lk
   have hmain := QuotientZk.DRpm.zk_rpm_skel J.P skel J.simV _ εFS (1 / 2 ^ 165)
     ((2 : ℝ≥0∞) ^ 2368)⁻¹ ((2 : ℝ≥0∞) ^ 2368)⁻¹ QP (Qfmt + Q) (Qp + (Qfmt + Q)) hskel hFS hHV.1 hHV.2
     (fun σ k x hx v y ↦ (hfac σ k x hx y).some.bound v)
