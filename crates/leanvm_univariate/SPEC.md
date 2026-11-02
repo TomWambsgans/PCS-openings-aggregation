@@ -2,7 +2,10 @@
 
 # A univariate PIOP for leanVM 42422001, for the EVM
 
-**Status: milestone 1 done** (spec, soundness script, verifier-only gas prototype; no prover yet). Option A:
+**Status: iteration 2 of the gas optimisation done** (§13 lists every change since milestone 1, with what the prover
+must change; the sections below are milestone 1's design, corrected where §13 says). At 1,000 signatures, the main
+line (ABI point claims × Flock (a′)) deployed: **305,808** transaction gas (EIP-7623, `c = 0`, without the base),
+against milestone 1's 417,014; calldata 7,108 B, execution 192,392 (3 contracts). Milestone 1: Option A:
 BLAKE2s by Flock's sumchecks, everything else univariate. §7 (Flock) is the Flock agent's, with details in
 `SPEC-FLOCK.md`; option B (BLAKE2s without sumcheck) is in `SPEC-B.md` and does not fit WHIR. *Measured*: revm
 runs of the contract compiled from the recorded Rust verifier (`tests/gas.rs`); *modelled*: computed here.
@@ -585,3 +588,51 @@ Each entry says what changed, why, and what the prover must change (none if the 
     seeds with the contract's IV. The vectors and the transcription follow milestone 1's protocol until updated to
     this list. The merge brings the prover too (a6e2190, inside a998edd), unchanged: its `tests/prove_tiny.rs` writes
     milestone 1's stream and fails here (`StreamExhausted`) until prover2 adapts it to this list. Prover: nothing.
+
+### Results of iteration 2 (measured on revm, 1,000 signatures, 1,023,109 cycles; tx without the 21,000 base)
+
+| configuration | calldata | execution straight / deployed (contracts) | tx EIP-7623 deployed, `c` = 0 / 2K / 5K / 20K | tx EIP-7976 deployed, `c` = 0 / 20K |
+|---|---:|---|---|---|
+| **main line, ABI × (a′)**, milestone 1 | 7,516 | 270,221 / 297,094 (4) | 417,014 / 427,014 / 442,014 / 517,014 | 481,024 / 517,014 |
+| **main line, ABI × (a′)**, iteration 2 | 7,108 | 182,104 / 192,392 (3) | **305,808** / 315,808 / 330,808 / 405,808 | 454,912 / 454,912 |
+| ABI × (a) [ext. B], milestone 1 | 6,172 | 99,948 / 105,436 (2) | 246,160 / 246,160 / 246,160 / 323,900 | 395,008 / 395,008 |
+| ABI × (a) [ext. B], iteration 2 | 5,716 | 90,996 / 95,955 (2) | 228,010 / 228,010 / 228,010 / 307,159 | 365,824 / 365,824 |
+| ext. W × (a′), milestone 1 | 6,148 | 139,640 / 154,663 (3) | 252,755 / 262,755 / 277,755 / 352,755 | 393,472 / 393,472 |
+| ext. W × (a′), iteration 2 | 6,172 | 99,874 / 114,735 (3) | 246,160 / 246,160 / 246,160 / 313,199 | 395,008 / 395,008 |
+| ext. W × (a) [ext. B], milestone 1 | 4,804 | 71,381 / 82,659 (2) | 191,620 / 191,620 / 191,620 / 259,307 | 307,456 / 307,456 |
+| ext. W × (a) [ext. B], iteration 2 | 4,828 | 75,927 / 87,211 (2) | 192,580 / 192,580 / 192,580 / 264,243 | 308,992 / 308,992 |
+| without BLAKE2s, ABI, iteration 2 | 3,508 | 66,206 / 70,019 (2) | 139,990 / 139,990 / 141,015 / 186,015 | 224,512 / 224,512 |
+| baseline (leanVM's GKR + Flock) | 27,068 | 334,216 / — | 1,074,620 | 1,732,352 |
+
+Straight-line (one contract, not deployable), iteration 2, EIP-7623 `c` = 0 / 2K / 5K / 20K: main line 295,520 /
+305,520 / 320,520 / 395,520; ext. B 228,010 / 228,010 / 228,010 / 302,200; ext. W × (a′) 246,160 / 246,160 / 246,160 /
+298,338; ext. W × (a) 192,580 / 192,580 / 192,580 / 252,959.
+
+**Where the main line's execution goes now** (straight, 182,104): the ring switch's weight at the batch's point 74,286
+(the kernel; 64 twisted eq products of 26 coordinates, the floor of this formulation is about 3,300 products and
+squarings); the batch's other weights 23,041; the ring switch's target 19,854; transcript 11,175; `Q_W` 9,079; the
+combination 7,930; calldata reads 6,442; Flock's matrices 6,032; bus 5,475; the row counts 6,500 (F1); `PCS_OPEN`
+3,444; heap 3,085; the rest about 5,800.
+
+**The floor.** The main line is execution-bound: `16 · B + execution` = 305,808 against the floor `40 · B` = 283,540.
+The ring switch's weight is now the binding cost: it needs the 64 conjugates of each of the 26 coordinates of Flock's
+point (1,638 squarings) and 64 products of 26 factors (1,664 products), whatever the map's coefficients, because a
+`K`-packed word's bits need all 64 Frobenius conjugates and the batch's point is random in `E`. The target fell from
+`64 · 63` squarings to `6 · 64` by the tower order (entry 2).
+
+**Measured vs modelled.** Every gas and calldata figure above is measured on revm (the measuring build's checks
+subtracted). Modelled: the public input's byte swap (about 110 gas, not built), the prover's costs, and the PCS's
+128.97 bits an opening (the coordinator's figure).
+
+**Dropped levers.**
+- Lever (e) (the lincheck as a univariate sumcheck): with the matrices' rounds already free in the batch (entry 5),
+  it would save only the lincheck's 8 rounds (16 scalars, about 6K at 16 a byte), against `Q`, `R` in `C2`, claims at
+  composed points and a new Flock prover. Not built.
+- The lincheck merged into the batch: circular (its point is the ring switch's, an input of the batch).
+- Fewer coefficients a round: the batch's weight is a sum over many points, with no common eq factor to split off.
+- A smaller skip (`k` 3 → 0–2): 2 scalars at most, against the prover's skip-3 kernels being written.
+- Another tower basis for the target's `XOR` network: 400 random bases, the best 755 `XOR`s against 767.
+- The public input in leanVM's byte order: about 110 gas; documented instead (F7).
+- A looped kernel (to reach 2 contracts): the code would still exceed 49 KB, and a loop costs about 30 gas an
+  iteration.
+- 32-bit packing of `q_flock` (32 twists instead of 64): not leanVM's witness, and `C1` would double.
