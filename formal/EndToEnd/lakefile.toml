@@ -90,6 +90,16 @@ srcDir = "../Lv42"
 globs = ["Lv42", "Lv42.+"]
 leanOptions = { warningAsError = true }
 
+# The univariate PIOP's bus (`crates/leanvm_univariate/SPEC.md` §5, branch `leanvm-univariate`) as a
+# product heap, `formal/Heap`: the tree, leaf and root identities give the push and pull products'
+# equality, which gives `Lv42`'s `Balanced` but with probability at most `4 N / |E|` over the bus
+# challenges (leanerVM 6175f1a0's Theorem 5.1, `LeanVM.Protocol.sideProduct_collision`).
+[[lean_lib]]
+name = "Heap"
+srcDir = "../Heap"
+globs = ["Heap", "Heap.+"]
+leanOptions = { warningAsError = true }
+
 # ---- The end-to-end libraries ----
 
 # `PcsQuotient.KnowledgeSoundness` from `Compose`'s random-permutation theorem (`Soundness.lean`,
