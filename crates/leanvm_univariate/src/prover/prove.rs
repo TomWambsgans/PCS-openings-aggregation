@@ -81,6 +81,8 @@ pub struct Report {
     pub flock: Option<(Vec<E>, E, E)>,
     /// Finer timings inside a phase, as text.
     pub notes: Vec<String>,
+    /// The setup roots the proof's contract binds.
+    pub roots: Option<SetupRoots>,
 }
 
 struct Clock {
@@ -166,8 +168,8 @@ pub struct Config {
     /// Send these root halves for `C1` and `C2` instead of the commitments' (no opening can then verify): a
     /// byte-for-byte cross-check of the stream against a prover that commits nothing (`tests/prove_tiny.rs`).
     pub stand_in_roots: Option<[[E; 2]; 2]>,
-    /// The setup roots the contract's IV binds (SPEC.md §13, F2): `contract::rust_verifier` takes
-    /// `SetupRoots::REFERENCE`, the reference shape's.
+    /// The setup roots the contract's IV binds (SPEC.md §13, F2): `F`'s must be this program's and shape's
+    /// (`setup::shape_roots`; at the reference shape `SetupRoots::REFERENCE`).
     pub roots: SetupRoots,
 }
 
@@ -188,13 +190,6 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
         .validate(matches!(config.blake2s, Blake2s::Flock(_)))
         .map_err(|e| format!("the shape: {e:?}"))?;
     let public = trace.public_input();
-    let seed = keccak_seed(&NAME, &contract_iv(&shape, iv, &config.roots), &public);
-    let mut writer = KeccakWriter::new(seed);
-
-    // 0. The six row counts (SPEC.md §13, F1), absorbed with C1's root.
-    for &rows in &trace.rows {
-        writer.send_integer(rows, 4);
-    }
 
     // 1. C1: every column in basis B, q_flock as values.
     let c1 = c1_polys(trace);
@@ -219,9 +214,32 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     }
     let committed1 = opening::commit(&stack1.words, stack1.layout.vars, stack1.placed());
     let committed_f = opening::commit(&stack_f.words, stack_f.layout.vars, stack_f.placed());
+    // The contract binds F's root (and opens F against it): it must be this program's and shape's. Garbage in the
+    // unused words makes another F, which only a contract built for it accepts: that contract's roots are used. (The
+    // stand-in roots' cross-check proves nothing.)
+    let roots = if config.garbage {
+        SetupRoots {
+            f: committed_f.root,
+            ..config.roots
+        }
+    } else {
+        config.roots
+    };
+    if config.stand_in_roots.is_none() && committed_f.root != roots.f {
+        return Err("the contract's F root is not this program's and shape's (prover::setup::f_root)".into());
+    }
+    report.roots = Some(roots);
     report.stacks.push((Commitment::C1, stack1.placed(), stack1.layout.vars));
     report.stacks.push((Commitment::Setup, stack_f.placed(), stack_f.layout.vars));
     clock.lap(&mut report, "C1 and setup: WHIR commits");
+
+    // 0. The seed (the contract's IV binds the setup roots), then the six row counts (SPEC.md §13, F1), absorbed with
+    // C1's root.
+    let seed = keccak_seed(&NAME, &contract_iv(&shape, iv, &roots), &public);
+    let mut writer = KeccakWriter::new(seed);
+    for &rows in &trace.rows {
+        writer.send_integer(rows, 4);
+    }
     writer.send_root(config.stand_in_roots.map_or_else(|| halves(&committed1.root), |r| r[0]));
 
     // 2. The bus's and the constraints' challenges.
@@ -572,23 +590,23 @@ fn merkle_bytes(paths: &fiat_shamir::merkle::PrunedMerklePaths) -> usize {
 /// Verify a proof: the verifier's `reduce` on the stream (its zero and nonzero checks held to account) and every
 /// opening's WHIR proof, its point and value the ones the verifier leaves, its layout word the contract's.
 ///
-/// `contract::rust_verifier` binds `SetupRoots::REFERENCE` (the reference shape's) in its IV, whatever the shape: with
-/// `reference_shape`, the setup opening's root must be its `F`; at another shape the setup's own root (another `F`)
-/// is opened, which a contract for that shape would bind (PROVER.md, "Notes for the verifier").
+/// The contract binds `roots` in its IV (`contract::rust_verifier_with`), and the setup opening's root must be its
+/// `F`.
 ///
 /// With extension B (`Slices::Claim`), `C1`'s call also carries a bit-slice claim, which a WHIR opening cannot prove
 /// (`PCS_OPEN` would ring-switch it): it is returned, for the caller to check against `q_flock`.
 pub fn verify(
     trace_shape: &crate::verifier::Shape,
     iv: &[u8; 32],
+    roots: &SetupRoots,
     public: &[u8; 32],
     proof: &Proof,
     blake2s: Blake2s,
-    reference_shape: bool,
 ) -> Result<Option<Combined<E>>, String> {
     let mut unproven = None;
     let (reduced, zero, nonzero) =
-        crate::contract::rust_verifier(trace_shape, iv, public, &proof.stream, blake2s, Claims::Point).map_err(|e| format!("reduce: {e:?}"))?;
+        crate::contract::rust_verifier_with(trace_shape, iv, roots, public, &proof.stream, blake2s, Claims::Point)
+            .map_err(|e| format!("reduce: {e:?}"))?;
     if let Some(i) = zero.iter().position(|x| *x != E::default()) {
         return Err(format!("check {i} of {} required zero is not", zero.len()));
     }
@@ -616,7 +634,7 @@ pub fn verify(
         let root_ok = match commitment {
             Commitment::C1 => reduced.roots[0] == halves(&mine.root),
             Commitment::C2 => reduced.roots[1] == halves(&mine.root),
-            Commitment::Setup => !reference_shape || mine.root == SetupRoots::REFERENCE.f,
+            Commitment::Setup => mine.root == roots.f,
         };
         if !root_ok {
             return Err(format!("{commitment:?}: the opening's root is not the stream's (or the contract's)"));

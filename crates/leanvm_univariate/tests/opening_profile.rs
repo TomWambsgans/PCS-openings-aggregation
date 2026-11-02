@@ -30,7 +30,7 @@ fn a0_opening_profile() {
         log_bytecode: 19,
         table_rows: [183266, 195439, 223851, 137591, 80937, 202025],
     }, 0x5504, 28, 1 << 28);
-    bench::trace::init_tracing();
+    bench::init_tracing();
     let started = std::time::Instant::now();
     let proof = opening::open(&a0, &committed, &layout, &point, value);
     println!("opened in {:.2} s", started.elapsed().as_secs_f64());
