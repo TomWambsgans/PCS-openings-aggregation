@@ -93,10 +93,11 @@ pub fn wiring_layout(log_rows: usize) -> Layout {
     Layout::new(m, m, m, &[(0, 1 << m)])
 }
 
-/// The random lanes of the witness table's hidden layout: the fewest with which its opening hides it (HIDING.md).
+/// The random lanes of the witness table's hidden layout: with the overflow lane, the cube of lanes `32..40`,
+/// whose fold weights span `E` but for a set of challenges below `2^-188` (condition (S), HIDING.md).
 pub const WITNESS_RANDOM_LANES: usize = 7;
 
-/// The random lanes of the quotient table's hidden layout: the fewest with which its opening hides it (HIDING.md).
+/// The random lanes of the quotient table's hidden layout: as the witness table's ([`WITNESS_RANDOM_LANES`]).
 pub const QUOTIENT_RANDOM_LANES: usize = 7;
 
 /// The fewest rows the hidden layouts take: below `2^17` rows the witness table's lanes are too short for its
@@ -152,7 +153,8 @@ pub(crate) fn table_seed(seed: &[u8; 32], table: &[u8]) -> [u8; 32] {
 /// four row polynomials, and the seed of both tables' padding. It must be uniform, secret, and **fresh per proof,
 /// never reused**: two proofs that share the padding's seed have the same random first pieces, and two that share
 /// the masks let the second proof's `a_j` be predicted from the first's for a guessed witness, so either confirms
-/// the guess (`review_hiding.rs`). [`prove`] draws its own; [`prove_with_randomness`] takes it.
+/// the guess (`review_hiding.rs`). [`prove`] draws its own seed, [`prove_with_seed`] takes one; both derive this
+/// from it ([`Randomness::derive`]).
 #[derive(Clone)]
 pub struct Randomness {
     /// `masks[j][i]`: coefficient `i` of row polynomial `j`'s mask.
@@ -397,14 +399,29 @@ pub struct Tables {
 /// of its own, fresh per proof and never reused: a 32-byte seed from the operating system ([`fresh_seed`]), from
 /// which [`Randomness::derive`] makes the masks and the tables' padding. Panics on a challenge the verifier rejects.
 pub fn prove(circuit: &Circuit, index: &Index, index_root: &Hash, statement: &Statement, cells: &[F64]) -> Proved {
-    let randomness = Randomness::derive(&fresh_seed(), index_root, statement, cells);
+    prove_with_seed(circuit, index, index_root, statement, cells, &fresh_seed())
+}
+
+/// [`prove`] with its 32-byte seed given, deterministic: for tests and reproducible benchmarks. The randomness is
+/// always [`Randomness::derive`]'s, bound to the statement and the witness, so a seed reused for another witness
+/// gives unrelated randomness; the proof hides the witness only if `seed` is secret and fresh per proof, as
+/// [`prove`]'s is. Panics on a challenge the verifier rejects.
+pub fn prove_with_seed(
+    circuit: &Circuit,
+    index: &Index,
+    index_root: &Hash,
+    statement: &Statement,
+    cells: &[F64],
+    seed: &[u8; 32],
+) -> Proved {
+    let randomness = Randomness::derive(seed, index_root, statement, cells);
     prove_with_randomness(circuit, index, index_root, statement, cells, &randomness)
 }
 
-/// [`prove`] with its randomness given, deterministic: for tests and reproducible benchmarks. The proof hides the
-/// witness only if `randomness` is uniform, secret, and **fresh per proof, never reused** ([`Randomness`]): from
-/// [`Randomness::derive`] of a fresh secret seed, as [`prove`] does. Panics on a challenge the verifier rejects.
-pub fn prove_with_randomness(
+/// [`prove`] with its randomness given. Crate-private: outside the crate, randomness reaches the prover only through
+/// [`Randomness::derive`] ([`prove`], [`prove_with_seed`]), so it cannot be reused across witnesses; the crate's
+/// tests use this to show what reuse would reveal (`review_hiding.rs`). Panics on a challenge the verifier rejects.
+pub(crate) fn prove_with_randomness(
     circuit: &Circuit,
     index: &Index,
     index_root: &Hash,
@@ -940,9 +957,10 @@ mod tests {
     }
 
     /// The prover's output, pinned: the proof and its three openings on the toy circuit hash to what the prover
-    /// made when the openings' transcripts took leanVM's shape (`opening::iv`), and the randomness came to be
-    /// derived from one seed (the pin before, with the masks and the padding's seed drawn directly, was
-    /// `aebdde8c…`; before the hidden layouts, at d940553, `7d2d3430…`), so a change to how the prover computes
+    /// made when the hidden layouts took the gadget (`HIDING.md`; the pin before, when the openings' transcripts
+    /// took leanVM's shape (`opening::iv`) and the randomness came to be derived from one seed, was `4462f71d…`;
+    /// with the masks and the padding's seed drawn directly, `aebdde8c…`; before the hidden layouts, at d940553,
+    /// `7d2d3430…`), so a change to how the prover computes
     /// cannot change a byte of what it proves. The proof's seed is part of the input: [`prove_with_randomness`] is
     /// deterministic, and the randomness is [`Randomness::derive`]'s, as [`prove`]'s is.
     #[test]
@@ -962,7 +980,7 @@ mod tests {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        assert_eq!(hex, "4462f71d9f6a296121c28f4b1ac24ff0389d905f7c8941b724ec7bd7a832d6c0");
+        assert_eq!(hex, "8e39cf6a95ae46bf134f38f32a0044c9eca690bc37c68f6134a24df7eaaa2fec");
     }
 
     /// On a small circuit: an honest proof leaves four true claims that open, and a witness that breaks one gate,
