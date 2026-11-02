@@ -134,78 +134,83 @@ section Elim
 
 variable {K α : Type} [Field K] [DecidableEq K] {r : ℕ}
 
+/-- A vector of `K^r`, stored (`Array`): its coordinate `i`. -/
+def get (a : Array K) (i : Fin r) : K := a.getD i 0
+
+/-- A vector of `K^r` stored: its coordinates computed once. -/
+def arr (v : Fin r → K) : Array K := Array.ofFn v
+
+@[simp] theorem get_arr (v : Fin r → K) : get (arr v) = v := by
+  funext i
+  simp [get, arr, Array.getD, Array.size_ofFn]
+
 /-- **A row of the echelon basis**: its pivot, its vector, the weighted entries it combines. -/
 structure Row (K α : Type) (r : ℕ) where
   piv : Fin r
-  vec : Fin r → K
+  vec : Array K
   comb : List (α × K)
 
 /-- What weighted entries give through the columns `col`. -/
-def comboVal (col : α → Fin r → K) (x : List (α × K)) : Fin r → K :=
-  (x.map fun p => p.2 • col p.1).sum
+def comboVal (col : α → Array K) (x : List (α × K)) : Fin r → K :=
+  (x.map fun p => p.2 • get (r := r) (col p.1)).sum
 
 /-- Weighted entries, scaled. -/
 def scaleL (a : K) (x : List (α × K)) : List (α × K) := x.map fun p => (p.1, a * p.2)
 
-/-- **A vector, computed once**: its coordinates in an array (`mat v = v`), so that a chain of
-reductions does not recompute its predecessors. -/
-def mat (v : Fin r → K) : Fin r → K :=
-  let a := Array.ofFn v
-  fun i => a.getD i 0
-
-@[simp] theorem mat_eq (v : Fin r → K) : mat v = v := by
-  funext i
-  simp [mat, Array.getD, Array.size_ofFn]
-
 /-- **One reduction step**: clear the vector's coordinate at the row's pivot, recording the row's
 entries. -/
-def step (vx : (Fin r → K) × List (α × K)) (row : Row K α r) : (Fin r → K) × List (α × K) :=
-  let c := vx.1 row.piv
-  (mat (vx.1 - c • row.vec), vx.2 ++ scaleL (-c) row.comb)
+def step (vx : Array K × List (α × K)) (row : Row K α r) : Array K × List (α × K) :=
+  let c := get vx.1 row.piv
+  (arr fun i : Fin r => get vx.1 i - c * get row.vec i, vx.2 ++ scaleL (-c) row.comb)
 
-theorem step_eq (vx : (Fin r → K) × List (α × K)) (row : Row K α r) :
-    step vx row = (vx.1 - vx.1 row.piv • row.vec, vx.2 ++ scaleL (-vx.1 row.piv) row.comb) := by
+theorem get_step (vx : Array K × List (α × K)) (row : Row K α r) :
+    get (step vx row).1 = get vx.1 - get vx.1 row.piv • get (r := r) row.vec := by
+  funext i
   simp [step]
 
+theorem step_snd (vx : Array K × List (α × K)) (row : Row K α r) :
+    (step vx row).2 = vx.2 ++ scaleL (-get vx.1 row.piv) row.comb := rfl
+
 /-- **Reduction** by the rows, in order. -/
-def reduce (B : List (Row K α r)) (vx : (Fin r → K) × List (α × K)) :
-    (Fin r → K) × List (α × K) :=
+def reduce (B : List (Row K α r)) (vx : Array K × List (α × K)) : Array K × List (α × K) :=
   B.foldl step vx
 
 /-- The first nonzero coordinate. -/
-def firstNZ (v : Fin r → K) : Option (Fin r) := (List.finRange r).find? fun i => v i ≠ 0
+def firstNZ (v : Array K) : Option (Fin r) := (List.finRange r).find? fun i => get v i ≠ 0
 
 /-- **Insert an entry**: its column reduced; unless zero, a new row at its first nonzero coordinate,
 normalized there. -/
-def insertE (col : α → Fin r → K) (B : List (Row K α r)) (e : α) : List (Row K α r) :=
+def insertE (col : α → Array K) (B : List (Row K α r)) (e : α) : List (Row K α r) :=
   let vx := reduce B (col e, [(e, 1)])
-  match firstNZ vx.1 with
+  match firstNZ (r := r) vx.1 with
   | none => B
-  | some p => B ++ [⟨p, mat ((vx.1 p)⁻¹ • vx.1), scaleL (vx.1 p)⁻¹ vx.2⟩]
+  | some p =>
+    let a := (get vx.1 p)⁻¹
+    B ++ [⟨p, arr fun i : Fin r => a * get vx.1 i, scaleL a vx.2⟩]
 
 /-- **The scan**: `n` entries from the `k`-th, stopping once every coordinate is a pivot. -/
-def scan (col : α → Fin r → K) (entryAt : ℕ → α) : ℕ → ℕ → List (Row K α r) → List (Row K α r)
+def scan (col : α → Array K) (entryAt : ℕ → α) : ℕ → ℕ → List (Row K α r) → List (Row K α r)
   | 0, _, B => B
   | n + 1, k, B =>
     if B.length = r then B else scan col entryAt n (k + 1) (insertE col B (entryAt k))
 
 /-- **The solution** for the target `t`: `t` reduced by the rows of the scan of the first `N`
 entries; the entries recorded, negated. -/
-def solveElim (col : α → Fin r → K) (entryAt : ℕ → α) (N : ℕ) (t : Fin r → K) : List (α × K) :=
-  scaleL (-1) (reduce (scan col entryAt N 0 []) (t, [])).2
+def solveElim (col : α → Array K) (entryAt : ℕ → α) (N : ℕ) (t : Array K) : List (α × K) :=
+  scaleL (-1) (reduce (scan (r := r) col entryAt N 0 []) (t, [])).2
 
 /-! ### Correctness -/
 
-variable (col : α → Fin r → K)
+variable (col : α → Array K)
 
-theorem comboVal_nil : comboVal col ([] : List (α × K)) = 0 := by simp [comboVal]
+theorem comboVal_nil : comboVal (r := r) col ([] : List (α × K)) = 0 := by simp [comboVal]
 
 theorem comboVal_append (x y : List (α × K)) :
-    comboVal col (x ++ y) = comboVal col x + comboVal col y := by
+    comboVal (r := r) col (x ++ y) = comboVal col x + comboVal col y := by
   simp [comboVal]
 
 theorem comboVal_scaleL (a : K) (x : List (α × K)) :
-    comboVal col (scaleL a x) = a • comboVal col x := by
+    comboVal (r := r) col (scaleL a x) = a • comboVal col x := by
   induction x with
   | nil => simp [comboVal, scaleL]
   | cons p x ih =>
@@ -216,15 +221,15 @@ theorem comboVal_scaleL (a : K) (x : List (α × K)) :
 the later rows are zero there. -/
 def WF : List (Row K α r) → Prop
   | [] => True
-  | row :: B => comboVal col row.comb = row.vec ∧ row.vec row.piv = 1 ∧
-      (∀ row' ∈ B, row'.vec row.piv = 0) ∧ WF B
+  | row :: B => comboVal (r := r) col row.comb = get row.vec ∧ get row.vec row.piv = 1 ∧
+      (∀ row' ∈ B, get row'.vec row.piv = 0) ∧ WF B
 
 /-- The rows' vectors. -/
-def vecs (B : List (Row K α r)) : Set (Fin r → K) := {w | ∃ row ∈ B, row.vec = w}
+def vecs (B : List (Row K α r)) : Set (Fin r → K) := {w | ∃ row ∈ B, get row.vec = w}
 
 variable {col}
 
-theorem WF.one : ∀ {B : List (Row K α r)}, WF col B → ∀ row ∈ B, row.vec row.piv = 1
+theorem WF.one : ∀ {B : List (Row K α r)}, WF col B → ∀ row ∈ B, get row.vec row.piv = 1
   | [], _, _, h => by simp at h
   | _ :: _, h, _, hm => by
     rcases List.mem_cons.mp hm with rfl | hm
@@ -232,7 +237,8 @@ theorem WF.one : ∀ {B : List (Row K α r)}, WF col B → ∀ row ∈ B, row.ve
     · exact WF.one h.2.2.2 _ hm
 
 theorem WF.append : ∀ {B : List (Row K α r)} (n : Row K α r), WF col B →
-    (∀ row ∈ B, n.vec row.piv = 0) → comboVal col n.comb = n.vec → n.vec n.piv = 1 →
+    (∀ row ∈ B, get n.vec row.piv = 0) → comboVal (r := r) col n.comb = get n.vec →
+    get n.vec n.piv = 1 →
     WF col (B ++ [n])
   | [], n, _, _, h1, h2 => ⟨h1, h2, by simp, trivial⟩
   | row :: B, n, h, hz, h1, h2 => by
@@ -243,50 +249,51 @@ theorem WF.append : ∀ {B : List (Row K α r)} (n : Row K α r), WF col B →
     · rw [List.mem_singleton.mp hm]
       exact hz row List.mem_cons_self
 
-theorem reduce_cons (row : Row K α r) (B : List (Row K α r)) (vx : (Fin r → K) × List (α × K)) :
+theorem reduce_cons (row : Row K α r) (B : List (Row K α r)) (vx : Array K × List (α × K)) :
     reduce (row :: B) vx = reduce B (step vx row) := rfl
 
 /-- **Reduction keeps the vector less its recorded combination.** -/
-theorem reduce_inv : ∀ {B : List (Row K α r)}, WF col B → ∀ vx : (Fin r → K) × List (α × K),
-    (reduce B vx).1 - comboVal col (reduce B vx).2 = vx.1 - comboVal col vx.2
+theorem reduce_inv : ∀ {B : List (Row K α r)}, WF col B → ∀ vx : Array K × List (α × K),
+    get (r := r) (reduce B vx).1 - comboVal col (reduce B vx).2 = get vx.1 - comboVal col vx.2
   | [], _, _ => rfl
   | row :: B, h, vx => by
-    rw [reduce_cons, reduce_inv h.2.2.2]
-    simp only [step_eq, comboVal_append, comboVal_scaleL, h.1]
-    rw [neg_smul]
+    rw [reduce_cons, reduce_inv h.2.2.2, get_step, step_snd, comboVal_append, comboVal_scaleL,
+      h.1, neg_smul]
     abel
 
 /-- Reduction keeps a coordinate where every row is zero. -/
-theorem reduce_zero_of : ∀ {B : List (Row K α r)} {q : Fin r}, (∀ row ∈ B, row.vec q = 0) →
-    ∀ vx : (Fin r → K) × List (α × K), vx.1 q = 0 → (reduce B vx).1 q = 0
+theorem reduce_zero_of : ∀ {B : List (Row K α r)} {q : Fin r}, (∀ row ∈ B, get row.vec q = 0) →
+    ∀ vx : Array K × List (α × K), get vx.1 q = 0 → get (reduce B vx).1 q = 0
   | [], _, _, _, h => h
   | row :: B, q, hB, vx, h => by
     rw [reduce_cons]
     refine reduce_zero_of (fun row' hm => hB row' (List.mem_cons_of_mem _ hm)) _ ?_
-    simp [step_eq, h, hB row List.mem_cons_self]
+    rw [get_step]
+    simp [h, hB row List.mem_cons_self]
 
 /-- **The reduced vector is zero at every pivot.** -/
-theorem reduce_piv : ∀ {B : List (Row K α r)}, WF col B → ∀ vx : (Fin r → K) × List (α × K),
-    ∀ row ∈ B, (reduce B vx).1 row.piv = 0
+theorem reduce_piv : ∀ {B : List (Row K α r)}, WF col B → ∀ vx : Array K × List (α × K),
+    ∀ row ∈ B, get (reduce B vx).1 row.piv = 0
   | [], _, _, _, h => by simp at h
   | row₀ :: B, h, vx, row, hm => by
     rw [reduce_cons]
     rcases List.mem_cons.mp hm with rfl | hm
     · refine reduce_zero_of h.2.2.1 _ ?_
-      simp [step_eq, h.2.1]
+      rw [get_step]
+      simp [h.2.1]
     · exact reduce_piv h.2.2.2 _ row hm
 
 /-- The reduction subtracts a combination of the rows. -/
-theorem reduce_sub_mem : ∀ (B : List (Row K α r)) (vx : (Fin r → K) × List (α × K)),
-    (reduce B vx).1 - vx.1 ∈ Submodule.span K (vecs B)
+theorem reduce_sub_mem : ∀ (B : List (Row K α r)) (vx : Array K × List (α × K)),
+    get (r := r) (reduce B vx).1 - get vx.1 ∈ Submodule.span K (vecs B)
   | [], vx => by simp [reduce]
   | row :: B, vx => by
     rw [reduce_cons]
     have h1 := reduce_sub_mem B (step vx row)
     have hmono : Submodule.span K (vecs B) ≤ Submodule.span K (vecs (row :: B)) :=
       Submodule.span_mono fun w ⟨row', hm, hw⟩ => ⟨row', List.mem_cons_of_mem _ hm, hw⟩
-    have h2 : (step vx row).1 - vx.1 ∈ Submodule.span K (vecs (row :: B)) := by
-      simp only [step_eq, sub_sub_cancel_left]
+    have h2 : get (r := r) (step vx row).1 - get vx.1 ∈ Submodule.span K (vecs (row :: B)) := by
+      rw [get_step, sub_sub_cancel_left]
       exact Submodule.neg_mem _ (Submodule.smul_mem _ _
         (Submodule.subset_span ⟨row, List.mem_cons_self, rfl⟩))
     have := Submodule.add_mem _ (hmono h1) h2
@@ -300,7 +307,7 @@ theorem eq_zero_of_mem_span : ∀ {B : List (Row K α r)}, WF col B → ∀ {w :
     rw [this, Submodule.span_empty, Submodule.mem_bot] at hw
     exact hw
   | row :: B, h, w, hw, hz => by
-    have hv : vecs (row :: B) = insert row.vec (vecs B) := by
+    have hv : vecs (row :: B) = insert (get row.vec) (vecs B) := by
       ext u
       simp [vecs, eq_comm]
     rw [hv, Submodule.mem_span_insert] at hw
@@ -329,9 +336,9 @@ theorem piv_nodup : ∀ {B : List (Row K α r)}, WF col B → (B.map Row.piv).No
     exact zero_ne_one h1
 
 /-- **The residual is zero** when the rows span the target or every coordinate is a pivot. -/
-theorem reduce_eq_zero {B : List (Row K α r)} (h : WF col B) {t : Fin r → K}
-    (ht : B.length = r ∨ t ∈ Submodule.span K (vecs B)) (x : List (α × K)) :
-    (reduce B (t, x)).1 = 0 := by
+theorem reduce_eq_zero {B : List (Row K α r)} (h : WF col B) {t : Array K}
+    (ht : B.length = r ∨ get (r := r) t ∈ Submodule.span K (vecs B)) (x : List (α × K)) :
+    get (r := r) (reduce B (t, x)).1 = 0 := by
   rcases ht with hl | ht
   · funext q
     have hall : ∀ q : Fin r, ∃ row ∈ B, row.piv = q := by
@@ -349,34 +356,37 @@ theorem reduce_eq_zero {B : List (Row K α r)} (h : WF col B) {t : Fin r → K}
 
 /-- **Insertion keeps the echelon form.** -/
 theorem WF.insertE {B : List (Row K α r)} (h : WF col B) (e : α) : WF col (insertE col B e) := by
-  have hinv : comboVal col (reduce B (col e, [(e, 1)])).2 = (reduce B (col e, [(e, 1)])).1 := by
+  have hinv : comboVal (r := r) col (reduce B (col e, [(e, 1)])).2 =
+      get (reduce B (col e, [(e, 1)])).1 := by
     have := reduce_inv h (col e, [(e, 1)])
     simp only [comboVal, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero,
       one_smul, sub_self] at this
     exact (sub_eq_zero.mp this).symm
-  rcases hp : firstNZ (reduce B (col e, [(e, 1)])).1 with _ | p
+  rcases hp : firstNZ (r := r) (reduce B (col e, [(e, 1)])).1 with _ | p
   · simp only [Builder.insertE, hp]
     exact h
   · simp only [Builder.insertE, hp]
-    have hne : (reduce B (col e, [(e, 1)])).1 p ≠ 0 := by
+    have hne : get (reduce B (col e, [(e, 1)])).1 p ≠ 0 := by
       have := List.find?_some hp
       simpa using this
     refine WF.append _ h (fun row hm => ?_) ?_ ?_
     · simp [reduce_piv h _ row hm]
-    · simp only [comboVal_scaleL, hinv, mat_eq]
+    · rw [comboVal_scaleL, hinv, get_arr]
+      rfl
     · simp [inv_mul_cancel₀ hne]
 
 /-- **After insertion, the entry's column is a combination of the rows**, and so is every
 combination of the earlier rows. -/
 theorem insertE_span (B : List (Row K α r)) (e : α) :
     Submodule.span K (vecs B) ≤ Submodule.span K (vecs (insertE col B e)) ∧
-      col e ∈ Submodule.span K (vecs (insertE col B e)) := by
-  have hsub : col e - (reduce B (col e, [(e, 1)])).1 ∈ Submodule.span K (vecs B) := by
+      get (r := r) (col e) ∈ Submodule.span K (vecs (insertE col B e)) := by
+  have hsub : get (r := r) (col e) - get (reduce B (col e, [(e, 1)])).1 ∈
+      Submodule.span K (vecs B) := by
     have := Submodule.neg_mem _ (reduce_sub_mem B (col e, [(e, 1)]))
     rwa [neg_sub] at this
-  rcases hp : firstNZ (reduce B (col e, [(e, 1)])).1 with _ | p
+  rcases hp : firstNZ (r := r) (reduce B (col e, [(e, 1)])).1 with _ | p
   · simp only [Builder.insertE, hp]
-    have h0 : (reduce B (col e, [(e, 1)])).1 = 0 := by
+    have h0 : get (r := r) (reduce B (col e, [(e, 1)])).1 = 0 := by
       funext i
       have := List.find?_eq_none.mp hp i (List.mem_finRange i)
       simpa using this
@@ -384,20 +394,20 @@ theorem insertE_span (B : List (Row K α r)) (e : α) :
     simpa [h0] using hsub
   · simp only [Builder.insertE, hp]
     set v := (reduce B (col e, [(e, 1)])).1
-    have hne : v p ≠ 0 := by
+    have hne : get v p ≠ 0 := by
       have := List.find?_some hp
       simpa using this
-    have hmono : Submodule.span K (vecs B) ≤ Submodule.span K
-        (vecs (B ++ [⟨p, mat ((v p)⁻¹ • v), scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩])) :=
+    set n : Row K α r := ⟨p, arr fun i : Fin r => (get v p)⁻¹ * get v i,
+      scaleL (get v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩
+    have hmono : Submodule.span K (vecs B) ≤ Submodule.span K (vecs (B ++ [n])) :=
       Submodule.span_mono fun w ⟨row, hm, hw⟩ => ⟨row, List.mem_append_left _ hm, hw⟩
     refine ⟨hmono, ?_⟩
-    have hv : v ∈ Submodule.span K
-        (vecs (B ++ [⟨p, mat ((v p)⁻¹ • v), scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩])) := by
-      have hrow := Submodule.smul_mem _ (v p) (Submodule.subset_span (R := K)
-        (s := vecs (B ++ [⟨p, mat ((v p)⁻¹ • v), scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩]))
-        ⟨_, List.mem_append_right _ (List.mem_singleton_self _), rfl⟩)
-      have hvv : v p • mat ((v p)⁻¹ • v) = v := by
-        rw [mat_eq, smul_smul, mul_inv_cancel₀ hne, one_smul]
+    have hv : get v ∈ Submodule.span K (vecs (B ++ [n])) := by
+      have hrow := Submodule.smul_mem _ (get v p) (Submodule.subset_span (R := K)
+        (s := vecs (B ++ [n])) ⟨n, List.mem_append_right _ (List.mem_singleton_self _), rfl⟩)
+      have hvv : get v p • get (r := r) n.vec = get v := by
+        funext i
+        simp [n, ← mul_assoc, mul_inv_cancel₀ hne]
       rwa [hvv] at hrow
     have := Submodule.add_mem _ (hmono hsub) hv
     rwa [sub_add_cancel] at this
@@ -405,9 +415,10 @@ theorem insertE_span (B : List (Row K α r)) (e : α) :
 /-- **The scan's invariant**: echelon rows, and every scanned column a combination of them unless
 every coordinate is a pivot. -/
 theorem scan_spec (entryAt : ℕ → α) : ∀ (n k : ℕ) (B : List (Row K α r)), WF col B →
-    (B.length = r ∨ ∀ i < k, col (entryAt i) ∈ Submodule.span K (vecs B)) →
+    (B.length = r ∨ ∀ i < k, get (r := r) (col (entryAt i)) ∈ Submodule.span K (vecs B)) →
     WF col (scan col entryAt n k B) ∧ ((scan col entryAt n k B).length = r ∨
-      ∀ i < k + n, col (entryAt i) ∈ Submodule.span K (vecs (scan col entryAt n k B)))
+      ∀ i < k + n, get (r := r) (col (entryAt i)) ∈
+        Submodule.span K (vecs (scan col entryAt n k B)))
   | 0, k, B, h, hs => ⟨h, hs⟩
   | n + 1, k, B, h, hs => by
     unfold scan
@@ -426,12 +437,13 @@ theorem scan_spec (entryAt : ℕ → α) : ∀ (n k : ℕ) (B : List (Row K α r
 
 /-- **The solution meets the target** whenever the target is a combination of the columns of
 entries the scan reaches. -/
-theorem solveElim_spec (entryAt : ℕ → α) (N : ℕ) (t : Fin r → K) (U : Set α)
-    (hU : ∀ e ∈ U, ∃ i < N, entryAt i = e) (ht : t ∈ Submodule.span K (col '' U)) :
-    comboVal col (solveElim col entryAt N t) = t := by
-  obtain ⟨hWF, hs⟩ := scan_spec (col := col) entryAt N 0 [] trivial
+theorem solveElim_spec (entryAt : ℕ → α) (N : ℕ) (t : Array K) (U : Set α)
+    (hU : ∀ e ∈ U, ∃ i < N, entryAt i = e)
+    (ht : get (r := r) t ∈ Submodule.span K ((fun e => get (r := r) (col e)) '' U)) :
+    comboVal (r := r) col (solveElim (r := r) col entryAt N t) = get t := by
+  obtain ⟨hWF, hs⟩ := scan_spec (r := r) (col := col) entryAt N 0 [] trivial
     (Or.inr fun i hi => absurd hi (Nat.not_lt_zero i))
-  have hres : (reduce (scan col entryAt N 0 []) (t, [])).1 = 0 := by
+  have hres : get (r := r) (reduce (scan (r := r) col entryAt N 0 []) (t, [])).1 = 0 := by
     refine reduce_eq_zero hWF (hs.imp_right fun hall => ?_) []
     refine (Submodule.span_le.mpr ?_) ht
     rintro _ ⟨e, he, rfl⟩
@@ -451,39 +463,41 @@ section Claims
 variable {K E ι Y : Type} [Field K] [DecidableEq K] [Field E] [Algebra K E]
   [Fintype ι] [DecidableEq ι] [Fintype Y] [DecidableEq Y]
 
-/-- **The columns**: claim `j`'s weight at the entry, its coordinate `k`, at `(j, k)`. -/
-def colOf (co : E → Fin 3 → K) {m : ℕ} (Wc : Fin m → ι → Y → E) (e : ι × Y) :
-    Fin (m * 3) → K :=
-  let ws := Array.ofFn fun j : Fin m => co (Wc j e.1 e.2)
-  fun i => (ws.getD (finProdFinEquiv.symm i).1 0) (finProdFinEquiv.symm i).2
+/-- **The column of an entry**: claim `j`'s weight at the entry, its coordinate `k`, at `(j, k)`;
+the `m` weights evaluated once. -/
+def colOf (co : E → Fin 3 → K) {m : ℕ} (Wc : Fin m → ι → Y → E) (e : ι × Y) : Array K :=
+  let ws := Array.ofFn fun j : Fin m => Wc j e.1 e.2
+  arr fun i : Fin (m * 3) => co (ws.getD (finProdFinEquiv.symm i).1 0) (finProdFinEquiv.symm i).2
 
-theorem colOf_eq (co : E → Fin 3 → K) {m : ℕ} (Wc : Fin m → ι → Y → E) (e : ι × Y) :
-    colOf co Wc e = fun i => co (Wc (finProdFinEquiv.symm i).1 e.1 e.2) (finProdFinEquiv.symm i).2 := by
+theorem get_colOf (co : E → Fin 3 → K) {m : ℕ} (Wc : Fin m → ι → Y → E) (e : ι × Y) :
+    get (colOf co Wc e) =
+      fun i : Fin (m * 3) => co (Wc (finProdFinEquiv.symm i).1 e.1 e.2) (finProdFinEquiv.symm i).2 := by
   funext i
   have hi : (i : ℕ) / 3 < m := (Nat.div_lt_iff_lt_mul (by norm_num)).mpr i.isLt
-  simp only [colOf]
+  simp only [colOf, get_arr]
   rw [Array.getD_eq_getD_getElem?, Array.getElem?_ofFn]
   simp only [finProdFinEquiv_symm_apply, Fin.coe_divNat, hi, ↓reduceDIte, Option.getD_some]
   rfl
 
 /-- **The target**: the claimed values' coordinates. -/
-def tgtOf (co : E → Fin 3 → K) {m : ℕ} (val : Fin m → E) : Fin (m * 3) → K :=
-  fun i => co (val (finProdFinEquiv.symm i).1) (finProdFinEquiv.symm i).2
+def tgtOf (co : E → Fin 3 → K) {m : ℕ} (val : Fin m → E) : Array K :=
+  arr fun i : Fin (m * 3) => co (val (finProdFinEquiv.symm i).1) (finProdFinEquiv.symm i).2
 
 /-- **The table built for the claimed values `val`**, by the scan of `entryAt k`, `k < N`. -/
 def build (co : E → Fin 3 → K) {m : ℕ} (Wc : Fin m → ι → Y → E) (entryAt : ℕ → ι × Y) (N : ℕ)
     (val : Fin m → E) : ι → Y → K :=
-  sparse (solveElim (colOf co Wc) entryAt N (tgtOf co val))
+  sparse (solveElim (r := m * 3) (colOf co Wc) entryAt N (tgtOf co val))
 
 theorem co_sparseVal (co : E ≃ₗ[K] (Fin 3 → K)) {m : ℕ} (Wc : Fin m → ι → Y → E) (j : Fin m)
     (k : Fin 3) (x : List ((ι × Y) × K)) :
-    co (sparseVal (Wc j) x) k = comboVal (colOf co Wc) x (finProdFinEquiv (j, k)) := by
+    co (sparseVal (Wc j) x) k = comboVal (r := m * 3) (colOf co Wc) x (finProdFinEquiv (j, k)) := by
   induction x with
   | nil => simp [sparseVal, comboVal]
   | cons p x ih =>
     simp only [sparseVal, comboVal, List.map_cons, List.sum_cons] at ih ⊢
-    rw [map_add, Pi.add_apply, ih, map_smul, Pi.add_apply, Pi.smul_apply, Pi.smul_apply]
-    simp [colOf_eq]
+    rw [map_add, Pi.add_apply, ih, map_smul, Pi.add_apply, Pi.smul_apply, Pi.smul_apply,
+      get_colOf]
+    simp
 
 /-- **The built table has the claimed values whenever some table has them**, for claims that
 weigh nothing of the randomness and a scan that reaches every entry. -/
@@ -492,12 +506,14 @@ theorem claims_build (co : E ≃ₗ[K] (Fin 3 → K)) (L : GadgetLayout ι Y) {m
     (hcov : ∀ e, ∃ i < N, entryAt i = e) (val : Fin m → E) {d : ι → Y → K}
     (hd : HiddenLayout.claimsMap Wc (L.stackD d) = val) :
     HiddenLayout.claimsMap Wc (L.stackD (build co Wc entryAt N val)) = val := by
-  have hspan : tgtOf co val ∈ Submodule.span K (colOf co Wc '' Set.univ) := by
-    have he : tgtOf co val = ∑ e : ι × Y, L.stackD d e.1 e.2 • colOf co Wc e := by
+  have hspan : get (r := m * 3) (tgtOf co val) ∈
+      Submodule.span K ((fun e => get (r := m * 3) (colOf co Wc e)) '' Set.univ) := by
+    have he : get (r := m * 3) (tgtOf co val) =
+        ∑ e : ι × Y, L.stackD d e.1 e.2 • get (colOf co Wc e) := by
       funext i
-      rw [Finset.sum_apply, Fintype.sum_prod_type, tgtOf, ← hd]
+      rw [Finset.sum_apply, Fintype.sum_prod_type, tgtOf, get_arr, ← hd]
       show co (∑ l, ∑ y, Wc _ l y * algebraMap K E (L.stackD d l y)) _ = _
-      simp only [map_sum, Finset.sum_apply, Pi.smul_apply, smul_eq_mul, colOf_eq]
+      simp only [map_sum, Finset.sum_apply, Pi.smul_apply, smul_eq_mul, get_colOf]
       refine Finset.sum_congr rfl fun l _ => Finset.sum_congr rfl fun y _ => ?_
       rw [mul_comm, ← Algebra.smul_def, map_smul, Pi.smul_apply, smul_eq_mul]
     rw [he]
@@ -507,8 +523,8 @@ theorem claims_build (co : E ≃ₗ[K] (Fin 3 → K)) (L : GadgetLayout ι Y) {m
   funext j
   rw [build, claimsMap_stackD_sparse L Wc (weight_randPos L hW)]
   refine co.injective (funext fun k => ?_)
-  rw [co_sparseVal, hsol]
-  simp [tgtOf]
+  rw [co_sparseVal, hsol, tgtOf, get_arr]
+  simp
 
 end Claims
 
