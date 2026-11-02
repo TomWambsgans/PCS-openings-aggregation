@@ -30,7 +30,8 @@ and its challenges are not degenerate (`¬ BadAB`, `¬ Degenerate`, at most `(17
 accepts it**, given:
 
 * `M : MembershipCircuit` (F0b: the deployed circuit, its assignment, Keccak correctness forward)
-  laid as the instance's wiring (`hw`), the bit weights `coordinate_weight`'s (`hc`);
+  on an instance whose wiring keeps what its cells carry (`hw`, `WiringKeeps`: `wiringOf M.C`, or
+  the deployed σ), the bit weights `coordinate_weight`'s (`hc`);
 * the instance's Cantor basis in `K` (`hB`: `beta()` is `F64`'s);
 * the witness and quotient openings `Wi`, `Qo` (`OpeningSystem`s holding their tables' chunks): for
   the redesigned hidden layouts, `HiddenOpening.toSystem` of what F2's update is to give
@@ -203,7 +204,7 @@ challenges: F1's completeness (`Reduction.honest_accepts`), passed to the tables
 numbers (`mle_eq_tableEvalN`). -/
 theorem honest_claims (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) (M : MembershipCircuit) {x Y : E}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (tr : Transcript)
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (tr : Transcript)
     (Wi Qo : OpeningSystem) (H : Bytes → Digest) (s : Secret) (m : Fin 4 → Fin 3 → K)
     (padW padQ : ℕ → ℕ → K)
     (hab : ¬ Reduction.BadAB I (honestRun I BK M tr Wi Qo H s m padW padQ).g
@@ -272,13 +273,13 @@ theorem honest_claims (I : Instance E) (BK : CantorBasis K (22 + 2))
 /-- **End-to-end completeness.** For every hash function `H` and permutation `F`, transcript `tr`,
 secret `s` and prover randomness (`m`, `padW`, `padQ`): if the honest prover returns a proof `π`
 and its challenges `(α, β, t)` are not degenerate, the deployed verifier accepts `π` for the
-statement `s` proves, against the circuit's commitment. Given F0b's circuit (`M`, laid as the
-wiring, `hw`), the deployed weights (`hc`) and basis (`hB`), and the witness and quotient
+statement `s` proves, against the circuit's commitment. Given F0b's circuit (`M`, on a wiring
+keeping what its cells carry, `hw`), the deployed weights (`hc`) and basis (`hB`), and the witness and quotient
 openings `Wi`, `Qo` holding their chunks (`HiddenOpening.toSystem` for the redesigned layouts;
 the wiring opening is proven). -/
 theorem completeness_deployed (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) (M : MembershipCircuit) {x Y : E}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (tr : Transcript)
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (tr : Transcript)
     (Wi Qo : OpeningSystem) (hWv : Wi.vars = 25) (hQv : Qo.vars = 30)
     (hWheld : ∀ t, InChunks (WhirBridge.cellVars WhirBridge.logRows)
       [(0, 2 ^ WhirBridge.cellVars WhirBridge.logRows), (1, 16)] t → Wi.Held t)

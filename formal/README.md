@@ -119,14 +119,15 @@ in that PRG).
   claims' challenge: the inherent `|c₀| · 2^-191`); every draw through the duplex's fresh capacity, grinding
   included (tries differ in the nonce lane; an exhausted grind leaves a fresh draw input). **`zk_deployed_fs`**,
   **`zk_deployed_fs_bits`**: `2^-54 + εhv + 2^-2200`; with the joint model **`zk_deployed_joint_fs`**:
-  `2^-54 + 2^-165 + 2^-2200`, and in the random-permutation model **`zk_rpm_deployed_joint_fs`**
-  (`QuotientZk/FreshJoint.lean`): `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`.
+  `2^-54 + 2^-165 + 2^-2200`, and in the random-permutation model **`zk_rpm_deployed_joint_fs`**,
+  **`zk_rpm_deployed_joint_fs'`** (`QuotientZk/FreshJoint.lean`; the latter also without `hrow`, `hduplex`):
+  `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`.
 - **What stays a hypothesis**: `JointHVZK` (the interactive protocol's honest-verifier zero knowledge, F1 with F3
   and the gadget's (R)); `FSFresh`'s conditions on the prover above (long rows, the first witness row's entropy,
-  claims reading a challenge, structural); `Factors` for the deployed prover (structural: the masks and the two paddings are independent and WHIR's
-  messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed; equal by
+  claims reading a challenge, structural); `Factors` for the deployed prover (structural: the masks and the two
+  paddings are independent and WHIR's messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed; equal by
   test, not by proof: see the next item). The lift to leanerVM's random-permutation model is separate
-  (`QuotientZk/Rpm.lean`).
+  (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
 - **`skel` against the Rust prover, by test** (`QuotientZk/Test/SkelTrace.lean`, executable `skeltrace`;
   `crates/quotient/tests/skel_trace.rs`, feature `skel-trace`, which records every Keccak call of a proof through
   test-only hooks): at `2^17` rows `skel`, run as compiled with mumbai's Keccak-256 and Keccak-f[1600] as the
@@ -151,7 +152,8 @@ in that PRG).
 `lean_vm`; sorry-free, every end theorem on `propext`, `Classical.choice`, `Quot.sound`, checked by
 `#guard_msgs` in `Completeness.lean`) proves that **the honest prover's proof is accepted by the deployed
 verifier**, the three openings included, for every hash function and permutation (the deployed Keccak-256 and
-Keccak-f[1600] among them), except on an explicit set of challenges.
+Keccak-f[1600] among them), except on an explicit set of challenges, on the deployed instance (circuit, σ,
+weights, Cantor basis) with no hypothesis left (`completeness_deployed_concrete`).
 
 - **The verifier** (`deployedVerify`, `Deployed.lean`): the transcript's challenges from the proof's roots and
   values (`Transcript`; `keccakTranscript` is `transcript.rs`'s chain, `Chain.lean`), `reduce`'s own check
@@ -175,7 +177,8 @@ Keccak-f[1600] among them), except on an explicit set of challenges.
   denominators for `(α, β)`, then `11 · 2^24 + 8` roots of the product `reduce` inverts and `2^26 − 1` of the
   `1 + w_k`), outside which the honest proof is accepted. The openings' proofs of work, in the random-oracle
   model: at most `2^-277` per opening at a fuel of `2^25` (`ours_romComplete`, from mumbai's `romComplete`).
-- **The pieces**: the circuit (`Circuit.lean`: `honest_relation`, from F0a's `relation_statementWords`); the
+- **The pieces**: the circuit (`Circuit.lean`: `honest_relation`, F0a's `relation_statementWords` for any wiring
+  keeping what the cells carry); the
   reduction (`Reduction.lean`: `honest_accepts`, F1's `honest_consistent` and `accepts_of_consistent`); the
   tables (`Tables.lean`, `Honest.lean`, `Read.lean`: novel-basis tables of bounded support over `K`, the gate
   quotient over `K` (`qGate_mem_lifts`), the honest degrees (`q ≤ 3 · 2^24 + 9249`, the gate's
@@ -184,13 +187,29 @@ Keccak-f[1600] among them), except on an explicit set of challenges.
   the table, the gadget cancels; `HiddenOpenings.lean`: with F2's `holds_iff` and `extra_holds_iff`); the
   wiring opening (`Wiring.lean`); mumbai's WHIR completeness (`Opening.lean`: `honestOpen_accepts` for any
   stacking whose stack claims hold, `openingVerify_honest`, `romComplete_ours`).
-- **What stays a hypothesis**: `MembershipCircuit` (F0b's interface: the deployed `ChiCircuit`, the assignment
-  it computes from a secret, and Keccak-256 correctness forward: that assignment satisfies every gate and its
-  public bits are those of `(y, root)` the secret proves, with `pair` = mumbai's `keccak256`; `formal/Circuit`
-  and `QuotientSecurity/Deployed.lean` give `deployed`, `deployed_public`, `deployed_laid`, but not yet the
-  evaluation of the circuit on a secret's input bits nor its link to this file's `Secret`); `hw` (the instance's
-  wiring is the circuit's), `hc` (the bit weights `coordinate_weight`'s), `hB` (the Cantor basis is in `K`,
-  `beta()` being `F64`'s). **Not covered**: a random-oracle theorem for the chain's honest challenges (the
+- **The deployed circuit, σ, weights and basis** (`Membership.lean`, `QuotientSecurity/DeployedHonest.lean`,
+  `QuotientSecurity/DeployedBasis.lean`): the interface the theorems above take for the circuit,
+  `MembershipCircuit` (the `ChiCircuit`, the assignment it computes from a secret, and Keccak-256 correctness
+  forward), is built from F0b's `deployed` (`deployedMembership`). The assignment is `deployed` evaluated on
+  `membership_inputs(s)` (`ChiCircuit.eval`, row by row in rank order: it satisfies every gate and holds the
+  inputs, `eval_satisfies`, `eval_input`, and is the only such computation, `eq_eval`), which is the Rust's
+  `Circuit::outputs` (`deployedAssign_eq_outputs`: `Circuit.outputs` computes it, its second loop running the
+  rows in rank order; so `outputs_satisfies`, F0b's open point); its public bits are the
+  statement's by F0b's `membership_public` applied to it (`deployedAssign_public`), this file's `Secret` read as
+  F0b's (`Secret.toPcs`: `pair` is F0b's `H` of the concatenation, the path folded the same way). The wiring
+  hypothesis is now `WiringKeeps I.wiring M.C` (every cell and its successor carry the same source; `wiringOf C`
+  meets it), and **the deployed σ** (`membership.sigma`, soundness's `deployedSigma`) meets it
+  (`deployedSigma_cellSrc`: `finish`'s σ is the cyclic successor among one slot's cells, `wiring_slot`, and a
+  slot names one source). The instance is soundness's `deployedInstance` with `beta()`'s basis
+  (`deployedInstanceE`; `deployedBasis`: the 24 words of `domain.rs`'s `beta()`, a Cantor basis of `F64 = K`
+  checked by the kernel, its vectors after the first of low bit clear, which determines it,
+  `deployedBasis_unique`; `crates/quotient/tests/lean_beta_vector.rs` asserts the words of the Rust), `hB`,
+  `hc`, `hw` by definition. **`completeness_deployed_concrete`**: on that instance, for each witness one set
+  `Bad` of `(α, β, t)` of density `< 2^-163` outside which, for every transcript, hash, permutation and padding,
+  the honest proof (when the openings' proofs of work succeed) is accepted; **`completeness_deployed_keccak`**
+  the same on `transcript.rs`'s chain (`deployedChain`). No circuit, wiring, weight or basis hypothesis remains
+  (`completeness_deployed_basis`: any Cantor basis of `K`; `completeness_deployed_sigma`: any instance with the
+  deployed σ). **Not covered**: a random-oracle theorem for the chain's honest challenges (the
   density above is over uniform `(α, β, t)`; an honest run's chain queries are fresh but for collisions, a few
   `Q² / 2^256`), one experiment holding both the chain and the openings' proofs of work, `log_rows < 22`, and
   that the Rust is this Lean (F5; the claims' values by F1's review, the openings by F2's tests).

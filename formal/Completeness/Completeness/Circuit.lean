@@ -22,11 +22,14 @@ bits of the statement the secret proves (`publicBits`, as `circuit::public_words
 of a structure, so every theorem below that takes a `MembershipCircuit` holds of whatever F0b
 builds; nothing about Keccak is assumed beyond them.
 
-`honest_relation`: on an instance whose wiring is the circuit's (`wiringOf C`) and whose bit
-weights are `coordinate_weight`'s, the cells of the assignment (`cellsOfBits`) satisfy the relation
-for the statement's eight words (`statementWords`: the halves of `(y, root)`, then `1, 0, 0, 0`).
-F0a's `relation_statementWords` is the step from words to the relation; the words are the bits'
-weighted sums (`halves_eq_sum`), so no independence of the weights is needed in this direction.
+`honest_relation`: on an instance whose wiring keeps what each cell carries (`WiringKeeps`: the
+source it reads, or its row for a `V` cell; `wiringOf C` does, `wiringKeeps_wiringOf`, and so does
+the deployed σ, `QuotientSecurity.deployedSigma_cellSrc`) and whose bit weights are
+`coordinate_weight`'s, the cells of the assignment (`cellsOfBits`) satisfy the relation for the
+statement's eight words (`statementWords`: the halves of `(y, root)`, then `1, 0, 0, 0`). F0a's
+`relation_statementWords` (for `wiringOf C`) is the step from words to the relation, here for any
+such wiring (`relation_statementWords_keeps`); the words are the bits' weighted sums
+(`halves_eq_sum`), so no independence of the weights is needed in this direction.
 -/
 
 set_option linter.unusedSectionVars false
@@ -95,7 +98,61 @@ structure MembershipCircuit where
   word6 : ∀ j, C.pubSrc 6 j = .zero
   word7 : ∀ j, C.pubSrc 7 j = .zero
 
+/-- **The wiring `σ` keeps what each cell carries in `C`** (`ChiCircuit.cellSrc`: the source an
+`X`, `Y`, `C` cell reads, the row of a `V` cell): a cycle of `σ` never mixes two sources, so the
+cells of a computation, each holding the bit of what it carries, are copied by `σ`. -/
+def WiringKeeps (σ : Equiv.Perm (Fin (22 + 2) → Bool)) (C : ChiCircuit (Fin (2 ^ 22))) : Prop :=
+  ∀ z, C.cellSrc (σ z) = C.cellSrc z
+
+/-- `wiringOf C`, whose cycles are the classes of `cellSrc`, keeps them. -/
+theorem wiringKeeps_wiringOf (C : ChiCircuit (Fin (2 ^ 22))) : WiringKeeps (wiringOf C) C :=
+  wiringOf_cellSrc C
+
 variable {F : Type} [Field F] [DecidableEq F] [CharP F 2]
+
+/-- **The relation holds of `C`'s computations on a wiring keeping what the cells carry**
+(F0a's `relation_wiringOf`, for any such wiring). -/
+theorem relation_keeps (I : Instance F) (C : ChiCircuit (Fin (2 ^ 22))) {x Y : F}
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring C) (v : Fin (2 ^ 22) → Bool)
+    (hv : C.SatisfiesBits v) : I.Relation (fun J => C.pubWord x Y v J) (C.cellsOfBits v) := by
+  refine ⟨fun y => ?_, fun z => ?_, fun J => ?_⟩
+  · obtain ⟨r, rfl⟩ := rowEquiv.surjective y
+    have hcell : ∀ k : Fin 4, (C.cellsOfBits v (cellBits (rowEquiv r, k)) : F)
+        = bitF ((C.srcOf r k).bval v) := fun k =>
+      congrArg (fun s => bitF (Src.bval v s)) (C.cellSrc_rowCell r k)
+    rw [hcell, hcell, hcell, hcell]
+    exact (gate_bitF _ _ _ _).mpr (hv r)
+  · simp only [ChiCircuit.cellsOfBits, hw z]
+  · classical
+    rw [hc, sum_regionWeight _ (coordWeight_one x Y)]
+    unfold ChiCircuit.pubWord
+    refine sum_congr rfl fun j _ => ?_
+    rw [regionWeight_coordWeight]
+    simp only [ChiCircuit.cellsOfBits, ChiCircuit.cellSrc_pubCell, ChiCircuit.pubBit]
+
+/-- **Completeness of the circuit's relation for `(y, root)`** on a wiring keeping what the cells
+carry (F0a's `relation_statementWords`, for any such wiring). -/
+theorem relation_statementWords_keeps (I : Instance F) (C : ChiCircuit (Fin (2 ^ 22))) {x Y : F}
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring C)
+    (h4one : C.pubSrc 4 0 = .one) (h4 : ∀ j, j ≠ 0 → C.pubSrc 4 j = .zero)
+    (h5 : ∀ j, C.pubSrc 5 j = .zero) (h6 : ∀ j, C.pubSrc 6 j = .zero)
+    (h7 : ∀ j, C.pubSrc 7 j = .zero) (v : Fin (2 ^ 22) → Bool) (hv : C.SatisfiesBits v)
+    (y root : Fin 32 → UInt8)
+    (hpub : ∀ J : Fin 4, C.pubWord x Y v (Fin.castLE (by norm_num) J) = halves x Y y root J) :
+    I.Relation (statementWords x Y y root) (C.cellsOfBits v) := by
+  have hs : (fun J => C.pubWord x Y v J) = statementWords x Y y root := by
+    funext J
+    fin_cases J
+    · exact hpub 0
+    · exact hpub 1
+    · exact hpub 2
+    · exact hpub 3
+    · exact C.pubWord_four x Y v h4one h4
+    · exact C.pubWord_zero x Y v 5 h5
+    · exact C.pubWord_zero x Y v 6 h6
+    · exact C.pubWord_zero x Y v 7 h7
+  rw [← hs]
+  exact relation_keeps I C hc hw v hv
 
 /-- A public word of the assignment is the statement's half, as the bits are. -/
 theorem pubWord_eq_halves (M : MembershipCircuit) (x Y : F) (s : Secret) (J : Fin 4) :
@@ -104,13 +161,14 @@ theorem pubWord_eq_halves (M : MembershipCircuit) (x Y : F) (s : Secret) (J : Fi
   rw [halves_eq_sum, ChiCircuit.pubWord]
   exact sum_congr rfl fun j _ => by rw [M.publicBits s J j]
 
-/-- **The honest cells satisfy the relation.** On an instance whose wiring is the circuit's and
-whose bit weights are `coordinate_weight`'s, the cells of the assignment of a secret satisfy the
-relation for the eight words of the statement it proves. -/
+/-- **The honest cells satisfy the relation.** On an instance whose wiring keeps what the
+circuit's cells carry (`wiringOf M.C`, or the deployed σ) and whose bit weights are
+`coordinate_weight`'s, the cells of the assignment of a secret satisfy the relation for the eight
+words of the statement it proves. -/
 theorem honest_relation (M : MembershipCircuit) (I : Instance F) {x Y : F}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (s : Secret) :
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (s : Secret) :
     I.Relation (statementWords x Y s.statement.y s.statement.root) (M.C.cellsOfBits (M.assign s)) :=
-  I.relation_statementWords M.C hc hw M.word4_one M.word4 M.word5 M.word6 M.word7 (M.assign s)
+  relation_statementWords_keeps I M.C hc hw M.word4_one M.word4 M.word5 M.word6 M.word7 (M.assign s)
     (M.satisfies s) _ _ (pubWord_eq_halves M x Y s)
 
 end Completeness
