@@ -312,7 +312,7 @@ fn coordinate_weight(k: usize) -> Option<F192> {
 }
 
 /// The two coordinates of the extension over the base field, and the scale of their weights `(1, Y, Y^2, Y^3)`.
-pub(crate) fn extension() -> ([F192; 2], F192) {
+pub fn extension() -> ([F192; 2], F192) {
     let (y, y2) = (F192::Y, F192::Y * F192::Y);
     let (d0, d1) = (F192::ONE + y, F192::ONE + y2);
     ([y * d0.inv(), y2 * d1.inv()], (d0 * d1).inv())
