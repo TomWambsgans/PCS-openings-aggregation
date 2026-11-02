@@ -54,7 +54,9 @@ word with `c₁.dec` (lists of at most `c₁.bound`). `_certified`: `2^-138` in 
   opening: one candidate must satisfy both). These are the events F2's `family_sound` bounds, at
   `(QA + 10122) (2^-128 + 5 (QA + 10122) / 2^256)` each, for the seed form the Rust now has
   (`keccak256(pre ‖ claims)` IV, zero public digest, root as the first two stream scalars; its
-  instantiation for that exact transcript is in progress in `WhirBridge`). To discharge them here:
+  instantiation for that exact transcript is in progress in `WhirBridge`; so far `WhirBridge`'s layout
+  and weight closure are the public ones, which the **wiring** opening uses: the witness and quotient
+  openings use hidden layouts, being added). To discharge them here:
   1. run this experiment in mumbai's two-oracle model (`KeccakCalls`: the chain and the Merkle
      trees on Keccak-256, the openings' duplex on Keccak-f[1600]) — the bad-query engine of
      `QuotientRpm/FreshBad.lean` is for one oracle, so either it is extended to the sum, or both
