@@ -26,6 +26,7 @@ import QuotientZk.RpmDuplexProver
 import QuotientZk.RpmDeployed
 import QuotientZk.RpmJoint
 import QuotientZk.RpmAxioms
+import QuotientZk.RpmDiscipline
 
 /-!
 # Zero knowledge of the non-interactive proof (layer F3b)
@@ -45,7 +46,10 @@ import QuotientZk.RpmAxioms
   indifferentiability simulator over the programmed cache. **`zk_rpm_deployed`**,
   **`zk_rpm_deployed_bits`**, **`zk_rpm_deployed_joint`** (`RpmJoint.lean`): the ROM bounds plus
   `Q² / 2^508` for `Q` permutation calls (`zk_rpm`, `RpmMain.lean`: a prover hashing with
-  Keccak-256 only, plus `Q² / 2^509`).
+  Keccak-256 only, plus `Q² / 2^509`). `RpmDiscipline.lean` discharges two of their hypotheses:
+  the deployed prover follows the duplex discipline for every shape (`duplexDiscipline_skel`), and
+  its rows are byte strings (`ofBytes`); **`zk_rpm_deployed_bits'`**, **`zk_rpm_deployed_joint'`**
+  are the statements without `hrow` and `hduplex`.
 -/
 
 /-- info: 'QuotientZk.zk_rom' depends on axioms: [propext, Classical.choice, Quot.sound] -/
