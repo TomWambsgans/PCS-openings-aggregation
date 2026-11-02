@@ -251,4 +251,223 @@ theorem proves_of_relation_statement (C : ChiCircuit (Fin (2 ^ 22))) {x Y : F} (
 
 end Instance
 
+/-! ## A wiring that lays a circuit
+
+`Builder::finish` joins each source and the cells reading it into one cycle. Any permutation with
+those cycles lays the circuit: `wiringOf C` is one (`laid_wiringOf`), and the relation holds of
+`C`'s computations on it (`relation_wiringOf`, `relation_statementWords`). So the hypotheses of
+`soundness_circuit` can be met, and for such a wiring the relation says exactly that the cells
+are a computation of `C` with the statement's public words. -/
+
+section WiringOf
+
+theorem permCongr_pow {α β : Type*} (e : α ≃ β) (p : Equiv.Perm α) (n : ℕ) :
+    e.permCongr p ^ n = e.permCongr (p ^ n) := by
+  induction n with
+  | zero => ext; simp [Equiv.permCongr_apply]
+  | succ n ih => rw [pow_succ, ih, pow_succ, Equiv.permCongr_mul]
+
+theorem sigmaCongrRight_pow {α : Type*} {β : α → Type*} (F : ∀ a, Equiv.Perm (β a)) (n : ℕ) :
+    Equiv.Perm.sigmaCongrRight F ^ n = Equiv.Perm.sigmaCongrRight fun a => F a ^ n := by
+  induction n with
+  | zero => ext <;> rfl
+  | succ n ih =>
+    rw [pow_succ, ih, Equiv.Perm.sigmaCongrRight_mul]
+    congr 1
+    funext a
+    exact (pow_succ (F a) n).symm
+
+theorem addRight_one_pow (k n : ℕ) (x : ZMod (k + 1)) :
+    ((Equiv.addRight (1 : ZMod (k + 1))) ^ n) x = x + n := by
+  induction n with
+  | zero => simp
+  | succ n ih => rw [pow_succ', Equiv.Perm.mul_apply, ih]; simp [add_assoc]
+
+/-- A permutation of a finite type with one cycle. -/
+theorem exists_transitive_perm (α : Type*) [Fintype α] :
+    ∃ p : Equiv.Perm α, ∀ a b, ∃ n : ℕ, (p ^ n) a = b := by
+  classical
+  rcases Nat.eq_zero_or_eq_succ_pred (Fintype.card α) with h | h
+  · have := Fintype.card_eq_zero_iff.mp h
+    exact ⟨1, fun a => (IsEmpty.false a).elim⟩
+  · set k := (Fintype.card α).pred
+    let e : α ≃ ZMod (k + 1) := Fintype.equivFinOfCardEq h
+    refine ⟨e.symm.permCongr (Equiv.addRight 1), fun a b => ⟨(e b - e a).val, ?_⟩⟩
+    rw [permCongr_pow, Equiv.permCongr_apply, Equiv.symm_symm, addRight_one_pow,
+      ZMod.natCast_zmod_val]
+    simp
+
+/-- **A permutation whose cycles are the classes of `key`.** -/
+theorem exists_perm_classes {α β : Type*} [Fintype α] (key : α → β) :
+    ∃ σ : Equiv.Perm α, (∀ a, key (σ a) = key a) ∧
+      ∀ a b, key a = key b → ∃ n : ℕ, (σ ^ n) a = b := by
+  classical
+  choose p hp using fun s : β => exists_transitive_perm {a // key a = s}
+  let e := Equiv.sigmaFiberEquiv key
+  have hpow : ∀ (n : ℕ) (a : α),
+      ((e.permCongr (Equiv.Perm.sigmaCongrRight p)) ^ n) a = ((p (key a) ^ n) ⟨a, rfl⟩).1 := by
+    intro n a
+    rw [permCongr_pow, Equiv.permCongr_apply, sigmaCongrRight_pow]
+    rfl
+  refine ⟨e.permCongr (Equiv.Perm.sigmaCongrRight p), fun a => ?_, fun a b hab => ?_⟩
+  · have := hpow 1 a
+    rw [pow_one, pow_one] at this
+    rw [this]
+    exact ((p (key a)) ⟨a, rfl⟩).2
+  · obtain ⟨n, hn⟩ := hp (key a) ⟨a, rfl⟩ ⟨b, hab.symm⟩
+    exact ⟨n, by rw [hpow, hn]⟩
+
+/-- The row of a cell. -/
+noncomputable def cellRow (z : Fin (22 + 2) → Bool) : Fin (2 ^ 22) :=
+  rowEquiv.symm (cellBits.symm z).1
+
+/-- The role of a cell. -/
+def cellRole (z : Fin (22 + 2) → Bool) : Fin 4 := (cellBits.symm z).2
+
+theorem rowCell_cellRow (z : Fin (22 + 2) → Bool) : rowCell (cellRow z) (cellRole z) = z := by
+  unfold rowCell cellRow cellRole
+  rw [← rowEquiv_apply, Equiv.apply_symm_apply]
+  exact cellBits.apply_symm_apply z
+
+theorem cellRow_rowCell (r : Fin (2 ^ 22)) (k : Fin 4) :
+    cellRow (rowCell r k) = r ∧ cellRole (rowCell r k) = k := by
+  unfold rowCell cellRow cellRole
+  rw [Equiv.symm_apply_apply]
+  exact ⟨rowEquiv.symm_apply_apply r, rfl⟩
+
+/-- What a cell carries in `C`: what it reads, for an `X`, `Y`, `C` cell; its row, for a `V`
+cell. -/
+def ChiCircuit.srcOf (C : ChiCircuit (Fin (2 ^ 22))) (r : Fin (2 ^ 22)) (k : Fin 4) :
+    Src (Fin (2 ^ 22)) :=
+  ![C.x r, C.y r, C.c r, .row r] k
+
+/-- What cell `z` carries in `C`. -/
+noncomputable def ChiCircuit.cellSrc (C : ChiCircuit (Fin (2 ^ 22))) (z : Fin (22 + 2) → Bool) :
+    Src (Fin (2 ^ 22)) :=
+  C.srcOf (cellRow z) (cellRole z)
+
+theorem ChiCircuit.cellSrc_rowCell (C : ChiCircuit (Fin (2 ^ 22))) (r : Fin (2 ^ 22)) (k : Fin 4) :
+    C.cellSrc (rowCell r k) = C.srcOf r k := by
+  obtain ⟨h1, h2⟩ := cellRow_rowCell r k
+  rw [ChiCircuit.cellSrc, h1, h2]
+
+theorem ChiCircuit.cellSrc_pubCell (C : ChiCircuit (Fin (2 ^ 22))) (J : Fin 8) (j : Fin 128) :
+    C.cellSrc (pubCell J j) = C.pubSrc J j := by
+  rw [pubCell, ChiCircuit.cellSrc_rowCell, ChiCircuit.pubSrc, pubRole]
+  split_ifs <;> rfl
+
+/-- **A wiring that lays `C`**: its cycles are the classes of what the cells carry, a source with
+the cells reading it. -/
+noncomputable def wiringOf (C : ChiCircuit (Fin (2 ^ 22))) : Equiv.Perm (Fin (22 + 2) → Bool) :=
+  (exists_perm_classes C.cellSrc).choose
+
+theorem wiringOf_cellSrc (C : ChiCircuit (Fin (2 ^ 22))) (z : Fin (22 + 2) → Bool) :
+    C.cellSrc (wiringOf C z) = C.cellSrc z :=
+  (exists_perm_classes C.cellSrc).choose_spec.1 z
+
+theorem wiringOf_reach (C : ChiCircuit (Fin (2 ^ 22))) (z z' : Fin (22 + 2) → Bool)
+    (h : C.cellSrc z = C.cellSrc z') : ∃ n : ℕ, (wiringOf C ^ n) z = z' :=
+  (exists_perm_classes C.cellSrc).choose_spec.2 z z' h
+
+theorem cellSrc_anchor (C : ChiCircuit (Fin (2 ^ 22))) (h5 : C.pubSrc 5 0 = .zero)
+    (h4 : C.pubSrc 4 0 = .one) (s : Src (Fin (2 ^ 22))) : C.cellSrc (anchor s) = s := by
+  cases s with
+  | zero => exact (C.cellSrc_pubCell 5 0).trans h5
+  | one => exact (C.cellSrc_pubCell 4 0).trans h4
+  | row r => exact C.cellSrc_rowCell r 3
+
+/-- **`wiringOf C` lays `C`**, when word 5 reads the zero and word 4 the one then zeros. -/
+theorem laid_wiringOf (C : ChiCircuit (Fin (2 ^ 22))) (h5 : ∀ j, C.pubSrc 5 j = .zero)
+    (h4one : C.pubSrc 4 0 = .one) (h4 : ∀ j, j ≠ 0 → C.pubSrc 4 j = .zero) :
+    Laid (wiringOf C) C where
+  reads r := by
+    have hr : ∀ k : Fin 4, Reads (wiringOf C) (rowCell r k) (C.srcOf r k) := fun k =>
+      wiringOf_reach C _ _ ((C.cellSrc_rowCell r k).trans (cellSrc_anchor C (h5 0) h4one _).symm)
+    exact ⟨hr 0, hr 1, hr 2⟩
+  word5 := h5
+  word4_one := h4one
+  word4 := h4
+
+variable {F : Type} [Field F] [DecidableEq F] [CharP F 2]
+
+/-- **The cells of `C`'s computation `v`**: each cell holds the bit of what it carries. -/
+noncomputable def ChiCircuit.cellsOfBits (C : ChiCircuit (Fin (2 ^ 22))) (v : Fin (2 ^ 22) → Bool) :
+    (Fin (22 + 2) → Bool) → F :=
+  fun z => bitF ((C.cellSrc z).bval v)
+
+theorem ChiCircuit.cellsOfBits_computes (C : ChiCircuit (Fin (2 ^ 22))) (v : Fin (2 ^ 22) → Bool)
+    (hv : C.SatisfiesBits v) : C.Computes (C.cellsOfBits v : (Fin (22 + 2) → Bool) → F) v :=
+  ⟨hv, fun r => by simp only [ChiCircuit.cellsOfBits, ChiCircuit.cellSrc_rowCell]; exact ⟨rfl, rfl, rfl, rfl⟩⟩
+
+/-- A word whose 128 bits read the zero is 0. -/
+theorem ChiCircuit.pubWord_zero (C : ChiCircuit (Fin (2 ^ 22))) (x Y : F) (v : Fin (2 ^ 22) → Bool)
+    (J : Fin 8) (h : ∀ j, C.pubSrc J j = .zero) : C.pubWord x Y v J = 0 :=
+  sum_eq_zero fun j _ => by simp [ChiCircuit.pubBit, h j, Src.bval, bitF]
+
+/-- Word 4, reading the one then zeros, is 1. -/
+theorem ChiCircuit.pubWord_four (C : ChiCircuit (Fin (2 ^ 22))) (x Y : F) (v : Fin (2 ^ 22) → Bool)
+    (h4one : C.pubSrc 4 0 = .one) (h4 : ∀ j, j ≠ 0 → C.pubSrc 4 j = .zero) :
+    C.pubWord x Y v 4 = 1 := by
+  rw [ChiCircuit.pubWord, sum_eq_single (0 : Fin 128)]
+  · simp [ChiCircuit.pubBit, h4one, Src.bval, bitF, bitWeight_zero]
+  · intro j _ hj
+    simp [ChiCircuit.pubBit, h4 j hj, Src.bval, bitF]
+  · intro h
+    exact absurd (mem_univ _) h
+
+end WiringOf
+
+namespace Instance
+
+variable {F : Type} [Field F] [DecidableEq F] [CharP F 2] (I : Instance F)
+
+/-- **On `wiringOf C`, the relation holds of `C`'s computations**: for every `v` satisfying `C` on
+bits, its cells satisfy the relation for the statement made of its own public words. -/
+theorem relation_wiringOf (C : ChiCircuit (Fin (2 ^ 22))) {x Y : F} (hc : I.c = coordWeight x Y)
+    (hw : I.wiring = wiringOf C) (v : Fin (2 ^ 22) → Bool) (hv : C.SatisfiesBits v) :
+    I.Relation (fun J => C.pubWord x Y v J) (C.cellsOfBits v) := by
+  refine ⟨fun y => ?_, fun z => ?_, fun J => ?_⟩
+  · obtain ⟨r, rfl⟩ := rowEquiv.surjective y
+    have hcell : ∀ k : Fin 4, (C.cellsOfBits v (cellBits (rowEquiv r, k)) : F)
+        = bitF ((C.srcOf r k).bval v) := fun k =>
+      congrArg (fun s => bitF (Src.bval v s)) (C.cellSrc_rowCell r k)
+    rw [hcell, hcell, hcell, hcell]
+    exact (gate_bitF _ _ _ _).mpr (hv r)
+  · rw [hw]
+    simp only [ChiCircuit.cellsOfBits, wiringOf_cellSrc]
+  · classical
+    rw [hc, sum_regionWeight _ (coordWeight_one x Y)]
+    unfold ChiCircuit.pubWord
+    refine sum_congr rfl fun j _ => ?_
+    rw [regionWeight_coordWeight]
+    simp only [ChiCircuit.cellsOfBits, ChiCircuit.cellSrc_pubCell, ChiCircuit.pubBit]
+
+/-- **Completeness of the circuit's relation for the statement `(y, root)`.** On `wiringOf C`, for
+a circuit whose words 4 to 7 read `1, 0, 0, 0` as `Builder::finish` lays them, the cells of a
+computation of `C` whose public words 0 to 3 are the halves of `(y, root)` satisfy the relation
+for the statement's eight words. -/
+theorem relation_statementWords (C : ChiCircuit (Fin (2 ^ 22))) {x Y : F}
+    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf C)
+    (h4one : C.pubSrc 4 0 = .one) (h4 : ∀ j, j ≠ 0 → C.pubSrc 4 j = .zero)
+    (h5 : ∀ j, C.pubSrc 5 j = .zero) (h6 : ∀ j, C.pubSrc 6 j = .zero)
+    (h7 : ∀ j, C.pubSrc 7 j = .zero) (v : Fin (2 ^ 22) → Bool) (hv : C.SatisfiesBits v)
+    (y root : Fin 32 → UInt8)
+    (hpub : ∀ J : Fin 4, C.pubWord x Y v (Fin.castLE (by norm_num) J) = halves x Y y root J) :
+    I.Relation (statementWords x Y y root) (C.cellsOfBits v) := by
+  have hs : (fun J => C.pubWord x Y v J) = statementWords x Y y root := by
+    funext J
+    fin_cases J
+    · exact hpub 0
+    · exact hpub 1
+    · exact hpub 2
+    · exact hpub 3
+    · exact C.pubWord_four x Y v h4one h4
+    · exact C.pubWord_zero x Y v 5 h5
+    · exact C.pubWord_zero x Y v 6 h6
+    · exact C.pubWord_zero x Y v 7 h7
+  rw [← hs]
+  exact I.relation_wiringOf C hc hw v hv
+
+end Instance
+
 end QuotientSecurity

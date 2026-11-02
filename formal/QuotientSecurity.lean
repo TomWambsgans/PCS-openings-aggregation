@@ -397,3 +397,19 @@ import QuotientSecurity.Hiding
 /-- info: 'QuotientSecurity.rowCell_eq_cellOf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms QuotientSecurity.rowCell_eq_cellOf
+
+/-- info: 'QuotientSecurity.laid_wiringOf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.laid_wiringOf
+
+/-- info: 'QuotientSecurity.Instance.relation_wiringOf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Instance.relation_wiringOf
+
+/-- info: 'QuotientSecurity.Instance.relation_statementWords' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.Instance.relation_statementWords
+
+/-- info: 'QuotientSecurity.exists_perm_classes' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.exists_perm_classes
