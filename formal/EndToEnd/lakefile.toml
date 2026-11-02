@@ -137,3 +137,12 @@ name = "UniStatement"
 srcDir = "../UniStatement"
 globs = ["UniStatement", "UniStatement.+"]
 leanOptions = { warningAsError = true }
+
+# The univariate PIOP's completeness (milestone 4, `formal/UniComplete`): the honest prover `uniProver` (a Lean
+# prover following SPEC.md and the Rust prover's message order) and `UniCompleteness` for it. The differential
+# runner (`UniCompleteTest/Runner.lean`) runs with `lake env lean`, not built.
+[[lean_lib]]
+name = "UniComplete"
+srcDir = "../UniComplete"
+globs = ["UniComplete", "UniComplete.+"]
+leanOptions = { warningAsError = true }
