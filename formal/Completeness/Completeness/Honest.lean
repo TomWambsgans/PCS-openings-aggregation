@@ -426,12 +426,12 @@ noncomputable def limb4 (p : F[X]) (e : Fin 4) : K[X] :=
 
 /-- **The degree each slot of the quotient table holds** (`quotient_chunks`, in entries of the
 slot's `2^26`): `h` one chunk, `q` three and `Q_SPILL = 9280`, the gate's quotient `(2 - 1/4)`
-chunks and `64`, the fourth slot nothing. -/
+chunks and `64`, the fourth slot nothing (its limbs are not live). -/
 def slotBound : Bool → Bool → ℕ
   | false, false => 2 ^ 24
   | true, false => 3 * 2 ^ 24 + 9280
   | false, true => 7 * 2 ^ 22 + 64
-  | true, true => 0
+  | true, true => 1
 
 /-- The limbs a slot holds: `h` and `q` three, the gate's quotient (over `K`) one. -/
 def slotLive : Bool → Bool → Fin 4 → Bool
@@ -523,5 +523,85 @@ theorem slotPoly_three (p : F[X]) :
   conv_rhs => rw [← S.sum_limbPoly p]
   rw [Fin.sum_univ_three]
   simp [limb4]
+
+/-- The limbs' degrees. -/
+theorem natDegree_limb4_le (p : F[X]) (e : Fin 4) : (limb4 S p e).natDegree ≤ p.natDegree := by
+  unfold limb4
+  split_ifs
+  · exact S.natDegree_limbPoly_le p _
+  · simp
+
+/-- **The honest slots**: for a second message whose `h₀`, `q` and gate quotient (over `K`,
+`qGateK`) have the degrees the slots hold, the table's four slots hold `h₀`, `q`, the gate
+quotient and zero. -/
+theorem slots_honest (M : ℕ) (hM : 3 * 2 ^ 24 + 9280 ≤ 2 ^ M) (R : Params.Quotients F)
+    (qGateK : K[X]) (hh : R.h₀.natDegree < 2 ^ 24) (hq : R.q.natDegree < 3 * 2 ^ 24 + 9280)
+    (hg : qGateK.natDegree < 7 * 2 ^ 22 + 64) :
+    slotPoly S.Y (fun b => S.ι (quotientTable S M R qGateK b)) false false = R.h₀ ∧
+      slotPoly S.Y (fun b => S.ι (quotientTable S M R qGateK b)) true false = R.q ∧
+      slotPoly S.Y (fun b => S.ι (quotientTable S M R qGateK b)) false true = qGateK.map S.ι ∧
+      slotPoly S.Y (fun b => S.ι (quotientTable S M R qGateK b)) true true = 0 := by
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [slotPoly_quotientTable S M R qGateK false false
+      (fun e => lt_of_le_of_lt (natDegree_limb4_le S _ e) hh) (by
+        show 2 ^ 24 ≤ 2 ^ M
+        omega)]
+    exact slotPoly_three S R.h₀
+  · rw [slotPoly_quotientTable S M R qGateK true false
+      (fun e => lt_of_le_of_lt (natDegree_limb4_le S _ e) hq) hM]
+    exact slotPoly_three S R.q
+  · rw [slotPoly_quotientTable S M R qGateK false true (fun _ => hg) (by
+        show 7 * 2 ^ 22 + 64 ≤ 2 ^ M
+        omega)]
+    simp [slotLive, slotPolyK]
+  · rw [slotPoly_quotientTable S M R qGateK true true (fun _ => by
+        show (0 : K[X]).natDegree < 1
+        simp) (by
+        show 1 ≤ 2 ^ M
+        exact Nat.one_le_two_pow)]
+    simp [slotLive]
+
+/-- **`Accepts` passes from the honest second message to the table holding it**, for any
+parameters whose cells' vanishing polynomial is the digit `w_m`: the table's slots hold `h₀`,
+`q`, the gate quotient and zero, so its `h`, quotients, `junk` and sum over the cells are the
+honest message's. -/
+theorem accepts_table_of_honest {m : ℕ} (P : Params F) (hv : P.vCells = digitPoly m) (Y : F)
+    (c : (Fin (m + 1 + 1 + 1 + 1 + 1 + 1) → Bool) → F) (stmt : Fin P.words → F)
+    (g : Params.Witness F) (α β γ t ρ s : F) (a : Fin 4 → F)
+    (hh : slotPoly Y c false false = (Params.honest P g α β γ).h₀)
+    (hq : slotPoly Y c true false = (Params.honest P g α β γ).q)
+    (hg : slotPoly Y c false true = (Params.honest P g α β γ).qGate)
+    (hj : slotPoly Y c true true = 0)
+    (hacc : P.Accepts stmt g (Params.honest P g α β γ) α β γ t a s ρ) :
+    P.Accepts stmt g (quotientsOfTable Y c) α β γ t a s ρ := by
+  refine (accepts_congr P ?_ ?_ ?_ ?_ ?_).mpr hacc
+  · rw [quotientsOfTable_h P Y c hv, hh]
+    simp [Params.Quotients.h, Params.honest]
+  · exact hq
+  · exact hg
+  · exact hj
+  · unfold Params.Quotients.top
+    refine sum_congr rfl fun i _ => ?_
+    have hz : (digitPoly m : F[X]).eval (P.pt i) = 0 := by
+      rw [← hv]; exact P.hCells i.1.1 i.1.2 i.2
+    have h1 := congrArg (fun p : F[X] => p.eval (P.pt i)) (slotPoly_low Y c)
+    simp only [eval_add, eval_mul, hz, zero_mul, add_zero] at h1
+    show (sumPolyLow Y c).eval (P.pt i) = (Params.honest P g α β γ).h₀.eval (P.pt i)
+    rw [← h1, hh]
+
+/-- **Where the honest quotient table is not zero**: a live limb of a slot, below the slot's
+bound. -/
+theorem quotientTable_support (M : ℕ) (R : Params.Quotients F) (qGateK : K[X])
+    (low : Fin M → Bool) (κ τ e₀ e₁ : Bool)
+    (hb : quotientTable S M R qGateK (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc low κ) τ) e₀) e₁) ≠ 0) :
+    slotLive κ τ (limbIdx e₀ e₁) = true ∧ idx low < slotBound κ τ := by
+  unfold quotientTable at hb
+  rw [quad_snoc, quad_snoc] at hb
+  unfold slotTable at hb
+  split_ifs at hb with hl
+  · refine ⟨hl, ?_⟩
+    by_contra hge
+    exact hb (tableSupp_support _ low (by omega))
+  · exact absurd rfl hb
 
 end Completeness
