@@ -100,19 +100,22 @@ fn conjugate(c: E, j: usize) -> E {
     frobenius(c, 1 << j)
 }
 
+/// `e^((2^64 - 1) / (2^(2^(j+1)) - 1))`, an element of `F_(j+1)`.
+fn into_subfield(e: E, j: usize) -> E {
+    if j == STAGES - 1 { e } else { e.pow(u64::MAX / ((1u64 << (1 << (j + 1))) - 1)) }
+}
+
 impl Tower {
     fn new() -> Self {
         // θ_j = x^((2^64 - 1) / (2^(2^(j+1)) - 1)) generates F_(j+1)^* (x is primitive in K); θ_5 = x.
-        let theta: [E; STAGES] = std::array::from_fn(|j| {
-            let theta = if j == STAGES - 1 {
-                GEN
-            } else {
-                GEN.pow(u64::MAX / ((1u64 << (1 << (j + 1))) - 1))
-            };
-            assert_eq!(conjugate(theta, j + 1), theta, "θ_{j} lies in F_{}", j + 1);
-            assert_ne!(conjugate(theta, j), theta, "θ_{j} is not in F_{j}");
-            theta
-        });
+        Self::with_theta(std::array::from_fn(|j| into_subfield(GEN, j)))
+    }
+
+    fn leaves_of(theta: &[E; STAGES]) -> [u64; K_BITS] {
+        for (j, &t) in theta.iter().enumerate() {
+            assert_eq!(conjugate(t, j + 1), t, "θ_{j} lies in F_{}", j + 1);
+            assert_ne!(conjugate(t, j), t, "θ_{j} is not in F_{j}");
+        }
         let mut leaves = [0u64; K_BITS];
         for i in 0..K_BITS {
             // Decompose x^i from F_6 down: index bit j = 1 for the θ_j part.
@@ -137,6 +140,11 @@ impl Tower {
                 }
             }
         }
+        leaves
+    }
+
+    fn with_theta(theta: [E; STAGES]) -> Self {
+        let leaves = Self::leaves_of(&theta);
         let (xors, sums) = xor_network(&leaves);
         Self {
             theta,
@@ -273,6 +281,33 @@ mod tests {
             acc + d[k] * crate::multilinear::eq_eval(&twisted, &r)
         });
         assert_eq!(weight_at(&point, &a, &map), direct);
+    }
+
+    /// The XOR network's size for other choices of `θ` (random elements of each `F_(j+1) \ F_j`):
+    /// `cargo test --release -p leanvm_flock_gas --lib theta_search -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn theta_search() {
+        let mut seed = 0x7e7a_u64;
+        let size = |tower: &Tower| tower.xors.len() + tower.sums.iter().map(|s| s.len().saturating_sub(1)).sum::<usize>();
+        let base = size(tower());
+        let mut best: Vec<(u32, [E; STAGES])> = Vec::new();
+        for _ in 0..400 {
+            let theta: [E; STAGES] = std::array::from_fn(|j| loop {
+                let t = into_subfield(E::new(element(&mut seed).c0, 0, 0), j);
+                if conjugate(t, j) != t {
+                    break t;
+                }
+            });
+            let ones: u32 = Tower::leaves_of(&theta).iter().map(|m| m.count_ones()).sum();
+            best.push((ones, theta));
+        }
+        best.sort_by_key(|(ones, _)| *ones);
+        println!("x's θ: {base} XORs; the fewest slice terms among 400 random θ: {:?}", best.iter().take(5).map(|b| b.0).collect::<Vec<_>>());
+        for (ones, theta) in best.iter().take(5) {
+            let tower = Tower::with_theta(*theta);
+            println!("  {ones} terms: {} XORs; θ = {:x?}", size(&tower), theta.map(|t| t.c0));
+        }
     }
 
     /// The ring switch's identity on a packed table: `Σ_u Φ(eq(p, u)) q(u) = Σ_i x^i Φ(s_i)`, `s_i = ẑ(i, p)`.
