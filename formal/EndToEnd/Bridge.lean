@@ -1,4 +1,5 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+import Bridge.Circuit
 import Bridge.Opening
 import Bridge.Chain
 import Bridge.Verifier
@@ -12,6 +13,9 @@ the proofs (`formal/Circuit`, `QuotientSecurity`, `QuotientRpm`, `WhirBridge`, `
 `Completeness`, `Implementation`) are about theirs. Each file here proves one part of the statement's
 definitions equal to the proofs' (see `README.md` of this package):
 
+* `Bridge/Circuit.lean` (`Bridge/Circuit/*.lean`): the statement's `membership 22` is F0b's
+  `PcsCircuit.membership` (`membership_eq`; rows, inputs, `σ`), proved for general builder steps,
+  never evaluating the `2^22`-row run.
 * `Bridge/Opening.lean`: the openings (layouts, weights, gadget, seed bytes, the check itself, the
   read-back of a hidden table) are F2's (`WhirBridge`).
 * `Bridge/Chain.lean`: the reduction's Keccak-256 chain (label, roots, values, challenges) is F4's
