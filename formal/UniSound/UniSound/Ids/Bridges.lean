@@ -182,6 +182,14 @@ structure RowConstraints (D : Deployment) (c : Stk) (s : USt) : Prop where
     c1Val D c (.memory k) D.shape.logMemory 0 = toK ((linesOf (publicWordsOf s.1.toList)).getD k (0, 0)).1 ∧
       c1Val D c (.memory k) D.shape.logMemory 1 = toK ((linesOf (publicWordsOf s.1.toList)).getD k (0, 0)).2
 
+/-- **Lv42's columns of `C1`'s Lv42 stack are `lv42Column`'s**: a committed column read back through
+Lv42's layout (`M3Instance.column`) is the column `lv42Stack` stacked (`lv42Column`). -/
+def LvReadBack (D : Deployment) : Prop :=
+  ∀ (rows : List ℕ) (c : Stk) (col : Lv42.Protocol.LeanIsa.Col), ¬ Lv42.Protocol.LeanIsa.IsLimb col →
+    ∀ x : Fin (2 ^ Lv42.Protocol.LeanIsa.kappa D.prog (D.sizes rows) col),
+      ((D.inst rows).column (lv42Stack D.prog (D.sizes rows) D.shape c) col).values.get x =
+        (lv42Column D.prog (D.sizes rows) D.shape c col).get x
+
 /-- **The constraints on `C1`'s rows are Lv42's** `ConstraintsVanish`, `CountsNonzero`,
 `PublicLinesHold` of `C1`'s Lv42 stack (`lv42Stack`, its rows through `rowPosition`). -/
 def LvConstraints (D : Deployment) : Prop :=
