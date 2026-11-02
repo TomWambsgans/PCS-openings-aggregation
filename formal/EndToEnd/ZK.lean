@@ -26,6 +26,7 @@ import ZK.CoreTrees
 import ZK.CoreOpen
 import ZK.CoreRed
 import ZK.CoreRender
+import ZK.CoreMain
 import ZK.Axioms
 
 /-!
