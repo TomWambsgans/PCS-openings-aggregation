@@ -14,6 +14,7 @@ import E2ECompleteness.Final
 import E2ECompleteness.Closed
 import E2ECompleteness.Cost
 import E2ECompleteness.Done
+import E2ECompleteness.NoneProb
 
 /-!
 # `PcsQuotient.Completeness`, end to end
@@ -53,6 +54,11 @@ layers, with an explicit `δ`:
 * `ProverCircuit.lean`: the membership circuit's cells and wiring are F0b's (`circuitMatch`).
 * `Closed.lean`: **`completeness_deployed_closed`**, `PcsQuotient.Completeness deltaDeployed` with
   `deltaDeployed < 2^-162`, from the block count alone.
+
+* `NoneProb.lean`: **`hnone_deployed`**, the hypothesis `hnone` of the zero-knowledge end theorem
+  (`zeroKnowledge_deployed_whir`, `ZK/ProverBridge.lean`): for every coins, the Statement's honest
+  prover makes no proof with probability at most `deltaNone < 2^-162` (the prover alone, staged:
+  the degenerate challenges, the grinding, the transfer from the random permutation).
 
 What stays a hypothesis: the block count of the deployed staged run (`2^48`, `Common.QueryCostAtMost
 … hashBlocks`). See the completeness section of `formal/README.md`.
@@ -145,3 +151,7 @@ What stays a hypothesis: the block count of the deployed staged run (`2^48`, `Co
 /-- info: 'E2ECompleteness.completeness_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms E2ECompleteness.completeness_end
+
+/-- info: 'E2ECompleteness.hnone_deployed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.hnone_deployed
