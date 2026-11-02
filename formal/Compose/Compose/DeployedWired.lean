@@ -239,4 +239,88 @@ theorem prEvent_EQw_le (A : OracleComp KeccakCalls (RootProof F × OpenProofs)) 
             fun y : (((S0 F × Bool) × Transcript) × Bool) × Transcript => qIn D y.1.1.1.1)
     _ ≤ openingBound (Q + 6 + 10122 + 10122) := hs
 
+/-! ## The wired run reads as the deployed run -/
+
+/-- The wired run asks what the deployed run asks, and gives the same outcome but for the wiring
+stage's transcript. -/
+theorem wired_deployed (A : OracleComp KeccakCalls (RootProof F × OpenProofs)) (T : KTable) :
+    tableQueryLog (wiredExp W D A) T = tableQueryLog (deployedExp W D A) T ∧
+      (evalWithAnswerFn (QueryImpl.ofFn T) (wiredExp W D A)).1.1.1.1.1 =
+        (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)).1.1.1.1 ∧
+      (evalWithAnswerFn (QueryImpl.ofFn T) (wiredExp W D A)).1.1.1.1.2 =
+        (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)).1.1.1.2 ∧
+      (evalWithAnswerFn (QueryImpl.ofFn T) (wiredExp W D A)).1.1.1.2 =
+        (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)).1.1.2 ∧
+      (evalWithAnswerFn (QueryImpl.ofFn T) (wiredExp W D A)).1.2 =
+        (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)).1.2 ∧
+      (evalWithAnswerFn (QueryImpl.ofFn T) (wiredExp W D A)).2 =
+        (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)).2 := by
+  set xI := evalWithAnswerFn (QueryImpl.ofFn T) (innerW W D A)
+  -- The wiring stage, kept and logged.
+  obtain ⟨hσl, hσe⟩ := run_keep (innerW W D A)
+    (fun x : (S0 F × Bool) × Transcript => ourVerifier D.Lσ D.R (σIn D x.1.1)) T
+  obtain ⟨hIσl, hIσe⟩ := run_logged (innerW W D A >>= fun x : (S0 F × Bool) × Transcript =>
+    (x, ·) <$> ourVerifier D.Lσ D.R (σIn D x.1.1)) T
+  have hinnerσ_l : tableQueryLog (innerσ W D A) T = tableQueryLog (innerW W D A) T ++
+      tableQueryLog (ourVerifier D.Lσ D.R (σIn D xI.1.1)) T := hIσl.trans hσl
+  have hinnerσ_e : evalWithAnswerFn (QueryImpl.ofFn T) (innerσ W D A) =
+      ((xI, evalWithAnswerFn (QueryImpl.ofFn T) (ourVerifier D.Lσ D.R (σIn D xI.1.1))),
+        (tableQueryLog (innerW W D A) T ++
+          tableQueryLog (ourVerifier D.Lσ D.R (σIn D xI.1.1)) T).filterMap inlEntry) := by
+    show evalWithAnswerFn (QueryImpl.ofFn T) ((simulateQ logImplKC (innerW W D A >>=
+      fun x : (S0 F × Bool) × Transcript => (x, ·) <$> ourVerifier D.Lσ D.R (σIn D x.1.1))).run [])
+        = _
+    rw [hIσe, hσe, hσl]
+  have hmid_l : tableQueryLog (midσ W D A) T = tableQueryLog (innerW W D A) T ++
+      tableQueryLog (ourVerifier D.Lσ D.R (σIn D xI.1.1)) T := hσl
+  have hmid_e : evalWithAnswerFn (QueryImpl.ofFn T) (midσ W D A) =
+      (xI, evalWithAnswerFn (QueryImpl.ofFn T) (ourVerifier D.Lσ D.R (σIn D xI.1.1))) := hσe
+  -- The quotient stage, kept and logged, after each.
+  obtain ⟨hQwl, hQwe⟩ := run_keep (innerσ W D A)
+    (fun y : (((S0 F × Bool) × Transcript) × Bool) × Transcript =>
+      ourVerifier D.LQ D.R (qIn D y.1.1.1.1)) T
+  obtain ⟨hWl, hWe⟩ := run_logged (innerσ W D A >>=
+    fun y : (((S0 F × Bool) × Transcript) × Bool) × Transcript =>
+      (y, ·) <$> ourVerifier D.LQ D.R (qIn D y.1.1.1.1)) T
+  obtain ⟨hQdl, hQde⟩ := run_keep (midσ W D A)
+    (fun y : ((S0 F × Bool) × Transcript) × Bool => ourVerifier D.LQ D.R (qIn D y.1.1.1)) T
+  obtain ⟨hDl, hDe⟩ := run_logged (midσ W D A >>=
+    fun y : ((S0 F × Bool) × Transcript) × Bool =>
+      (y, ·) <$> ourVerifier D.LQ D.R (qIn D y.1.1.1)) T
+  rw [hinnerσ_e] at hQwl hQwe
+  rw [hmid_e] at hQdl hQde
+  rw [hinnerσ_l] at hQwl
+  rw [hmid_l] at hQdl
+  have hlog : tableQueryLog (wiredExp W D A) T = tableQueryLog (deployedExp W D A) T := by
+    show tableQueryLog ((simulateQ logImplKC (innerσ W D A >>=
+      fun y : (((S0 F × Bool) × Transcript) × Bool) × Transcript =>
+        (y, ·) <$> ourVerifier D.LQ D.R (qIn D y.1.1.1.1))).run []) T =
+      tableQueryLog ((simulateQ logImplKC (midσ W D A >>=
+        fun y : ((S0 F × Bool) × Transcript) × Bool =>
+          (y, ·) <$> ourVerifier D.LQ D.R (qIn D y.1.1.1))).run []) T
+    rw [hWl, hDl, hQwl, hQdl]
+  have hz : evalWithAnswerFn (QueryImpl.ofFn T) (wiredExp W D A) =
+      ((((xI, evalWithAnswerFn (QueryImpl.ofFn T) (ourVerifier D.Lσ D.R (σIn D xI.1.1))),
+        (tableQueryLog (innerW W D A) T ++
+          tableQueryLog (ourVerifier D.Lσ D.R (σIn D xI.1.1)) T).filterMap inlEntry),
+        evalWithAnswerFn (QueryImpl.ofFn T) (ourVerifier D.LQ D.R (qIn D xI.1.1))),
+        (tableQueryLog (innerW W D A) T ++ tableQueryLog (ourVerifier D.Lσ D.R (σIn D xI.1.1)) T ++
+          tableQueryLog (ourVerifier D.LQ D.R (qIn D xI.1.1)) T).filterMap inlEntry) := by
+    show evalWithAnswerFn (QueryImpl.ofFn T) ((simulateQ logImplKC (innerσ W D A >>=
+      fun y : (((S0 F × Bool) × Transcript) × Bool) × Transcript =>
+        (y, ·) <$> ourVerifier D.LQ D.R (qIn D y.1.1.1.1))).run []) = _
+    rw [hWe, hQwe, hQwl]
+  have hz' : evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A) =
+      (((xI, evalWithAnswerFn (QueryImpl.ofFn T) (ourVerifier D.Lσ D.R (σIn D xI.1.1))),
+        evalWithAnswerFn (QueryImpl.ofFn T) (ourVerifier D.LQ D.R (qIn D xI.1.1))),
+        (tableQueryLog (innerW W D A) T ++ tableQueryLog (ourVerifier D.Lσ D.R (σIn D xI.1.1)) T ++
+          tableQueryLog (ourVerifier D.LQ D.R (qIn D xI.1.1)) T).filterMap inlEntry) := by
+    show evalWithAnswerFn (QueryImpl.ofFn T) ((simulateQ logImplKC (midσ W D A >>=
+      fun y : ((S0 F × Bool) × Transcript) × Bool =>
+        (y, ·) <$> ourVerifier D.LQ D.R (qIn D y.1.1.1))).run []) = _
+    rw [hDe, hQde, hQdl]
+  refine ⟨hlog, ?_⟩
+  rw [hz, hz']
+  exact ⟨rfl, rfl, rfl, rfl, rfl⟩
+
 end Compose
