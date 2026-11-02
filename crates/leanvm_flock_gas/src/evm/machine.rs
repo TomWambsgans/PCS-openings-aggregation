@@ -1,8 +1,9 @@
 // Adapted from this repository's crates/evm/src/machine.rs (itself adapted from leanVM
 // (https://github.com/leanEthereum/leanVM), branch PCS-openings-aggregation, commit 651453c6): revm with `FIELD_MUL`
-// and a mock `PCS_OPEN`, the same opcode, address, call encoding and transaction gas; here the mock takes any layout
-// id, the code is installed rather than deployed (it may pass EIP-170's limit), and an inspector gives every
-// instruction's gas. MIT OR Apache-2.0; see NOTICE.md.
+// and a mock `PCS_OPEN`, the same opcode, address, call encoding and transaction gas, and a `Chain` that deploys
+// contracts and keeps them across transactions; here the mock takes any layout id, code may also be installed rather
+// than deployed (it may pass EIP-170's limit), and an inspector gives every instruction's gas, in every contract a
+// call runs. MIT OR Apache-2.0; see NOTICE.md.
 //! revm with `FIELD_MUL`, a mock of the precompile `PCS_OPEN`, and per-instruction gas.
 //!
 //! `PCS_OPEN`'s input is this repository's (`crates/evm/src/machine.rs`): `3 + k (v + 1)` words, the commitment's
@@ -17,11 +18,12 @@ use revm::bytecode::Bytecode;
 use revm::context::result::{ExecutionResult, Output};
 use revm::context::{Cfg, Context, ContextTr, LocalContextTr, TxEnv};
 use revm::database::{CacheDB, EmptyDB};
-use revm::handler::{EthPrecompiles, MainBuilder, MainContext, PrecompileProvider};
-use revm::inspector::{InspectEvm, Inspector};
-use revm::interpreter::interpreter_types::{InterpreterTypes, Jumps, StackTr};
+use revm::handler::{EthPrecompiles, ExecuteCommitEvm, MainBuilder, MainContext, PrecompileProvider};
+use revm::inspector::{InspectCommitEvm, Inspector};
+use revm::interpreter::interpreter_types::{InputsTr, InterpreterTypes, Jumps, StackTr};
 use revm::interpreter::{
-    CallInput, Gas, InputsImpl, InstructionContext, InstructionResult, Interpreter, InterpreterResult, gas,
+    CallInput, CallInputs, CallOutcome, Gas, InputsImpl, InstructionContext, InstructionResult, Interpreter,
+    InterpreterResult, gas,
 };
 use revm::primitives::hardfork::SpecId;
 use revm::primitives::{Address, Bytes, TxKind, U256};
@@ -37,6 +39,8 @@ pub const PCS_OPEN: Address = Address::with_last_byte(0x12);
 /// Where the contract is installed, and who calls it.
 pub const VERIFIER: Address = Address::with_last_byte(0xc0);
 pub const CALLER: Address = Address::with_last_byte(0xca);
+/// Who deploys contracts.
+pub const DEPLOYER: Address = Address::with_last_byte(0xde);
 
 fn element(word: U256) -> E {
     let [c0, c1, c2, _] = word.into_limbs();
@@ -151,26 +155,107 @@ impl<CTX: ContextTr> PrecompileProvider<CTX> for Precompiles<'_> {
     }
 }
 
-/// The gas of each instruction, by its program counter: what the gas left drops by between the start of the
-/// instruction and the start of the next (a call's included).
+/// A call frame being run: whose code, and its last instruction started (its pc and the gas left then).
+struct FrameGas {
+    code: Address,
+    last: Option<(usize, u64)>,
+    /// The gas left after its last instruction ran (for the one that ends it).
+    end: u64,
+    /// Gas its finished calls' frames spent since its last instruction started, which that instruction's drop holds.
+    children: u64,
+    /// Gas attributed to its instructions and to its calls' frames.
+    total: u64,
+}
+
+impl FrameGas {
+    fn new(code: Address) -> Self {
+        Self {
+            code,
+            last: None,
+            end: 0,
+            children: 0,
+            total: 0,
+        }
+    }
+}
+
+/// The gas of each instruction, by the code it is in and its program counter: what its frame's gas left drops by
+/// between the start of the instruction and the start of the next, less what the frames of its calls spent (a call
+/// of a precompile runs no instructions: its gas is the call's).
 #[derive(Default)]
 struct GasByPc {
-    gas: Vec<u64>,
-    last: Option<(usize, u64)>,
-    end: u64,
+    sizes: Vec<(Address, usize)>,
+    gas: Vec<(Address, Vec<u64>)>,
+    frames: Vec<FrameGas>,
+}
+
+impl GasByPc {
+    fn charge(&mut self, code: Address, pc: usize, gas: u64) {
+        let at = match self.gas.iter().position(|(address, _)| *address == code) {
+            Some(at) => at,
+            None => {
+                let size = self.sizes.iter().find(|(address, _)| *address == code).map_or(0, |s| s.1);
+                self.gas.push((code, vec![0; size + 1]));
+                self.gas.len() - 1
+            }
+        };
+        let counts = &mut self.gas[at].1;
+        if counts.len() <= pc {
+            counts.resize(pc + 1, 0);
+        }
+        counts[pc] += gas;
+    }
+
+    /// The frame on top ended: its last instruction's gas, and its total to its caller's.
+    fn finish(&mut self) {
+        let frame = self.frames.pop().expect("a frame");
+        let mut total = frame.total;
+        if let Some((pc, before)) = frame.last {
+            let gas = before - frame.end - frame.children;
+            self.charge(frame.code, pc, gas);
+            total += gas + frame.children;
+        }
+        if let Some(caller) = self.frames.last_mut() {
+            caller.children += total;
+        }
+    }
 }
 
 impl<CTX, INTR: InterpreterTypes> Inspector<CTX, INTR> for GasByPc {
     fn step(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
         let (pc, left) = (interp.bytecode.pc(), interp.gas.remaining());
-        if let Some((last, before)) = self.last {
-            self.gas[last] += before - left;
+        let code = interp
+            .input
+            .bytecode_address()
+            .copied()
+            .unwrap_or_else(|| interp.input.target_address());
+        if self.frames.is_empty() {
+            self.frames.push(FrameGas::new(code));
         }
-        self.last = Some((pc, left));
+        let frame = self.frames.last_mut().expect("a frame");
+        frame.code = code;
+        let previous = frame.last.replace((pc, left));
+        let children = std::mem::take(&mut frame.children);
+        if let Some((last, before)) = previous {
+            let gas = before - left - children;
+            frame.total += gas + children;
+            self.charge(code, last, gas);
+        }
     }
 
     fn step_end(&mut self, interp: &mut Interpreter<INTR>, _context: &mut CTX) {
-        self.end = interp.gas.remaining();
+        if let Some(frame) = self.frames.last_mut() {
+            frame.end = interp.gas.remaining();
+        }
+    }
+
+    fn call(&mut self, _context: &mut CTX, inputs: &mut CallInputs) -> Option<CallOutcome> {
+        self.frames.push(FrameGas::new(inputs.bytecode_address));
+        None
+    }
+
+    fn call_end(&mut self, _context: &mut CTX, _inputs: &CallInputs, _outcome: &mut CallOutcome) {
+        self.finish();
     }
 }
 
@@ -182,8 +267,10 @@ pub struct Outcome {
     /// The gas of its execution, its calls of `PCS_OPEN` included: the transaction's without its base cost and its
     /// calldata.
     pub execution: u64,
-    /// Each instruction's gas, by program counter.
+    /// Each instruction's gas, by program counter, of the code called.
     pub gas_by_pc: Vec<u64>,
+    /// The same, of every code that ran, by its address.
+    pub gas_by_code: Vec<(Address, Vec<u64>)>,
     /// The inputs `PCS_OPEN` was called with, in order.
     pub pcs_calls: Vec<Vec<u8>>,
 }
@@ -201,54 +288,157 @@ pub fn transaction_gas(calldata: &[u8], execution: u64, floor: u64) -> u64 {
 /// Call `code`, installed at [`VERIFIER`] with storage `storage` (slot, word), with `calldata`, from [`CALLER`], in a
 /// block whose openings are `pcs_open`'s; the transaction starts cold (EIP-2929).
 pub fn call(code: &[u8], storage: &[(u8, [u8; 32])], calldata: &[u8], pcs_open: &PcsOpen) -> Outcome {
-    let mut db = CacheDB::<EmptyDB>::default();
-    let account = AccountInfo::default().with_code(Bytecode::new_raw(Bytes::copy_from_slice(code)));
-    db.insert_account_info(VERIFIER, account);
+    let mut chain = Chain::default();
+    chain.install(VERIFIER, code);
     for &(slot, word) in storage {
-        db.insert_account_storage(VERIFIER, U256::from(slot), U256::from_be_bytes(word))
+        chain.store(VERIFIER, slot, word);
+    }
+    chain.call(VERIFIER, calldata, pcs_open)
+}
+
+/// The accounts transactions run on, kept across them.
+#[derive(Clone, Default)]
+pub struct Chain {
+    db: CacheDB<EmptyDB>,
+}
+
+/// A transaction's output (a creation's: the code), its execution gas (a creation's includes its 32,000, its init
+/// code's 2 a word and its code's deposit, 200 a byte), and the address it created.
+type Run = (Option<Vec<u8>>, u64, Option<Address>);
+
+impl Chain {
+    /// Put `code` at `address`, as if deployed.
+    pub fn install(&mut self, address: Address, code: &[u8]) {
+        let account = AccountInfo::default().with_code(Bytecode::new_raw(Bytes::copy_from_slice(code)));
+        self.db.insert_account_info(address, account);
+    }
+
+    pub fn store(&mut self, address: Address, slot: u8, word: [u8; 32]) {
+        self.db
+            .insert_account_storage(address, U256::from(slot), U256::from_be_bytes(word))
             .expect("an account");
     }
-    db.insert_account_info(CALLER, AccountInfo::from_balance(U256::from(10u64.pow(18))));
-    // Cancun has no calldata floor, so the gas it reports separates into calldata and execution.
-    let mut evm = Context::mainnet()
-        .with_db(&mut db)
-        .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
-        .modify_block_chained(|block| block.gas_limit = u64::MAX)
-        .build_mainnet_with_inspector(GasByPc {
-            gas: vec![0; code.len() + 1],
-            ..GasByPc::default()
-        })
-        .with_precompiles(Precompiles {
+
+    /// The code at `address`.
+    pub fn code(&self, address: Address) -> Vec<u8> {
+        let account = self.db.cache.accounts.get(&address);
+        let code = account.and_then(|account| account.info.code.as_ref());
+        code.map_or_else(Vec::new, |code| code.original_byte_slice().to_vec())
+    }
+
+    /// The word in storage slot `slot` of the account at `address`.
+    pub fn storage(&self, address: Address, slot: u8) -> [u8; 32] {
+        let account = self.db.cache.accounts.get(&address);
+        let word = account.and_then(|account| account.storage.get(&U256::from(slot)).copied());
+        word.unwrap_or_default().to_be_bytes()
+    }
+
+    /// Deploy `init_code` by a transaction from [`DEPLOYER`] (EIP-170's and EIP-3860's limits enforced): the address,
+    /// unless the creation failed, and the transaction's execution gas.
+    pub fn deploy(&mut self, init_code: &[u8]) -> (Option<Address>, u64) {
+        let (_, execution, created) = self.transact(DEPLOYER, TxKind::Create, init_code, &PcsOpen::default(), None);
+        (created, execution)
+    }
+
+    /// Call `to` with `calldata`, from [`CALLER`], in a block whose openings are `pcs_open`'s, leaving the chain as
+    /// it was; each instruction's gas, by code.
+    pub fn call(&self, to: Address, calldata: &[u8], pcs_open: &PcsOpen) -> Outcome {
+        let mut chain = self.clone();
+        let mut inspector = GasByPc::default();
+        for (address, account) in &chain.db.cache.accounts {
+            let size = account.info.code.as_ref().map_or(0, |code| code.original_byte_slice().len());
+            inspector.sizes.push((*address, size));
+        }
+        let mut calls = Vec::new();
+        let (output, execution, _) = chain.transact(
+            CALLER,
+            TxKind::Call(to),
+            calldata,
+            pcs_open,
+            Some((&mut inspector, &mut calls)),
+        );
+        while !inspector.frames.is_empty() {
+            inspector.finish();
+        }
+        let gas_by_pc = inspector
+            .gas
+            .iter()
+            .find(|(address, _)| *address == to)
+            .map_or_else(Vec::new, |(_, gas)| gas.clone());
+        Outcome {
+            output,
+            execution,
+            gas_by_pc,
+            gas_by_code: inspector.gas,
+            pcs_calls: calls,
+        }
+    }
+
+    fn transact(
+        &mut self,
+        from: Address,
+        to: TxKind,
+        data: &[u8],
+        pcs_open: &PcsOpen,
+        inspect: Option<(&mut GasByPc, &mut Vec<Vec<u8>>)>,
+    ) -> Run {
+        let nonce = self
+            .db
+            .cache
+            .accounts
+            .get(&from)
+            .map_or(0, |account| account.info.nonce);
+        self.db.insert_account_info(
+            from,
+            AccountInfo::from_balance(U256::from(10u64.pow(18))).with_nonce(nonce),
+        );
+        let tx = TxEnv::builder()
+            .caller(from)
+            .nonce(nonce)
+            .kind(to)
+            .data(Bytes::copy_from_slice(data))
+            .gas_limit(100_000_000)
+            .build()
+            .expect("a transaction");
+        let precompiles = Precompiles {
             eth: EthPrecompiles::default(),
             pcs_open,
             calls: Vec::new(),
             warm: false,
-        });
-    evm.instruction.insert_instruction(FIELD_MUL, field_mul);
-    let tx = TxEnv::builder()
-        .caller(CALLER)
-        .kind(TxKind::Call(VERIFIER))
-        .data(Bytes::copy_from_slice(calldata))
-        .gas_limit(100_000_000)
-        .build()
-        .expect("a transaction");
-    let result = evm.inspect_one_tx(tx).expect("a valid transaction");
-    let execution = result.gas_used() - transaction_gas(calldata, 0, 0);
-    let output = match result {
-        ExecutionResult::Success {
-            output: Output::Call(output),
-            ..
-        } => Some(output.to_vec()),
-        _ => None,
-    };
-    let mut inspector = std::mem::take(&mut evm.inspector);
-    if let Some((last, before)) = inspector.last {
-        inspector.gas[last] += before - inspector.end;
-    }
-    Outcome {
-        output,
-        execution,
-        gas_by_pc: inspector.gas,
-        pcs_calls: std::mem::take(&mut evm.precompiles.calls),
+        };
+        // Cancun has no calldata floor, so the gas it reports separates into calldata and execution.
+        let context = Context::mainnet()
+            .with_db(&mut self.db)
+            .modify_cfg_chained(|cfg| cfg.spec = SpecId::CANCUN)
+            .modify_block_chained(|block| block.gas_limit = u64::MAX);
+        let result = match inspect {
+            Some((inspector, calls)) => {
+                let mut evm = context
+                    .build_mainnet_with_inspector(std::mem::take(inspector))
+                    .with_precompiles(precompiles);
+                evm.instruction.insert_instruction(FIELD_MUL, field_mul);
+                let result = evm.inspect_tx_commit(tx).expect("a valid transaction");
+                *inspector = std::mem::take(&mut evm.inspector);
+                *calls = std::mem::take(&mut evm.precompiles.calls);
+                result
+            }
+            None => {
+                let mut evm = context.build_mainnet().with_precompiles(precompiles);
+                evm.instruction.insert_instruction(FIELD_MUL, field_mul);
+                evm.transact_commit(tx).expect("a valid transaction")
+            }
+        };
+        let execution = result.gas_used() - transaction_gas(data, 0, 0);
+        match result {
+            ExecutionResult::Success {
+                output: Output::Call(output),
+                ..
+            } => (Some(output.to_vec()), execution, None),
+            ExecutionResult::Success {
+                output: Output::Create(output, created),
+                ..
+            } => (Some(output.to_vec()), execution, created),
+            _ => (None, execution, None),
+        }
     }
 }

@@ -1248,6 +1248,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "evm_link"
+version = "0.1.0"
+
+[[package]]
 name = "fastrlp"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1726,6 +1730,7 @@ checksum = "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb"
 name = "leanvm_flock_gas"
 version = "0.1.0"
 dependencies = [
+ "evm_link",
  "revm",
 ]
 
