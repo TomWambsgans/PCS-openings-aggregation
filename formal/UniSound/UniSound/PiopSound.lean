@@ -60,10 +60,10 @@ theorem uniPre_pre_post (s : USt) (p : Op Stk) (m : Option Stk × List E) (c : L
   rw [ite_eq_right hl] at h
   by_cases hq : (p ++ [(m, c)]).length = Fl.prog.rounds.length + 1
   · rw [ite_eq_left hq] at h
-    obtain ⟨c1, c2, h1, -, hP, hEnd, hDone⟩ := h
+    obtain ⟨c1, c2, h1, -, hP, hEnd, hPend, hDone⟩ := h
     refine ⟨c1, h1, ?_⟩
     rw [ite_eq_left (le_of_eq hq), hq, Nat.add_sub_cancel, List.take_length]
-    exact ⟨I.main_of_polys _ _ _ _ hP, hDone.1, Fl.finish _ _ hDone.1 hEnd hDone.2⟩
+    exact ⟨I.main_of_polys _ _ _ _ hP, hDone, Fl.finish _ _ hDone hEnd hPend⟩
   · rw [ite_eq_right hq] at h
     exact h
 
@@ -143,6 +143,7 @@ theorem uniSound_c2 (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.lengt
   have hpre : uniPre Fl I s p m = ∃ c1 c2, (rd p 0).1.1 = some c1 ∧ m.1 = some c2 ∧
       (∀ P ∈ I.polys s c1 (rd p 0).2 c2, P = 0) ∧
       FlockEndHolds (I.qf c1) (Fl.prog.out (fdOf Fl.prog.rounds.length p) []) ∧
+      PendingHolds (Fl.prog.out (fdOf Fl.prog.rounds.length p) []).2.2 ∧
       FlockDone Fl (fdOf Fl.prog.rounds.length p) := by
     unfold uniPre
     rw [ite_eq_right (by omega), ite_eq_left hp]
@@ -183,8 +184,9 @@ theorem uniSound_c2 (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.lengt
   rw [hfd] at hDone
   have hev := I.diffs_eval _ _ _ _ _ _ _ hz
   have hEnd := I.diffs_flock _ _ _ _ _ _ _ hz
+  have hPend := I.diffs_pending _ _ _ _ _ _ _ hz
   by_contra hno
-  refine hn ⟨c1, c2, rfl, rfl, fun P hP => ?_, hEnd, hDone⟩
+  refine hn ⟨c1, c2, rfl, rfl, fun P hP => ?_, hEnd, hPend, hDone⟩
   by_contra hP0
   exact hno ⟨P, hP, hP0, hev P hP⟩
 

@@ -113,7 +113,7 @@ def uniRounds (flockRounds : List Compose.RoundSpec) (nV V : ℕ) : List Compose
   values `vals` (zero when the relation holds; the verifier's relations, in `combine`'s order),
   and as a fourth entry the pending reduction's `Σ G L̂ ŝ + claim`; `diffs_eval`: all zero, every
   identity vanishes at `t`; `diffs_flock`: all zero, Flock's claim on `q_flock` holds (it is one
-  of `C1`'s relations).
+  of `C1`'s relations); `diffs_pending`: all zero, the pending reduction's claim is its sum.
 * `prod … ρ λ`: the batch's `g = Σ_{k<3} λ^k W_k C_k + λ³ G L` (`ProdSum`, over `V` variables;
   iteration 2's lever 4a: the pending matrices' sum is the fourth product), `target` its claimed
   sum `Σ_k λ^k v_k + λ³ claim`; `batch_start`: `Σ_u g(u) + target` is the combination by `λ` of
@@ -144,6 +144,8 @@ structure UniIds (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) where
     ∀ P ∈ polys s c1 ch c2, P.eval t = 0
   diffs_flock : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
     FlockEndHolds (qf c1) (Fl.prog.out fd [])
+  diffs_pending : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
+    PendingHolds (Fl.prog.out fd []).2.2
   prod : USt → Stk → List E → Done → Stk → E → List E → E → E → ProdSum
   prod_vars : ∀ s c1 ch fd c2 t vals ρ l, (prod s c1 ch fd c2 t vals ρ l).vars = V
   target : USt → Stk → List E → Done → Stk → E → List E → E → E → E
@@ -259,9 +261,8 @@ section States
 
 variable {D : Deployment} {κ : ℕ} (Fl : FlockSound κ) (I : UniIds D Fl)
 
-/-- **Flock's end**: its rounds completed, its pending reduction's claim its sum. -/
-def FlockDone (fd : Done) : Prop :=
-  DoneFits Fl.prog.rounds fd ∧ PendingHolds (Fl.prog.out fd []).2.2
+/-- **Flock's end**: its rounds completed. -/
+def FlockDone (fd : Done) : Prop := DoneFits Fl.prog.rounds fd
 
 /-- **The state after the completed rounds `q`** (`q` nonempty). -/
 def uniS (s : USt) (q : Op Stk) : Prop :=
@@ -297,6 +298,7 @@ def uniPre (s : USt) (p : Op Stk) (m : Option Stk × List E) : Prop :=
     ∃ c1 c2, (rd p 0).1.1 = some c1 ∧ m.1 = some c2 ∧
       (∀ P ∈ I.polys s c1 (rd p 0).2 c2, P = 0) ∧
       FlockEndHolds (I.qf c1) (Fl.prog.out (fdOf Fl.prog.rounds.length p) []) ∧
+      PendingHolds (Fl.prog.out (fdOf Fl.prog.rounds.length p) []).2.2 ∧
       FlockDone Fl (fdOf Fl.prog.rounds.length p)
   else uniS Fl I s p
 
