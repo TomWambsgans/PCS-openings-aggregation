@@ -149,6 +149,114 @@ theorem draw_rel {d : Dx} {sp : Sponge} (hr : Rel d sp) (hist : List Out) :
   · show (if hist.length < P.n then hist ++ [((gF d.input, π d.input) : Out)] else hist) = _
     rw [input_eq hr]
 
+/-! ## Grinding -/
+
+theorem runDet_bind {α β : Type} (x : OracleComp DSpec α) (f : α → OracleComp DSpec β)
+    (hist : List Out) :
+    runDet P (Gof h π gH gF) s (x >>= f) hist =
+      runDet P (Gof h π gH gF) s (f (runDet P (Gof h π gH gF) s x hist).1)
+        (runDet P (Gof h π gH gF) s x hist).2 := by
+  simp only [runDet, simulateQ_bind, StateT.run_bind]
+  rfl
+
+theorem limbsOf_nonceOf (n : ℕ) : limbsOf (LeanVM.Prover.nonceOf n) = (UInt64.ofNat n, 0, 0) := rfl
+
+theorem grindOk_eq (x : KeccakState) :
+    (x[0] % (2 ^ QuotientZk.Deployed.grindBits : UInt64) == 0) =
+      decide (x[0].toNat % 2 ^ 17 = 0) := by
+  have h : ((2 : UInt64) ^ QuotientZk.Deployed.grindBits).toNat = 2 ^ 17 := by decide
+  rw [Bool.eq_iff_iff, beq_iff_eq, decide_eq_true_iff, ← UInt64.toNat_inj, UInt64.toNat_mod, h]
+  rfl
+
+
+/-- The proof-of-work step in `Id`: absorb the nonce with tag `4`, then squeeze. -/
+theorem powStepM_run (sp : Sponge) (e : E) :
+    (LeanVM.Prover.powStepM (m := Id) (fun y ↦ pure (π y)) sp e).run =
+      (Compile.challengeOf (π (duplexInput (absorb (m := Id) (fun y ↦ pure (π y)) sp e 4).run)),
+        ⟨π (duplexInput (absorb (m := Id) (fun y ↦ pure (π y)) sp e 4).run), []⟩) := rfl
+
+theorem powOk_challengeOf (e : E) (x : KeccakState) :
+    powOk 17 e (Compile.challengeOf x) = decide (x[0].toNat % 2 ^ 17 = 0) := by
+  show decide ((K.ofLane (Keccak.lane x 0)).lane.toNat % 2 ^ 17 = 0) = _
+  rw [lane_eq x 0 (by norm_num)]
+  rfl
+
+/-- **One grinding try is one proof-of-work step**: the same verdict, the states after them related. -/
+theorem tryNonce_rel {d : Dx} {sp : Sponge} (hr : Rel d sp) (n : ℕ) (hist : List Out) :
+    let r := runDet P (Gof h π gH gF) s (QuotientZk.Deployed.tryNonce d (UInt64.ofNat n)) hist
+    let q := (LeanVM.Prover.powStepM (m := Id) (fun y ↦ pure (π y)) sp
+      (LeanVM.Prover.nonceOf n)).run
+    r.2 = hist ∧ r.1.1 = powOk 17 (LeanVM.Prover.nonceOf n) q.1 ∧ Rel r.1.2 q.2 := by
+  have ha := absorb_rel P h π gH gF s hr (LeanVM.Prover.nonceOf n) 4 hist
+  rw [limbsOf_nonceOf] at ha
+  obtain ⟨hh, hrel⟩ := ha
+  have hin := input_eq hrel
+  have ht : QuotientZk.Deployed.tagNonce = (4 : ℕ).toUInt64 := rfl
+  have key : runDet P (Gof h π gH gF) s (QuotientZk.Deployed.tryNonce d (UInt64.ofNat n)) hist =
+      (((π (duplexInput (absorb (m := Id) (fun y ↦ pure (π y)) sp (LeanVM.Prover.nonceOf n) 4).run))[0]
+          % (2 ^ QuotientZk.Deployed.grindBits : UInt64) == 0,
+        ⟨π (duplexInput (absorb (m := Id) (fun y ↦ pure (π y)) sp (LeanVM.Prover.nonceOf n) 4).run),
+          []⟩), hist) := by
+    unfold QuotientZk.Deployed.tryNonce
+    rw [ht, runDet_bind, hin, hh]
+    rfl
+  rw [key, powStepM_run]
+  dsimp only
+  rw [powOk_challengeOf, grindOk_eq]
+  refine ⟨rfl, rfl, fun i _ ↦ ?_, rfl⟩
+  show (π _)[i] = Keccak.lane (π _) i
+  rw [lane_eq_getElem]
+
+/-- **Grinding is the proof-of-work search**: when the statement's search from `n` within `count`
+tries finds the nonce `e`, the skeleton's grind from `n` (with at least `count` tries) returns it, its
+state related to the statement's step at `e`, the challenges untouched. -/
+theorem grind_rel (count : ℕ) : ∀ (n fuel : ℕ) (d : Dx) (sp : Sponge) (hist : List Out),
+    Rel d sp → count ≤ fuel → n + count < 2 ^ 64 → ∀ e : E,
+    LeanVM.Prover.searchM (m := Id) (fun y ↦ pure (π y)) 17 sp n count = some e →
+    (runDet P (Gof h π gH gF) s (QuotientZk.Deployed.grind d fuel (UInt64.ofNat n)) hist).2 = hist ∧
+    ((runDet P (Gof h π gH gF) s (QuotientZk.Deployed.grind d fuel (UInt64.ofNat n)) hist).1.1,
+      (0 : UInt64), (0 : UInt64)) = limbsOf e ∧
+    Rel (runDet P (Gof h π gH gF) s (QuotientZk.Deployed.grind d fuel (UInt64.ofNat n)) hist).1.2
+      (LeanVM.Prover.powStepM (m := Id) (fun y ↦ pure (π y)) sp e).run.2 := by
+  induction count with
+  | zero =>
+    intro n fuel d sp hist _ _ _ e he
+    cases he
+  | succ c ih =>
+    intro n fuel d sp hist hr hc hn e he
+    obtain ⟨f, rfl⟩ : ∃ f, fuel = f + 1 := ⟨fuel - 1, by omega⟩
+    obtain ⟨h1, h2, h3⟩ := tryNonce_rel P h π gH gF s hr n hist
+    have hsearch : LeanVM.Prover.searchM (m := Id) (fun y ↦ pure (π y)) 17 sp n (c + 1) =
+        if powOk 17 (LeanVM.Prover.nonceOf n)
+          (LeanVM.Prover.powStepM (m := Id) (fun y ↦ pure (π y)) sp (LeanVM.Prover.nonceOf n)).run.1
+        then some (LeanVM.Prover.nonceOf n)
+        else LeanVM.Prover.searchM (m := Id) (fun y ↦ pure (π y)) 17 sp (n + 1) c := rfl
+    have hgrind : runDet P (Gof h π gH gF) s (QuotientZk.Deployed.grind d (f + 1) (UInt64.ofNat n))
+        hist =
+        if (runDet P (Gof h π gH gF) s (QuotientZk.Deployed.tryNonce d (UInt64.ofNat n)) hist).1.1
+        then ((UInt64.ofNat n,
+          (runDet P (Gof h π gH gF) s (QuotientZk.Deployed.tryNonce d (UInt64.ofNat n)) hist).1.2),
+          (runDet P (Gof h π gH gF) s (QuotientZk.Deployed.tryNonce d (UInt64.ofNat n)) hist).2)
+        else runDet P (Gof h π gH gF) s (QuotientZk.Deployed.grind d f (UInt64.ofNat n + 1))
+          (runDet P (Gof h π gH gF) s (QuotientZk.Deployed.tryNonce d (UInt64.ofNat n)) hist).2 := by
+      conv_lhs => unfold QuotientZk.Deployed.grind
+      rw [runDet_bind]
+      cases hr1 : (runDet P (Gof h π gH gF) s
+          (QuotientZk.Deployed.tryNonce d (UInt64.ofNat n)) hist).1 with
+      | mk ok d' => cases ok <;> rfl
+    rw [hsearch] at he
+    rw [hgrind, h2]
+    cases hok : powOk 17 (LeanVM.Prover.nonceOf n)
+        (LeanVM.Prover.powStepM (m := Id) (fun y ↦ pure (π y)) sp (LeanVM.Prover.nonceOf n)).run.1
+    · rw [hok] at he
+      simp only [Bool.false_eq_true, ↓reduceIte] at he ⊢
+      rw [h1, ← UInt64.ofNat_one, ← UInt64.ofNat_add]
+      exact ih (n + 1) f d sp hist hr (by omega) (by omega) e he
+    · rw [hok] at he
+      simp only [↓reduceIte] at he ⊢
+      cases he
+      exact ⟨h1, by rw [limbsOf_nonceOf], h3⟩
+
 end Run
 
 end PcsQuotient.EndToEnd.Duplex
@@ -158,3 +266,9 @@ info: 'PcsQuotient.EndToEnd.Duplex.draw_rel' depends on axioms: [propext, Classi
 -/
 #guard_msgs in
 #print axioms PcsQuotient.EndToEnd.Duplex.draw_rel
+
+/--
+info: 'PcsQuotient.EndToEnd.Duplex.grind_rel' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms PcsQuotient.EndToEnd.Duplex.grind_rel
