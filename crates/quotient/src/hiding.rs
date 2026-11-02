@@ -21,7 +21,7 @@ use primitives::test_rng::Rng;
 use pcs::whir::LaneTensor;
 
 use crate::opening::{self, Claim, GADGET, LANE_FOLD, LOG_INV_RATE, Lane, Layout, gadget_beta, gadget_lanes};
-use crate::protocol::{Channel, Q_SPILL, extension, quotient_chunks, reduce, sum_point};
+use crate::protocol::{Channel, extension, reduce, sum_point};
 use crate::transcript::TranscriptError;
 
 /// The `K` coordinates of an `E` value.
