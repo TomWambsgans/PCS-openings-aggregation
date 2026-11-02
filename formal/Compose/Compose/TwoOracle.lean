@@ -6,6 +6,9 @@
 -- commit 6175f1a0, MIT OR Apache-2.0): `KeccakCalls`, `callKeccak256`, `Digest.toRpm`.
 import Compose.Openings
 import LeanVM.Protocol.WithHash
+-- mumbai's `Fintype` instances of digests and states (`instFintypeDigest`), which its random-oracle
+-- theorems are stated with.
+import LeanVM.Protocol.Compile.Prog
 import Common.Lanes
 
 /-!
@@ -44,7 +47,8 @@ open QuotientRpm QuotientSecurity QuotientSecurity.Params
 /-! ## The engine, for answers whose type depends on the input -/
 
 /-- The uniform table on a finite set of inputs, for dependent answer types. -/
-noncomputable local instance instSampleablePiSubtype {D : Type} {R : D → Type} [∀ d, Fintype (R d)]
+noncomputable instance (priority := 50) instSampleablePiSubtype {D : Type} {R : D → Type}
+    [∀ d, Fintype (R d)]
     [∀ d, Nonempty (R d)] (S : Finset D) : SampleableType ((d : ↥S) → R d.1) :=
   SampleableType.piOfFintype _
 
@@ -453,7 +457,7 @@ theorem kcExperiment_queryBound (A : OracleComp KeccakCalls (RootProof F × O))
 theorem kcRun_run (A : OracleComp KeccakCalls (RootProof F × O))
     (post : RootProof F × O → Chals F → OracleComp KeccakCalls β) (T : KTable) :
     let p := evalWithAnswerFn (QueryImpl.ofFn T) A
-    let x₀ := W.label p.1.stmt
+    let x₀ := labelOf p.1.ir p.1.stmt
     let x₁ := Wire.afterRoot (viewT T x₀) p.1.r₁
     let x₂ := (viewT T x₁).toList
     let x₃ := (viewT T x₂).toList
