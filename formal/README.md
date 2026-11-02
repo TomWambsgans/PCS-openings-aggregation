@@ -101,13 +101,49 @@ in that PRG).
   independent) and the redesigned layout's row entropy (`row_entropy` for any layout whose entries below the
   gadget are free, `gadget_stackR_of_onFirst` for `GadgetLayout`; pairs of rows too): `δ = 2^-64(L-3)`,
   `2^-2368` (40 lanes) and `2^-3840` (63). **`zk_deployed_bits`**: `εFS + εhv + 2^-2200`.
-- **What stays a hypothesis**: `JointHVZK` (the interactive protocol's honest-verifier zero knowledge, F1 with F3
-  and the gadget's (R)); `FSFresh` (the honest prover's Fiat–Shamir inputs fresh but with probability `εFS`: every
-  such input holds the previous chain state or duplex capacity, or a fresh root; a collision bound not formalized);
-  `Factors` for the deployed prover (structural: the masks and the two paddings are independent and WHIR's
-  messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed; equal by
-  test, not by proof: see the next item). The lift to leanerVM's random-permutation model is separate
-  (`QuotientZk/Rpm.lean`).
+- **`FSFresh`, proved** (`Deployed/Fresh/`, `Deployed/Fresh.lean`; `fsFresh_deployed`): the honest prover's
+  Fiat–Shamir inputs are fresh but with probability
+  `εFS = Q · 6 (|c₀| + Q) / 2^256 + 2 (|c₀| + Q) · 3 εc + |c₀| δ₀` (`Q = skelBound`), `≤ 2^-54` for
+  `|c₀| ≤ 2^127` (`fsFresh_deployed_bits`), for a prover `P` whose secret rows are Keccak-256 inputs longer than
+  192 bytes, whose witness table needs no challenge and has a first row of min-entropy `δ₀` (`2^-2368`), whose
+  openings' messages begin, after 5, 128 and 242 challenges, with claims whose first 24 bytes are a window `cw j`
+  of the fifth (`ρ`) or fourth (`t`) chain state of min-entropy `εc` (`2^-191`: `ρ`'s limbs, `t / (1 + t)`), and
+  with `242 ≤ P.n`. The run is tracked with a flag *bad*, raised when a fresh answer lands where it should not
+  (its digest the start of an input held, or the root words at its end, or another answer's digest; its
+  capacity an input's or zero; its seed state an input; at the fourth and fifth states, a claims window of an
+  input): `Pr[bad]` is the first two terms (`Fresh/Prob.lean`, a potential-weighted bad-event budget). Off
+  *bad*, Hoare triples over the whole skeleton (`Fresh/Core.lean` … `Fresh/Skel.lean`, `trip_skel`) show every
+  Fiat–Shamir input fresh: the chain's first input (label state, which may be public, then the witness root)
+  through the root, fresh because the first leaf is (`|c₀| δ₀`); each later chain input through the previous
+  state; each opening's seed through the claims' window (the IV hashes public data, so its freshness is the
+  claims' challenge: the inherent `|c₀| · 2^-191`); every draw through the duplex's fresh capacity, grinding
+  included (tries differ in the nonce lane; an exhausted grind leaves a fresh draw input). **`zk_deployed_fs`**,
+  **`zk_deployed_fs_bits`**: `2^-54 + εhv + 2^-2200`; with the joint model **`zk_deployed_joint_fs`**:
+  `2^-54 + 2^-165 + 2^-2200`, and in the random-permutation model **`zk_rpm_deployed_joint_fs`**,
+  **`zk_rpm_deployed_joint_fs'`** (`QuotientZk/FreshJoint.lean`; the latter also without `hrow`, `hduplex`):
+  `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`.
+- **The joint model instantiated** (`QuotientZk/Instance/`). The deployed quotient claim's point reads the
+  five values (`vCells(t)/claimDen(α, β, t, a, s)`), so `Joint.lean`'s openings (weights from the challenges
+  alone) cannot carry it: `JointV.lean` is the same chain over `ChV = Chal × Vals` (`modelV`, `jointSimV`,
+  `LinkV`, **`zk_rpm_deployed_jointV_fs'`**, same bound). For the deployed prover: the schedule (`394` steps:
+  `5 + 123 + 114 + 152` draws, `openDraws`) and the challenges of the oracle's answers (`chOf`, an
+  equivalence with what no challenge reads, so **`hch`** `chOf_uniform`; causality `chOf_take_*`,
+  `Challenges.lean`); the two openings at `2^22` rows (`openW`, `openQ`: `witness_layout(22)`,
+  `quotient_layout(22)` with the gadget `1, Y, Y²`, the verifier's claims `modelWitness`, `modelQuotient`,
+  `modelSum`, the novel basis at the opened positions: level 0's queries then fillers, `224`/`225`) and their
+  **`Conditions`** (`Openings.lean`); the prover `Pb` (the claims' bytes at the openings' starts, then any
+  public renderer `R` of the part of the joint view drawn for by then; leaves the 64-word images of the stacks'
+  rows) and **`LinkV`** (`link`: the view from the joint view by causality, injective leaves, the free vectors
+  from the novel basis's degrees, `Prover.lean`); **`FSFresh`'s conditions** (`Fresh.lean`: `hcw` at `2^-191`,
+  `hrow₀` at `2^-2368`, the three `ClaimsAt`, long rows, `hcK`, `hn`); the simulator's tables chosen with the
+  verifier's claimed values (`solve`). **`zk_rpm_deployed_instance`** (`Instance/Main.lean`) and, for the end
+  statement, `deployedJointData`, `deployedJointData_valid` (`EndToEnd/ZK/Joint.lean`): remaining are the
+  field, F1's, and **the honest tables meeting the verifier's claims** (`hTW`, `hTQ`, the claim maps'
+  completeness, proved for the deployed tables in `Completeness/`, not yet linked); every renderer `R` (WHIR's
+  honest prover is one) and every pair of such tables is covered. The simulator's tables are a classical choice.
+- **What stays a hypothesis**: the honest tables' claims (above); F1's on the witness; that `skel` and `Pb` are
+  the Rust prover (transcribed; `skel` equal by test, not by proof: see the next item). The lift to leanerVM's
+  random-permutation model is separate (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
 - **`skel` against the Rust prover, by test** (`QuotientZk/Test/SkelTrace.lean`, executable `skeltrace`;
   `crates/quotient/tests/skel_trace.rs`, feature `skel-trace`, which records every Keccak call of a proof through
   test-only hooks): at `2^17` rows `skel`, run as compiled with mumbai's Keccak-256 and Keccak-f[1600] as the
@@ -193,6 +229,27 @@ weights, Cantor basis) with no hypothesis left (`completeness_deployed_concrete`
   density above is over uniform `(α, β, t)`; an honest run's chain queries are fresh but for collisions, a few
   `Q² / 2^256`), one experiment holding both the chain and the openings' proofs of work, `log_rows < 22`, and
   that the Rust is this Lean (F5; the claims' values by F1's review, the openings by F2's tests).
+
+**To the Statement's `Completeness δ`** (`EndToEnd/Completeness/`, library `E2ECompleteness`; sorry-free,
+`propext`, `Classical.choice`, `Quot.sound`, checked by `#guard_msgs` in `E2ECompleteness.lean`):
+`completeness_of_staged` proves `PcsQuotient.Completeness ((17 · 2^24 + 8) / 2^192 + 2 / 2^256 + εpow +
+N² / 2^508)` and `completeness_deployed` the deployed `δ < 2^-162` (`N = 2^48` block calls,
+`εpow = 3 · 2^-277`, `deltaDeployed_lt`), from the staged form of the experiment (`Staged.Holds`). Proved: the
+**random-oracle theorem for the chain's honest challenges** (`Chain.lean`, `prEvent_staged_le`: in the two-call
+random-oracle model the `α`, `β`, `t` queries are fresh by their lengths, `96` and `32` bytes, which the Merkle
+trees and the label never hash, but for `s₂ = s₁` or `s₃ = s₀`, so `(α, β, t)` lies in `Bad` with probability at
+most `|Bad| / 2^576 + 2 / 2^256`, for any challenge map with at most `2^64` digests per value); the transcript's
+`challengeOf` is such a map (`Regular.lean`); the transfer from the random permutation to the two random oracles
+for any honest computation following the duplex discipline (`Transfer.lean`, `rpm_le_rom`, mumbai's
+indifferentiability, `N² / 2^508`); `Bad` is `completeness_deployed_concrete`'s set for the secret and the masks
+(`badSet`, density `badSet_density`). **The hypothesis left**, `Staged.Holds` for the Statement's experiment: it
+is, in distribution, the coins then a two-call computation of the chain's shape (`staged`: the setup's, index and
+witness trees and the label's hash; `s₁ … s₃`; the quotient tree; `s₄`; the rest) whose permutation calls follow
+the duplex discipline, of at most `N` block calls, hashing before `α` and between `γ` and `t` nothing of `32` or
+`96` bytes; and in the two-call random-oracle model its honest proof is rejected at non-degenerate challenges
+with probability at most `εpow` (`completeness_deployed_concrete` for every hash and permutation, given the
+Statement's prover and verifier as `honestProve`, `deployedVerify` (`EndToEnd/Bridge`), and mumbai's
+proof-of-work potential for the openings' grinding, `ours_romComplete`'s `2^-277` per opening).
 
 ## The port to this protocol (F1)
 
