@@ -13,14 +13,15 @@ Flock (a′) with leanVM's skip of 6. It runs through:
 - `C1`, the challenges, then leanVM's own Flock prover: zerocheck, lincheck, the 64 slices;
 - the matrices' reduction and the ring map;
 - the heap and every quotient, `C2`, the values at `t`;
-- the batching sumcheck and the three WHIR openings.
+- the batching sumcheck and the three WHIR openings;
+- Flock's two setup claims, on `A0` and `B0` (the BLAKE2s R1CS, `2^28` words each), each committed and opened with
+  WHIR (`matrices.rs`).
 
 On the reference trace (1,000 leanXMSS signatures, 1,023,109 cycles):
 
-- the Rust verifier accepts the proof, and the three WHIR openings verify;
-- Flock's claims on `A0`, `B0` are the matrices' values (`matrices::matrix_values`);
+- the Rust verifier accepts the proof, and all five WHIR openings verify (`C1`, `C2`, setup, `A0`, `B0`);
 - the EVM contract accepts the proof's real calldata (283,941 gas of execution). Its `PCS_OPEN` mock attests
-  exactly the five claims: the three the WHIR openings prove, and `A0`'s and `B0`'s;
+  exactly the five claims the WHIR openings prove;
 - flipped stream bytes are rejected.
 
 The same holds without BLAKE2s's argument (`Blake2s::Omitted`), at 73,836 gas, which is SPEC §10's number on
@@ -29,7 +30,6 @@ random streams.
 **Not built** (§ "What is missing"):
 
 - (a′)'s skip of 3 (`FLOCK_MAIN`): leanVM's zerocheck prover hard-codes a skip of 6;
-- commitments to `A0`, `B0` and their WHIR openings;
 - extension W's openings.
 
 ## How it runs
@@ -200,8 +200,10 @@ takes 0.14 s.
     is the first run of `flock_min` against a real prover.
   - The matrices' terminal holds.
   - The ring switch's target is `q_flock`'s.
-  - `A0`'s and `B0`'s claims are the matrices' values.
-- **End to end**: the Rust verifier, three WHIR openings, and the EVM contract on the calldata, with `PCS_OPEN`
+  - `A0`'s and `B0`'s claims are the matrices' values: direct evaluation and a WHIR opening each.
+  - `A0` and `B0` are built by one walk of the circuit per 64 columns, the weights bits of a word (the walk is
+    additive): 0.2 s. A WHIR commit at `2^28` takes 1.2 s each, and an opening 1.7 s.
+- **End to end**: the Rust verifier, five WHIR openings, and the EVM contract on the calldata, with `PCS_OPEN`
   registering exactly the proven claims.
 - **The stacks' unused words**: past every block, inside the last committed lane, filled with pseudo-random words,
   the proof is accepted all the same. `StackLayout` places the blocks contiguously, so the only unused words are
@@ -215,12 +217,11 @@ takes 0.14 s.
      packing bits of each K-word).
    - A skip of 3 needs a new round-1 kernel and new bit rounds. The lincheck, the slices, the matrices' reduction
      (`k + 6` rounds) and the ring switch here take `k` as a parameter already.
-2. **`A0`, `B0`** (`2^28` words each, fixed): not committed. Their claims are checked against
-   `matrices::matrix_values`, which is what an honest setup opening proves. The contract's mock attests them.
-3. **Extension W** (weighted claims): no opening prover. `PCS_OPEN` would run the weight itself.
-4. **The setup's root in the contract** is a placeholder constant (`contract::setup_root`). The prover computes the
-   real one (the setup stack's `Committed::root`), which a deployment must put in the code. The same goes for
-   `A0`'s and `B0`'s.
+2. **Extension W** (weighted claims): no opening prover. `PCS_OPEN` would run the weight itself.
+3. **The setup roots in the contract** are placeholder constants (`contract::setup_root`). The prover computes the
+   real ones (`F`'s; `A0`'s begins `93cd9a03…` and `B0`'s `c0755650…`), which a deployment must put in the code.
+4. **The `A0`, `B0` openings run in the test**, after the proof (`tests/prove_real.rs`), not in `prove`. They are
+   fixed commitments, opened per proof: about 3 s for the two, not in the phase table above.
 
 ## Notes for the verifier and SPEC (from building the prover)
 
