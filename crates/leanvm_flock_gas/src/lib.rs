@@ -27,6 +27,7 @@ pub mod layout;
 pub mod matrices;
 mod merkle;
 pub mod multilinear;
+pub mod ring_tower;
 pub mod scalar;
 pub mod shapes;
 mod stack;

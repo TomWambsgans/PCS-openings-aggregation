@@ -60,6 +60,8 @@ impl StackLayout {
 /// `eq(point, r)` products, shared: by (point, length), and the selector factors by the offset's high bits.
 pub struct EqCache<'a, S> {
     r: &'a [S],
+    /// `1 + r_k`, so that each eq factor `1 + p_k + r_k` is one sum.
+    one_plus_r: Vec<S>,
     rows: HashMap<(usize, usize, u8), S>,
     selectors: HashMap<(usize, u64), S>,
     /// A point's coordinates squared `twist` times, from the previous twist's.
@@ -70,10 +72,15 @@ impl<'a, S: Scalar> EqCache<'a, S> {
     pub fn new(r: &'a [S]) -> Self {
         Self {
             r,
+            one_plus_r: r.iter().map(|&x| S::one() + x).collect(),
             rows: HashMap::new(),
             selectors: HashMap::new(),
             twisted: HashMap::new(),
         }
+    }
+
+    pub fn one_plus_r(&self) -> &[S] {
+        &self.one_plus_r
     }
 
     /// `Π_{k<len} (1 + p_k^(2^twist) + r_k)` for the point numbered `id`.
@@ -84,7 +91,7 @@ impl<'a, S: Scalar> EqCache<'a, S> {
         let coordinates = self.twisted_point(id, point, twist);
         let mut product = S::one();
         for k in 0..len {
-            product *= S::one() + coordinates[k] + self.r[k];
+            product *= self.one_plus_r[k] + coordinates[k];
         }
         self.rows.insert((id, len, twist), product);
         product

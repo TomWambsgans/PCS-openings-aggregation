@@ -44,6 +44,9 @@ pub enum Slices {
     Weighted,
     /// Not sent: one claim `Σ μ_i ẑ(i, p) = κ` of a bit-slice type, ring-switched inside `PCS_OPEN`.
     Claim,
+    /// As [`Slices::Weighted`], with the ring map's stages in tower order ([`crate::ring_tower`]): the target through
+    /// `K`'s subfields, the weight at a point from the inside out.
+    Tower,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -166,8 +169,12 @@ pub fn verify<S: Scalar>(
         (Some(s), _) => {
             let _phase = enter("ring switch: map, coefficients, target");
             let map = transcript.samples(crate::flock::RING_MAP_SHIFTS.len());
-            let images: Vec<S> = s.iter().map(|&value| ring_map(value, &map)).collect();
-            let target = poly_eval(&images, S::constant(GEN));
+            let target = if variant.slices == Slices::Tower {
+                crate::ring_tower::target(&s, &map)
+            } else {
+                let images: Vec<S> = s.iter().map(|&value| ring_map(value, &map)).collect();
+                poly_eval(&images, S::constant(GEN))
+            };
             let weight = (variant.slices == Slices::InContract).then(|| {
                 let weight = crate::flock::ring_switch_weight(point.clone(), &map);
                 // At a point of the stack's batch: any 26 coordinates cost the same; the zerocheck's are at hand.
@@ -376,7 +383,7 @@ mod tests {
     #[test]
     fn scalars_are_what_verify_reads() {
         for skip in [0, 1, 3, 4, 5, 6] {
-            for slices in [Slices::InContract, Slices::Weighted, Slices::Claim] {
+            for slices in [Slices::InContract, Slices::Weighted, Slices::Claim, Slices::Tower] {
                 let variant = Variant { skip, slices };
                 let log_n = 14 + 18;
                 let stream = vec![0x5au8; 24 * variant.scalars(log_n)];

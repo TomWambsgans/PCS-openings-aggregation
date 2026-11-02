@@ -6,6 +6,7 @@
 
 use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::flock::ring_switch_weight;
+use leanvm_flock_gas::ring_tower;
 use leanvm_flock_gas::flock_min::{self, End, Slices, Variant};
 use leanvm_flock_gas::layout::{
     BLAKE2S_R1CS_LOG_SIZE, BLAKE2S_SLOTS, Form, N_TABLES, OP_BLAKE2S, OP_DEREF, OP_JUMP, OP_MUL, SEP_MEM,
@@ -290,8 +291,13 @@ pub enum Claims {
 /// bit-slice claim type (a precompile extension); leanVM's own skip with (a′)'s weighted claim.
 pub const FLOCK_MAIN: Variant = Variant {
     skip: 3,
-    slices: Slices::Weighted,
+    slices: Slices::Tower,
 };
+
+/// The twist field of the term that stands for the whole ring-switch weight `Φ(eq(p, ·))` on the main line: the
+/// batch's weight evaluates it at its point by [`ring_tower::weight_at`] (64 twisted eq products and the map's stages)
+/// rather than as 64 terms with explicit coefficients (SPEC.md §13).
+pub const RING_TWIST: u8 = u8::MAX;
 pub const FLOCK_BIT_SLICE: Variant = Variant {
     skip: 4,
     slices: Slices::Claim,
@@ -564,8 +570,42 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     // 7. Flock's claim on q_flock: the ring switch's 64 twisted terms (E-linear), or one bit-slice combination.
     let mut matrices = None;
     let mut bit_slice = Relations::default();
+    let mut ring_map: Option<Vec<S>> = None;
+    let tower = matches!(blake2s, Blake2s::Flock(Variant { slices: Slices::Tower, .. }));
     if let Some(flock) = flock {
         match flock.end {
+            End::Ring { map, target, .. } if tower && mode == Claims::Point => {
+                // One term for the whole weight, evaluated at the batch's point (SPEC.md §13).
+                relations.push(
+                    vec![Term {
+                        column: Column::Qflock,
+                        point: flock.point.clone(),
+                        twist: RING_TWIST,
+                        coefficient: S::one(),
+                    }],
+                    target,
+                );
+                ring_map = Some(map);
+            }
+            End::Ring { map, target, .. } if tower => {
+                let coefficients = {
+                    let _phase = enter("ring switch: map, coefficients, target");
+                    ring_tower::coefficients(&map)
+                };
+                relations.push(
+                    coefficients
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &coefficient)| Term {
+                            column: Column::Qflock,
+                            point: flock.point.clone(),
+                            twist: k as u8,
+                            coefficient,
+                        })
+                        .collect(),
+                    target,
+                );
+            }
             End::Ring { map, target, .. } => {
                 let weight = {
                     let _phase = enter("ring switch: map, coefficients, target");
@@ -632,7 +672,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
             }
             openings
         }
-        Claims::Point => batch(channel, &combined, &layouts, bit_slice)?,
+        Claims::Point => batch(channel, &combined, &layouts, bit_slice, ring_map.as_deref())?,
     };
     Ok(Reduced {
         roots: [root1, root2],
@@ -674,8 +714,15 @@ fn layouts(shape: &Shape, c2_columns: &[(Column, usize, bool)]) -> Vec<(Commitme
     ]
 }
 
-/// A combined claim's weight at the stack point `r`: every term's eq weight on its column's blocks.
-fn weight_at<S: Scalar>(claim: &Combined<S>, layout: &StackLayout, r: &[S], base_id: usize) -> S {
+/// A combined claim's weight at the stack point `r`: every term's eq weight on its column's blocks; the ring-switch
+/// term ([`RING_TWIST`]) by its map.
+fn weight_at<S: Scalar>(
+    claim: &Combined<S>,
+    layout: &StackLayout,
+    r: &[S],
+    base_id: usize,
+    ring_map: Option<&[S]>,
+) -> S {
     let mut cache = EqCache::new(r);
     let basis = limb_basis::<S>();
     let mut total = S::zero();
@@ -692,7 +739,14 @@ fn weight_at<S: Scalar>(claim: &Combined<S>, layout: &StackLayout, r: &[S], base
         };
         for (limb, vars, offset) in layout.limbs(column) {
             let len = if row_len > 0 { row_len } else { vars };
-            let eq = cache.row(id, &row, len, twist) * cache.selector(vars, offset);
+            let row_weight = if twist == RING_TWIST {
+                let map = ring_map.expect("the ring map of a ring-switch term");
+                let _phase = enter("claims: the ring switch's weight at the batch's point");
+                ring_tower::weight_at(&row[..len], &cache.one_plus_r()[..len], map)
+            } else {
+                cache.row(id, &row, len, twist)
+            };
+            let eq = row_weight * cache.selector(vars, offset);
             let scale = if limb == 0 { coefficient } else { coefficient * basis[limb] };
             total += scale * eq;
         }
@@ -707,6 +761,7 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
     combined: &[(Commitment, Combined<S>)],
     layouts: &[(Commitment, StackLayout)],
     bit_slice: Option<Combined<S>>,
+    ring_map: Option<&[S]>,
 ) -> Result<Vec<(Commitment, Opening<S>)>, VerifierError> {
     let _phase = enter("claims: batching sumcheck to point claims");
     let lambda = channel.sample();
@@ -726,7 +781,7 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
     let mut bit_slice = bit_slice;
     for (k, ((commitment, claim), &value)) in combined.iter().zip(&values).enumerate() {
         let layout = &layouts.iter().find(|(c, _)| c == commitment).expect("a layout").1;
-        let weight = weight_at(claim, layout, &r, 10_000 * k);
+        let weight = weight_at(claim, layout, &r, 10_000 * k, ring_map);
         let extension = (layout.vars..vars).fold(S::one(), |acc, j| acc * (S::one() + r[j]));
         sum += scale * weight * extension * value;
         scale *= lambda;

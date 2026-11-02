@@ -421,3 +421,19 @@ Each entry says what changed, why, and what the prover must change (none if the 
      `copy_j = ℓ_j`. Every iteration keeps that constraint.
 
    Prover: nothing.
+
+2. **Lever 1a: the ring map in tower order** (`leanvm_flock_gas::ring_tower`, `Slices::Tower`, the main line's
+   `FLOCK_MAIN`). The map's six stages are applied shift 1 first, 32 last (leanVM: 32 first). The outermost stage is
+   then `GF(2^32)`-linear, the next `GF(2^16)`-linear, and so on, so the target `Σ_i x^i Φ(s_i)` is computed through
+   `K`'s subfields: 64 sums of slices (the coordinates of `x^i` in a tower basis, 1,938 slice terms), then six levels
+   with `6 · 64` squarings and `3 · 63` products, against `64 · 63` squarings. On the main line the ring-switch term
+   is one term of `C1`'s relations ([`RING_TWIST`]), whose weight at the batch's point is computed from the inside
+   out (the 64 twisted eq products, then 63 products and the chains `f_j^(2^k)`; no coefficients `d_k`). Each eq
+   factor is `(1 + r_k) + p_k`, with `1 + r_k` shared. The map's error is at most `6/|E|` (SPEC-FLOCK's leanVM order:
+   `2^31/|E|` by Schwartz–Zippel): a node of the tower is `(A + θB) + f_j(A^q + θB^q)`, which vanishes for at most one
+   `f_j` unless both children do.
+   Measured at 1,000 signatures, main line: straight 270,221 → 203,829; deployed 297,094 → 216,116 (4 contracts);
+   tx (EIP-7623, `c = 0`) 417,014 → 336,036. Target 70,521 → 26,832; twisted weight ~101,000 → 81,850. Ext. W × (a′):
+   139,640 → 101,820 straight.
+   Prover: the ring map's stages in the order shift 1, 2, 4, 8, 16, 32 (the same six challenges, drawn as before):
+   `Φ(a)` applies `a ← a + f_j a^(2^(2^j))` for `j = 0..5`, and the weight is `Φ(eq(p, u))` with that `Φ`.
