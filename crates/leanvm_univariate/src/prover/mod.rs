@@ -17,6 +17,7 @@ pub mod bus;
 pub mod check;
 pub mod columns;
 pub mod fingerprint;
+pub mod flock;
 pub mod opening;
 pub mod poly;
 pub mod prove;

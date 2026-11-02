@@ -10,7 +10,9 @@
 //! - `meta.txt`: `log_mem`, `log_bytecode`, `rows` (six), `taus` (six), `pi` (the two public cells, three limbs
 //!   each), `columns n`, then `column i len committed|virtual` per column;
 //! - `columns.bin`: the columns in that order, each its `len` words, 8 little-endian bytes a word;
-//! - `bytecode.bin`: the stacked bytecode (`layout::bytecode_table`), 8 little-endian bytes a word.
+//! - `bytecode.bin`: the stacked bytecode (`layout::bytecode_table`), 8 little-endian bytes a word;
+//! - `flock.bin`: Flock's prover inputs (`flock n_blocks z a b z_lincheck` in `meta.txt` gives their lengths): the
+//!   packed witness `z`, `A z` and `B z` (8 little-endian bytes a word), then the lincheck's packed bytes.
 
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -40,6 +42,26 @@ pub(crate) fn maybe_dump(program: &Program, w: &Witness) {
         let kind = if l.placements[i].is_virtual() { "virtual" } else { "committed" };
         writeln!(meta, "column {i} {} {kind}", column.len()).unwrap();
     }
+    // Flock's prover inputs, as leanVM's witness build left them (`hash_flock::PreparedReductionWitness`).
+    let (n_blocks, z, a, b, z_lincheck) = w.flock_reduction.dump_parts();
+    writeln!(
+        meta,
+        "flock {n_blocks} {} {} {} {}",
+        z.len(),
+        a.len(),
+        b.len(),
+        z_lincheck.len()
+    )
+    .unwrap();
+    let mut flock = std::io::BufWriter::with_capacity(1 << 24, std::fs::File::create(dir.join("flock.bin")).unwrap());
+    for words in [z, a, b] {
+        for chunk in words.chunks(1 << 16) {
+            let bytes: Vec<u8> = chunk.iter().flat_map(|x| x.to_le_bytes()).collect();
+            flock.write_all(&bytes).expect("flock.bin");
+        }
+    }
+    flock.write_all(z_lincheck).expect("flock.bin");
+    flock.flush().expect("flock.bin");
     std::fs::write(dir.join("meta.txt"), meta).expect("meta.txt");
     let mut out = std::io::BufWriter::with_capacity(1 << 24, std::fs::File::create(dir.join("columns.bin")).unwrap());
     for column in &columns {

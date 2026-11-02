@@ -18,5 +18,16 @@ anchor = '    let w = crate::stage!("Build witness", || program.build(&exec));\n
 assert anchor in s
 s = s.replace(anchor, anchor + "    trace_dump::maybe_dump(program, &w);\n", 1)
 open(p, 'w').write(s)
+p = 'crates/leanvm_core/src/hash_flock.rs'
+s = open(p).read()
+s += '''
+/// Trace dump (PCS-openings-aggregation's univariate prover), not leanVM: the reduction's inputs as they are.
+impl PreparedReductionWitness {
+    pub(crate) fn dump_parts(&self) -> (usize, &[u64], &[u64], &[u64], &[u8]) {
+        (self.n_blocks, &self.z_packed, &self.a_packed, &self.b_packed, &self.z_lincheck)
+    }
+}
+'''
+open(p, 'w').write(s)
 PY
 grep -n "trace_dump" crates/leanvm_core/src/cpu/mod.rs

@@ -1,8 +1,8 @@
 // Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 //! The prover on real leanVM 42422001 traces (`src/prover/dump`, PROVER.md): SPEC.md's identities on the domain, the
 //! quotients' degrees, every combined relation at `t`, the Rust verifier's and the EVM contract's acceptance of the
-//! proof (the contract's `PCS_OPEN` calls being exactly the claims the WHIR openings prove), and the rejection of
-//! mutated proofs.
+//! proof (the contract's `PCS_OPEN` calls being exactly the claims the WHIR openings prove, and Flock's `A0`, `B0`
+//! claims the matrices' values), and the rejection of mutated proofs.
 //!
 //! `LEANVM_TRACE=<dir of one trace>` (the directory `trace_dump.rs` wrote), then, built with
 //! `RUSTFLAGS="-C target-cpu=native"` as leanVM is,
@@ -14,18 +14,24 @@ use leanvm_flock_gas::shapes::PROGRAM_IV;
 use leanvm_univariate::claims::Commitment;
 use leanvm_univariate::contract::{calldata, compile_verifier, record_verifier};
 use leanvm_univariate::prover::check::on_domain;
+use leanvm_univariate::prover::flock::FlockWitness;
 use leanvm_univariate::prover::poly::to_v;
 use leanvm_univariate::prover::prove::{Config, OpeningProof, Proof, layout_word, prove, verify};
 use leanvm_univariate::prover::trace::Trace;
-use leanvm_univariate::{Blake2s, Claims};
+use leanvm_univariate::{Blake2s, Claims, FLOCK_LEANVM_SKIP};
 use primitives::field::F192;
 
+fn dir() -> Option<std::path::PathBuf> {
+    std::env::var("LEANVM_TRACE").ok().map(std::path::PathBuf::from)
+}
+
 fn trace() -> Option<Trace> {
-    let dir = std::env::var("LEANVM_TRACE").ok()?;
+    let dir = dir()?;
     let started = std::time::Instant::now();
-    let trace = Trace::load(std::path::Path::new(&dir)).expect("a trace");
+    let trace = Trace::load(&dir).expect("a trace");
     println!(
-        "trace {dir}: loaded in {:.2} s, rows {:?}, heights {:?}, memory 2^{}, bytecode 2^{}",
+        "trace {}: loaded in {:.2} s, rows {:?}, heights {:?}, memory 2^{}, bytecode 2^{}",
+        dir.display(),
         started.elapsed().as_secs_f64(),
         trace.rows,
         trace.heights,
@@ -64,6 +70,12 @@ fn copy(proof: &Proof, stream: Vec<u8>) -> Proof {
     }
 }
 
+fn number(n: u64) -> [u8; 32] {
+    let mut b = [0u8; 32];
+    b[24..].copy_from_slice(&n.to_be_bytes());
+    b
+}
+
 #[test]
 #[ignore]
 fn identities_hold_on_the_domain() {
@@ -82,23 +94,27 @@ fn identities_hold_on_the_domain() {
     assert!(!failed, "an identity fails on the domain");
 }
 
-#[test]
-#[ignore]
-fn proves_and_verifies() {
+/// Prove, verify (Rust and EVM), mutate.
+fn end_to_end(blake2s: Blake2s) {
     let Some(trace) = trace() else {
         println!("LEANVM_TRACE is not set: nothing to prove");
         return;
     };
     parallel::init();
+    let flock = match blake2s {
+        Blake2s::Flock(_) => Some(FlockWitness::load(&dir().expect("a trace")).expect("Flock's inputs")),
+        Blake2s::Omitted => None,
+    };
     let config = Config {
-        blake2s: Blake2s::Omitted,
+        blake2s,
         claims: Claims::Point,
         check: true,
         garbage: false,
     };
     let started = std::time::Instant::now();
-    let (proof, report) = prove(&trace, &PROGRAM_IV, config).expect("a proof");
+    let (proof, report) = prove(&trace, flock.as_ref(), &PROGRAM_IV, config).expect("a proof");
     let total = started.elapsed().as_secs_f64();
+    drop(flock);
     for (phase, secs) in &report.phases {
         println!("  {secs:8.3} s  {phase}");
     }
@@ -120,11 +136,11 @@ fn proves_and_verifies() {
     let shape = trace.shape();
     let public = trace.public_input();
     let started = std::time::Instant::now();
-    verify(&shape, &PROGRAM_IV, &public, &proof, Blake2s::Omitted).expect("the verifier accepts");
+    verify(&shape, &PROGRAM_IV, &public, &proof, blake2s).expect("the verifier accepts");
     println!("  verified (reduce + 3 WHIR openings) in {:.3} s", started.elapsed().as_secs_f64());
 
-    // The contract on the real calldata: its PCS_OPEN mock attests exactly the three claims the openings prove (the
-    // setup's root being the contract's constant).
+    // The contract on the real calldata: its PCS_OPEN mock attests exactly the claims the openings prove (the setup's
+    // root being the contract's constant) and Flock's A0, B0 claims, which are the matrices' values.
     let mut pcs = PcsOpen::default();
     for o in &proof.openings {
         let root = match o.commitment {
@@ -132,21 +148,29 @@ fn proves_and_verifies() {
             _ => o.root,
         };
         let mut input = root.to_vec();
-        for n in [layout_word(o.commitment), 1] {
-            let mut b = [0u8; 32];
-            b[24..].copy_from_slice(&n.to_be_bytes());
-            input.extend(b);
-        }
+        input.extend(number(layout_word(o.commitment)));
+        input.extend(number(1));
         for &x in o.point.iter().chain([&o.value]) {
             input.extend(element_word(to_v(x)));
         }
         pcs.register(input);
     }
+    if let Some((point, a, b)) = &report.flock {
+        for (k, (layout, value)) in [(0x5504u64, *a), (0x5505, *b)].into_iter().enumerate() {
+            let mut input = word([0x1111 * (2 + k as u64), 0x2222, 0x3333]).to_vec();
+            input.extend(number(layout));
+            input.extend(number(1));
+            for &x in point.iter().chain([&value]) {
+                input.extend(element_word(x));
+            }
+            pcs.register(input);
+        }
+    }
     let data = calldata(&public, &proof.stream);
-    let stream = proof.stream.clone();
+    let stream_len = proof.stream.len();
     let (accepted, rejected, gas) = deep(move || {
-        let recorded = record_verifier(&shape, Blake2s::Omitted, Claims::Point);
-        assert_eq!(recorded.stream_len, stream.len(), "the contract's stream is the proof's");
+        let recorded = record_verifier(&shape, blake2s, Claims::Point);
+        assert_eq!(recorded.stream_len, stream_len, "the contract's stream is the proof's");
         let contract = compile_verifier(&recorded, &PROGRAM_IV, false);
         let ok = call(&contract.code, &[], &data, &pcs);
         let mut bad = data.clone();
@@ -155,17 +179,17 @@ fn proves_and_verifies() {
         let no = call(&contract.code, &[], &bad, &pcs);
         (ok.output.clone(), no.output.is_some(), ok.execution)
     });
-    println!("  the contract returns {accepted:02x?} on the real proof, {gas} gas of execution");
+    println!("  the contract returns {:?} on the real proof, {gas} gas of execution", accepted.as_ref().map(|o| o[31]));
     assert_eq!(accepted.as_deref(), Some(&word([1, 0, 0])[..]), "the contract accepts the real proof");
     assert!(!rejected, "the contract rejects a mutated proof");
 
-    // Mutations: a root, a value at t, the middle, a final value, a sumcheck round.
+    // Mutations: a root, a value early on, the middle, a final value, a sumcheck round.
     let mut refused = 0;
     let len = proof.stream.len();
     for &at in &[0usize, 40, len / 2, len - 30, len - 100] {
         let mut bad = proof.stream.clone();
         bad[at] ^= 1;
-        let verdict = verify(&trace.shape(), &PROGRAM_IV, &public, &copy(&proof, bad), Blake2s::Omitted);
+        let verdict = verify(&trace.shape(), &PROGRAM_IV, &public, &copy(&proof, bad), blake2s);
         println!(
             "  stream byte {at} flipped: {}",
             verdict.as_ref().err().map_or("ACCEPTED".to_string(), |e| e.clone())
@@ -173,6 +197,20 @@ fn proves_and_verifies() {
         refused += verdict.is_err() as usize;
     }
     assert_eq!(refused, 5, "every mutation is rejected");
+}
+
+#[test]
+#[ignore]
+fn proves_and_verifies() {
+    end_to_end(Blake2s::Omitted);
+}
+
+/// With BLAKE2s's argument: leanVM's Flock prover (skip 6, the slices sent), the matrices' reduction, the ring
+/// switch's weight on `q_flock`.
+#[test]
+#[ignore]
+fn proves_and_verifies_with_flock() {
+    end_to_end(Blake2s::Flock(FLOCK_LEANVM_SKIP));
 }
 
 /// The verifier relies on nothing in the stacks' words past their blocks: filled with pseudo-random words, the
@@ -191,7 +229,7 @@ fn unused_words_are_not_relied_on() {
         check: true,
         garbage: true,
     };
-    let (proof, report) = prove(&trace, &PROGRAM_IV, config).expect("a proof");
+    let (proof, report) = prove(&trace, None, &PROGRAM_IV, config).expect("a proof");
     for (c, placed, vars) in &report.stacks {
         println!("  stack {c:?}: words {placed}.. up to its last lane pseudo-random (2^{vars})");
     }

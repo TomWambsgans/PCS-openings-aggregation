@@ -16,6 +16,7 @@ use primitives::field::{F64, F192};
 
 use super::bus::{Bus, all_leaves, expected_root, heap};
 use super::columns::{c1_polys, setup_polys};
+use super::flock::FlockWitness;
 use super::opening::{self, Committed};
 use super::poly::{eval_e, eval_k, from_v, novel_from_values, subset_sums, to_v};
 use super::quotients::{self, Quotient};
@@ -65,6 +66,8 @@ pub struct Report {
     pub checks: Vec<(String, bool)>,
     pub stream_bytes: usize,
     pub opening_bytes: Vec<usize>,
+    /// Flock's claim on `A0`, `B0`: the point and the two values.
+    pub flock: Option<(Vec<E>, E, E)>,
 }
 
 struct Clock {
@@ -148,16 +151,13 @@ pub struct Config {
     pub garbage: bool,
 }
 
-/// Prove `trace`'s execution for the contract of `iv`.
-pub fn prove(trace: &Trace, iv: &[u8; 32], config: Config) -> Result<(Proof, Report), String> {
+/// Prove `trace`'s execution for the contract of `iv`; with Flock, from leanVM's Flock inputs `flock`.
+pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config: Config) -> Result<(Proof, Report), String> {
     let mut report = Report::default();
     let mut clock = Clock { last: Instant::now() };
     let shape = trace.shape();
     if shape.heights() != trace.heights {
         return Err(format!("leanVM's heights {:?} are not the verifier's {:?}", trace.heights, shape.heights()));
-    }
-    if !matches!(config.blake2s, Blake2s::Omitted) {
-        return Err("Flock's prover is not built: run with Blake2s::Omitted (PROVER.md)".into());
     }
     let public = trace.public_input();
     let mut writer = KeccakWriter::new(keccak_seed(&NAME, iv, &public));
@@ -202,7 +202,14 @@ pub fn prove(trace: &Trace, iv: &[u8; 32], config: Config) -> Result<(Proof, Rep
     let beta = from_v(writer.sample());
     let gamma = from_v(writer.sample());
 
-    // 3. Flock: not built (Blake2s::Omitted).
+    // 3. Flock, on q_flock: leanVM's prover (`flock.rs`).
+    if let Blake2s::Flock(variant) = config.blake2s {
+        let witness = flock.ok_or("Flock needs leanVM's Flock inputs (flock.bin)")?;
+        let log_n = leanvm_flock_gas::layout::BLAKE2S_R1CS_LOG_SIZE + trace.heights[OP_BLAKE2S];
+        let out = super::flock::prove(&mut writer, witness, variant, log_n)?;
+        report.flock = Some((out.matrices_point, out.a, out.b));
+        clock.lap(&mut report, "Flock: zerocheck, lincheck, slices, matrices' reduction");
+    }
 
     // 4. The heap.
     let bus = Bus::new(&alphas, beta);
@@ -524,6 +531,18 @@ pub fn verify(trace_shape: &crate::verifier::Shape, iv: &[u8; 32], public: &[u8;
             &opening::wire_proof(&mine.proof),
         )
         .map_err(|e| format!("{commitment:?}: WHIR rejects: {e:?}"))?;
+    }
+    // Flock's claims on the fixed A0, B0 (the BLAKE2s R1CS): checked against the matrices themselves, as an honest
+    // setup opening proves them (A0 and B0 are not committed here: PROVER.md).
+    match (&reduced.matrices, blake2s) {
+        (Some(claim), Blake2s::Flock(_)) => {
+            let (a, b) = leanvm_flock_gas::matrices::matrix_values(&claim.point).map_err(|e| format!("{e:?}"))?;
+            if (a, b) != (claim.a, claim.b) {
+                return Err("Flock's claims on A0, B0 are not the matrices' values".into());
+            }
+        }
+        (None, Blake2s::Omitted) => {}
+        _ => return Err("Flock's matrices' claims".into()),
     }
     Ok(())
 }

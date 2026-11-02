@@ -17,13 +17,67 @@ use super::poly::{from_v, to_v};
 use crate::claims::{Column, Combined};
 use crate::stacks::StackLayout;
 
+/// `x ↦ Σ_k c_k x^(2^k)`, GF(2)-linear on `E`, as 24 byte tables: `L(x) = Σ_j T_j[byte_j(x)]`.
+struct Linearised {
+    tables: Vec<[F192; 256]>,
+}
+
+impl Linearised {
+    fn new(twists: &[(u8, F192)]) -> Self {
+        let image = |x: F192| {
+            let mut power = x;
+            let mut sum = F192::ZERO;
+            let top = twists.iter().map(|&(k, _)| k).max().unwrap_or(0);
+            for k in 0..=top {
+                for &(t, c) in twists {
+                    if t == k {
+                        sum += c * power;
+                    }
+                }
+                power = power.square();
+            }
+            sum
+        };
+        let mut tables = vec![[F192::ZERO; 256]; 24];
+        for (j, table) in tables.iter_mut().enumerate() {
+            let (limb, byte) = (j / 8, j % 8);
+            let bits: Vec<F192> = (0..8)
+                .map(|i| {
+                    let mut c = [0u64; 3];
+                    c[limb] = 1u64 << (8 * byte + i);
+                    image(F192::new(c[0], c[1], c[2]))
+                })
+                .collect();
+            for v in 1..256usize {
+                let low = v.trailing_zeros() as usize;
+                table[v] = table[v & (v - 1)] + bits[low];
+            }
+        }
+        Self { tables }
+    }
+
+    #[inline]
+    fn at(&self, x: F192) -> F192 {
+        let mut acc = F192::ZERO;
+        for (limb, word) in [x.c0, x.c1, x.c2].into_iter().enumerate() {
+            for byte in 0..8 {
+                acc += self.tables[8 * limb + byte][(word >> (8 * byte)) as usize & 0xff];
+            }
+        }
+        acc
+    }
+}
+
 /// A combined claim's weight on its stack, written out over `len` words. Terms are grouped by the eq table they read
-/// (point, length, twist): each table is built once, and dropped after its terms.
+/// (point and length): each table is built once, and dropped after its terms. Frobenius-twisted terms of one point on
+/// one block (the ring switch's) read the same table, since on the cube `eq(φ^k(p), u) = eq(p, u)^(2^k)`: their sum
+/// is one GF(2)-linear map of it ([`Linearised`]).
 pub fn dense_weight(claim: &Combined<E>, layout: &StackLayout, len: usize) -> Vec<F192> {
     let mut weight = vec![F192::ZERO; len];
     let basis = [F192::ONE, F192::new(0, 1, 0), F192::new(0, 0, 1)];
-    // (point, eq length, twist) -> its uses: (block offset, scale, q_flock slot).
-    let mut groups: BTreeMap<(usize, usize, u8), Vec<(usize, F192, Option<usize>)>> = BTreeMap::new();
+    // (point, eq length) -> its uses: (block offset, q_flock slot) -> [(twist, scale)].
+    type Uses = BTreeMap<(usize, Option<usize>), Vec<(u8, F192)>>;
+    let mut groups: BTreeMap<(usize, usize), Uses> = BTreeMap::new();
     for &(column, p, twist, coefficient) in &claim.terms {
         let coefficient = from_v(coefficient);
         let (target, slot) = match column {
@@ -33,32 +87,43 @@ pub fn dense_weight(claim: &Combined<E>, layout: &StackLayout, len: usize) -> Ve
         for (limb, vars, offset) in layout.limbs(target) {
             let len = if slot.is_some() { vars - 8 } else { vars };
             groups
-                .entry((p, len, twist))
+                .entry((p, len))
                 .or_default()
-                .push((offset as usize, coefficient * basis[limb], slot));
+                .entry((offset as usize, slot))
+                .or_default()
+                .push((twist, coefficient * basis[limb]));
         }
     }
-    for ((p, len, twist), uses) in groups {
-        let twisted: Vec<F192> = claim.points[p][..len]
-            .iter()
-            .map(|&x| (0..twist).fold(from_v(x), |y, _| y.square()))
-            .collect();
-        let eq = eq_table(&twisted);
-        for (offset, scale, slot) in uses {
+    for ((p, len), uses) in groups {
+        let point: Vec<F192> = claim.points[p][..len].iter().map(|&x| from_v(x)).collect();
+        let eq = eq_table(&point);
+        for ((offset, slot), twists) in uses {
+            let plain = twists.iter().all(|&(k, _)| k == 0);
+            let scale = twists.iter().fold(F192::ZERO, |acc, &(_, c)| acc + c);
             match slot {
                 // q_flock's word `j + 256 u`: the slot's bits, then the point.
                 Some(j) => {
+                    assert!(plain, "no twisted slot terms");
                     for (u, &e) in eq.iter().enumerate() {
                         weight[offset + j + (u << 8)] += scale * e;
                     }
                 }
                 None => {
                     let block = &mut weight[offset..offset + eq.len()];
-                    parallel::chunks_mut_zip(block, &eq, 1 << 14, |_, out, eq| {
-                        for (o, &e) in out.iter_mut().zip(eq) {
-                            *o += scale * e;
-                        }
-                    });
+                    if plain {
+                        parallel::chunks_mut_zip(block, &eq, 1 << 14, |_, out, eq| {
+                            for (o, &e) in out.iter_mut().zip(eq) {
+                                *o += scale * e;
+                            }
+                        });
+                    } else {
+                        let map = Linearised::new(&twists);
+                        parallel::chunks_mut_zip(block, &eq, 1 << 14, |_, out, eq| {
+                            for (o, &e) in out.iter_mut().zip(eq) {
+                                *o += map.at(e);
+                            }
+                        });
+                    }
                 }
             }
         }
