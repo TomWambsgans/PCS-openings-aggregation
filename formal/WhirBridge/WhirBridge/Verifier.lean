@@ -13,13 +13,13 @@ import WhirBridge.Layouts
 # `opening::verify` and its soundness
 
 `openingVerifyWithHash H F L R root claims π` is `opening::verify(layout, root, claims, proof)`
-(`opening.rs:728-819`) with Keccak-256 `H` and Keccak-f[1600] `F` in any monad, step by step:
+(`opening.rs:782-892`) with Keccak-256 `H` and Keccak-f[1600] `F` in any monad, step by step:
 
-1. reject unless every claim's point has the table's `vars` coordinates;
-2. the IV `H(prefix(L) ‖ claims)` (`iv`, `opening.rs:592-602`; `openingPrefix`: `LABEL`, `VERSION = 2`,
+1. reject unless there is a claim and every claim's point has the table's `vars` coordinates;
+2. the IV `H(prefix(L) ‖ claims)` (`iv`, `opening.rs:635-645`; `openingPrefix`: `LABEL`, `VERSION = 2`,
    the layout's id, `log_n`, the rate, 76 bytes; the claims as `claimsBytes`), the sponge
    `F(IV ‖ 0 ‖ 0)` (`Transcript::new(proof, iv, PUBLIC_DIGEST = 0, true)`);
-3. reject unless the proof's first two scalars encode the expected root (`opening.rs:742-745`);
+3. reject unless the proof's first two scalars encode the expected root (`opening.rs:797-800`);
 4. the program `ourProg`: read those two scalars as the commitment (absorbed), then `Layout.check`
    (the batching challenge, the target, the weight closure, `verify_whir`), accepting when it
    accepts and the proof is read whole.
@@ -53,41 +53,49 @@ open scoped ENNReal
 
 attribute [local irreducible] instFintypeDigest instFintypeKState
 
-/-! ## The prefix (`opening.rs:566-652`) -/
+/-! ## The prefix (`opening.rs:608-708`) -/
 
-/-- `LABEL` (`opening.rs:38`): the ASCII bytes of `pcs-quotient-opening`. -/
+/-- `LABEL` (`opening.rs:41`): the ASCII bytes of `pcs-quotient-opening`. -/
 def label : Bytes :=
   [0x70, 0x63, 0x73, 0x2d, 0x71, 0x75, 0x6f, 0x74, 0x69, 0x65, 0x6e, 0x74, 0x2d, 0x6f, 0x70, 0x65,
     0x6e, 0x69, 0x6e, 0x67]
 
-/-- `VERSION` (`opening.rs:45`). -/
+/-- `VERSION` (`opening.rs:48`). -/
 def version : ℕ := 2
 
 /-- An integer as 8 little-endian bytes (`(n as u64).to_le_bytes()`). -/
 def u64 (n : ℕ) : Bytes := wordBytes n.toUInt64
 
-/-- A lane's kind and block in the layout's encoding (`opening.rs:639-647`): `0` a block, `1` the
+/-- A lane's kind and block in the layout's encoding (`opening.rs:682-690`): `0` a block, `1` the
 overflow lane, `2` a random lane. -/
 def Lane.code : Lane → ℕ × ℕ
   | .block b => (0, b)
   | .overflow => (1, 0)
   | .random => (2, 0)
 
-/-- An optional field (`opening.rs:632-635`): `0`, or `1` then the value. -/
+/-- An optional field (`opening.rs:675-678`): `0`, or `1` then the value. -/
 def optBytes : Option ℕ → Bytes
   | none => u64 0
   | some v => u64 1 ++ u64 v
 
-/-- `encode_layout` (`opening.rs:623-652`): every field of the layout. -/
+/-- The gadget's field (`opening.rs:694-707`): `0` in a public layout; in a hidden one of pieces
+`2^s`, `GADGET`, then each pattern's number of lanes, its lanes and its three entries. -/
+def gadgetBytes : Option ℕ → Bytes
+  | none => u64 0
+  | some s => u64 gadget ++ (List.range 3).flatMap fun g ↦
+      u64 (gadgetLanes g).length ++ (gadgetLanes g).flatMap u64 ++
+        (List.range 3).flatMap fun i ↦ u64 (gadgetEntry s g i)
+
+/-- `encode_layout` (`opening.rs:667-708`): every field of the layout, then the gadget. -/
 def encodeLayout (L : Layout) : Bytes :=
   u64 L.vars ++ u64 L.logN ++ u64 L.lanes.length ++
     L.lanes.flatMap (fun l ↦ u64 l.code.1 ++ u64 l.code.2) ++ optBytes L.logPiece ++
-    u64 L.pieces.length ++ L.pieces.flatMap u64 ++ optBytes L.share
+    u64 L.pieces.length ++ L.pieces.flatMap u64 ++ gadgetBytes L.logPiece
 
-/-- `layout_id` (`opening.rs:617-621`): Keccak-256 of the encoding, its 32 bytes. -/
+/-- `layout_id` (`opening.rs:661-665`): Keccak-256 of the encoding, its 32 bytes. -/
 def layoutId (L : Layout) : Bytes := digestBytes (keccak256 (encodeLayout L))
 
-/-- **`prefix`** (`opening.rs:573-584`): `LABEL`, `VERSION`, the layout's id, `log_n` and the
+/-- **`prefix`** (`opening.rs:616-626`): `LABEL`, `VERSION`, the layout's id, `log_n` and the
 rate, in fixed-width fields. -/
 def openingPrefix (L : Layout) (R : ℕ) : Bytes :=
   label ++ u64 version ++ layoutId L ++ u64 L.logN ++ u64 R
@@ -95,7 +103,7 @@ def openingPrefix (L : Layout) (R : ℕ) : Bytes :=
 theorem openingPrefix_length (L : Layout) (R : ℕ) : (openingPrefix L R).length = 76 := by
   simp [openingPrefix, u64, wordBytes, layoutId, digestBytes, label]
 
-/-- `PUBLIC_DIGEST` (`opening.rs:605`): zero. -/
+/-- `PUBLIC_DIGEST` (`opening.rs:648`): zero. -/
 def publicDigest : Digest := #v[0, 0, 0, 0]
 
 theorem publicDigest_eq : publicDigest = default := rfl
@@ -118,10 +126,11 @@ section Run
 
 variable {m : Type → Type} [Monad m] (H : Bytes → m Digest) (F : KeccakState → m KeccakState)
 
-/-- **`opening::verify`** (`opening.rs:728-819`) over a hash `H` and a permutation `F`. -/
+/-- **`opening::verify`** (`opening.rs:782-892`) over a hash `H` and a permutation `F`: no claim,
+or a point of the wrong length, is rejected first (`opening.rs:792-794`). -/
 def openingVerifyWithHash (L : Layout) (R : ℕ) (root : Digest) (claims : List Claim)
     (π : Proof) : m Bool :=
-  if ∀ c ∈ claims, c.point.length = L.vars then do
+  if claims.isEmpty = false ∧ ∀ c ∈ claims, c.point.length = L.vars then do
     let iv ← H (openingPrefix L R ++ claimsBytes claims)
     let seed ← F (seedInput iv publicDigest)
     if rootOf π = some root then runProofWithHash H F (ourProg L R claims) seed π
@@ -141,7 +150,11 @@ theorem openingVerify_imp {H : Bytes → Option Digest} {F : KeccakState → Opt
       LeanVM.Protocol.Compile.Rom.verify H F (famSeed (openingPrefix L R) x)
         (variantProg L.stacking R x.claims) π = some true := by
   unfold openingVerifyWithHash at h
-  rw [if_pos (show ∀ c ∈ x.claims, c.point.length = L.vars from x.wide)] at h
+  by_cases hne : x.claims.isEmpty = false
+  swap
+  · rw [if_neg fun h' ↦ hne h'.1] at h
+    exact absurd h (by simp [pure])
+  rw [if_pos ⟨hne, x.wide⟩] at h
   simp only [bind, Option.bind_eq_some_iff] at h
   obtain ⟨iv, hiv, seed, hseed, h⟩ := h
   split_ifs at h with hr
@@ -168,13 +181,16 @@ def seedComp (pre : Bytes) (cs : List Claim) : OracleComp KeccakCalls KeccakStat
   callKeccak256 (pre ++ claimsBytes cs) >>= fun iv ↦ callKeccakF1600 (seedInput iv default)
 
 theorem ourVerifier_eq (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking) × Proof) :
-    ourVerifier L R w = seedComp (openingPrefix L R) w.1.2.claims >>= fun seed ↦
-      if rootOf w.2 = some w.1.1 then
-        runProofWithHash callKeccak256 callKeccakF1600 (variantProg L.stacking R w.1.2.claims) seed w.2
-      else pure false := by
-  rw [ourVerifier, openingVerifyWithHash,
-    if_pos (show ∀ c ∈ w.1.2.claims, c.point.length = L.vars from w.1.2.wide), seedComp,
-    bind_assoc, ourProg_eq, publicDigest_eq]
+    ourVerifier L R w = if w.1.2.claims.isEmpty = false then
+      (seedComp (openingPrefix L R) w.1.2.claims >>= fun seed ↦
+        if rootOf w.2 = some w.1.1 then
+          runProofWithHash callKeccak256 callKeccakF1600 (variantProg L.stacking R w.1.2.claims)
+            seed w.2
+        else pure false) else pure false := by
+  rw [ourVerifier, openingVerifyWithHash]
+  by_cases hne : w.1.2.claims.isEmpty = false
+  · rw [if_pos ⟨hne, w.1.2.wide⟩, if_pos hne, seedComp, bind_assoc, ourProg_eq, publicDigest_eq]
+  · rw [if_neg fun h' ↦ hne h'.1, if_neg hne]
 
 theorem verifierFam_eq (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking) × Proof) :
     verifierFam (famSeeds L.stacking (openingPrefix L R)) (famProgram L.stacking R) (w.1.2, w.2) =
@@ -185,24 +201,33 @@ theorem verifierFam_eq (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking) �
   simp only [verifierComp, LeanVM.Protocol.Compile.Rom.verify, Seed.run, Seed.hsRun, famSeed,
     seedComp, bind_assoc, pure_bind, List.nil_append, List.getD_cons_zero]
 
-/-- **A verifier that rejects more**: if `V₁` is `V₂` after a common first step when `c` holds,
-and rejects after it otherwise, then `V₁` accepting while `bad₁` holds is at most as likely as `V₂`
-accepting while `bad₂` holds, for `bad₁` implying `bad₂` where `c` holds. -/
+/-- **A verifier that rejects more**: if `V₁` rejects when `c₀` fails, and otherwise is `V₂` after
+a common first step when `c` holds and rejects after it when `c` fails, then `V₁` accepting while
+`bad₁` holds is at most as likely as `V₂` accepting while `bad₂` holds, for `bad₁` implying `bad₂`
+where `c₀` and `c` hold. -/
 theorem romExperiment_le_of_reject {α β : Type} (A : OracleComp KeccakCalls α)
     (S : α → OracleComp KeccakCalls β) (K : α → β → OracleComp KeccakCalls Bool)
-    (c : α → Prop) [DecidablePred c]
+    (c₀ c : α → Prop) [DecidablePred c₀] [DecidablePred c]
     (bad₁ bad₂ : α → KeccakCalls.QueryCache → Prop)
-    (himp : ∀ a cache, c a → bad₁ a cache → bad₂ a cache) :
-    Pr{let z ← romExperiment A (fun a ↦ S a >>= fun b ↦ if c a then K a b else pure false)}[
+    (himp : ∀ a cache, c₀ a → c a → bad₁ a cache → bad₂ a cache) :
+    Pr{let z ← romExperiment A (fun a ↦ if c₀ a then
+        (S a >>= fun b ↦ if c a then K a b else pure false) else pure false)}[
         z.1.2 = true ∧ bad₁ z.1.1 z.2] ≤
       Pr{let z ← romExperiment A (fun a ↦ S a >>= K a)}[z.1.2 = true ∧ bad₂ z.1.1 z.2] := by
   rw [romExperiment_eq, romExperiment_eq]
   refine prEvent_bind_mono_of_forall_le _ _ _ _ _ fun p ↦ ?_
   rw [prEvent_map, prEvent_map]
+  by_cases hc₀ : c₀ p.1
+  swap
+  · simp only [hc₀, ↓reduceIte]
+    refine le_of_eq_of_le (prEvent_eq_zero_of_forall_mem_support _ _ fun r hr hev ↦ ?_) bot_le
+    rw [simulateQ_pure, StateT.run_pure, mem_support_pure_iff] at hr
+    rw [hr] at hev
+    exact Bool.false_ne_true hev.1
   by_cases hc : c p.1
-  · simp only [hc, ↓reduceIte]
-    exact prEvent_mono _ _ _ fun r hr ↦ ⟨hr.1, himp _ _ hc hr.2⟩
-  · simp only [hc, ↓reduceIte]
+  · simp only [hc₀, hc, ↓reduceIte]
+    exact prEvent_mono _ _ _ fun r hr ↦ ⟨hr.1, himp _ _ hc₀ hc hr.2⟩
+  · simp only [hc₀, hc, ↓reduceIte]
     refine le_of_eq_of_le (prEvent_eq_zero_of_forall_mem_support _ _ fun r hr hev ↦ ?_) bot_le
     rw [simulateQ_bind, StateT.run_bind, mem_support_bind_iff] at hr
     obtain ⟨b, -, hr⟩ := hr
@@ -211,7 +236,10 @@ theorem romExperiment_le_of_reject {α β : Type} (A : OracleComp KeccakCalls α
     exact Bool.false_ne_true hev.1
 
 /-- **The event**: every candidate of the word extracted for the expected root (mumbai's `extract`
-from the oracle's answers, at level 0's shape) has a **table** violating one of the claims. -/
+from the oracle's answers, at level 0's shape) has a **table** violating one of the claims. The
+claims only: the doom mumbai's specification starts from (`OpeningDoom`) counts a hidden layout's
+gadget as one more stack claim, so it is "every candidate violates a claim or the gadget", which
+this event implies (`FamDoomed`, `Layout.openingDoom_iff`). -/
 def OpeningDoomed (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking) × Proof)
     (cache : KeccakCalls.QueryCache) : Prop :=
   ∀ q ∈ Candidates L.logN R (code₀ L.logN R).thr
@@ -247,17 +275,19 @@ theorem opening_sound (L : Layout) (hL : L.Valid) {R : ℕ} (hw : Whir.Admissibl
       fun w ↦ seedComp pre w.1.2.claims >>= fun seed ↦
         runProofWithHash callKeccak256 callKeccakF1600 (variantProg L.stacking R w.1.2.claims)
           seed w.2 := funext fun w ↦ verifierFam_eq L R w
-  have hO : ourVerifier L R = fun w ↦ seedComp pre w.1.2.claims >>= fun seed ↦
-      if rootOf w.2 = some w.1.1 then
-        runProofWithHash callKeccak256 callKeccakF1600 (variantProg L.stacking R w.1.2.claims)
-          seed w.2
-      else pure false := funext fun w ↦ ourVerifier_eq L R w
+  have hO : ourVerifier L R = fun w ↦ if w.1.2.claims.isEmpty = false then
+      (seedComp pre w.1.2.claims >>= fun seed ↦
+        if rootOf w.2 = some w.1.1 then
+          runProofWithHash callKeccak256 callKeccakF1600 (variantProg L.stacking R w.1.2.claims)
+            seed w.2
+        else pure false) else pure false := funext fun w ↦ ourVerifier_eq L R w
   rw [hV, hO]
   refine romExperiment_le_of_reject A (fun w ↦ seedComp pre w.1.2.claims)
     (fun w seed ↦ runProofWithHash callKeccak256 callKeccakF1600
       (variantProg L.stacking R w.1.2.claims) seed w.2)
-    (fun w ↦ rootOf w.2 = some w.1.1) (fun w cache ↦ OpeningDoomed L R w cache)
-    (fun w cache ↦ FamDoomed L.stacking R (f w) cache) fun w cache hr hbad ↦ ?_
+    (fun w ↦ w.1.2.claims.isEmpty = false) (fun w ↦ rootOf w.2 = some w.1.1)
+    (fun w cache ↦ OpeningDoomed L R w cache)
+    (fun w cache ↦ FamDoomed L.stacking R (f w) cache) fun w cache _ hr hbad ↦ ?_
   intro r hr' q hq
   rw [hr'] at hr
   obtain rfl := (Option.some.inj hr).symm

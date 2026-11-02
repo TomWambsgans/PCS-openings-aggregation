@@ -11,3 +11,7 @@ import Compose.AdversaryLog
 import Compose.Coupling
 import Compose.Deployed
 import Compose.Axioms
+import Compose.Decoder
+import Compose.DecoderCost
+import Compose.DecoderDeployed
+import Compose.DecoderAxioms
