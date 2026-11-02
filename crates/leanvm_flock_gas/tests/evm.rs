@@ -1,9 +1,76 @@
 // Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 //! The contract computes what the Rust verifier computes, and what a call of it costs.
 
-use leanvm_flock_gas::LincheckTerminal;
-use leanvm_flock_gas::evm::contract::{GasReport, category, measure, parity, record_verifier, sample_stream};
+use leanvm_flock_gas::evm::contract::{
+    FragmentGas, GasReport, category, measure, measure_fragment, parity, record_verifier, sample_stream,
+};
+use leanvm_flock_gas::keccak_gkr::{KECCAK_DEPTH, KeccakShape, STATE_LANES, verify_keccak};
 use leanvm_flock_gas::shapes::{PROGRAM_IV, WORKLOADS, benchmark};
+use leanvm_flock_gas::transcript::Channel;
+use leanvm_flock_gas::{LincheckTerminal, verify_flock};
+
+fn print_fragment(name: &str, fragment: &FragmentGas) {
+    println!(
+        "\n{name}: execution {} gas, stream {} bytes; FIELD_MUL {}, XOR {}, KECCAK256 {}, memory {} words",
+        grouped(fragment.execution),
+        grouped(fragment.stream_bytes as u64),
+        grouped(fragment.field_muls as u64),
+        grouped(fragment.xors as u64),
+        fragment.hashes,
+        grouped(fragment.memory_words as u64)
+    );
+    for phase in &fragment.phases {
+        println!("  {:<60} {:>10}", phase.phase, grouped(phase.gas));
+    }
+}
+
+/// The hash argument alone, measured the same way: leanVM 42422001's Flock reduction of the benchmark's BLAKE2s table
+/// (2^18 rows), both ways of closing the lincheck, and leanVM 4af2cddd's Keccak GKR of a table of 2^18 permutations
+/// (its 1,290-signature proof has 240,556), from its point and output lanes, which are the table sumcheck's there.
+/// Neither includes the ring switch, which both end in.
+/// `cargo test --release -p leanvm_flock_gas --test evm -- --ignored --nocapture keccak_estimate`.
+#[test]
+#[ignore]
+fn keccak_estimate() {
+    deep(|| {
+        let log_rows = 18;
+        for lincheck in [LincheckTerminal::Matrices, LincheckTerminal::Walk] {
+            let flock = measure_fragment(|recorder| {
+                let flock = verify_flock(14 + log_rows, recorder, lincheck).expect("recorded");
+                let mut outputs = [flock.point(), flock.s.clone()].concat();
+                if let Some(matrices) = &flock.matrices {
+                    outputs.extend(matrices.point.iter().copied().chain([matrices.a, matrices.b]));
+                }
+                outputs
+            });
+            print_fragment(&format!("Flock (42422001), lincheck {lincheck:?}"), &flock);
+        }
+        let keccak = measure_fragment(|recorder| {
+            // The table sumcheck's point and output lanes, read here rather than derived.
+            let instance = recorder.next_scalars(log_rows).expect("recorded");
+            let output = recorder.next_scalars(STATE_LANES).expect("recorded");
+            let shape = KeccakShape {
+                log_steps: log_rows,
+                depth: KECCAK_DEPTH,
+            };
+            let openings = verify_keccak(recorder, shape, &instance, &output).expect("recorded");
+            let (point, slices) = openings.inputs;
+            let mut outputs = [point, slices].concat();
+            if let Some((point, word)) = openings.outputs {
+                outputs.extend(point.into_iter().chain([word]));
+            }
+            outputs
+        });
+        print_fragment("Keccak GKR (4af2cddd), depth 12", &keccak);
+        println!(
+            "  of its stream, {} bytes are the point and output lanes read here: the reduction's own is {} bytes, {} \
+             scalars",
+            24 * (log_rows + STATE_LANES),
+            keccak.stream_bytes - 24 * (log_rows + STATE_LANES),
+            (keccak.stream_bytes - 24 * (log_rows + STATE_LANES)) / 24
+        );
+    });
+}
 
 /// Run `f` on a thread with a deep stack: the code generator recurses along the graph.
 fn deep<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
@@ -109,6 +176,21 @@ fn print_report(name: &str, report: &GasReport) {
             grouped(report.transaction(c, 64))
         );
     }
+    println!();
+    println!("| stream read by | bytes | scalars (24 B; a root 32 B) |");
+    println!("|---|---:|---:|");
+    for &(phase, bytes) in &report.stream_by_phase {
+        let phase = if phase == "setup" {
+            "announced sizes, stack root"
+        } else {
+            phase
+        };
+        println!("| {phase} | {} | {} |", grouped(bytes as u64), bytes / 24);
+    }
+    println!(
+        "| selector, public input | {} | |",
+        report.calldata_bytes - report.stream_bytes
+    );
 }
 
 fn print_categories(report: &GasReport) {

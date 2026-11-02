@@ -135,7 +135,7 @@ pub struct FlockClaims<S> {
 
 impl<S: Scalar> FlockClaims<S> {
     /// The point the slices are claims at: the lincheck's challenges in coordinate order, then the rest of chi.
-    pub(crate) fn point(&self) -> Vec<S> {
+    pub fn point(&self) -> Vec<S> {
         let chi_in_prime = self.round_challenges.iter().rev().copied();
         let rest = self.chi[FLOCK_NUM_LINCHECK_ROUNDS..].iter().copied();
         chi_in_prime.chain(rest).collect()

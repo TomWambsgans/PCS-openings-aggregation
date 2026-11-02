@@ -13,7 +13,7 @@
 //! stacked bytecode, and, when the lincheck's terminal is left to them, `A0` and `B0`; the three fixed commitments
 //! are in storage slots 0, 1, 2 (one cold `SLOAD` each), as this repository keeps its circuit's.
 
-use crate::evm::codegen::{CALLS, Contract, Ending, Entry, MEASURE, VERIFY, Word, compile, word};
+use crate::evm::codegen::{CALLS, Contract, ENTRY, Ending, Entry, MEASURE, VERIFY, Word, compile, word};
 use crate::evm::machine::{Outcome, PcsOpen, call, element_word};
 use crate::evm::record::{Graph, Recorder, Sym, record};
 use crate::field::E;
@@ -43,21 +43,29 @@ pub struct Recorded {
     /// Bytes of stream it reads, and where the stack's root starts in it.
     pub stream_len: usize,
     pub root_at: usize,
+    /// The stream's bytes, by the phase that reads them.
+    pub reads: Vec<(&'static str, u32)>,
 }
 
 pub fn record_verifier(shape: &Shape, lincheck: LincheckTerminal) -> Recorded {
-    let ((reduced, stream_len, root_at), graph) = record(|| {
+    let ((reduced, stream_len, root_at, reads), graph) = record(|| {
         let mut recorder = Recorder::new();
         let words = Recorder::statement();
         let reduced = reduce(shape, words, &mut recorder, lincheck).expect("a recorder rejects nothing");
         assert_eq!(recorder.roots.len(), 1, "one commitment in the stream");
-        (reduced, recorder.cursor as usize, recorder.roots[0] as usize)
+        (
+            reduced,
+            recorder.cursor as usize,
+            recorder.roots[0] as usize,
+            recorder.reads,
+        )
     });
     Recorded {
         graph,
         reduced,
         stream_len,
         root_at,
+        reads,
     }
 }
 
@@ -297,6 +305,8 @@ pub struct GasReport {
     pub stack_log: usize,
     pub stack_claims: usize,
     pub bus_depth: usize,
+    /// The stream's bytes, by the phase that reads them.
+    pub stream_by_phase: Vec<(&'static str, u32)>,
 }
 
 impl GasReport {
@@ -382,6 +392,7 @@ pub fn measure(shape: &Shape, iv: &[u8; 32], lincheck: LincheckTerminal) -> GasR
         stack_log: recorded.reduced.layout_stack_log,
         stack_claims: recorded.reduced.stack_claims,
         bus_depth: recorded.reduced.bus_depth,
+        stream_by_phase: recorded.reads.clone(),
     }
 }
 
@@ -415,5 +426,72 @@ pub fn parity(shape: &Shape, iv: &[u8; 32], public_input: &[u8; 32], stream: &[u
     assert_eq!(output.len(), expected.len());
     for (k, (got, want)) in output.chunks(32).zip(expected.chunks(32)).enumerate() {
         assert_eq!(got, want, "word {k}");
+    }
+}
+
+/// What a part of a verifier costs measured alone: the same compilation and run, of a graph `f` records on a fresh
+/// transcript (its outputs kept live by returning them), less the entry checks and the returned words.
+#[derive(Clone, Debug)]
+pub struct FragmentGas {
+    /// Execution of the part itself: its arithmetic, its transcript hashing and its calldata reads.
+    pub execution: u64,
+    pub phases: Vec<PhaseGas>,
+    pub stream_bytes: usize,
+    pub field_muls: usize,
+    pub xors: usize,
+    pub hashes: usize,
+    pub memory_words: usize,
+}
+
+pub fn measure_fragment(f: impl FnOnce(&mut Recorder) -> Vec<Sym>) -> FragmentGas {
+    let ((outputs, stream_len), graph) = record(|| {
+        let mut recorder = Recorder::new();
+        let outputs = f(&mut recorder);
+        (outputs, recorder.cursor as usize)
+    });
+    let entry = Entry {
+        name: NAME,
+        iv: [0x77; 32],
+        stream_len,
+        measure: true,
+    };
+    let words: Vec<Word> = outputs.iter().map(|sym| Word::Node(sym.0)).collect();
+    let contract = compile(&graph, &words, &Ending::Return, &entry);
+    let mut state = 0x9E37_79B9u64;
+    let stream: Vec<u8> = (0..stream_len)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 24) as u8
+        })
+        .collect();
+    let outcome = call(
+        &contract.code,
+        &[],
+        &calldata(&[0x5a; 32], &stream),
+        &PcsOpen::default(),
+    );
+    assert!(outcome.output.is_some(), "the measuring build returns");
+    let mut phases: Vec<PhaseGas> = Vec::new();
+    for (pc, &gas) in outcome.gas_by_pc.iter().enumerate() {
+        let phase = contract.phase_of.get(pc).copied().unwrap_or(CALLS);
+        if gas == 0 || [MEASURE, CALLS, ENTRY].contains(&phase) {
+            continue;
+        }
+        match phases.iter_mut().find(|p| p.phase == phase) {
+            Some(p) => p.gas += gas,
+            None => phases.push(PhaseGas { phase, gas }),
+        }
+    }
+    phases.sort_by_key(|p| std::cmp::Reverse(p.gas));
+    FragmentGas {
+        execution: phases.iter().map(|p| p.gas).sum(),
+        phases,
+        stream_bytes: stream_len,
+        field_muls: contract.field_muls,
+        xors: contract.xors,
+        hashes: contract.hashes,
+        memory_words: contract.memory_words,
     }
 }

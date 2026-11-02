@@ -21,6 +21,7 @@ pub mod evm;
 mod field;
 mod flock;
 mod hash;
+pub mod keccak_gkr;
 mod layout;
 pub mod matrices;
 mod merkle;
@@ -33,13 +34,13 @@ mod whir;
 
 pub use bytecode::Bytecode;
 pub use field::{E, K};
-pub use flock::{FlockClaims, LincheckTerminal};
+pub use flock::{FlockClaims, LincheckTerminal, verify_flock};
 pub use layout::{Layout, N_TABLES, TABLE_NAMES};
 pub use merkle::{MerkleOpenings, MerklePath, PrunedMerklePaths};
 pub use transcript::Proof;
 
 use bus::{ColumnClaim, table_sumcheck, verify_bus_balance};
-use flock::{ring_switch, verify_flock};
+use flock::ring_switch;
 use hash::Digest;
 use layout::{
     BLAKE2S_R1CS_LOG_SIZE, MAX_STACKED_LOG, MEMORY_0, MEMORY_1, MEMORY_2, MIN_STACKED_LOG, OP_BLAKE2S, QFLOCK,
@@ -86,6 +87,11 @@ pub enum VerifierError {
     FlockMatrixTerminal,
     /// New here: the stack claims' batching sumcheck does not close (`stack`).
     StackBatchTerminal,
+    /// Of the Keccak GKR (leanVM 4af2cddd), ported for the estimate (`keccak_gkr`).
+    KeccakProduct,
+    KeccakLayer,
+    KeccakOutputOpening,
+    KeccakInputOpening,
 }
 
 impl std::fmt::Display for VerifierError {

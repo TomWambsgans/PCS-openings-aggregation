@@ -142,6 +142,8 @@ pub struct Recorder {
     absorbed: u32,
     /// Where each root starts in the stream.
     pub roots: Vec<u32>,
+    /// The stream's bytes, by the phase that reads them.
+    pub reads: Vec<(&'static str, u32)>,
 }
 
 impl Recorder {
@@ -152,6 +154,7 @@ impl Recorder {
             cursor: 0,
             absorbed: 0,
             roots: Vec::new(),
+            reads: Vec::new(),
         }
     }
 
@@ -161,6 +164,11 @@ impl Recorder {
     }
 
     fn input(&mut self, len: u8) -> Sym {
+        let reader = crate::scalar::phase();
+        match self.reads.iter_mut().find(|(phase, _)| *phase == reader) {
+            Some((_, bytes)) => *bytes += len as u32,
+            None => self.reads.push((reader, len as u32)),
+        }
         let _phase = crate::scalar::enter(CALLDATA);
         let scalar = Sym::new(Node::Input {
             offset: self.cursor,
