@@ -43,51 +43,48 @@ elab "#escapes " ns:ident : command => do
 #escapes LeanVM.Protocol
 #escapes LeanVM.Parameters
 
-#print axioms WhirBridge.openingCheck_eq
-#print axioms WhirBridge.isMultiaffine_claimWeight
+#print axioms WhirBridge.Layout.check_eq
+#print axioms WhirBridge.isMultiaffine_layoutClaimWeight
 #print axioms WhirBridge.openingSpec
 #print axioms WhirBridge.whirEps_le
 #print axioms WhirBridge.eBatch_two
 #print axioms WhirBridge.listMax_ours
 #print axioms WhirBridge.layouts_ok
+#print axioms WhirBridge.layouts_valid
 #print axioms WhirBridge.holds_iff
-#print axioms WhirBridge.openingDoom_iff
-#print axioms WhirBridge.joint_of_not_doom
+#print axioms WhirBridge.holds_iff_hidden
+#print axioms WhirBridge.Layout.holds_iff
+#print axioms WhirBridge.Layout.openingDoom_iff
+#print axioms WhirBridge.Layout.joint_of_not_doom
 #print axioms WhirBridge.candidates_ours
 #print axioms WhirBridge.variant_sound
-#print axioms WhirBridge.variant_sound_table
 #print axioms WhirBridge.variant_bound_le
 #print axioms WhirBridge.family_sound
 #print axioms WhirBridge.family_bound_le
-#print axioms WhirBridge.layouts_nodup
+#print axioms WhirBridge.openingVerify_imp
+#print axioms WhirBridge.opening_sound
+#print axioms WhirBridge.opening_bound_le
+#print axioms WhirBridge.ours_sound
 
 /-! ## Which layouts the bridge is about
 
-`WhirBridge.Layout` is `Layout::new`'s public layout only (`blocks : List ℕ`, every lane a block of the
-table): it has no overflow lane, no share lane, no random lanes, no first pieces and no odd-lane swaps,
-and `weight` transcribes only the `piece = None` branch of `opening::verify`'s closure
-(`opening.rs:699-701`). The deployed witness and quotient layouts are `Layout::hidden`
-(`protocol.rs:116-129`, 40 and 63 lanes; `crates/quotient/tests/review_f2f3.rs` checks it), so the
-bridge's `witnessLayout` and `quotientLayout` are the pre-hiding layouts. -/
+(Updated with the fix.) The review found that `WhirBridge.Layout` was `Layout::new`'s public layout only
+and that the bridge's `witnessLayout` / `quotientLayout` were the pre-hiding ones (33 and 59 block lanes),
+so the deployed witness and quotient openings were outside it. `WhirBridge.Layout` now has every field of
+the Rust struct, `Layout.check` transcribes both branches of the closure, and the protocol's layouts are
+built by `Layout.hidden` (`WhirBridge/Layouts.lean`): -/
 
-/-- The bridge's witness and quotient layouts have the pre-hiding lane counts `33` and `59`; the
-deployed ones have `40` and `63` (`protocol::witness_layout`, `protocol::quotient_layout`). -/
+/-- The bridge's witness and quotient layouts have the deployed lane counts `40` and `63`, the deployed
+random lanes, overflow and share lanes. -/
 example : ∀ r, 17 ≤ r → r ≤ 22 →
-    (WhirBridge.witnessLayout r).lanes = 33 ∧ (WhirBridge.quotientLayout r).lanes = 59 := by
+    (WhirBridge.witnessLayout r).lanes.length = 40 ∧ (WhirBridge.quotientLayout r).lanes.length = 63 := by
   decide +kernel
 
-example : ∀ r, 17 ≤ r → r ≤ 22 →
-    (WhirBridge.witnessLayout r).lanes ≠ 40 ∧ (WhirBridge.quotientLayout r).lanes ≠ 63 := by
+/-- In the deployed witness layout lanes `1, 7, 13, 19, 25, 31, 39` are random and lane `38` holds the
+overflow (`review_f2f3.rs`, `f3_design_facts_hold_at_every_size`). -/
+example : ((WhirBridge.witnessLayout 17).lanes.zipIdx.filter (·.1 = .random)).map (·.2) =
+      [1, 7, 13, 19, 25, 31, 39] ∧ (WhirBridge.witnessLayout 17).lanes[38]? = some .overflow := by
   decide +kernel
 
-/-- In the bridge, every lane of the witness layout holds a block of the table (the first `32` the
-row polynomials, the `33`rd the masks' chunk); in the deployed layout lanes `1, 7, 13, 19, 25, 31, 39`
-are random and lane `38` holds the overflow. -/
-example : WhirBridge.witnessLayout 17 =
-    ⟨20, 20, (List.range 32) ++ [32]⟩ := by
-  decide +kernel
-
-/-! What follows on executing the two checks on deployed proofs: `Test/Check.lean` (the bridge's
-`openingCheck`, `witnessLayout 17` / `quotientLayout 17`) rejects a deployed witness and a deployed
-quotient opening, and `Review/HiddenWeight.lean` (mumbai's `verifyWhir` with the hidden branch of the
-closure) accepts both (`crates/quotient/tests/review_f2f3.rs` writes the vectors). -/
+/-! `Test/Check.lean` now accepts deployed witness and quotient openings (the vectors of
+`crates/quotient/tests/whir_bridge_vector.rs`) and recomputes the 18 layouts' prefixes. -/

@@ -50,6 +50,13 @@ git = "https://github.com/Verified-zkEVM/leanerVM"
 rev = "6175f1a07f0dc33bd3d640de0063d1006143ee91"
 subDir = "common"
 
+# The deployed circuit (`formal/Circuit`, also a package of its own), which
+# `QuotientSecurity/Deployed.lean` plugs into the end theorems.
+[[lean_lib]]
+name = "Circuit"
+srcDir = "Circuit"
+globs = ["Circuit", "Circuit.+"]
+
 [[lean_lib]]
 name = "QuotientSecurity"
 
