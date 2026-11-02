@@ -412,22 +412,33 @@ fn lean_vectors() {
             extended.extend([0u8; 24]);
             w.emit(&config, "extend", &iv, &public, &extended);
         }
-        // A small shape, the main line.
-        let config = Config {
-            workload: by_name("xmss32"),
-            flock: flocks[0],
-            claims: point,
-        };
-        let len = record_verifier(&config.shape(), config.flock.1, config.claims.1).stream_len;
-        let public = rng.bytes32();
-        w.emit(&config, "random", &PROGRAM_IV, &public, &sample_stream(len, 0x300));
-        let public = rng.bytes32();
-        let stream = accepting(&config, &PROGRAM_IV, &public, len, 0x301);
-        w.emit(&config, "accept", &PROGRAM_IV, &public, &stream);
-        let mut mutated = stream.clone();
-        let position = (rng.next() as usize) % mutated.len();
-        mutated[position] ^= rng.nonzero_byte();
-        w.emit(&config, "mutate", &PROGRAM_IV, &public, &mutated);
+        // The other measured shapes, the main line (and at the largest, extension W with B too).
+        let others = [
+            ("xmss32", (flocks[0], point)),
+            ("xmss128", (flocks[0], point)),
+            ("xmss400", (flocks[0], point)),
+            ("xmss1290", (flocks[0], point)),
+            ("xmss2000", (flocks[0], point)),
+            ("xmss2000", (flocks[1], weighted)),
+        ];
+        for (k, (name, (flock, claims))) in others.into_iter().enumerate() {
+            let config = Config {
+                workload: by_name(name),
+                flock,
+                claims,
+            };
+            let len = record_verifier(&config.shape(), config.flock.1, config.claims.1).stream_len;
+            let salt = 0x300 + 16 * k as u64;
+            let public = rng.bytes32();
+            w.emit(&config, "random", &PROGRAM_IV, &public, &sample_stream(len, salt));
+            let public = rng.bytes32();
+            let stream = accepting(&config, &PROGRAM_IV, &public, len, salt + 1);
+            w.emit(&config, "accept", &PROGRAM_IV, &public, &stream);
+            let mut mutated = stream.clone();
+            let position = (rng.next() as usize) % mutated.len();
+            mutated[position] ^= rng.nonzero_byte();
+            w.emit(&config, "mutate", &PROGRAM_IV, &public, &mutated);
+        }
 
         std::fs::write(&path, &w.out).expect("the vectors file");
         println!("{} vectors, {} lines, written to {path}", w.id, w.out.lines().count());
