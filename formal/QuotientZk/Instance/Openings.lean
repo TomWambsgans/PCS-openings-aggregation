@@ -33,12 +33,14 @@ namespace QuotientZk.Instance
 set_option linter.unusedSectionVars false
 
 /-- **The fields' representations**: `K`'s 64-bit words (`Words`, the novel basis's points and the
-rows' bytes) and `E`'s limbs. -/
-structure Rep (K E : Type) [Field K] [Field E] where
+rows' bytes), `E`'s limbs, and `E`'s coordinates over `K` (`coords`, a `K`-linear bijection; for
+`F192` its three `F64` limbs), in which the simulator's tables are solved for (`Builder.lean`). -/
+structure Rep (K E : Type) [Field K] [Field E] [Algebra K E] where
   w : Words K
   toWord : K → UInt64
   toWord_injective : Function.Injective toWord
   limbs : E ≃ Limbs
+  coords : E ≃ₗ[K] (Fin 3 → K)
 
 /-! ## The layouts -/
 

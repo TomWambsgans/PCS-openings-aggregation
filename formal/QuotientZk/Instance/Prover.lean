@@ -96,7 +96,7 @@ theorem flatMap_wordBytes_injective : Function.Injective (fun l : List UInt64 =>
 
 section Field
 
-variable {K E : Type} [Field K] [Field E] (rep : Rep K E)
+variable {K E : Type} [Field K] [Field E] [Algebra K E] (rep : Rep K E)
 
 /-- **A leaf's bytes** (`whir.rs`): the 64-word image, the absent lanes' zeros first, then the
 committed lanes from the last to the first, each word little-endian. -/

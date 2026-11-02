@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import QuotientZk.Instance.Fresh
+import QuotientZk.Instance.Builder
 
 /-!
 # Zero knowledge of the deployed proof, the joint model instantiated
@@ -12,10 +13,11 @@ challenges `chOf` (`Challenges.lean`), every hypothesis on them discharged:
   (`chOf_uniform`), the lanes `h40` (`card_ιW`, `card_ιQ`);
 * `FSFresh`'s conditions (`Fresh.lean`): `hcw_deployed`, `hrow₀_Pb`, `hlong_Pb`, `hcK_Pb`, `claimsAt_W`,
   `claimsAt_σ`, `claimsAt_Q`, `hn_Pb`; `hrow` and `hduplex` by `ofBytes` (`RpmDiscipline.lean`);
-* the simulator's tables (`hsimT`): `solveW`, `solveQ` choose a table with the verifier's claimed
-  values (`valsW`, `valsQ`) when one exists, and the joint model's claims `cl` are the chosen
-  table's, so `hsimT` holds by definition and `hT` follows from the honest table meeting the
-  verifier's values (`hTW`, `hTQ`).
+* the simulator's tables (`hsimT`): `simTW`, `simTQ` (`Builder.lean`) are built by a computable
+  Gaussian elimination, which meets the verifier's claimed values (`valsW`, `valsQ`) whenever some
+  table does (`claims_simTW`, `claims_simTQ`); the joint model's claims `cl` are the built table's,
+  so `hsimT` holds by definition and `hT` follows from the honest table meeting the verifier's
+  values (`hTW`, `hTQ`).
 
 **What remains a hypothesis.** The field (`[E : K] = 3`, `|E| = 2^192`, `|K| = 2^64`, characteristic
 2, `K`'s 64-bit words and `E`'s limbs `rep`, `1, Y, Y²` independent); F1's (`hE`, `hvan`, `hsat`: the
@@ -27,8 +29,9 @@ this one cannot import); the permutation budget `hQ`. The statement holds for ev
 of the messages (WHIR's honest prover is one) and every pair of tables `TW`, `TQ` meeting the
 claims.
 
-The simulator `jointSimV … (chOf σ)`, read through `out`, uses `solveW`, `solveQ` (a classical
-choice: noncomputable) and no witness.
+The simulator `jointSimV … (chOf σ)`, read through `out`, uses the tables `simTW`, `simTQ` (computed,
+`Builder.lean`: a Gaussian elimination over `rep.coords`, the coordinates of `E` over `K`) and no
+witness.
 -/
 
 open OracleComp OracleSpec Polynomial Module QuotientSecurity QuotientSecurity.Hiding QuotientRpm
@@ -40,27 +43,7 @@ namespace QuotientZk.Instance
 
 set_option linter.unusedSectionVars false
 
-/-! ## The simulator's tables -/
-
-section Solve
-
-variable {K E Ch ι Y Q O : Type} [Field K] [Field E] [Algebra K E]
-  [Fintype ι] [DecidableEq ι] [Fintype Y] [DecidableEq Y] [Fintype Q] [DecidableEq Q]
-
-/-- **A table with given claims**, chosen when one exists (`0` otherwise). -/
-noncomputable def solve (S : SecretOpening K E Ch ι Y Q O) (c : Ch) (val : Fin S.m → E) :
-    ι → Y → K :=
-  open Classical in if h : ∃ d, S.claims c d = val then h.choose else 0
-
-theorem claims_solve (S : SecretOpening K E Ch ι Y Q O) (c : Ch) (val : Fin S.m → E)
-    {d : ι → Y → K} (hd : S.claims c d = val) : S.claims c (solve S c val) = val := by
-  classical
-  have h : ∃ d, S.claims c d = val := ⟨d, hd⟩
-  unfold solve
-  rw [dif_pos h]
-  exact h.choose_spec
-
-end Solve
+/-! ## The simulator's tables: `simTW`, `simTQ` (`Builder.lean`) -/
 
 section Main
 
@@ -68,14 +51,6 @@ variable {K E : Type} [Field K] [Field E] [Algebra K E] [DecidableEq E] [CharP E
   [CharP K 2] [Fintype K] [DecidableEq K] [FiniteDimensional K E] [SampleableType K]
   [SampleableType E]
   (rep : Rep K E) (P₀ : Params E) (stmt : Fin P₀.words → E) (Y : E)
-
-/-- The simulator's witness table: the verifier's claimed value. -/
-noncomputable def simTW (c : DChal E) (v : Vals E) : ιW → YW → K :=
-  solve (openW rep Y) (c, v) (valsW c v)
-
-/-- The simulator's quotient table. -/
-noncomputable def simTQ (c : DChal E) (v : Vals E) : ιQ → YQ → K :=
-  solve (openQ rep P₀ Y) (c, v) (valsQ P₀ stmt Y c v)
 
 /-- The joint model's claims: the simulator's tables'. -/
 noncomputable def clW (c : DChal E) (v : Vals E) : Fin 1 → E :=
@@ -129,8 +104,8 @@ theorem zk_rpm_deployed_instance (stmtD : Deployed.Statement) (idW idσ idQ : By
     (by rw [card_ιW]) (by rw [card_ιQ]; norm_num) inK hinK sigmaAt hsig (fun _ => ())
     (openW rep Y) (openQ rep P₀ Y) (conditionsW rep h3 hY) (conditionsQ rep P₀ h3 hY) (T₁ TW)
     (T₂ TQ) (clW rep Y) (clQ rep P₀ stmt Y)
-    (fun c hc m => (hTW c hc m).trans (claims_solve _ _ _ (hTW c hc m)).symm)
-    (fun c hc m => (hTQ c hc m).trans (claims_solve _ _ _ (hTQ c hc m)).symm)
+    (fun c hc m => (hTW c hc m).trans (claims_simTW (hTW c hc m)).symm)
+    (fun c hc m => (hTQ c hc m).trans (claims_simTQ (hTQ c hc m)).symm)
     (simTW rep Y) (simTQ rep P₀ stmt Y) (fun _ _ _ => rfl) (fun _ _ _ => rfl)
     (link rep P₀ gK van stmt Y TW TQ R) (chOf_uniform rep.limbs) D hD hQ
 

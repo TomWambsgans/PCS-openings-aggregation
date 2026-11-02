@@ -10,8 +10,9 @@ its prover `Pb` (`Instance/Prover.lean`: the claims' bytes at the openings' star
 renderer `R` of the available joint view; leaves the 64-word images of the stacks' rows), the claims'
 windows `cwD`, the openings `openW`, `openQ` (`Instance/Openings.lean`: `witness_layout(22)`,
 `quotient_layout(22)` with the gadget, the verifier's claims, the novel basis at the opened
-positions), the honest tables `TW`, `TQ`, the simulator's tables `simTW`, `simTQ` (chosen with the
-verifier's claimed values) and the link `link`.
+positions), the honest tables `TW`, `TQ`, the simulator's tables `simTW`, `simTQ` (`Instance/Builder.lean`:
+computed by a Gaussian elimination, with the verifier's claimed values whenever some table has them,
+`claims_simTW`, `claims_simTQ`) and the link `link`.
 
 **`deployedJointData_valid`**: `JointData.Valid` from
 
@@ -104,8 +105,8 @@ theorem deployedJointData_valid (rep : QuotientZk.Instance.Rep K E) (P₀ : Para
   hsig := hsig
   hS₁ := conditionsW rep h3 hY
   hS₂ := conditionsQ rep P₀ h3 hY
-  hT₁ c hc m hnd := (hTW c hc m hnd).trans (claims_solve _ _ _ (hTW c hc m hnd)).symm
-  hT₂ c hc m hnd := (hTQ c hc m hnd).trans (claims_solve _ _ _ (hTQ c hc m hnd)).symm
+  hT₁ c hc m hnd := (hTW c hc m hnd).trans (claims_simTW (hTW c hc m hnd)).symm
+  hT₂ c hc m hnd := (hTQ c hc m hnd).trans (claims_simTQ (hTQ c hc m hnd)).symm
   hsimT₁ _ _ _ := rfl
   hsimT₂ _ _ _ := rfl
   hch := chOf_uniform rep.limbs
