@@ -192,3 +192,94 @@ fn lean_vectors() {
         println!("in {:.1} s", started.elapsed().as_secs_f64());
     });
 }
+
+/// The real prover's proofs as Lean vectors: `UNI_REAL_VECTORS_DIR` holds the Rust→EVM test vectors of branch
+/// `leanvm-univariate-prover2` (`tests/vectors/*.txt`: real 1,000-signature proofs, their calldata and the
+/// `PCS_OPEN` inputs the contract calls with), each written as a `real` vector with its calls (`PCSOPEN <hex>`, for
+/// the Lean runner to rebuild word for word), and three mutations each (`real-mutate`: anywhere, a row count, the
+/// last scalar).
+///
+/// `UNI_REAL_VECTORS_DIR=<dir> UNI_REAL_OUT=uni_real.txt cargo test --release -p leanvm_univariate --test lean_vectors
+/// -- --ignored --nocapture lean_real_vectors`
+#[test]
+#[ignore]
+fn lean_real_vectors() {
+    deep(|| {
+        let dir = std::env::var("UNI_REAL_VECTORS_DIR").expect("UNI_REAL_VECTORS_DIR: prover2's tests/vectors");
+        let path = std::env::var("UNI_REAL_OUT").unwrap_or_else(|_| "target/uni_real_vectors.txt".to_string());
+        let mut files: Vec<_> = std::fs::read_dir(&dir)
+            .expect("the vectors' directory")
+            .map(|e| e.expect("an entry").path())
+            .filter(|p| p.extension().is_some_and(|x| x == "txt"))
+            .collect();
+        files.sort();
+        let unhex = |t: &str| -> Vec<u8> {
+            (0..t.len() / 2).map(|i| u8::from_str_radix(&t[2 * i..2 * i + 2], 16).expect("hex")).collect()
+        };
+        let mut w = Writer::default();
+        writeln!(w.out, "# leanvm_univariate real-proof vectors (tests/lean_vectors.rs, lean_real_vectors)").unwrap();
+        let mut rng = Rng(0x5EED_1EA4_0000_0003);
+        for file in files {
+            let text = std::fs::read_to_string(&file).expect("a vector");
+            let mut config_name = String::new();
+            let mut shape_line: Vec<u64> = Vec::new();
+            let mut public = [0u8; 32];
+            let mut calldata = Vec::new();
+            let mut calls: Vec<Vec<u8>> = Vec::new();
+            let mut accepts = false;
+            for line in text.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
+                let (key, value) = line.split_once(' ').expect("key value");
+                match key {
+                    "config" => config_name = value.to_string(),
+                    "shape" => shape_line = value.split(' ').map(|x| x.parse().expect("a number")).collect(),
+                    "public" => public.copy_from_slice(&unhex(value)),
+                    "calldata" => calldata = unhex(value),
+                    "pcs_open" => calls.push(unhex(value)),
+                    "accepts" => accepts = value == "true",
+                    _ => {}
+                }
+            }
+            let flock = match config_name.as_str() {
+                "main_line" => ("main", Blake2s::Flock(FLOCK_MAIN)),
+                "ext_b" => ("bitslice", Blake2s::Flock(FLOCK_BIT_SLICE)),
+                "leanvm_skip" => ("leanvm", Blake2s::Flock(FLOCK_LEANVM_SKIP)),
+                "omitted" => ("omitted", Blake2s::Omitted),
+                other => panic!("no configuration {other}"),
+            };
+            let shape = Shape {
+                log_memory: shape_line[0] as usize,
+                log_bytecode: shape_line[1] as usize,
+                table_rows: std::array::from_fn(|k| shape_line[2 + k]),
+            };
+            let config = Config {
+                name: format!("real-{config_name}"),
+                shape,
+                flock,
+                claims: ("point", Claims::Point),
+                program_iv: leanvm_flock_gas::shapes::PROGRAM_IV,
+            };
+            let iv = config.contract_iv();
+            assert_eq!(&calldata[4..36], &public, "the calldata's public input");
+            let stream = calldata[36..].to_vec();
+            let extra: String = calls.iter().map(|c| format!("PCSOPEN {}\n", lean_format::hex(c))).collect();
+            let before = w.tally.get("real").map_or(0, |t| t.0);
+            w.emit_with(&config, "real", &iv, &public, &stream, &extra);
+            assert!(accepts, "{config_name}: the vector's verdict");
+            assert_eq!(w.tally["real"].0, before + 1, "{config_name}: the real proof is accepted");
+            for position in [
+                (rng.next() as usize) % stream.len(),
+                (rng.next() as usize) % 24,
+                stream.len() - 24 + (rng.next() as usize) % 24,
+            ] {
+                let mut mutated = stream.clone();
+                mutated[position] ^= rng.nonzero_byte();
+                w.emit(&config, "real-mutate", &iv, &public, &mutated);
+            }
+        }
+        std::fs::write(&path, &w.out).expect("the vectors file");
+        println!("{} vectors written to {path}", w.id);
+        for (kind, (yes, no)) in &w.tally {
+            println!("{kind}: {yes} accepted, {no} rejected");
+        }
+    });
+}

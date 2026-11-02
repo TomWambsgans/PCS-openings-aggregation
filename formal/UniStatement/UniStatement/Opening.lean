@@ -113,6 +113,53 @@ def layoutWords (s : Shape) : List (List UInt8) :=
 /-- The stack's variables a layout word names (byte `24`): what the opening reads it for. -/
 def layoutWordVars (word : List UInt8) : ℕ := (word.getD 24 0).toNat
 
+/-! ### `PCS_OPEN`'s inputs, word for word (`contract::calls`, `opening_words`, `combined_words`) -/
+
+/-- The eight big-endian bytes of a 64-bit word. -/
+def be64 (w : UInt64) : List UInt8 := (List.range 8).map fun k ↦ (w >>> (8 * (7 - k)).toUInt64).toUInt8
+
+/-- `number(n)`: a 32-byte word, `n` big-endian in its last eight bytes. -/
+def numberWord (n : ℕ) : List UInt8 := List.replicate 24 0 ++ be64 n.toUInt64
+
+/-- `element_word(x)`: `x`'s limbs `c2, c1, c0` big-endian in the low 24 bytes of a 32-byte word. -/
+def elementWord (x : E) : List UInt8 :=
+  List.replicate 8 0 ++ be64 (x.limb 2).lane ++ be64 (x.limb 1).lane ++ be64 (x.limb 0).lane
+
+/-- A commitment's root word, as the stream carries it (`next_root`'s two halves, each big-endian limbs `1, 0`). -/
+def rootWord (halves : E × E) : List UInt8 :=
+  be64 (halves.1.limb 1).lane ++ be64 (halves.1.limb 0).lane ++ be64 (halves.2.limb 1).lane ++
+    be64 (halves.2.limb 0).lane
+
+/-- `combined_words(claim)`: its points (a count, then each its length and coordinates), its terms (a count, then
+each `column | point << 32 | twist << 48` and its coefficient), its value. -/
+def combinedWords (claim : Combined) : List UInt8 :=
+  numberWord claim.points.length ++ claim.points.flatMap (fun p ↦ numberWord p.length ++ p.flatMap elementWord) ++
+    numberWord claim.terms.length ++
+    claim.terms.flatMap (fun (c, p, twist, k) ↦ numberWord (c.id ||| p <<< 32 ||| twist <<< 48) ++ elementWord k) ++
+    elementWord claim.value
+
+/-- `opening_words(root, layout, opening)`: a call's header (the root, the layout word, the number of claims),
+then its claims: a weighted claim; or a point claim (its coordinates, its value), and the bit-slice claim. -/
+def openingWords (root layout : List UInt8) : Opening → List UInt8
+  | .weighted claim => root ++ layout ++ numberWord 1 ++ combinedWords claim
+  | .point pt v bitSlice => root ++ layout ++ numberWord (if bitSlice.isSome then 2 else 1) ++
+      pt.flatMap elementWord ++ elementWord v ++ (bitSlice.map combinedWords).getD []
+
+/-- **`calls`**: the contract's `PCS_OPEN` inputs, in call order: one per commitment (`C1`'s and `C2`'s roots the
+stream's, the setup's a constant), then `A0`'s and `B0`'s (one point claim each), each with its layout word. -/
+def pcsCalls (shape : Shape) (roots : SetupRoots) (r : Reduced) : List (List UInt8) :=
+  let words := layoutWords shape
+  let header : Commitment → List UInt8 × List UInt8
+    | .c1 => (rootWord r.roots.1, words.getD 0 [])
+    | .c2 => (rootWord r.roots.2, words.getD 1 [])
+    | .setup => (digestBytes roots.bytecode, words.getD 2 [])
+  let matrices : List (List UInt8) := match r.matrices with
+    | some mc =>
+      [digestBytes roots.a0 ++ words.getD 3 [] ++ numberWord 1 ++ mc.point.flatMap elementWord ++ elementWord mc.a,
+        digestBytes roots.b0 ++ words.getD 4 [] ++ numberWord 1 ++ mc.point.flatMap elementWord ++ elementWord mc.b]
+    | none => []
+  r.openings.map (fun (c, o) ↦ openingWords (header c).1 (header c).2 o) ++ matrices
+
 /-- The contract IV's tag. -/
 def ivTag : List UInt8 := "leanVM-univar-iv".toUTF8.toList
 
@@ -140,6 +187,16 @@ def contractIvWith (s : Shape) (programIv : List UInt8) (roots : SetupRoots) : m
   let d ← keccak256With F (ivTag ++ programIv ++ digestBytes roots.bytecode ++ digestBytes roots.a0 ++
     digestBytes roots.b0 ++ shapeBytes s ++ (layoutWords s).flatten)
   return digestBytes d
+
+end With
+
+/-- The contract's IV over Keccak-f[1600]: the deployed contract's constant (`contract::contract_iv`). -/
+def contractIv (s : Shape) (programIv : List UInt8) (roots : SetupRoots) : List UInt8 :=
+  Id.run (contractIvWith (m := Id) (fun x ↦ pure (keccakF1600 x)) s programIv roots)
+
+section With
+
+variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
 
 /-- **`PCS_OPEN`** over `F`: the claims on the stack of `2^vars` words committed as `root`, against the
 call's opening proof. -/
