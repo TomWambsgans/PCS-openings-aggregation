@@ -61,7 +61,7 @@ use crate::codegen::{COMMITMENT, Ending, Entry, Word, compile, creation_code};
 pub use crate::codegen::{Contract, SET_INDEX_ROOT, VERIFY};
 use crate::contract::Recorder;
 use crate::machine::{TableId, element_word, layout_id, root_word};
-use crate::record::{Sym, record};
+use crate::record::{Graph, Sym, record};
 
 /// What the contract returns on a proof it accepts: the word 1, `abi.encode(true)`.
 pub const VERIFIED: [u8; 32] = {
@@ -111,6 +111,30 @@ fn entry(selector: bool, index_root: Option<&Hash>) -> Entry {
 }
 
 fn build(log_rows: usize, entry: &Entry, pcs_open: bool) -> Contract {
+    let Recorded {
+        graph,
+        outputs,
+        ending,
+        inputs,
+    } = recorded(log_rows, entry, pcs_open);
+    compile(&graph, &outputs, &ending, entry, inputs)
+}
+
+/// What a contract is compiled from: the graph the recorder leaves, the words the contract writes (the calls'
+/// inputs, or the claims it returns), how it ends, and how many scalars of the proof it reads.
+pub(crate) struct Recorded {
+    pub(crate) graph: Graph,
+    pub(crate) outputs: Vec<Word>,
+    pub(crate) ending: Ending,
+    pub(crate) inputs: usize,
+}
+
+/// What [`contract`] is compiled from (`formal/Implementation` is about this graph).
+pub(crate) fn deployed(log_rows: usize) -> Recorded {
+    recorded(log_rows, &entry(true, None), true)
+}
+
+fn recorded(log_rows: usize, entry: &Entry, pcs_open: bool) -> Recorded {
     let ((reduced, read), graph) = record(|| {
         let mut recorder = Recorder::new();
         let reduced = reduce(&mut recorder, log_rows).unwrap_or_else(|_| unreachable!("a recorder rejects nothing"));
@@ -155,7 +179,12 @@ fn build(log_rows: usize, entry: &Entry, pcs_open: bool) -> Contract {
         outputs.push(node(&sum));
         (outputs, Ending::Return)
     };
-    compile(&graph, &outputs, &ending, entry, read as usize)
+    Recorded {
+        graph,
+        outputs,
+        ending,
+        inputs: read as usize,
+    }
 }
 
 /// The calls of `PCS_OPEN` that [`contract`] makes, as a root, a layout id and the claims opened together: those of
