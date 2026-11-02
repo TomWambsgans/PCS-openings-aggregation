@@ -7,6 +7,9 @@
 //!
 //! `cargo test --release -p leanvm_univariate --test prove_tiny -- --nocapture`
 
+// The copied execution keeps the review's spelling.
+#![allow(clippy::assign_op_pattern)]
+
 use leanvm_flock_gas::field::{E, GEN, ONE, ZERO};
 use leanvm_flock_gas::layout::{
     BLAKE2S_SLOTS, N_TABLES, OP_BLAKE2S, OP_DEREF, OP_JUMP, OP_MUL, OP_SET, OP_XOR, SEP_BYTECODE, SEP_MEM, SEP_STATE,

@@ -12,3 +12,6 @@ doctest = false
 
 [dependencies]
 primitives = { package = "lv42_primitives", path = "../lv42_primitives" }
+
+[lints]
+workspace = true

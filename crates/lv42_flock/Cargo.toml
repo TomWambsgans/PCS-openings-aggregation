@@ -17,3 +17,6 @@ primitives = { package = "lv42_primitives", path = "../lv42_primitives" }
 fiat_shamir = { package = "lv42_fiat_shamir", path = "../lv42_fiat_shamir" }
 pcs = { package = "lv42_pcs", path = "../lv42_pcs" }
 tracing.workspace = true
+
+[lints]
+workspace = true

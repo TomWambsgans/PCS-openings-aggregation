@@ -18,6 +18,7 @@ use primitives::field::F64;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bits(pub u64);
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Add for Bits {
     type Output = Self;
     fn add(self, other: Self) -> Self {
@@ -25,12 +26,14 @@ impl Add for Bits {
     }
 }
 
+#[allow(clippy::suspicious_op_assign_impl)]
 impl AddAssign for Bits {
     fn add_assign(&mut self, other: Self) {
         self.0 ^= other.0;
     }
 }
 
+#[allow(clippy::suspicious_arithmetic_impl)]
 impl Mul for Bits {
     type Output = Self;
     fn mul(self, other: Self) -> Self {
@@ -38,6 +41,7 @@ impl Mul for Bits {
     }
 }
 
+#[allow(clippy::suspicious_op_assign_impl)]
 impl MulAssign for Bits {
     fn mul_assign(&mut self, other: Self) {
         self.0 &= other.0;
