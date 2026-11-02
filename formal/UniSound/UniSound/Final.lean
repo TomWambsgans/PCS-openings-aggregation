@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. The numbers follow
 -- `formal/Compose/Compose/ListChainKDoomExample.lean`.
 import UniSound.Fs
+import UniSound.Bus
 
 /-!
 # Knowledge soundness of the univariate verifier, end to end (main line)
@@ -273,5 +274,20 @@ theorem uniKnowledgeSoundness_bits (hFlock : FlockSound κ) (I : UniIds D hFlock
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
   ⟨uniKnowledgeSoundness hFlock I C hFin hFs hMain hFl hdeg hrel, uniBound_le_bits⟩
+
+/-- **Knowledge soundness, round `0` proved** (the bus `4N/|E|` and the constraints' batching,
+`BusModel.mainSound`, from `formal/Heap`): the end theorem with the bus model `B` and the rest of
+the identity model `J` in place of `UniIds`; **under the Flock hypothesis `hFlock`**. -/
+theorem uniKnowledgeSoundness_bus (hFlock : FlockSound κ) (B : BusModel D κ)
+    (J : UniIdsRest D hFlock B) (C : UniCode D hFlock J.nV J.V)
+    (hFin : UniFinal D hFlock (UniIds.ofBus hFlock B J) C) (hFs : FsLayer D hFlock J.nV J.V C)
+    (hB : 4 * B.N + B.ncv ≤ 2 ^ 32)
+    (hFl : ∀ j, hFlock.err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
+    (hdeg : J.degSum ≤ 2 ^ 32) (hrel : J.nRel + 2 ≤ 2 ^ 32) :
+    UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
+      ∀ Q ≤ 2 ^ 64,
+        uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
+  uniKnowledgeSoundness_bits hFlock (UniIds.ofBus hFlock B J) C hFin hFs (B.errMain_le hB) hFl hdeg
+    hrel
 
 end UniSound

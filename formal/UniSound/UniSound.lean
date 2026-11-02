@@ -6,6 +6,7 @@ import UniSound.Sumcheck
 import UniSound.Piop
 import UniSound.PiopSound
 import UniSound.Fs
+import UniSound.Bus
 import UniSound.Final
 
 /-!
@@ -25,7 +26,8 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `Piop.lean` | The PIOP's rounds (`uniRounds`), the identity model (`UniIds`), the states (`uniPre`, `uniPost`) and errors (`uniErr`). |
 | `PiopSound.lean` | **`uniPiop`**: the PIOP is round-by-round sound (every round proved). |
 | `Fs.lean` | The code-level link (`UniCode`), the last link (`UniFinal`), the Fiat–Shamir layer (`FsLayer`), the bound (`uniBound`). |
-| `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**. |
+| `Bus.lean` | Round `0` from `formal/Heap`: the bus model (`BusModel`), **`BusModel.mainSound`** (`4N/|E|` and the constraints' batching), `UniIds.ofBus`. |
+| `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
 
 The build fails if the end theorems' axioms grow beyond Lean's three standard ones.
 -/
@@ -49,6 +51,14 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.SumOracle.step_sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.SumOracle.step_sound
+
+/-- info: 'UniSound.uniKnowledgeSoundness_bus' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniKnowledgeSoundness_bus
+
+/-- info: 'UniSound.BusModel.mainSound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.BusModel.mainSound
 
 /-- info: 'UniSound.prEvent_twoLevel_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
