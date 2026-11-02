@@ -267,6 +267,65 @@ admissible shape (the IV's hash, the seed's permutation, mumbai's `whirBound`), 
   overflow lane at the held pieces, the blocks' other pieces on their lanes, the random first pieces left
   out), so the composition's claims are on the tables the protocol commits to.
 
+## Public layouts at `2^24 ..= 2^28` (a univariate leanVM PIOP)
+
+`WhirBridge/Large*.lean` (imported by `WhirBridge.lean`, axioms checked in `WhirBridge/Large.lean`) extend the
+bridge to the commitments of a univariate leanVM PIOP: **public** stacks (no hiding) of `2^24 ..= 2^28` words,
+any shape `Layout::new` accepts, rate `1/2`. Nothing above changes; the new theorems are corollaries of
+`opening_sound` (and of `family_sound`'s proof, with the query count a parameter).
+
+| Theorem | File | What |
+|---|---|---|
+| `admissible_large`, `ladder_large`, `residual_large`, `grinding_large` | `LargeParams.lean` | `(μ, 1)` admissible for `24 ≤ μ ≤ 28`; `Whir.ladder μ 1 = some (largeLadder μ)` (decided); residuals `2, 3, 4, 5, 2`; `17` bits of grinding |
+| `shapeOK_large` | `LargeParams.lean` | the certified codes check at `2^-128` per group and **not** at `2^-129`, at each of the five shapes (decided) |
+| `listHi_large`, `listMax_large`, `candidates_large` | `LargeParams.lean` | level 0's Johnson list `L₀ = largeList μ`: **9952, 7908, 6296, 4473, 3564** |
+| `largeQueries_eq`, `isTotalQueryBound_large` | `LargeParams.lean` | `ourVerifier` makes at most **`QO = 7183, 7546, 7928, 8318, 9018`** queries (mumbai's cost calculus at the commitments' height `μ − 5`; `≤ 10122`, `largeQueries_le`) |
+| `NewOK`, `Layout.new_valid` | `LargeLayout.lean` | **every** `Layout.new vars log_chunk log_n chunks` whose `(table, height)` chunks pass `Layout::new`'s assertions (`NewOK`: `ℓ ≤ log_chunk ≤ vars`, chunk indices `< 2^(vars − log_chunk)`, heights `≤ 2^log_chunk`, `Σ ⌈height/2^ℓ⌉ ≤ 64`; decidable on the chunks' numbers) is `Layout.Valid`: one generic proof (`mem_newBlocks`, `newBlocks_lt`, `newBlocks_length`), no lane enumerated |
+| `newBlocks_nodup`, `Blocks.table_eq_lane`, `Blocks.table_eq_zero`, `mem_newBlocks_iff`, `Layout.new_table_eq_zero` | `LargeLayout.lean` | distinct chunks give distinct blocks; the table read back is the stack's lanes on each listed chunk's first `⌈height/2^ℓ⌉` lanes, **zero elsewhere** (a chunk's entries past its height inside its last lane are read back from the stack, not forced to zero) |
+| `ours_sound_public`, `ours_sound_public_le`, `ours_sound_public_layout` | `LargeSound.lean` | `opening::verify` on such a layout with `24 ≤ log_n ≤ 28`: accepting while every candidate table of the root's word violates a claim has probability at most `openingBound QA = (QA + 10122)(2^-128 + 5(QA + 10122)/2^256) ≤ 2^-63` (`QA ≤ 2^64`); the same for any public layout whose blocks are a valid stacking |
+| `ours_sound_public_at` (`family_sound_q`, `opening_sound_q`) | `LargeSound.lean` | the same with the shape's `QO`: `openingBoundAt QO QA` |
+| `joint_public_large` | `LargeSound.lean` | an opening not doomed has a candidate, among at most `L₀`, whose table satisfies **all** its claims |
+| `exampleChunks_ok`, `example_sound` | `LargeSound.lean` | how a fixed shape is covered: `NewOK` by `decide +kernel` (43 lanes of a `2^28` stack), then the theorem |
+| `eBatch_large`, `eBatch_large_le` | `LargeMargins.lean` | one opening's batching lead `(J − 1)·L₀/2^192`, `≤ 2^-164` for `J ≤ 2^14` claims |
+| `ncard_bad_pairs_le`, `ncard_bad_candidates_le` | `LargeMargins.lean` | the union bound after two roots as a count: `≤ L₁ L₂ · d` bad challenges |
+| `union_one_root_le`, `union_two_roots_le`, `union_three_roots_le`, `largeList_pairs` | `LargeMargins.lean` | `L₁ d/2^192 ≤ 2^-(178−k)`, `L₁L₂ d/2^192 ≤ 2^-(165−k)`, `L₁L₂L₃ d/2^192 ≤ 2^-(152−k)` for `d ≤ 2^k`; `L₁L₂ ∈ [3564², 9952²] = [2^23.60, 2^26.56]` |
+
+**The parameters** (rate `1/2`; queries per level after `17` bits of grinding; `L₀` the certified level-0 list;
+the weakest group of the certificate, its `Nat` bounds read as bits by `review/whir_params.py --large`, which
+computes them exactly as `Params/Check.lean` does and reproduces the table of the previous section at `24`,
+`25`, `28`):
+
+| `log_n` | folds | queries | residual | `L₀` | `QO` | weakest group | after root 1 / roots 1, 2 (worst partner `2^24`) |
+|---|---|---|---|---|---|---|---|
+| 24 | 6, 4, 4, 4, 4 | 224, 56, 32, 23, 17 | 2 | 9952 (`2^13.28`) | 7183 | 128.97 (level 0) | 178.72 / 165.44 |
+| 25 | 6, 4, 4, 4, 4 | 224, 56, 32, 23, 17 | 3 | 7908 (`2^12.95`) | 7546 | 128.96 (level 0) | 179.05 / 165.77 |
+| 26 | 6, 4, 4, 4, 4 | 224, 56, 32, 23, 18 | 4 | 6296 (`2^12.62`) | 7928 | 128.95 (level 0) | 179.38 / 166.10 |
+| 27 | 6, 4, 4, 4, 4 | 225, 56, 32, 23, 18 | 5 | 4473 (`2^12.13`) | 8318 | 128.99 (levels 1, 2) | 179.87 / 166.59 |
+| 28 | 6, 4, 4, 4, 4, 4 | 225, 56, 32, 23, 18, 14 | 2 | 3564 (`2^11.80`) | 9018 | 128.98 (level 1) | 180.20 / 166.92 |
+
+The rate exponents are `1, 4, 7, 10, 13 (, 16)`; level 0 takes no out-of-domain sample, every later level one.
+The last column is `192 − log2 L₁` and `192 − log2 (L₁ L₂)`: what is left, after the union over the lists,
+for a challenge's own error (a degree-`2^k` identity keeps `165.44 − k` bits after two roots of `2^24`;
+`union_two_roots_le` proves `165 − k`; three roots of `2^24` leave `152.16 − k`).
+
+**Against the Rust** (on h1): `cargo test --release -p quotient --test whir_large_params` checks that the
+prover's configuration (`pcs::whir::config_for_rate`, `whir_config.rs`'s eta search), the verifier's
+`WHIR_QUERIES` (read from `crates/verifier/src/whir.rs`) and its ladder rule equal `largeLadder` level by level
+(folds, rates, queries, grinding `17`, out-of-domain samples `0, 1, 1, ...`, residual), and prints the code's own
+level-0 lists (`323, 323, 323, 216, 216`: its search omits the fold group's row-union factor, so it is not the
+certified accounting). The ignored `large_public_openings` (`WHIR_LARGE_MAX=28`) commits and opens, with the
+real prover, a PIOP-like public layout at each size (`32` chunks of heights `2^(ℓ+1)`, `2^ℓ + 5`, `2^ℓ/3`, `1`,
+out of order with gaps: `62` lanes), verifies it in Rust, rejects a wrong value, and writes the openings;
+`lake env lean --run Test/CheckLarge.lean ../../target/whir_large_vector.txt` rebuilds each layout with the
+Lean `Layout.new`, evaluates `NewOK` on it, recomputes its prefix, accepts the honest proof with the Lean
+verifier and rejects a wrong value, a wrong root, a changed stream scalar, a changed leaf word, no claim and a
+wrong prefix.
+
+What this does not cover, beyond the gaps below: the PIOP's own layouts are not fixed yet (any one is covered
+once its `NewOK` is decided); `Layout::new` = `Layout.new` is checked by execution (`Check.lean`,
+`CheckLarge.lean`), not proved; the composition with the PIOP's reduction (the union over the lists,
+`LargeMargins.lean` gives the counting and the numbers) is the PIOP's.
+
 ## Assumptions
 
 Keccak-256 and Keccak-f[1600] are independent random oracles (mumbai's two-oracle model; leanVM's own
@@ -311,3 +370,9 @@ modules, **931 modules in 6 min 30 s** (0.97 CPU-hours), then the whole `LeanVM`
 a clean `.lake` in 1 min 19 s on the shared machine (`Layouts.lean`'s kernel decisions of the 18 layouts
 28 s of it); the vectors are written in 5 s and `Test/Check.lean` runs in 1 min 54 s (`all checks: true`;
 it now also runs every opening against the weight without the gadget's term).
+
+The `Large*` files were built at `/root/pcs-quotient-fv/whir-large` (a copy of `whir-bridge-gadget`, the same
+`../leanervm`): the five modules build in about 20 s (their kernel decisions, `shapeOK` at `128` and `129` for
+the five shapes included, a few seconds each); `Review/WhirBridgeAxioms.lean` sweeps 676 declarations, none
+outside the three axioms, no opaque, axiom or `implemented_by` constant. The Rust check is in the same directory
+(`rust/`, the workspace without `formal/`).
