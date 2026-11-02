@@ -398,4 +398,74 @@ theorem jOf_cacheQuery_inr (c : (Inp →ₒ Out).QueryCache) (x : KSt) (o : Out)
     · rw [QueryCache.cacheQuery_of_ne _ _ h]
       simp [jOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inr x' : Inp) ≠ .inr x by simpa using h)]
 
+theorem jOf_fst (c : (Inp →ₒ Out).QueryCache) (m : List UInt8) :
+    (jOf c).1 m = (c (.inl m)).map (·.2) := rfl
+
+theorem jOf_snd (c : (Inp →ₒ Out).QueryCache) (x : KSt) :
+    (jOf c).2 x = (c (.inr x)).map (·.1) := rfl
+
+/-- A uniform answer of `G` is a uniform digest and a uniform state. -/
+theorem uniform_out : ($ᵗ Out) = (do let d ← $ᵗ DigestBytes; let y ← $ᵗ KSt; pure (d, y)) :=
+  SampleableType.uniformSample_prod_eq_bind _ _
+
+/-- A uniform state on bytes, read on lanes, is uniform. -/
+theorem uniform_lanes : (stateEquiv.symm <$> ($ᵗ KState)) =ᵈ ($ᵗ KSt) :=
+  SampleableType.map_uniformSample_evalDistEq_of_bijective stateEquiv.symm.bijective
+
+/-- A uniform state on bytes is a uniform state on lanes, read on bytes. -/
+theorem lanes_bind {β : Type} (H : KState → ProbComp β) :
+    (($ᵗ KState) >>= H) =ᵈ (($ᵗ KSt) >>= fun y ↦ H (stateEquiv y)) := by
+  calc (($ᵗ KState) >>= H)
+      = (($ᵗ KState) >>= fun y' ↦ (fun y ↦ H (stateEquiv y)) (stateEquiv.symm y')) := by
+        refine congrArg (fun f ↦ ($ᵗ KState) >>= f) (funext fun y' ↦ ?_)
+        beta_reduce
+        rw [Equiv.apply_symm_apply]
+    _ = ((stateEquiv.symm <$> ($ᵗ KState)) >>= fun y ↦ H (stateEquiv y)) :=
+        (bind_map_left stateEquiv.symm ($ᵗ KState) (fun y ↦ H (stateEquiv y))).symm
+    _ =ᵈ _ := EvalDistEq.bind_left uniform_lanes _
+
+/-- **One query of `G`, read as `H`, `F` and the tables**: in the two-oracle model with the
+tables of `G`'s cache. -/
+theorem romImpl_hashJ (t : Inp) (c : (Inp →ₒ Out).QueryCache) :
+    (simulateQ HF.romImpl ((hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes) t).run (jOf c))).run
+        (hfOf c) =ᵈ
+      (fun z ↦ ((z.1, jOf z.2), hfOf z.2)) <$> Common.roStep (hs := Inp →ₒ Out) t c := by
+  rcases t with m | x
+  · change (simulateQ HF.romImpl (hH2 m >>= _)).run (hfOf c) =ᵈ _
+    rw [simulateQ_bind, StateT.run_bind, hH2, hQuery, Common.run_hq]
+    rcases h : c (.inl m) with _ | o
+    · have h1 : hfOf c (.inl m) = none := by rw [hfOf_inl, h]; rfl
+      have h2 : (jOf c).1 m = none := by rw [jOf_fst, h]; rfl
+      rw [Common.roStep_of_none h1, Common.roStep_of_none h, uniform_out]
+      simp only [bind_assoc, pure_bind, map_bind, map_pure, h2]
+      refine EvalDistEq.bind_congr_of_support _ fun d _ ↦ ?_
+      simp only [simulateQ_bind, StateT.run_bind, OracleSpec.simulateQ_romImpl_liftM_run,
+        bind_map_left, simulateQ_pure, StateT.run_pure, hfOf_cacheQuery_inl, jOf_cacheQuery_inl]
+      exact EvalDistEq.rfl
+    · have h1 : hfOf c (.inl m) = some o.1 := by rw [hfOf_inl, h]; rfl
+      have h2 : (jOf c).1 m = some o.2 := by rw [jOf_fst, h]; rfl
+      rw [Common.roStep_of_some h1, Common.roStep_of_some h]
+      simp only [pure_bind, map_pure, h2, simulateQ_pure, StateT.run_pure]
+      exact EvalDistEq.rfl
+  · change (simulateQ HF.romImpl (hF2 x >>= _)).run (hfOf c) =ᵈ _
+    rw [simulateQ_bind, StateT.run_bind, hF2, simulateQ_map, StateT.run_map, fQuery,
+      Common.run_hq]
+    rcases h : c (.inr x) with _ | o
+    · have h1 : hfOf c (.inr (stateEquiv x)) = none := by rw [hfOf_inr, h]; rfl
+      have h2 : (jOf c).2 x = none := by rw [jOf_snd, h]; rfl
+      rw [Common.roStep_of_none h1, Common.roStep_of_none h, uniform_out]
+      simp only [map_bind, bind_assoc, map_pure, pure_bind, h2, simulateQ_bind, StateT.run_bind,
+        OracleSpec.simulateQ_romImpl_liftM_run, bind_map_left, simulateQ_pure, StateT.run_pure,
+        hfOf_cacheQuery_inr, jOf_cacheQuery_inr]
+      refine (EvalDistEq.bind_bind_swap _ _ _).trans ?_
+      refine EvalDistEq.bind_congr_of_support _ fun j _ ↦ ?_
+      refine (lanes_bind _).trans ?_
+      simp only [Equiv.symm_apply_apply]
+      exact EvalDistEq.rfl
+    · have h1 : hfOf c (.inr (stateEquiv x)) = some (stateEquiv o.2) := by rw [hfOf_inr, h]; rfl
+      have h2 : (jOf c).2 x = some o.1 := by rw [jOf_snd, h]; rfl
+      rw [Common.roStep_of_some h1, Common.roStep_of_some h]
+      simp only [pure_bind, map_pure, h2, simulateQ_pure, StateT.run_pure, Equiv.symm_apply_apply]
+      exact EvalDistEq.rfl
+
 end QuotientZk.DRpm
