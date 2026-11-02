@@ -11,6 +11,8 @@ import ZK.Format
 import ZK.CoinsMatch
 import ZK.End
 import ZK.ProverBridge
+import ZK.ProverBridgeDuplex
+import ZK.ProverBridgeMerkle
 import ZK.Axioms
 
 /-!
@@ -67,6 +69,10 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
   **`whirRenderer`** (`ProverBridgeRender.lean`: WHIR's honest prover on the available view, driven
   in the skeleton's order); **`proverBridge_whir`**, **`zeroKnowledge_deployed_whir`**
   (`ProverBridge.lean`): the end theorem with that renderer, from `CoreWhir` and `noneProb ≤ δ`.
+  Toward `CoreWhir`: the skeleton's duplex is the statement's sponge, grinding is the proof-of-work
+  search (`ProverBridgeDuplex.lean`: `draw_rel`, `grind_rel`); the skeleton's trees are mumbai's and
+  `fmt`'s expansion of the pruned multiproofs gives mumbai's full openings (`ProverBridgeMerkle.lean`:
+  `tree_levels`, `tree_root`, `expandMulti_eq`).
 * `ZK/Assembly.lean`: the same assembly for the package's own `simulator` given an ideal bridge
   (`zeroKnowledge_of_bridges`, `zeroKnowledge_deployed` on the constant-root skeleton); the joint
   model's data (`JointData`) and the bounds (`zkBound`).
