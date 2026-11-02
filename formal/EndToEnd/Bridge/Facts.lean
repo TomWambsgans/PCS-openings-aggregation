@@ -4,6 +4,7 @@ import Bridge.Extractor
 import Bridge.Circuit
 import Bridge.Claims.Reduce
 import Bridge.Setup
+import Bridge.Circuit.Secret
 
 /-!
 # The bridge facts knowledge soundness takes, at the statement's constants
@@ -18,8 +19,8 @@ own constants (`Bridge.statementConsts`: `PcsQuotient.Domain.betaAt` and `rowVan
 * **`verifierBridge`**: `Soundness.VerifierBridge statementConsts h`;
 * **`setupBridge_statementConsts`**: `Soundness.SetupBridge statementConsts h` (the circuit's
   commitment: `Bridge.Setup.setupBridge` with the circuit's `σ`, `Bridge.Circuit.membership_sigma`);
-* **`readsSecret_of_secretMatches`**: `Soundness.ReadsSecret statementConsts h`, from the circuit's
-  `SecretMatches`.
+* **`readsSecret`**: `Soundness.ReadsSecret statementConsts h` (`readsSecret_of_secretMatches` with the
+  circuit's `Bridge.Circuit.secretMatches`).
 -/
 
 namespace Bridge
@@ -50,6 +51,11 @@ theorem setupBridge_statementConsts (h : Compose.IsCantor statementConsts.beta) 
     Soundness.SetupBridge statementConsts h :=
   Setup.setupBridge statementConsts rfl h Circuit.membership_sigma
 
+/-- **`Soundness.ReadsSecret` at the statement's constants.** -/
+theorem readsSecret (h : Compose.IsCantor statementConsts.beta) :
+    Soundness.ReadsSecret statementConsts h :=
+  readsSecret_of_secretMatches h Circuit.secretMatches
+
 end Bridge
 
 /-- info: 'Bridge.claimsMatch_statementConsts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -67,3 +73,7 @@ end Bridge
 /-- info: 'Bridge.setupBridge_statementConsts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms Bridge.setupBridge_statementConsts
+
+/-- info: 'Bridge.readsSecret' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.readsSecret

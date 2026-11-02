@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Bridge.Circuit
+import Bridge.Circuit.Secret
 import Bridge.Opening
 import Bridge.Chain
 import Bridge.Verifier
