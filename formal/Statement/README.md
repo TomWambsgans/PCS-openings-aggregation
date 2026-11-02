@@ -106,14 +106,15 @@ proofs in `formal/` are to import it and prove its statements about its definiti
 * **The extractor**: `transcriptExtractorFor` is mumbai's `committedLeaves` and list decoder on the witness
   table, then the hidden layout's read-back and the cells; `formal/Compose`'s Merkle-climbing extractor is
   proved equal to mumbai's `extract` on injective histories (`wordOfMerkle_eq_extract`), the link to this one.
-* **The simulator**: `Simulator.simulateFor` is the strategy of `formal/QuotientZk`'s `jointSim` made concrete
-  in the random-permutation model: its step 3 is `simRed` (`inK`, `sigmaAt`), its `fakeStack` is a `simT`, its
-  openings are the honest prover's on them, and its programmed roots are the random-oracle programming the
-  ZK-RPM lift does. `ZeroKnowledge ζ` is about this `simulator` and its `Simulator.simOracle`; the proof would
-  show they are (in distribution) the instance of QuotientZk's lifted simulator at these types, or the two
-  definitions are replaced by that instance once it is stated over mumbai's `RandomPermutationOracles` and
-  `PcsQuotient.Proof` (the statement's shape takes any simulator `Statement → StateT S ProbComp (Option Proof)`
-  with an oracle `QueryImpl RandomPermutationOracles (StateT S ProbComp)`).
+* **The simulator**: zero knowledge is stated for any simulator, `ZeroKnowledgeWith s₀ sim simOracle ζ`
+  (a simulator `Statement → StateT S ProbComp (Option Proof)`, its oracle
+  `QueryImpl RandomPermutationOracles (StateT S ProbComp)`, its initial state `s₀`). The end theorem
+  (`formal/EndToEnd/ZK`, `zeroKnowledge_end`) proves it for `formal/QuotientZk`'s simulator put in this
+  shape (`zkSimulator`, `rpmSimOracle`; described in `formal/README.md`, "Zero knowledge end to end"), so
+  the simulator the theorem covers is named in the theorem's statement. This package's own `simulator`
+  (`ZeroKnowledge ζ` is `ZeroKnowledgeWith` at it) is a tested heuristic (the self-test runs it): it is
+  **not** covered by the theorem (it programs the roots where `QuotientZk`'s simulator programs the
+  challenges; the two are not equal in distribution).
 
 ## The end statements
 
@@ -152,18 +153,25 @@ noncomputable def realExperiment (stmt : Statement) (w : Secret) (D : Distinguis
     let coins ← sampleCoins
     D (← prover queryPermutation stmt w coins)
 
-def idealExperiment (stmt : Statement) (D : Distinguisher) : ProbComp Bool :=
+def idealExperimentWith {S : Type} (s₀ : S) (sim : Statement → StateT S ProbComp (Option Proof))
+    (simOracle : QueryImpl RandomPermutationOracles (StateT S ProbComp)) (stmt : Statement)
+    (D : Distinguisher) : ProbComp Bool :=
   (do
-    let proof ← simulator stmt
-    simulateQ Simulator.simOracle (D proof)).run' {}
+    let proof ← sim stmt
+    simulateQ simOracle (D proof)).run' s₀
 
-def ZeroKnowledge (ζ : ℕ → ℝ≥0∞) : Prop :=
+def ZeroKnowledgeWith {S : Type} (s₀ : S) (sim : Statement → StateT S ProbComp (Option Proof))
+    (simOracle : QueryImpl RandomPermutationOracles (StateT S ProbComp)) (ζ : ℕ → ℝ≥0∞) : Prop :=
   ∀ (stmt : Statement) (w : Secret), Relation stmt w →
   ∀ (D : Distinguisher) (Q : ℕ), (∀ proof, QueryCostAtMost (D proof) permutationCallCost Q) →
     Pr{let b ← realExperiment stmt w D}[b = true] ≤
-        Pr{let b ← idealExperiment stmt D}[b = true] + ζ Q ∧
-      Pr{let b ← idealExperiment stmt D}[b = true] ≤
+        Pr{let b ← idealExperimentWith s₀ sim simOracle stmt D}[b = true] + ζ Q ∧
+      Pr{let b ← idealExperimentWith s₀ sim simOracle stmt D}[b = true] ≤
         Pr{let b ← realExperiment stmt w D}[b = true] + ζ Q
+
+-- this package's own simulator (a tested heuristic, not covered by the end theorem)
+def ZeroKnowledge (ζ : ℕ → ℝ≥0∞) : Prop :=
+  ZeroKnowledgeWith (S := Simulator.SimState) {} simulator Simulator.simOracle ζ
 
 def StatementBinds : Prop :=
   ∀ w w' : Secret, w.statement = w'.statement →
@@ -211,6 +219,16 @@ entries (a scan of the layout's `≤ 64` lanes and `≤ 167` held pieces each), 
 `33` Keccak-256.
 
 ## The simulator
+
+**Which simulator the end theorem covers.** `ZeroKnowledgeWith` takes the simulator as a parameter; the end
+theorem (`formal/EndToEnd/ZK/Main.lean`, `zeroKnowledge_end`) proves it for `formal/QuotientZk`'s simulator in
+this shape (`zkSimulator`, `rpmSimOracle`, `formal/EndToEnd/ZK/With.lean` and `Simulator.lean`), whose
+definition and cost `formal/README.md` describes ("Zero knowledge end to end"). It draws every Fiat–Shamir
+challenge first and programs the oracle with them, takes the messages and opened rows from the joint
+honest-verifier simulator, and answers the unopened leaves with fresh private digests. The rest of this
+section describes **this package's own `simulator`**, a tested heuristic that `ZeroKnowledge ζ` (that is,
+`ZeroKnowledgeWith` at it) is about and that **no theorem covers**: it programs the trees' roots instead of
+the challenges.
 
 `simulator stmt` (`Security.lean`) is `Simulator.simulateFor (membership logRows) (2^25)`; together with
 `Simulator.simOracle`, which answers every query of the distinguisher from the simulator's tables of
@@ -270,9 +288,9 @@ kernel, which did not finish evaluating them in twenty minutes.
   `common` and `lean_vm` extraction, through the hidden layout's read-back).
 * `Completeness δ`: the honest prover's claims hold (F1's completeness) and its WHIR openings are accepted
   (mumbai's completeness of its WHIR prover), with the proofs of work.
-* `ZeroKnowledge ζ`: the reduction's honest-verifier zero knowledge (F1), the hidden layouts' theorem (F3,
-  `HIDING.md`; its conditions (S) and (R) are checked at random challenges, not proved for every claim
-  point), the siblings in the model, and the programming of the roots.
+* `ZeroKnowledgeWith` for `QuotientZk`'s simulator (`formal/EndToEnd/ZK`, `zeroKnowledge_end`, under named
+  hypotheses: the joint model's instance, the skeleton's Fiat–Shamir freshness, the statement's prover against
+  the skeleton's at fixed coins). `ZeroKnowledge ζ`, for this package's heuristic `simulator`, is not proved.
 * `StatementBinds`: a pigeonhole, immediate.
 
 ## Building and testing

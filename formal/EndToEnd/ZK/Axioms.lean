@@ -55,6 +55,18 @@ import ZK.Main
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zkBoundEnd_le
 
+/-- info: 'PcsQuotient.EndToEnd.zeroKnowledgeWith_of_coinFree' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.zeroKnowledgeWith_of_coinFree
+
+/-- info: 'PcsQuotient.EndToEnd.zeroKnowledgeWith_of_core' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.zeroKnowledgeWith_of_core
+
+/-- info: 'PcsQuotient.EndToEnd.coreClose_of_joint' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.coreClose_of_joint
+
 /-- info: 'PcsQuotient.EndToEnd.zeroKnowledge_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zeroKnowledge_end
