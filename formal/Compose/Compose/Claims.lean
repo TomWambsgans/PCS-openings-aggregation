@@ -392,4 +392,152 @@ theorem knowledgeSoundness_deployed_concrete
 
 end Final
 
+/-! ## Not vacuous: the instance and the wiring stack of `beta()`
+
+The hypotheses on the instance (`hβ`, `hc`) and on the wiring stack (`hq₀`) are met by the
+instance whose basis is `beta()`'s words and whose weights are `coordinate_weight`'s
+(`rustInstance`), with the wiring stack whose table holds, in `K`, the polynomial carrying the
+wiring (`wiringStack`: the honest wiring table, `Index::new`'s; its coefficients are in `K` since
+the cells are). What is left is that `beta()` is a Cantor basis (`IsCantor`, by construction) and
+that `tau` solves `row_vanishing`'s system (`RowVanishing`). -/
+
+section Rust
+
+/-- **`beta()` is a Cantor basis of `K`**: `beta[0] = 1`, `S(beta[k + 1]) = beta[k]`
+(`domain::beta` by construction; the Rust test `transform_matches_the_basis`). -/
+def IsCantor (beta : ℕ → K) : Prop :=
+  beta 0 = 1 ∧ ∀ k, k + 1 < 22 + 2 → QuotientSecurity.sq (beta (k + 1)) = beta k
+
+/-- `beta()`'s words as a Cantor basis of `K`. -/
+def basisK (c : Consts) (h : IsCantor c.beta) : CantorBasis K (22 + 2) := ⟨c.beta, h.1, h.2⟩
+
+/-- `beta()`'s words as a Cantor basis of `E` (`base`). -/
+def basisE (c : Consts) (h : IsCantor c.beta) : CantorBasis E (22 + 2) where
+  β k := ofK (c.beta k)
+  zero := by rw [h.1, ofK_one]
+  succ k hk := by
+    rw [← h.2 k hk]; simp only [QuotientSecurity.sq, Reduce.ofK_add, Reduce.ofK_mul]
+
+/-- `coordinate_weight`'s weights, as an instance's `c`. -/
+def rustWeights (k : ℕ) : E := (coordinateWeight k).getD 0
+
+/-- **F1's instance of `beta()`**, a wiring `σ`, and `coordinate_weight`'s weights. -/
+def rustInstance (c : Consts) (h : IsCantor c.beta) (σ : Equiv.Perm (Fin (22 + 2) → Bool)) :
+    Instance E :=
+  ⟨basisE c h, σ, rustWeights⟩
+
+theorem rustInstance_basis (c : Consts) (h : IsCantor c.beta) (σ : Equiv.Perm (Fin (22 + 2) → Bool)) :
+    ∀ k < 22 + 2, (rustInstance c h σ).basis.β k = ofK (c.beta k) := fun _ _ => rfl
+
+theorem rustInstance_weights (c : Consts) (h : IsCantor c.beta) (σ : Equiv.Perm (Fin (22 + 2) → Bool)) :
+    ∀ k < 8, coordinateWeight k = some ((rustInstance c h σ).c k) := by
+  intro k hk
+  show coordinateWeight k = some ((coordinateWeight k).getD 0)
+  unfold coordinateWeight
+  split_ifs <;> rfl
+
+/-- `base` maps `digitPoly` to itself. -/
+theorem map_digitPoly (k : ℕ) :
+    (digitPoly k : Polynomial K).map (algebraMap K E) = digitPoly k := by
+  induction k with
+  | zero => simp [digitPoly]
+  | succ k ih => rw [digitPoly, digitPoly, Polynomial.map_comp, ih]; simp
+
+/-- A table over `K`, read in `E`, holds the image of its polynomial. -/
+theorem map_tablePoly {m : ℕ} (cK : (Fin m → Bool) → K) :
+    (tablePoly cK).map (algebraMap K E) = tablePoly fun b => ofK (cK b) := by
+  simp only [tablePoly, Polynomial.map_sum, Polynomial.map_mul, Polynomial.map_C,
+    Polynomial.map_prod]
+  refine sum_congr rfl fun b _ => congrArg (_ * ·) (prod_congr rfl fun k _ => ?_)
+  split_ifs
+  · exact map_digitPoly k
+  · exact Polynomial.map_one _
+
+theorem point_basisE (c : Consts) (h : IsCantor c.beta) (x : Fin (22 + 2) → Bool) :
+    (basisE c h).point x = ofK ((basisK c h).point x) := by
+  rw [CantorBasis.point, CantorBasis.point, ofK_sumFin]
+  exact sum_congr rfl fun j _ => by split_ifs <;> simp [basisE, basisK]
+
+/-- The wiring layout's table is its stack, entry by entry (`Layout::new` with one chunk of
+`2^m`: lane `l` holds block `l`). -/
+theorem wiring_table (q : Column (wiringLayout 22).logN) (t : ℕ) (ht : t < 2 ^ 24) :
+    (wiringLayout 22).table q t = q.values.getD t 0 := by
+  have hb : (wiringLayout 22).toBlocks.blocks = List.range 64 := by decide +kernel
+  have hl : (wiringLayout 22).toBlocks.logLane = 18 := by decide +kernel
+  have hn : (wiringLayout 22).toBlocks.lanes = 64 := by
+    rw [Blocks.lanes, hb, List.length_range]
+  show (wiringLayout 22).toBlocks.table q t = _
+  simp only [Blocks.table]
+  rw [hn, hl]
+  calc _ = ∑ l ∈ range 64,
+        if l = t / 2 ^ 18 then q.values.getD (t % 2 ^ 18 + 2 ^ 18 * l) 0 else 0 := by
+          refine sum_congr rfl fun l hl' => ?_
+          rw [hb, List.getD_eq_getElem _ _ (by simpa using hl'), List.getElem_range]
+          exact rfl
+    _ = _ := by
+          rw [sum_ite_eq']
+          simp only [mem_range, show t / 2 ^ 18 < 64 by omega, ↓reduceIte]
+          rw [Nat.mod_add_div]
+
+theorem getD_ofFn {n : ℕ} (f : Fin n → K) (i : ℕ) (hi : i < n) :
+    (Vector.ofFn f).getD i 0 = f ⟨i, hi⟩ := by
+  simp [Vector.getD, hi]
+
+/-- **The honest wiring stack** (`Index::new`'s table): the stack whose table holds, over `K`, a
+polynomial carrying the wiring `σ` on the cells of `beta()`. -/
+noncomputable def wiringStack (c : Consts) (h : IsCantor c.beta)
+    (σ : Equiv.Perm (Fin (22 + 2) → Bool)) : Column (wiringLayout 22).logN :=
+  ⟨Vector.ofFn fun t : Fin (2 ^ 24) =>
+    ((basisK c h).exists_table le24 fun x => (basisK c h).point (σ x)).choose
+      ((Whir.bitsEquiv 24).symm t)⟩
+
+/-- **The honest wiring stack carries the wiring** (`hq₀` holds of it). -/
+theorem wiringStack_carries (c : Consts) (h : IsCantor c.beta)
+    (σ : Equiv.Perm (Fin (22 + 2) → Bool)) (x : Fin (22 + 2) → Bool) :
+    (tablePoly (wiringFn 22 (tabOf (wiringLayout 22) (wiringStack c h σ)))).eval
+      ((rustInstance c h σ).basis.point x) = (rustInstance c h σ).basis.point (σ x) := by
+  set cK := ((basisK c h).exists_table le24 fun x => (basisK c h).point (σ x)).choose with hcK
+  have hspec : ∀ x, (tablePoly cK).eval ((basisK c h).point x) = (basisK c h).point (σ x) :=
+    ((basisK c h).exists_table le24 fun x => (basisK c h).point (σ x)).choose_spec
+  have hfn : wiringFn 22 (tabOf (wiringLayout 22) (wiringStack c h σ)) = fun b => ofK (cK b) := by
+    funext b
+    have hlt := (Whir.bitsEquiv 24 b).isLt
+    show ofK (Vector.ofFn (fun t : Fin (2 ^ 24) =>
+      (wiringLayout 22).table (wiringStack c h σ) t.val))[Whir.bitsEquiv 24 b] = _
+    simp only [Fin.getElem_fin, Vector.getElem_ofFn]
+    rw [wiring_table _ _ hlt]
+    show ofK ((Vector.ofFn fun t : Fin (2 ^ 24) => cK ((Whir.bitsEquiv 24).symm t)).getD _ 0) = _
+    rw [getD_ofFn _ _ hlt]
+    simp
+  show (tablePoly (wiringFn 22 (tabOf (wiringLayout 22) (wiringStack c h σ)))).eval
+      ((basisE c h).point x) = (basisE c h).point (σ x)
+  rw [hfn, ← map_tablePoly, point_basisE, point_basisE, Polynomial.eval_map,
+    show ofK ((basisK c h).point x) = algebraMap K E ((basisK c h).point x) from rfl,
+    Polynomial.eval₂_at_apply, hspec]
+  rfl
+
+/-- **Knowledge soundness of the deployed verifier, on the Rust's constants**:
+`knowledgeSoundness_deployed_concrete` for F1's instance of `beta()` and `coordinate_weight`
+(`rustInstance`) and the honest wiring stack (`wiringStack`), any wiring `σ`. What remains: that
+`beta()` is a Cantor basis (`IsCantor`), that `tau` solves `row_vanishing`'s system
+(`RowVanishing`), and that the wire reads the statement as its halves then `1, 0, 0, 0`. -/
+theorem knowledgeSoundness_deployed_rust (c : Consts) (h : IsCantor c.beta)
+    (hτ : RowVanishing c 22) (σ : Equiv.Perm (Fin (22 + 2) → Bool))
+    (W : Wire (rustInstance c h σ).params (rustInstance c h σ).bounds)
+    (hdec : ∀ sb, W.decode sb = stmtWords sb)
+    (A : Bytes32 → OracleComp KeccakCalls (RootProof E × OpenProofs)) (Q : ℕ)
+    (hQ : ∀ ir, IsTotalQueryBound (A ir) Q) :
+    Pr{let z ← (simulateQ randomOracle (wiredExp W (deployD c 22)
+        (withSetup (stackSetup (deployD c 22) (wiringStack c h σ)) A))).run' ∅}[
+        BreaksW W (witnessDecoder (rustInstance c h σ) c) z] ≤
+      openingBound (2 ^ 20 + Q + 6) + openingBound (2 ^ 20 + Q + 6 + 10122) +
+        openingBound (2 ^ 20 + Q + 6 + 10122 + 10122) +
+        ((2 ^ 20 + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) *
+          (((1 / 2 ^ 128 : ℝ≥0) : ℝ≥0∞) +
+          5 * ((2 ^ 20 + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) / 2 ^ 256) :=
+  knowledgeSoundness_deployed_concrete (rustInstance c h σ) c (rustInstance_basis c h σ)
+    (rustInstance_weights c h σ) hτ W hdec (wiringStack c h σ) (wiringStack_carries c h σ) A Q hQ
+
+end Rust
+
 end Compose

@@ -68,3 +68,19 @@ info: 'Compose.knowledgeSoundness_deployed_concrete' depends on axioms: [propext
 -/
 #guard_msgs in
 #print axioms Compose.knowledgeSoundness_deployed_concrete
+
+/-- info: 'Compose.wiring_table' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.wiring_table
+
+/--
+info: 'Compose.wiringStack_carries' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Compose.wiringStack_carries
+
+/--
+info: 'Compose.knowledgeSoundness_deployed_rust' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms Compose.knowledgeSoundness_deployed_rust
