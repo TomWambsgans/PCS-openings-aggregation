@@ -38,8 +38,8 @@ identities give `Lv42.Protocol.M3Instance.Balanced` (the push and pull tuples on
    gives, `leaf_of_padded`, with `Z_act`, `Z_pad` products of aligned factors `w_b + ω_{a >> b}`
    vanishing exactly on their blocks, `prod_blockVanishing_eq_zero_iff`; aligned when largest
    first, `alignedFrom_of_sorted`); and **`heap_prod_eq`**:
-   tree, leaves and root `T(1)·fp(init) = fp(fin)` give `Π_push fp · fp(init) = Π_pull fp · fp(fin)`,
-   by multiplications only.
+   tree, leaves and root `T(1)·fp(init) = fp(fin)` give
+   `Π_push fp · fp(init) = Π_pull fp · fp(fin)`, by multiplications only.
 3. **The fingerprint** (`Heap.Bus`). `fp α β τ = β + Σ_s eq(α, s)·τ_s` is leanerVM 6175f1a0's
    `β − fingerprint α τ` (characteristic two), so its Theorem 5.1 (`sideProduct_collision`, one
    Schwartz–Zippel bound over `E⁵`, total degree `4` per factor) gives **`prob_fpProd_eq_le`**:

@@ -78,21 +78,24 @@ theorem omega_xor (i j : ℕ) : omega B (i ^^^ j) = omega B i + omega B j := by
 theorem omega_xor_one (hn : 1 ≤ n) (i : ℕ) : omega B (i ^^^ 1) = omega B i + 1 := by
   rw [omega_xor, omega_one B hn]
 
-theorem sq_ite (b : Bool) (x : F) : QuotientSecurity.sq (if b then x else 0) = if b then QuotientSecurity.sq x else 0 := by
+theorem sq_ite (b : Bool) (x : F) :
+    QuotientSecurity.sq (if b then x else 0) = if b then QuotientSecurity.sq x else 0 := by
   cases b <;> simp [QuotientSecurity.sq_zero]
 
 theorem sq_one' : QuotientSecurity.sq (1 : F) = 0 := by
   simp only [QuotientSecurity.sq, mul_one, CharTwo.add_self_eq_zero]
 
 /-- **The parent**: `s(ω_i) = ω_{i >> 1}` for `i < 2^n`. -/
-theorem sq_omega {i : ℕ} (hi : i < 2 ^ n) : QuotientSecurity.sq (omega B i) = omega B (i >>> 1) := by
+theorem sq_omega {i : ℕ} (hi : i < 2 ^ n) :
+    QuotientSecurity.sq (omega B i) = omega B (i >>> 1) := by
   rcases n with _ | m
   · have : i = 0 := by simpa using hi
     subst this
     simp [omega, QuotientSecurity.sq_zero]
   · unfold omega
     rw [show QuotientSecurity.sq (∑ k ∈ range (m + 1), if i.testBit k then B.β k else 0) =
-        ∑ k ∈ range (m + 1), QuotientSecurity.sq (if i.testBit k then B.β k else 0) from sq_iterate_sum _ _ 1,
+        ∑ k ∈ range (m + 1), QuotientSecurity.sq (if i.testBit k then B.β k else 0) from
+        sq_iterate_sum _ _ 1,
       Finset.sum_range_succ', Finset.sum_range_succ]
     have h0 : QuotientSecurity.sq (if i.testBit 0 then B.β 0 else 0) = 0 := by
       rw [sq_ite, B.zero, sq_one']
@@ -106,7 +109,8 @@ theorem sq_omega {i : ℕ} (hi : i < 2 ^ n) : QuotientSecurity.sq (omega B i) = 
     rw [sq_ite, B.succ k (by simp at hk; omega), Nat.shiftRight_one, Nat.testBit_div_two]
 
 /-- **The digits**: `w_l(ω_i) = s^l(ω_i) = ω_{i >> l}` for `i < 2^n`. -/
-theorem sq_iterate_omega (l : ℕ) : ∀ {i : ℕ}, i < 2 ^ n → QuotientSecurity.sq^[l] (omega B i) = omega B (i >>> l) := by
+theorem sq_iterate_omega (l : ℕ) :
+    ∀ {i : ℕ}, i < 2 ^ n → QuotientSecurity.sq^[l] (omega B i) = omega B (i >>> l) := by
   induction l with
   | zero => intro i _; rfl
   | succ l ih =>
@@ -207,7 +211,8 @@ theorem sq_eq_zero_iff (x : F) : QuotientSecurity.sq x = 0 ↔ x = 0 ∨ x = 1 :
     · exact sq_one'
 
 /-- `w_n = s^n` vanishes on `V_n`. -/
-theorem sq_iterate_omega_eq_zero {i : ℕ} (hi : i < 2 ^ n) : QuotientSecurity.sq^[n] (omega B i) = 0 := by
+theorem sq_iterate_omega_eq_zero {i : ℕ} (hi : i < 2 ^ n) :
+    QuotientSecurity.sq^[n] (omega B i) = 0 := by
   rw [sq_iterate_omega B n hi, Nat.shiftRight_eq_div_pow, Nat.div_eq_of_lt hi, omega_zero]
 
 /-- **The tree identity from its quotient form.** The verifier checks
@@ -215,7 +220,8 @@ theorem sq_iterate_omega_eq_zero {i : ℕ} (hi : i < 2 ^ n) : QuotientSecurity.s
 identity holds on `V_n`, the tree identity holds on `V_n \ V_1`, since `w_n` vanishes on `V_n`
 and `w_1` does not on `V_n \ V_1`. -/
 theorem tree_of_quotient {T Q : F → F}
-    (h : ∀ x ∈ V B n, QuotientSecurity.sq x * (T (QuotientSecurity.sq x) + T x * T (x + 1)) + QuotientSecurity.sq^[n] x * Q x = 0) :
+    (h : ∀ x ∈ V B n, QuotientSecurity.sq x * (T (QuotientSecurity.sq x) + T x * T (x + 1)) +
+      QuotientSecurity.sq^[n] x * Q x = 0) :
     ∀ x ∈ V B n, x ∉ V B 1 → T (QuotientSecurity.sq x) = T x * T (x + 1) := by
   rintro x ⟨i, hi, rfl⟩ hx
   have hn : 1 ≤ n := by
@@ -225,7 +231,8 @@ theorem tree_of_quotient {T Q : F → F}
     exact hx ⟨i, by simp at hi; omega, rfl⟩
   have h1 := h (omega B i) ⟨i, hi, rfl⟩
   rw [sq_iterate_omega_eq_zero B hi, zero_mul, add_zero] at h1
-  have hs : QuotientSecurity.sq (omega B i) ≠ 0 := fun h0 ↦ hx ((mem_V_one_iff B hn _).mpr ((sq_eq_zero_iff _).mp h0))
+  have hs : QuotientSecurity.sq (omega B i) ≠ 0 := fun h0 ↦
+    hx ((mem_V_one_iff B hn _).mpr ((sq_eq_zero_iff _).mp h0))
   exact CharTwo.add_eq_zero.mp ((mul_eq_zero.mp h1).resolve_left hs)
 
 /-! ## Blocks of leaves on cosets -/
@@ -284,7 +291,8 @@ theorem blockVanishing_eq_zero_iff {b a k : ℕ} (hal : 2 ^ b ∣ a) (ha : a < 2
     constructor
     · intro h0
       by_contra hne
-      have hx : 0 < (k >>> b) ^^^ (a >>> b) := Nat.pos_of_ne_zero fun h ↦ hne (Nat.xor_eq_zero_iff.mp h)
+      have hx : 0 < (k >>> b) ^^^ (a >>> b) :=
+        Nat.pos_of_ne_zero fun h ↦ hne (Nat.xor_eq_zero_iff.mp h)
       exact omega_ne_zero B hx (Nat.xor_lt_two_pow (hlt k hk) (hlt a ha)) h0
     · intro h
       rw [h, Nat.xor_self, omega_zero]

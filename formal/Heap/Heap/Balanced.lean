@@ -43,8 +43,8 @@ theorem length_executed (j : Fin I.ntab) : (I.executed j).length = I.rows j := b
 /-- Every stack has `busCount` tuples on each side. -/
 theorem length_tuples (q : LeanVM.Protocol.Column I.μ) (s : Side) :
     (I.tuples q s).length = busCount I s := by
-  simp only [M3Instance.tuples, M3Instance.flushTuples, M3Instance.boundaryTuples, List.length_append,
-    List.length_flatMap, List.length_map, length_executed, List.length_finRange, busCount,
+  simp only [M3Instance.tuples, M3Instance.flushTuples, M3Instance.boundaryTuples,
+    List.length_append, List.length_flatMap, List.length_map, length_executed, List.length_finRange, busCount,
     List.map_const', List.sum_replicate, smul_eq_mul]
 
 variable {I}

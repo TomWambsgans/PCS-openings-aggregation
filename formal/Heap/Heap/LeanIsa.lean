@@ -9,7 +9,7 @@ SPEC §5.2's heap for `leanIsaInstance F prog s` (`Lv42.Protocol`, leanVM 424220
 
 | block | leaves | leaf `k` pushes | leaf `k` pulls |
 |---|---|---|---|
-| memory | `2^logMem` | the seed `(SEP_MEM, g^k, 1, m_k)` | the finalize `(SEP_MEM, g^k, MFCNT_k, m_k)` |
+| memory | `2^logMem` | `(SEP_MEM, g^k, 1, m_k)` | `(SEP_MEM, g^k, MFCNT_k, m_k)` |
 | bytecode | `2^logSize` | the seed, count `1` | the finalize, count `BFCNT_k` |
 | opcode table `j` | `2^τ_j` | executed row `k`'s push flushes | its pull flushes |
 | unused | any | nothing | nothing |
@@ -99,9 +99,11 @@ theorem tableTuples_nil (side : Side) (j : Fin 9) (hj : decide (3 ≤ j.val) = f
 /-- `flushTuples` is the opcode tables'. -/
 theorem flushTuples_eq_opcode (side : Side) :
     (leanIsaInstance F prog s).flushTuples q side =
-      (List.finRange 6).flatMap fun j ↦ tableTuples (leanIsaInstance F prog s) q (opIdx j) side := by
+      (List.finRange 6).flatMap fun j ↦
+        tableTuples (leanIsaInstance F prog s) q (opIdx j) side := by
   rw [flushTuples_eq]
-  show (List.finRange 9).flatMap (fun j : Fin 9 ↦ tableTuples (leanIsaInstance F prog s) q j side) = _
+  show (List.finRange 9).flatMap
+    (fun j : Fin 9 ↦ tableTuples (leanIsaInstance F prog s) q j side) = _
   rw [← flatMap_filter_of_nil (fun j : Fin 9 ↦ decide (3 ≤ j.val)) _ _
     fun j _ hj ↦ tableTuples_nil F prog s q side j hj]
   exact (congrArg (fun l ↦ List.flatMap _ l) (finRange_filter)).trans (List.flatMap_map ..)
@@ -127,11 +129,13 @@ theorem realizes (n : ℕ) {bs : List (LeafBlock (Vector K 16))} (h : Shaped F p
     Realizes q (heapData F prog s q n bs) := by
   have hpushT : ((List.finRange 6).flatMap fun j ↦
       (tableBlock (leanIsaInstance F prog s) q (opIdx j)).pushes).Perm
-      ((List.finRange 6).flatMap fun j ↦ tableTuples (leanIsaInstance F prog s) q (opIdx j) .push) :=
+      ((List.finRange 6).flatMap fun j ↦
+        tableTuples (leanIsaInstance F prog s) q (opIdx j) .push) :=
     List.Perm.flatMap_left _ fun j _ ↦ pushes_tableBlock_perm _ q (opIdx j)
   have hpullT : ((List.finRange 6).flatMap fun j ↦
       (tableBlock (leanIsaInstance F prog s) q (opIdx j)).pulls).Perm
-      ((List.finRange 6).flatMap fun j ↦ tableTuples (leanIsaInstance F prog s) q (opIdx j) .pull) :=
+      ((List.finRange 6).flatMap fun j ↦
+        tableTuples (leanIsaInstance F prog s) q (opIdx j) .pull) :=
     List.Perm.flatMap_left _ fun j _ ↦ pulls_tableBlock_perm _ q (opIdx j)
   constructor
   · refine ((allPush_of_shaped F prog s q h).append_right _).trans ?_

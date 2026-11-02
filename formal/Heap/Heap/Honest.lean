@@ -107,7 +107,8 @@ theorem HeapData.sat_of_perm (D : HeapData) (hD : D.WellFormed) (hp : D.pushes.P
         heapOf_leaf leaf hi1 (by omega) (by have := Nat.one_le_two_pow (n := D.n - 1); omega))
     rw [hpow, ← root_eq_prod_leaves hn (treeHolds_heapOf hn leaf)] at hleaves
     have hprod := hp.map (fp α β) |>.prod_eq
-    simp only [HeapData.pushes, HeapData.pulls, heapPush, heapPull, List.map_append, List.prod_append, List.map_cons,
+    simp only [HeapData.pushes, HeapData.pulls, heapPush, heapPull, List.map_append,
+      List.prod_append, List.map_cons,
       List.map_nil, List.prod_cons, List.prod_nil, mul_one] at hprod
     have hP : fpProd (fp α β) (allPull D.blocks) ≠ 0 := fpProd_ne_zero _ hnz
     apply mul_right_cancel₀ hP
