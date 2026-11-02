@@ -1,13 +1,16 @@
-// Part of this repository. The zerocheck, lincheck and slices are leanVM 42422001's Flock prover, unchanged
-// (`crates/lv42_flock`, its `Blake2sSetup::prove_reduction_precomputed`), on its own witness buffers (dumped by
-// `dump/trace_dump.rs`); the matrices' reduction follows `leanvm_flock_gas::flock_min`'s verifier (its `sliced` is that
-// module's test's). MIT OR Apache-2.0; see NOTICE.md.
-//! Flock's prover (SPEC.md §7), behind one call ([`prove`]): leanVM's zerocheck (its skip of 6), lincheck and 64
+// Part of this repository. The zerocheck, lincheck and slices are leanVM 42422001's Flock prover (`crates/lv42_flock`,
+// its `Blake2sSetup::prove_reduction_precomputed`, unchanged, at leanVM's skip of 6; `prove_reduction_skip`, this
+// repository's, below), on its own witness buffers (dumped by `dump/trace_dump.rs`); the matrices' reduction follows
+// `leanvm_flock_gas::flock_min`'s verifier (its `sliced` is that module's test's). MIT OR Apache-2.0; see NOTICE.md.
+//! Flock's prover (SPEC.md §7), behind one call ([`prove`]): the zerocheck (a skip of 3 to 6), lincheck and 64
 //! slices, written to the contract's Keccak-256 chain through [`Chain`]; then the matrices' reduction to `A0`, `B0`
-//! claims (`k + 6` rounds and `a`, `b`) and the ring map's challenges, as `flock_min::verify` reads them.
+//! claims (`k + 6` rounds and `a`, `b`) and the ring map's challenges, as `flock_min::verify` reads them; or, on the
+//! point-claim ABI, the ring map's challenges at once and the matrices' reduction's tables ([`Pending`]) for the
+//! batching sumcheck, as `flock_min::verify_deferred` reads them (SPEC.md §13, lever 4a).
 //!
-//! Only leanVM's skip is built (`FLOCK_LEANVM_SKIP`: skip 6, slices sent). (a′)'s skip of 3 needs another zerocheck
-//! prover: leanVM's hard-codes its skip in its bit-sliced kernels.
+//! At a skip of 6 (`FLOCK_LEANVM_SKIP`) the zerocheck is leanVM's own; below (the main line's 3, `FLOCK_MAIN`), it is
+//! `lv42_flock::zerocheck::skip`'s. The ring map's order (`Slices::Tower` or leanVM's) is the verifier's business:
+//! the prover only draws its six challenges.
 
 use std::path::Path;
 
@@ -61,6 +64,42 @@ impl FlockWitness {
             z_lincheck: bytes[at..at + n[4]].to_vec(),
         })
     }
+
+    /// The instances at the BLAKE2S rows' positions ([`super::trace::Trace::place`]): instance `i` to `to[i]` in
+    /// `z`, `A z` and `B z` (blocks of `2^14` bits), and the lincheck's stripes rebuilt from `z`. Every instance
+    /// satisfies the R1CS alone, so the witness stays one.
+    pub fn place(&mut self, to: &[usize]) {
+        assert_eq!(to.len() << 8, self.z.len(), "one instance a row");
+        self.z = super::trace::permute_blocks(&self.z, to);
+        self.a = super::trace::permute_blocks(&self.a, to);
+        self.b = super::trace::permute_blocks(&self.b, to);
+        // Stripe `g` byte `j` holds bit `j` of instances `8g..8g + 8`, bit `r` instance `8g + r`
+        // (`lv42_flock::lincheck`'s layout): an 8×8 bit transpose of the eight instances' byte `j / 8`.
+        let block_words = 1usize << (BLAKE2S_R1CS_LOG_SIZE - 6);
+        let stripe = 1usize << BLAKE2S_R1CS_LOG_SIZE;
+        assert_eq!(self.z_lincheck.len(), (to.len() / 8) * stripe, "one stripe per eight instances");
+        let z = &self.z;
+        parallel::chunks_mut(&mut self.z_lincheck, stripe, |g, out| {
+            for byte in 0..stripe / 8 {
+                let word = (0..8).fold(0u64, |w, r| {
+                    let instance = &z[(8 * g + r) * block_words..(8 * g + r + 1) * block_words];
+                    w | (instance[byte / 8] >> (8 * (byte % 8)) & 0xff) << (8 * r)
+                });
+                out[8 * byte..8 * byte + 8].copy_from_slice(&transpose_8x8(word).to_le_bytes());
+            }
+        });
+    }
+}
+
+/// The 8×8 bit matrix whose byte `r` is row `r`, transposed: bit `8 r + c` to bit `8 c + r` (Hacker's Delight 7-3).
+fn transpose_8x8(mut x: u64) -> u64 {
+    let t = (x ^ (x >> 7)) & 0x00AA_00AA_00AA_00AA;
+    x ^= t ^ (t << 7);
+    let t = (x ^ (x >> 14)) & 0x0000_CCCC_0000_CCCC;
+    x ^= t ^ (t << 14);
+    let t = (x ^ (x >> 28)) & 0x0000_0000_F0F0_F0F0;
+    x ^= t ^ (t << 28);
+    x
 }
 
 /// The contract's chain as leanVM's flock prover's transcript: a scalar sent is 24 calldata bytes, a challenge one
@@ -190,9 +229,10 @@ pub fn prove(
     deferred: bool,
 ) -> Result<FlockOut, String> {
     let k = variant.skip;
-    if k != PACKING || variant.slices != Slices::Weighted {
+    if !(lv42_flock::zerocheck::skip::MIN_SKIP..=PACKING).contains(&k) || variant.slices == Slices::Claim {
         return Err(format!(
-            "Flock {variant:?}: only leanVM's skip of 6 with the slices sent (FLOCK_LEANVM_SKIP) has a prover"
+            "Flock {variant:?}: a prover for a skip of 3 to 6 with the slices sent (the bit-slice claim of \
+             Slices::Claim has no opening here)"
         ));
     }
     lv42_parallel::init();
@@ -204,7 +244,8 @@ pub fn prove(
         writer: &mut *writer,
         samples: Vec::new(),
     };
-    let claim = setup.prove_reduction_precomputed(&witness.z, &witness.a, &witness.b, &witness.z_lincheck, &mut chain);
+    // leanVM's own prover at a skip of 6; the skip module's zerocheck and the lincheck at its row weights below.
+    let claim = setup.prove_reduction_skip(k, &witness.z, &witness.a, &witness.b, &witness.z_lincheck, &mut chain);
     let samples = chain.samples;
     // The challenges, as the verifier draws them: the zerocheck's sampled eq coordinates, the skip's point, its
     // rounds', the lincheck's batching and rounds'.

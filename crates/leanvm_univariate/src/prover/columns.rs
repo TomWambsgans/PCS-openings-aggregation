@@ -35,7 +35,7 @@ impl Column {
 pub struct C1Polys {
     pub tables: Vec<Vec<Column>>,
     pub inverses: Vec<Column>,
-    /// The inverse columns' values, `1 / Π_j c_j` on active rows, 0 on padding rows.
+    /// The inverse columns' values, `1 / Π_j c_j` on every row.
     pub inverse_values: Vec<Vec<F64>>,
     pub memory: [Column; 4],
     pub bytecode_final: Column,
@@ -56,15 +56,10 @@ pub fn c1_polys(trace: &Trace) -> C1Polys {
     for (t, table) in layout.iter().enumerate() {
         let columns = &trace.tables[t];
         tables_out.push(columns.iter().map(|c| Column::from_values(c)).collect());
-        let rows = trace.rows[t] as usize;
         let n = 1usize << trace.heights[t];
         let counters: Vec<usize> = table.count_columns().collect();
-        let mut z: Vec<F64> = parallel::map_collect(n, |i| {
-            if i >= rows {
-                return F64::ZERO;
-            }
-            counters.iter().fold(F64::ONE, |acc, &c| acc * columns[c][i])
-        });
+        // Every row's counters are nonzero (the placed trace's padding rows hold 1: SPEC.md §13, F1).
+        let mut z: Vec<F64> = parallel::map_collect(n, |i| counters.iter().fold(F64::ONE, |acc, &c| acc * columns[c][i]));
         // One inversion a chunk.
         parallel::chunks_mut(&mut z, 1 << 12, |_, chunk| {
             let mut prefix = Vec::with_capacity(chunk.len());

@@ -1,5 +1,7 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/flock/src/zerocheck/bit_fold.rs.
-// MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
+// Changed here: rows of 1, 2 and 4 bytes fold through the byte tables (for a univariate skip below 6); rows of 8
+// bytes or more fold as before. MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository
+// root).
 //! Weighted sums of packed bit rows, the fold that turns witness bits into F192 values.
 //!
 //! A row is `8 * CHUNKS` bits and every bit carries a fixed F192 weight:
@@ -33,8 +35,10 @@ pub const GFNI: bool = cfg!(all(
 pub struct BitFold {
     /// Bytes per row.
     n_chunks: usize,
-    /// The target's fold kernel data.
-    imp: Imp,
+    /// The target's fold kernel data, for rows of 8 bytes or more.
+    imp: Option<Imp>,
+    /// The byte tables, for rows of 1, 2 or 4 bytes (a univariate skip below 6: this repository's addition).
+    small: Vec<[F192; 256]>,
 }
 
 impl BitFold {
@@ -42,16 +46,24 @@ impl BitFold {
     ///
     /// # Panics
     ///
-    /// Panics unless a row is 8, 16, 32, 64 or 128 bytes.
+    /// Panics unless a row is 1, 2, 4, 8, 16, 32, 64 or 128 bytes.
     pub fn new(weights: &[F192]) -> Self {
         let n_chunks = weights.len() / 8;
         assert!(
-            weights.len() == 8 * n_chunks && n_chunks.is_power_of_two() && (8..=128).contains(&n_chunks),
-            "a row is 8 to 128 bytes, a power of two"
+            weights.len() == 8 * n_chunks && n_chunks.is_power_of_two() && (1..=128).contains(&n_chunks),
+            "a row is 1 to 128 bytes, a power of two"
         );
+        if n_chunks < 8 {
+            return Self {
+                n_chunks,
+                imp: None,
+                small: lookup_tables(weights),
+            };
+        }
         Self {
             n_chunks,
-            imp: Imp::new(weights),
+            imp: Some(Imp::new(weights)),
+            small: Vec::new(),
         }
     }
 
@@ -80,19 +92,17 @@ impl BitFold {
     pub fn fold_block<const CHUNKS: usize>(&self, rows: &[[u8; CHUNKS]], out: &mut [F192; BLOCK]) {
         debug_assert_eq!(CHUNKS, self.n_chunks);
         assert!(rows.len() <= BLOCK);
-        self.imp.fold_block(rows, out);
+        match &self.imp {
+            Some(imp) => imp.fold_block(rows, out),
+            None => {
+                for (o, row) in out.iter_mut().zip(rows) {
+                    *o = fold_row_lookup(&self.small, row);
+                }
+            }
+        }
     }
 }
 
-#[cfg(any(
-    test,
-    not(all(
-        target_arch = "x86_64",
-        target_feature = "gfni",
-        target_feature = "avx512bw",
-        target_feature = "avx512vbmi"
-    ))
-))]
 /// One 256-entry subset-sum table per byte of a row: entry `[j][v]` sums the weights of the set bits of `v` at byte `j`.
 fn lookup_tables(weights: &[F192]) -> Vec<[F192; 256]> {
     weights
@@ -111,15 +121,6 @@ fn lookup_tables(weights: &[F192]) -> Vec<[F192; 256]> {
         .collect()
 }
 
-#[cfg(any(
-    test,
-    not(all(
-        target_arch = "x86_64",
-        target_feature = "gfni",
-        target_feature = "avx512bw",
-        target_feature = "avx512vbmi"
-    ))
-))]
 /// The fold of one row through the byte tables: one lookup and one XOR per byte.
 #[inline(always)]
 fn fold_row_lookup<const CHUNKS: usize>(tables: &[[F192; 256]], row: &[u8; CHUNKS]) -> F192 {

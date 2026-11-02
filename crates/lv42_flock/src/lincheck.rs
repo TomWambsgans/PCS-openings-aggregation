@@ -1,4 +1,6 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/flock/src/lincheck.rs.
+// Changed here: the prover's body after its row weights is `prove_padded_capture_s_hat_v_rows`, which also takes
+// row weights a zerocheck skip below 6 leaves; leanVM's entry is unchanged in what it computes.
 // MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
 // CREDIT: https://github.com/succinctlabs/flock (flock-core), MIT OR Apache-2.0.
 //! Lincheck PIOP for **block-diagonal** R1CS over GF(2).
@@ -1005,6 +1007,30 @@ pub fn prove_padded_capture_s_hat_v(
     x_ab: &QuirkyPoint,
     ps: &mut ProverState,
 ) -> LincheckClaim {
+    assert!(k_skip <= k_log, "k_skip must be ≤ k_log");
+    assert_eq!(x_ab.x_inner_rest.len(), k_log - k_skip);
+    let eq_inner =
+        tracing::info_span!("Eq table").in_scope(|| build_quirky_eq_table(x_ab.z_skip, &x_ab.x_inner_rest, k_skip));
+    prove_padded_capture_s_hat_v_rows(z_packed, m, k_log, k_skip, useful_bits, circuit, &eq_inner, &x_ab.x_outer, ps)
+}
+
+/// [`prove_padded_capture_s_hat_v`] with the row weights given: `eq_inner[i]`, `i < 2^k_log`, weighs the block's
+/// row `i` (the zerocheck's claim point on the block's rows), and the sumcheck runs over the high `k_log - k_skip`
+/// column bits, leaving `2^k_skip` slices. leanVM's weights are `build_quirky_eq_table(z, x_inner_rest, k_skip)`; a
+/// zerocheck skip of `k < k_skip` leaves `L(z) ⊗ eq(low) ⊗ eq(x_inner_rest)` over the row's `k`, `k_skip - k` and
+/// `k_log - k_skip` bits. (This split is this repository's; the body is leanVM's.)
+#[allow(clippy::too_many_arguments)]
+pub fn prove_padded_capture_s_hat_v_rows(
+    z_packed: &[u8],
+    m: usize,
+    k_log: usize,
+    k_skip: usize,
+    useful_bits: usize,
+    circuit: &dyn LincheckCircuit,
+    eq_inner: &[F192],
+    x_outer: &[F192],
+    ps: &mut ProverState,
+) -> LincheckClaim {
     let k = 1usize << k_log;
     let n_log = m - k_log;
     assert!(m >= k_log);
@@ -1012,17 +1038,15 @@ pub fn prove_padded_capture_s_hat_v(
     assert!(useful_bits <= k, "useful_bits ({useful_bits}) > k ({k})");
     let inner_rest_len = k_log - k_skip;
     assert_eq!(circuit.n_cols(), k);
-    assert_eq!(x_ab.x_inner_rest.len(), inner_rest_len);
-    assert_eq!(x_ab.x_outer.len(), n_log);
+    assert_eq!(eq_inner.len(), k);
+    assert_eq!(x_outer.len(), n_log);
 
     // 1. Sample α (matches verifier's order). Used to batch the scalar
     //    consistency checks v_a, v_b, v_c into a single sumcheck.
     let alpha = ps.sample();
 
     // 2. Build the α-batched column marginal through the circuit.
-    let eq_inner =
-        tracing::info_span!("Eq table").in_scope(|| build_quirky_eq_table(x_ab.z_skip, &x_ab.x_inner_rest, k_skip));
-    let mut comb_vec = tracing::info_span!("Fold circuit").in_scope(|| circuit.fold_alpha_batched(alpha, &eq_inner));
+    let mut comb_vec = tracing::info_span!("Fold circuit").in_scope(|| circuit.fold_alpha_batched(alpha, eq_inner));
 
     // 3. The zerocheck's c-claim, at α². `C = I`, so `ĉ(x_ab)` is the z-claim
     //    `Σ_j eq_inner[j]·ẑ(j, x_outer)`: the same row weights the matrices are
@@ -1030,7 +1054,7 @@ pub fn prove_padded_capture_s_hat_v(
     //    and no extra sumcheck. It is what makes the AB and C claims come out
     //    of lincheck at ONE point.
     let alpha_sq = alpha.square();
-    for (c, e) in comb_vec.iter_mut().zip(&eq_inner) {
+    for (c, e) in comb_vec.iter_mut().zip(eq_inner) {
         *c += alpha_sq * *e;
     }
 
@@ -1045,7 +1069,7 @@ pub fn prove_padded_capture_s_hat_v(
     //    Below 8 instances the one stripe is partial: its absent instances'
     //    bits are zero, and so are their weights.
     let mut z_vec = tracing::info_span!("Partial fold").in_scope(|| {
-        let mut eq_x_outer = build_eq(&x_ab.x_outer);
+        let mut eq_x_outer = build_eq(x_outer);
         eq_x_outer.resize(eq_x_outer.len().max(8), F192::ZERO);
         partial_fold_packed_z_best(z_packed, k_log + n_log.max(3), k_log, useful_bits, &eq_x_outer)
     });

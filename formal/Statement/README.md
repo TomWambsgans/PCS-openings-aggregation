@@ -15,7 +15,7 @@ The extractor is an **explicit, computable definition** referenced by the statem
 can check what it reads and that it is efficient (Lean has no running-time theorem; the convention is
 mumbai's: a fixed straight-line extractor reading only the adversary's transcript, its cost read off its
 loops). The simulator the zero-knowledge theorem covers (`zkSimulator`, `formal/EndToEnd/ZK`, named in
-`zeroKnowledge_closed`'s statement) is an **explicit simulator; its computable form is in progress**; this
+`zeroKnowledge_closed`'s statement) is an **explicit simulator**, compiled in `zeroKnowledge_closed_computable` (no axiom, no `noncomputable` constant in its closure); this
 package's own `simulator` is computable but is a heuristic no theorem covers ("The simulator", below).
 Neither is F1's (`formal/QuotientSecurity`), whose extractor reads the proof's polynomials in the ideal
 model and whose extractor and simulator are `noncomputable`. The proofs are in
@@ -368,7 +368,7 @@ check the ones they use by kernel evaluation (`formal/EndToEnd/Bridge/Claims/Con
   (`PcsQuotient.EndToEnd.zeroKnowledge_closed`, `formal/EndToEnd/ZK/CoreMain.lean`), with WHIR's honest prover
   as the renderer. Two statement changes were needed: the deterministic core is stated off degenerate `α, β`
   (`CoreWhirG`; `CoreWhir` is false there), those charged to `deltaNone`; `fmt`'s `fillRun` ends at `fail` as at
-  `ret`. An explicit simulator; its computable form is in progress. Single-proof zero knowledge: from an
+  `ret`. An explicit simulator, compiled in `zeroKnowledge_closed_computable`. Single-proof zero knowledge: from an
   empty `π`, the distinguisher's queries after the proof; no query before the proof and no second proof
   under the same `π` (a pre-proof phase is planned). `ZeroKnowledge ζ`, for this
   package's heuristic `simulator`, is not proved, so neither is the structure `Theorems` (`Security.lean`),
