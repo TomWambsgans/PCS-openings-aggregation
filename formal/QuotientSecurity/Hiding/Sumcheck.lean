@@ -591,4 +591,59 @@ theorem reach_all (n : ℕ) (Φ : Fin (n + 3) → E) (hΦ : ∀ i, Φ i ≠ 0 �
     field_simp
     ring
 
+/-! ### From a stack to one entry -/
+
+section Bridge
+
+variable {Y : Type} [Fintype Y] [DecidableEq Y]
+
+theorem msg_column {k : ℕ} (w t : LTable E Y (k + 1)) (y : Y) (ht : ∀ b y', y' ≠ y → t b y' = 0) :
+    msg w t = msg (fun b (_ : Unit) => w b y) (fun b _ => t b y) := by
+  simp only [msg, Fintype.sum_unique]
+  congr 1
+  · refine sum_congr rfl fun b _ => ?_
+    rw [sum_eq_single y]
+    · intro y' _ hy'; simp [ht _ y' hy']
+    · simp
+  · refine sum_congr rfl fun b _ => ?_
+    rw [sum_eq_single y]
+    · intro y' _ hy'; simp [ht _ y' hy']
+    · simp
+
+/-- **The lane rounds of a change on one entry** are that entry's. -/
+theorem laneRounds_column : ∀ (k : ℕ) (φ : Fin k → E) (w t : LTable E Y k) (y : Y),
+    (∀ b y', y' ≠ y → t b y' = 0) →
+    laneRounds k φ w t = laneRounds k φ (fun b (_ : Unit) => w b y) (fun b _ => t b y)
+  | 0, _, _, _, _, _ => funext fun i => Fin.elim0 i
+  | k + 1, φ, w, t, y, ht => by
+    have hf : ∀ b y', y' ≠ y → foldFirst (φ 0) t b y' = 0 := fun b y' hy' => by
+      simp [foldFirst, ht _ y' hy']
+    simp only [laneRounds]
+    rw [msg_column w t y ht, laneRounds_column k _ _ _ y hf]
+    rfl
+
+theorem msg_smul_left {k : ℕ} (c : E) (w t : LTable E Y (k + 1)) :
+    msg (c • w) t = c • msg w t := by
+  simp only [msg, Pi.smul_apply, smul_eq_mul, Prod.smul_mk, mul_sum]
+  congr 1 <;> refine sum_congr rfl fun b _ => sum_congr rfl fun y _ => ?_ <;> ring
+
+theorem foldFirst_smul_left {k : ℕ} (r c : E) (w : LTable E Y (k + 1)) :
+    foldFirst r (c • w) = c • foldFirst r w := by
+  funext b y
+  simp only [foldFirst, Pi.smul_apply, smul_eq_mul]
+  ring
+
+/-- The rounds are linear in the weight too. -/
+theorem laneRounds_smul_left : ∀ (k : ℕ) (φ : Fin k → E) (c : E) (w t : LTable E Y k),
+    laneRounds k φ (c • w) t = c • laneRounds k φ w t
+  | 0, _, _, _, _ => funext fun i => Fin.elim0 i
+  | k + 1, φ, c, w, t => by
+    simp only [laneRounds, foldFirst_smul_left, laneRounds_smul_left k, msg_smul_left]
+    funext i
+    refine Fin.cases ?_ (fun j => ?_) i
+    · rw [Pi.smul_apply, Fin.cons_zero, Fin.cons_zero]
+    · rw [Pi.smul_apply, Fin.cons_succ, Fin.cons_succ, Pi.smul_apply]
+
+end Bridge
+
 end QuotientSecurity.Hiding
