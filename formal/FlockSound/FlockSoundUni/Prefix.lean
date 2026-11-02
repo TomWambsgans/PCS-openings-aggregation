@@ -194,13 +194,13 @@ theorem badAt_congr (qf : Column (8 + κ)) {d d' : Done} {j i : ℕ} (hA : Agree
     · have hj : 2 + (j - 2) = j := by omega
       rw [τ_congr (hlt 0 (by omega)), c₀_congr (hlt 1 (by omega)), parse_z (hlt 1 (by omega))]
       refine zcBad_congr _ _ _ _ _ _ _ _ _ _ _ _ _ (fun u hu ↦ ?_) (fun u hu ↦ ?_)
-      · simp only [Fin.val_mk] at hu
+      · simp only at hu
         refine parse_zq u (fun a ha ↦ hlt a (by omega)) ?_
         rcases Nat.lt_or_ge (2 + u.val) j with hl | hl
         · rw [hlt _ hl]
         · rw [show 2 + u.val = j by omega]
           exact hmsg
-      · simp only [Fin.val_mk] at hu
+      · simp only at hu
         exact parse_zχ u (hlt _ (by omega))
     · rfl
   simp only [dite_eq_right h2]
@@ -219,11 +219,11 @@ theorem badAt_congr (qf : Column (8 + κ)) {d d' : Done} {j i : ℕ} (hA : Agree
       rw [rl_congr h13, rh_congr h13, rt_congr h13, parse_z (hlt 1 (by omega)),
         parse_α (hlt (13 + κ) (by omega))]
       refine sumBad_congr' 2 8 _ _ _ _ _ _ _ ?_ fun u hu ↦ ?_
-      · refine parse_lq _ (fun a ha ↦ hlt a (by simp only [Fin.val_mk] at ha; omega)) ?_
-        simp only [Fin.val_mk]
+      · refine parse_lq _ (fun a ha ↦ hlt a (by simp only at ha; omega)) ?_
+        simp only
         rw [show 14 + κ + (j - (14 + κ)) = j by omega]
         exact hmsg
-      · simp only [Fin.val_mk] at hu
+      · simp only at hu
         exact parse_lχ u (hlt _ (by omega))
     · rfl
   simp only [dite_eq_right h4]

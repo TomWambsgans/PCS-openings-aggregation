@@ -210,35 +210,35 @@ theorem card_badAt {κ : ℕ} (qf : Column (8 + κ)) (R : Front E 3 3 8 κ (4 + 
     Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs qf R
   unfold badAt
   by_cases h0 : j = 0
-  · rw [ite_eq_left h0, show dBound κ j i = 1 by unfold dBound; split_ifs <;> omega]
+  · rw [ite_eq_left h0, show dBound κ j i = 1 by unfold dBound; split_ifs; omega]
     split_ifs
     · exact hτ _
     · simp
   rw [ite_eq_right h0]
   by_cases h1 : j = 1
-  · rw [ite_eq_left h1, show dBound κ j i = 15 by unfold dBound; split_ifs <;> omega]
+  · rw [ite_eq_left h1, show dBound κ j i = 15 by unfold dBound; split_ifs; omega]
     split_ifs
     · exact hz.trans (by norm_num)
     · simp
   rw [ite_eq_right h1]
   by_cases h2 : j < 13 + κ
-  · rw [dite_eq_left h2, show dBound κ j i = 2 by unfold dBound; split_ifs <;> omega]
+  · rw [dite_eq_left h2, show dBound κ j i = 2 by unfold dBound; split_ifs; omega]
     split_ifs
     · exact hzc _
     · simp
   rw [dite_eq_right h2]
   by_cases h3 : j = 13 + κ
-  · rw [ite_eq_left h3, show dBound κ j i = 3 by unfold dBound; split_ifs <;> omega]
+  · rw [ite_eq_left h3, show dBound κ j i = 3 by unfold dBound; split_ifs; omega]
     split_ifs
     · exact hα
     · simp
   rw [ite_eq_right h3]
   by_cases h4 : j < 22 + κ
-  · rw [dite_eq_left h4, show dBound κ j i = 2 by unfold dBound; split_ifs <;> omega]
+  · rw [dite_eq_left h4, show dBound κ j i = 2 by unfold dBound; split_ifs; omega]
     split_ifs
     · exact hlin _
     · simp
-  rw [dite_eq_right h4, show dBound κ j i = 1 by unfold dBound; split_ifs <;> omega]
+  rw [dite_eq_right h4, show dBound κ j i = 1 by unfold dBound; split_ifs; omega]
   split_ifs
   · exact hring _
   · simp
@@ -246,6 +246,6 @@ theorem card_badAt {κ : ℕ} (qf : Column (8 + κ)) (R : Front E 3 3 8 κ (4 + 
 
 theorem card_flockBad (κ : ℕ) : ∀ qf done msg pre,
     (flockBad κ qf done msg pre).card ≤ dBound κ done.length pre.length :=
-  fun qf done msg pre ↦ card_badAt qf _ _ _
+  fun qf _ _ _ ↦ card_badAt qf _ _ _
 
 end FlockSound.Uni
