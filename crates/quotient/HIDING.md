@@ -114,10 +114,11 @@ then pin across both proofs' positions (about 446 > 256), and two that share the
 state in the process and so does not repeat in a fork), from which `protocol::Randomness::derive` makes both by
 Keccak-256 with distinct tags, a key binding the seed, the circuit's commitment, the statement and a digest of
 the witness's cells: a seed that repeats anyway (a restored snapshot) gives unrelated randomness for another
-witness or statement, and the same proof again for the same ones. `protocol::prove_with_randomness` takes the
-randomness, deterministic, for tests and reproducible benchmarks, with the same requirement.
-A table's seed is Keccak-256(`"pcs-quotient-pad-" ‖ table ‖ seed`); lane `l` is filled by ChaCha12 (`rand`'s
-`StdRng`) keyed by Keccak-256(table seed ‖ `l`), so the prover is deterministic given the seed and fills lanes in
+witness or statement, and the same proof again for the same ones. `protocol::prove_with_seed` takes the seed,
+deterministic, for tests and reproducible benchmarks, with the same requirement; randomness given directly
+(`prove_with_randomness`) is crate-private, for the tests that show what reuse reveals.
+A table's seed is Keccak-256(`"pcs-quotient-pad-" ‖ table ‖ seed`); lane `l` is filled by ChaCha12 (`rand_chacha`'s
+`ChaCha12Rng`, by name) keyed by Keccak-256(table seed ‖ `l`), so the prover is deterministic given the seed and fills lanes in
 parallel; then each gadget pair's second lane takes its first lane's values there, and the overflow lane's
 pattern-2 entries are set to zero. Tests and the benchmark draw the proof's seed from `primitives::test_rng`.
 
