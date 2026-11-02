@@ -62,9 +62,9 @@ statements from the layers below. Every theorem in this section is sorry-free an
 - The simulator is explicit and named in the statement (`zkSimulator`, `rpmSimOracle`:
   `formal/EndToEnd/ZK/With.lean`, `Simulator.lean`). It reads no witness. It draws the Fiat–Shamir challenges
   first and programs them, takes the messages and opened rows from the joint honest-verifier simulator (WHIR's
-  honest prover on tables built from uniform values), and answers unopened leaves with fresh digests. Its
-  computable form is in progress (its tables are computed by Gaussian elimination,
-  `QuotientZk/Instance/Builder.lean`).
+  honest prover on tables built from uniform values), and answers unopened leaves with fresh digests. It is
+  compiled in `zeroKnowledge_closed_computable` (no axiom and no `noncomputable` constant in its closure; its tables by
+  Gaussian elimination, `QuotientZk/Instance/Builder.lean`).
 - Scope: single-proof zero knowledge. `realExperiment` starts from an empty permutation, the prover goes first,
   and the distinguisher queries π and π⁻¹ only after it has the proof. Not covered: oracle queries before the
   proof (a distinguisher's precomputation, or auxiliary input that depends on π), and several proofs under one
@@ -198,7 +198,7 @@ statements from the layers below. Every theorem in this section is sorry-free an
   - stale lines (`coreClose_of_joint`'s lemmas under old names; `ProverBridge.lean`'s bound without
     2^-125 + 2/2^192; `Nondeg.lean`'s (2^26 + 4|K|)/|E| for the proved (26·2^25 + 4|K|)/|E|, and "every good
     challenge"; `Deployed/Main.lean`'s "`FSFresh` not proved here"; `HIDING.md`'s open items) → corrected;
-  - the simulator was called compiled/computable → "an explicit simulator; its computable form is in progress".
+  - the simulator was called compiled/computable → "an explicit simulator", then compiled (`zeroKnowledge_closed_computable`).
 - **End-to-end completeness (adversarial; `formal/EndToEnd/Review/E2ECompletenessReview.lean`)**: the end
   theorem is on the three standard axioms, and the statement's closure was swept (`#review_sweep`). Proved there:
   `Relation` is satisfiable (`relation_self`), and an explicit secret's statement is accepted with probability at
