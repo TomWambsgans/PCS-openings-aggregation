@@ -138,13 +138,41 @@ pub fn table_leaf(trace: &Trace, t: usize, c1: &C1Polys, bus: &Bus, r_novel: &[F
         let z_act = vanishing_on(&act, first, r, &pts);
         let z_pad = vanishing_on(&pad, first, r, &pts);
         let w_r_inv = F192::from(omega(first >> r).inv());
-        parallel::for_each_mut(out, |i, slot| {
-            let col = |c: usize| values[c][i];
-            let p = pull.iter().fold(F192::ONE, |acc, f| acc * f.at(col));
-            let p2 = push.iter().fold(F192::ONE, |acc, f| acc * f.at(col));
-            let (za, zp) = (F192::from(z_act[i]), z_pad[i]);
-            let numerator = heap[i] * (p.mul_base(zp) + za) + p2.mul_base(zp) + za;
-            *slot = numerator * w_r_inv;
+        // A block of points at a time, a fingerprint at a time: each term one pass over a column's block.
+        const BLOCK: usize = 1 << 10;
+        parallel::chunks_mut(out, BLOCK, |b, slots| {
+            let base = b * BLOCK;
+            let len = slots.len();
+            let product = |prints: &[super::fingerprint::Fingerprint]| {
+                let mut acc = vec![F192::ONE; len];
+                let mut value = vec![F192::ZERO; len];
+                for f in prints {
+                    value.fill(f.constant);
+                    for &(c, k) in &f.linear {
+                        let col = &values[c][base..base + len];
+                        for (v, &x) in value.iter_mut().zip(col) {
+                            *v += k.mul_base(x);
+                        }
+                    }
+                    for &(c, d, k) in &f.quadratic {
+                        let (u, w) = (&values[c][base..base + len], &values[d][base..base + len]);
+                        for ((v, &x), &y) in value.iter_mut().zip(u).zip(w) {
+                            *v += k.mul_base(x * y);
+                        }
+                    }
+                    for (a, &v) in acc.iter_mut().zip(&value) {
+                        *a *= v;
+                    }
+                }
+                acc
+            };
+            let (p, p2) = (product(pull), product(push));
+            for (k, slot) in slots.iter_mut().enumerate() {
+                let i = base + k;
+                let (za, zp) = (F192::from(z_act[i]), z_pad[i]);
+                let numerator = heap[i] * (p[k].mul_base(zp) + za) + p2[k].mul_base(zp) + za;
+                *slot = numerator * w_r_inv;
+            }
         });
     }
     Quotient::finish(q, m, count)

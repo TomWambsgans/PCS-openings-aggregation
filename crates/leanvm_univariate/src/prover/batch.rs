@@ -6,7 +6,7 @@
 //! [`dense_weight`] writes a commitment's combined claim out as its weight on the stack, which is what the verifier's
 //! `weight_at` evaluates at the end point; the rounds fold the weights and the stacks low variable first.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::transcript::KeccakWriter;
@@ -17,43 +17,44 @@ use super::poly::{from_v, to_v};
 use crate::claims::{Column, Combined};
 use crate::stacks::StackLayout;
 
-/// A combined claim's weight on its stack, written out over `len` words.
+/// A combined claim's weight on its stack, written out over `len` words. Terms are grouped by the eq table they read
+/// (point, length, twist): each table is built once, and dropped after its terms.
 pub fn dense_weight(claim: &Combined<E>, layout: &StackLayout, len: usize) -> Vec<F192> {
     let mut weight = vec![F192::ZERO; len];
     let basis = [F192::ONE, F192::new(0, 1, 0), F192::new(0, 0, 1)];
-    let mut tables: HashMap<(usize, usize, u8, Option<usize>), Vec<F192>> = HashMap::new();
+    // (point, eq length, twist) -> its uses: (block offset, scale, q_flock slot).
+    let mut groups: BTreeMap<(usize, usize, u8), Vec<(usize, F192, Option<usize>)>> = BTreeMap::new();
     for &(column, p, twist, coefficient) in &claim.terms {
-        let point: Vec<F192> = claim.points[p].iter().map(|&x| from_v(x)).collect();
-        let twisted: Vec<F192> = point
-            .iter()
-            .map(|&x| (0..twist).fold(x, |y, _| y.square()))
-            .collect();
         let coefficient = from_v(coefficient);
         let (target, slot) = match column {
             Column::QflockSlot(j) => (Column::Qflock, Some(j)),
             other => (other, None),
         };
         for (limb, vars, offset) in layout.limbs(target) {
-            let scale = coefficient * basis[limb];
-            let offset = offset as usize;
+            let len = if slot.is_some() { vars - 8 } else { vars };
+            groups
+                .entry((p, len, twist))
+                .or_default()
+                .push((offset as usize, coefficient * basis[limb], slot));
+        }
+    }
+    for ((p, len, twist), uses) in groups {
+        let twisted: Vec<F192> = claim.points[p][..len]
+            .iter()
+            .map(|&x| (0..twist).fold(from_v(x), |y, _| y.square()))
+            .collect();
+        let eq = eq_table(&twisted);
+        for (offset, scale, slot) in uses {
             match slot {
+                // q_flock's word `j + 256 u`: the slot's bits, then the point.
                 Some(j) => {
-                    // q_flock's word `j + 256 u`: the slot's bits, then the point.
-                    let len = vars - 8;
-                    let eq = tables
-                        .entry((p, len, twist, None))
-                        .or_insert_with(|| eq_table(&twisted[..len]));
-                    let block = &mut weight[offset..offset + (1 << vars)];
                     for (u, &e) in eq.iter().enumerate() {
-                        block[j + (u << 8)] += scale * e;
+                        weight[offset + j + (u << 8)] += scale * e;
                     }
                 }
                 None => {
-                    let eq = tables
-                        .entry((p, vars, twist, None))
-                        .or_insert_with(|| eq_table(&twisted[..vars]));
-                    let block = &mut weight[offset..offset + (1 << vars)];
-                    parallel::chunks_mut_zip(block, eq, 1 << 14, |_, out, eq| {
+                    let block = &mut weight[offset..offset + eq.len()];
+                    parallel::chunks_mut_zip(block, &eq, 1 << 14, |_, out, eq| {
                         for (o, &e) in out.iter_mut().zip(eq) {
                             *o += scale * e;
                         }
