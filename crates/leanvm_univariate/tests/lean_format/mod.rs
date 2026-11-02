@@ -1,7 +1,10 @@
 // Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 //! The vectors' format and the Rust verifier's run on them, shared by `tests/lean_vectors.rs` (random, accepting and
 //! mutated streams at the measured shapes) and `tests/review_honest.rs` (the review's honest proofs). See
-//! `lean_vectors.rs` for the format; each vector also has a `SHAPE <log_memory> <log_bytecode> <rows…>` line.
+//! `lean_vectors.rs` for the format; each vector also has a `SHAPE <log_memory> <log_bytecode> <rows…>` line (the
+//! Rust's `Shape`, whose heights `⌈log₂ rows⌉` the contract is built for), its setup (`PROGRAMIV`, `CONTRACTIV`, the
+//! five `LAYOUTWORDS`: `contract::contract_iv` and `layout_words` at the reference roots) and the row counts the
+//! stream announces (`COUNTS`, iteration 2's F1).
 
 use std::fmt::Write as _;
 
@@ -10,7 +13,7 @@ use leanvm_flock_gas::field::{E, ONE, ZERO};
 use leanvm_flock_gas::shapes::Workload;
 use leanvm_flock_gas::transcript::{Channel, Checks, KeccakChannel, keccak_seed, scalar_bytes};
 use leanvm_univariate::claims::Combined;
-use leanvm_univariate::contract::{NAME, sample_stream};
+use leanvm_univariate::contract::{NAME, SetupRoots, contract_iv, layout_words, sample_stream};
 use leanvm_univariate::{Blake2s, Claims, Opening, Reduced, Shape, reduce};
 
 /// The contract's chain, logging what the verifier draws and checks.
@@ -24,6 +27,20 @@ pub struct Logging<'a> {
     scalar_at: Vec<usize>,
     /// For each zero check, how many scalars were read before it.
     zero_after: Vec<usize>,
+}
+
+impl<'a> Logging<'a> {
+    fn new(seed: [u8; 32], stream: &'a [u8]) -> Self {
+        Self {
+            inner: KeccakChannel::new(seed, stream, Checks::Enforce),
+            cursor: 0,
+            challenges: vec![],
+            zeros: vec![],
+            nonzeros: vec![],
+            scalar_at: vec![],
+            zero_after: vec![],
+        }
+    }
 }
 
 impl Channel<E> for Logging<'_> {
@@ -56,6 +73,12 @@ impl Channel<E> for Logging<'_> {
         self.nonzeros.push(value);
         Ok(())
     }
+
+    fn next_integer(&mut self, bytes: usize) -> Result<E, VerifierError> {
+        let value = self.inner.next_integer(bytes)?;
+        self.cursor += bytes;
+        Ok(value)
+    }
 }
 
 /// What one run of the verifier gives.
@@ -81,6 +104,8 @@ pub struct Config {
     pub shape: Shape,
     pub flock: (&'static str, Blake2s),
     pub claims: (&'static str, Claims),
+    /// The program's IV, which the contract's IV is derived from (`contract::contract_iv`, F2).
+    pub program_iv: [u8; 32],
 }
 
 impl Config {
@@ -91,26 +116,33 @@ impl Config {
             shape: Shape::of(&workload.shape),
             flock,
             claims,
+            program_iv: leanvm_flock_gas::shapes::PROGRAM_IV,
         }
     }
 
     pub fn shape(&self) -> Shape {
         self.shape
     }
+
+    /// The contract's IV for this configuration's program IV, at the reference setup roots.
+    pub fn contract_iv(&self) -> [u8; 32] {
+        contract_iv(&self.shape, &self.program_iv, &SetupRoots::REFERENCE)
+    }
+}
+
+/// The six row counts as the stream announces them (iteration 2, F1): 4-byte big-endian integers, XOR to BLAKE2S.
+pub fn count_bytes(counts: &[u64; 6]) -> [u8; 24] {
+    let mut out = [0u8; 24];
+    for (k, &c) in counts.iter().enumerate() {
+        out[4 * k..4 * k + 4].copy_from_slice(&(c as u32).to_be_bytes());
+    }
+    out
 }
 
 /// The Rust verifier on `stream`, as `contract::rust_verifier` runs it, logging.
 pub fn run(config: &Config, iv: &[u8; 32], public: &[u8; 32], stream: &[u8]) -> Run {
     let seed = keccak_seed(&NAME, iv, public);
-    let mut channel = Logging {
-        inner: KeccakChannel::new(seed, stream, Checks::Enforce),
-        cursor: 0,
-        challenges: vec![],
-        zeros: vec![],
-        nonzeros: vec![],
-        scalar_at: vec![],
-        zero_after: vec![],
-    };
+    let mut channel = Logging::new(seed, stream);
     let words: [E; 4] =
         std::array::from_fn(|k| E::new(u64::from_be_bytes(public[8 * k..8 * k + 8].try_into().unwrap()), 0, 0));
     let result = reduce(&config.shape(), words, &mut channel, config.flock.1, config.claims.1).and_then(|reduced| {
@@ -128,8 +160,22 @@ pub fn run(config: &Config, iv: &[u8; 32], public: &[u8; 32], stream: &[u8]) -> 
 }
 
 /// A random stream made to pass every zero check, one check at a time, by solving for the scalar read last before it.
+/// Its row counts are the shape's (`Shape::table_rows`), which fit its heights.
 pub fn accepting(config: &Config, iv: &[u8; 32], public: &[u8; 32], len: usize, seed: u64) -> Vec<u8> {
+    accepting_with_counts(config, iv, public, len, seed, &config.shape.table_rows)
+}
+
+/// [`accepting`], the stream announcing `counts` (each at most its height's `2^r`, so that the counts' checks hold).
+pub fn accepting_with_counts(
+    config: &Config,
+    iv: &[u8; 32],
+    public: &[u8; 32],
+    len: usize,
+    seed: u64,
+    counts: &[u64; 6],
+) -> Vec<u8> {
     let mut stream = sample_stream(len, seed);
+    stream[..24].copy_from_slice(&count_bytes(counts));
     let mut k = 0;
     loop {
         let current = run(config, iv, public, &stream);
@@ -215,6 +261,15 @@ pub fn record(
     let shape = config.shape();
     let rows: Vec<String> = shape.table_rows.iter().map(|r| r.to_string()).collect();
     writeln!(out, "SHAPE {} {} {}", shape.log_memory, shape.log_bytecode, rows.join(" ")).unwrap();
+    writeln!(out, "PROGRAMIV {}", hex(&config.program_iv)).unwrap();
+    writeln!(out, "CONTRACTIV {}", hex(&config.contract_iv())).unwrap();
+    let words: Vec<String> = layout_words(&shape).iter().map(|w| hex(w)).collect();
+    writeln!(out, "LAYOUTWORDS {} {}", words.len(), words.join(" ")).unwrap();
+    let counts: Vec<String> = (0..6)
+        .filter(|k| 4 * k + 4 <= stream.len())
+        .map(|k| u32::from_be_bytes(stream[4 * k..4 * k + 4].try_into().unwrap()).to_string())
+        .collect();
+    writeln!(out, "COUNTS {} {}", counts.len(), counts.join(" ")).unwrap();
     writeln!(out, "IV {}", hex(iv)).unwrap();
     writeln!(out, "PUBLIC {}", hex(public)).unwrap();
     writeln!(out, "STREAM {} {}", stream.len(), hex(stream)).unwrap();

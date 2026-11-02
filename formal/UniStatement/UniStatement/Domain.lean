@@ -21,7 +21,11 @@ public import UniStatement.Basic
   Rust), read at `t` by `coordinatesAt`.
 * **The vanishing polynomials** of the first `rows` points of `V_r` (`prefixVanishing`) and of the rest
   (`suffixVanishing`), products over aligned cosets; `w_m / w_r = Π_{j=r}^{m−1} (w_j + 1)`
-  (`vanishingRatio`).
+  (`vanishingRatio`). Milestone 1's verifier read them; iteration 2's does not.
+* **The active rows** (iteration 2, F1b): a count's bit `b < r` owns the fixed coset
+  `[2^r − 2^(b+1), 2^r − 2^b)` (`cosetOffset`), bit `r` all of `V_r`; the active rows are the cosets of the
+  count's set bits (`activePositions`, `isActive`), and their vanishing polynomial is read from the count's bits
+  (`activeVanishingFromBits`, one factor a bit).
 
 Each is checked against the Rust through the verifier's outputs (the differential test); the defining
 properties (`s(β_{k+1}) = β_k`, `y_l(ω_i) = i_l`, the vanishing) are the Rust's unit tests
@@ -159,6 +163,46 @@ def suffixVanishing (w : List E) (rows r : ℕ) : E := Id.run do
       product := product * (w.getD b 0 + pointE (start >>> b))
       start := start + 2 ^ b
   return product
+
+/-! ### The active rows at fixed cosets (iteration 2, F1 and F1b; `SPEC.md` §13 entries 6 and 10) -/
+
+/-- **`prefix_vanishing_from_bits(t, bits)`**: `prefixVanishing` at `t` for a count known only by its bits
+`bits[b]` (the scalars `0` or `1`, `b ≤ r`): `Π_b (1 + bit_b · d_b)`, `d` the digits of `t + ω_rows`. Not on
+the verifier's path since F1b (`activeVanishingFromBits`); the runner checks it against `prefixVanishing`. -/
+def prefixVanishingFromBits (t : E) (bits : List E) : E := Id.run do
+  let omega := (bits.zip (List.range bits.length)).foldl (fun acc (bit, b) ↦ acc + bit * pointE (2 ^ b)) 0
+  let mut digit := t + omega
+  let mut product : E := 1
+  for (bit, b) in bits.zip (List.range bits.length) do
+    if b > 0 then digit := digit * digit + digit
+    product := product * (1 + bit * digit)
+  return product
+
+/-- **`coset_offset(r, b)`**: bit `b < r` of a height-`r` table's count owns the rows
+`[2^r − 2^(b+1), 2^r − 2^b)`, the aligned coset `ω_(2^(r−b) − 2) + V_b`; this is its offset. -/
+def cosetOffset (r b : ℕ) : E := pointE (2 ^ (r - b) - 2)
+
+/-- **`active_positions(rows, r)`**: the positions of a height-`r` table's `rows` active rows, in order: all of
+`V_r` for a full table, else the cosets of `rows`' set bits, the highest first. -/
+def activePositions (rows r : ℕ) : List ℕ :=
+  if rows = 2 ^ r then List.range rows
+  else (List.range r).reverse.flatMap fun b ↦
+    if rows.testBit b then List.range' (2 ^ r - 2 ^ (b + 1)) (2 ^ b) else []
+
+/-- **`is_active(i, rows, r)`**: whether row `i < 2^r` of a height-`r` table with `rows` active rows is one. -/
+def isActive (i rows r : ℕ) : Bool :=
+  if rows = 2 ^ r then true
+  else
+    let gap := 2 ^ r - i
+    decide (2 ≤ gap) && rows.testBit (Nat.log2 (gap - 1))
+
+/-- **`active_vanishing_from_bits(w, bits, r)`**: `Z_act(t)`, the vanishing polynomial of the active rows, from
+the count's bits `bits[b]` (`0` or `1`, `b ≤ r`) and the digits `w` of `t`:
+`(1 + c_r (w_r + 1)) · Π_{b<r} (1 + c_b (w_b + K_b + 1))`, `K_b = cosetOffset r b`. -/
+def activeVanishingFromBits (w bits : List E) (r : ℕ) : E :=
+  (List.range r).foldl (fun product b ↦
+    product * (1 + bits.getD b 0 * (w.getD b 0 + (cosetOffset r b + 1))))
+    (1 + bits.getD r 0 * (w.getD r 0 + 1))
 
 /-- `w_m / w_r = Π_{j=r}^{m−1} (w_j + 1)` (`vanishing_ratio`). -/
 def vanishingRatio (w : List E) (r m : ℕ) : E :=

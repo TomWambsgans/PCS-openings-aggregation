@@ -17,7 +17,8 @@ native verifier is `E`; constants are elements of `E`):
 * `eNew c0 c1 c2` is the Rust's `E::new`, limb `i` the coefficient of `y^i`;
 * `epow` is `E::pow` (square and multiply, low bit first) and `sqn x k` is `k` squarings;
 * `eqKernel`, `eqEval`, `multilinearEval`, `polyEval`, `dot` (`multilinear.rs`);
-* `log2Ceil` (`multilinear.rs`) and `trailingZeros` (`u64::trailing_zeros`, `64` at zero).
+* `log2Ceil` (`multilinear.rs`) and `trailingZeros` (`u64::trailing_zeros`, `64` at zero);
+* `intBits` (`Scalar::bits`, iteration 2): the bit fields of a packed integer, as scalars.
 
 A `List` stands for a `Vec`; an out-of-range index reads `0` (`getD`), where the Rust would panic.
 The verifier reads in range everywhere (the test exercises every path).
@@ -96,6 +97,11 @@ def trailingZeros (n : ℕ) : ℕ :=
 
 /-- Bit `k` of `n` as an element of `E`: `E::new(n >> k & 1, 0, 0)`. -/
 def bitE (n k : ℕ) : E := if n.testBit k then 1 else 0
+
+/-- **`Scalar::bits(shift, width)`** of a scalar holding the integer `n` in its low limb (a packed count read by
+`Channel::next_integer`): the integer `(n >> shift) mod 2^width`, as a scalar in the same way (`E::new(v, 0, 0)`;
+a bit is the scalar `0` or `1`). The Rust masks with `u64::MAX` at a width of `64` or more. -/
+def intBits (n shift width : ℕ) : E := eK (UInt64.ofNat ((n >>> shift) % 2 ^ min width 64))
 
 end UniStatement
 
