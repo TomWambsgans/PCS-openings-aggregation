@@ -556,3 +556,12 @@ Each entry says what changed, why, and what the prover must change (none if the 
     Measured, main line: the ring weight 81,757 → 74,286; straight 188,918 → 182,104; code 77,678 → 67,209 bytes,
     so 3 contracts instead of 4; deployed 202,394 → 192,392; tx (EIP-7623, `c = 0`, deployed) 315,810 → 305,808.
     (The report's `FIELD_MUL` count is the graph's, without the kernel's 3,500.) Prover: nothing.
+12. **Lever 5a (extension B on the ABI): Flock (a)'s matrices' reduction in the batching sumcheck too.** Without the
+    slices, the merged sumcheck's initial claim has an unknown part (theirs); each round multiplies it by its
+    challenge, so at the end it is `Λ` times it, `Λ` the product of the batch's 27 challenges. The batch's terminal
+    is then not checked by the contract: it becomes the bit-slice claim `Σ_i μ_i ẑ(i, p) = Σ (stack terms) + last`,
+    `μ = λ^3 (ext (a + α b) L̂(ρ) eq(σ, ·) + Λ (c_weight e + pin_weight [· = pin]))` (`Pending::combination`), which
+    joins `C1`'s call as before. If `PCS_OPEN` accepts it, the batch's terminal holds with the true slices: the same
+    check, made by the opening. Measured (ABI × (a), 1,000 signatures): calldata 6,196 → 5,716 B (−20 scalars, skip
+    4); straight 92,309 → 90,996; tx (EIP-7623, `c = 0`) 247,120 → 228,010; EIP-7976 396,544 → 365,824.
+    Prover (extension B): as entry 5, with the bit-slice claim's weights and value from the batch's end.

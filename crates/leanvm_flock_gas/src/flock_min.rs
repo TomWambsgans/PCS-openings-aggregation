@@ -160,17 +160,17 @@ pub fn verify<S: Scalar>(
     })
 }
 
-/// Flock with the slices sent, its matrices' reduction left to a later sumcheck that runs its `k + 6` rounds beside
-/// its own (the batching sumcheck of `crates/leanvm_univariate`, SPEC.md §13): the zerocheck, the lincheck, the slices
-/// and the ring switch's map and target; then what that sumcheck needs of the matrices' reduction.
+/// Flock with its matrices' reduction left to a later sumcheck that runs its `k + 6` rounds beside its own (the
+/// batching sumcheck of `crates/leanvm_univariate`, SPEC.md §13): the zerocheck, the lincheck, and with the slices
+/// sent, the slices and the ring switch's map and target; then what that sumcheck needs of the matrices' reduction.
+/// Without the slices ([`Slices::Claim`]) there is no end yet: the later sumcheck's terminal leaves the combination
+/// ([`Pending::combination`]).
 pub fn verify_deferred<S: Scalar>(
     log_n: usize,
     variant: Variant,
     transcript: &mut impl Channel<S>,
-) -> Result<(Vec<S>, End<S>, Pending<S>), VerifierError> {
-    assert_ne!(variant.slices, Slices::Claim, "the slices are sent");
+) -> Result<(Vec<S>, Option<End<S>>, Pending<S>), VerifierError> {
     let front = front(log_n, variant, transcript)?;
-    let slices = front.slices.clone().expect("sent");
     let pending = Pending::new(
         front.z_skip,
         &front.row_low,
@@ -178,9 +178,9 @@ pub fn verify_deferred<S: Scalar>(
         &front.chi_in_prime,
         front.alpha,
         front.r_lc,
-        &slices,
+        front.slices.as_deref(),
     );
-    let end = ring_end(variant, &front, &slices, transcript);
+    let end = front.slices.as_ref().map(|slices| ring_end(variant, &front, slices, transcript));
     Ok((front.point, end, pending))
 }
 
@@ -191,15 +191,20 @@ pub struct Pending<S> {
     pub claim: S,
     k: usize,
     skip_weights: Vec<S>,
+    low_weights: Vec<S>,
+    c_weight: S,
+    pin_weight: S,
     row_low: Vec<S>,
     chi_in: Vec<S>,
     chi_in_prime: Vec<S>,
     alpha: S,
-    slices: Vec<S>,
+    /// The slices if sent; else the terminal leaves their combination.
+    slices: Option<Vec<S>>,
 }
 
 impl<S: Scalar> Pending<S> {
-    /// The matrices' reduction of the lincheck's terminal `r_lc`, as `reduce_terminal` starts it with the slices.
+    /// The matrices' reduction of the lincheck's terminal `r_lc`, as `reduce_terminal` starts it: with the slices,
+    /// its claim has their known part; without, it is `r_lc` and their part stays unknown.
     fn new(
         z_skip: Option<S>,
         row_low: &[S],
@@ -207,22 +212,64 @@ impl<S: Scalar> Pending<S> {
         chi_in_prime: &[S],
         alpha: S,
         r_lc: S,
-        slices: &[S],
+        slices: Option<&[S]>,
     ) -> Self {
         let _phase = enter("flock matrices: reduction to A0, B0 claims");
         let (skip_weights, low_weights) = row_low_weights(z_skip, row_low);
         let (c_weight, pin_weight) = known_weights(alpha, chi_in, chi_in_prime);
-        let known = c_weight * dot(&low_weights, slices) + pin_weight * slices[BLAKE2S_CONSTANT_COLUMN % K_BITS];
+        let known = slices.map(|slices| {
+            c_weight * dot(&low_weights, slices) + pin_weight * slices[BLAKE2S_CONSTANT_COLUMN % K_BITS]
+        });
         Self {
-            claim: r_lc + known,
+            claim: r_lc + known.unwrap_or(S::zero()),
             k: PACKING - row_low.len(),
             skip_weights,
+            low_weights,
+            c_weight,
+            pin_weight,
             row_low: row_low.to_vec(),
             chi_in: chi_in.to_vec(),
             chi_in_prime: chi_in_prime.to_vec(),
             alpha,
-            slices: slices.to_vec(),
+            slices: slices.map(|s| s.to_vec()),
         }
+    }
+
+    /// Whether the slices were sent (else [`Self::combination`] is the terminal).
+    pub fn has_slices(&self) -> bool {
+        self.slices.is_some()
+    }
+
+    /// Without the slices: the terminal of the sumcheck that ran the matrices' rounds as its first, at its point
+    /// (every round's challenge), with `a = Â0`, `b = B̂0` there, the matrices' zero-extension `extension` and its power
+    /// `scale` in that sumcheck. Each round maps its claim `c` to `c0 + (c + c2) r + c2 r^2`, so the slices' unknown
+    /// part of the initial claim reaches the last claim times `Λ`, the product of every challenge: the terminal is
+    /// `Σ_i μ_i s_i = rest`, `rest` the terminal's known terms and the last claim, and
+    /// `μ = scale (extension (a + α b) L̂(ρ) eq(σ, ·) + Λ (c_weight e + pin_weight [· = pin]))`. Returns `μ` and the
+    /// claims on `A0`, `B0`.
+    pub fn combination(&self, point: &[S], a: S, b: S, extension: S, scale: S) -> Result<(Vec<S>, MatrixClaim<S>), VerifierError> {
+        assert!(self.slices.is_none(), "the combination is for unsent slices");
+        let _phase = enter("flock matrices: the slices' combination");
+        let (rho, sigma) = point[..self.rounds()].split_at(self.k);
+        let skip_at_rho = if self.k > 0 {
+            multilinear_eval(&self.skip_weights, rho)?
+        } else {
+            S::one()
+        };
+        let lambda = point.iter().fold(S::one(), |acc, &r| acc * r);
+        let factor = scale * extension * (a + self.alpha * b) * skip_at_rho;
+        let (lambda_c, lambda_pin) = (scale * lambda * self.c_weight, scale * lambda * self.pin_weight);
+        let mut weights: Vec<S> = eq_kernel(sigma).into_iter().map(|e| factor * e).collect();
+        for (weight, &low) in weights.iter_mut().zip(&self.low_weights) {
+            *weight += lambda_c * low;
+        }
+        weights[BLAKE2S_CONSTANT_COLUMN % K_BITS] += lambda_pin;
+        let claim = MatrixClaim {
+            point: [rho, &self.row_low, &self.chi_in, sigma, &self.chi_in_prime].concat(),
+            a,
+            b,
+        };
+        Ok((weights, claim))
     }
 
     /// The variables of the sum, the sumcheck's first ones.
@@ -240,7 +287,8 @@ impl<S: Scalar> Pending<S> {
         } else {
             S::one()
         };
-        let value = (a + self.alpha * b) * skip_at_rho * multilinear_eval(&self.slices, sigma)?;
+        let slices = self.slices.as_ref().expect("the terminal of sent slices");
+        let value = (a + self.alpha * b) * skip_at_rho * multilinear_eval(slices, sigma)?;
         let claim = MatrixClaim {
             point: [rho, &self.row_low, &self.chi_in, sigma, &self.chi_in_prime].concat(),
             a,
@@ -567,7 +615,7 @@ mod tests {
             let alpha = element(&mut seed);
             let r_lc = walked(k, z_skip, &low, &chi_in, &chi_in_prime, &s, alpha);
             let z = (k > 0).then_some(z_skip);
-            let pending = Pending::new(z, &low, &chi_in, &chi_in_prime, alpha, r_lc, &s);
+            let pending = Pending::new(z, &low, &chi_in, &chi_in_prime, alpha, r_lc, Some(&s));
             assert_eq!(pending.rounds(), k + PACKING);
 
             // The matrices' tables over `vars` variables: G' zero-extended (δ_0 on the rest), L and s repeated.
@@ -622,9 +670,27 @@ mod tests {
             assert_eq!(claim.point, matrix_point, "k = {k}");
             assert_eq!((claim.a, claim.b), (a, b));
             assert_eq!(w_r * c_r, multilinear_eval(&w, &point).unwrap() * c_r);
+            // Without the slices: the terminal leaves Σ μ_i s_i = rest, which the true slices hold.
+            {
+                let unsent = Pending::new(z, &low, &chi_in, &chi_in_prime, alpha, r_lc, None);
+                let mut channel = KeccakChannel::new(bytes, &writer.stream, Checks::Enforce);
+                let lambda = channel.sample();
+                let target = other + lambda * unsent.claim;
+                let (r, last) = sumcheck(&mut channel, target, 3, &vec![None; vars]).unwrap();
+                let c_r = channel.next_scalar().unwrap();
+                let (a, b) = (channel.next_scalar().unwrap(), channel.next_scalar().unwrap());
+                let extension = (unsent.rounds()..vars).fold(ONE, |acc, j| acc * (ONE + r[j]));
+                let (weights, claim) = unsent.combination(&r, a, b, extension, lambda).unwrap();
+                let rest = multilinear_eval(&w, &r).unwrap() * c_r + last;
+                assert_eq!(dot(&weights, &s), rest, "k = {k}: the combination holds of the true slices");
+                assert_eq!(claim.point, matrix_point);
+                let mut wrong = s.clone();
+                wrong[9] += ONE;
+                assert_ne!(dot(&weights, &wrong), rest);
+            }
             let mut other_slices = s.clone();
             other_slices[5] += ONE;
-            let forged = Pending::new(z, &low, &chi_in, &chi_in_prime, alpha, r_lc, &other_slices);
+            let forged = Pending::new(z, &low, &chi_in, &chi_in_prime, alpha, r_lc, Some(&other_slices));
             assert!(run(&forged).is_err(), "k = {k}: other slices fail");
         }
     }

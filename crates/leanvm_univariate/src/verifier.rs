@@ -393,14 +393,14 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     // (SPEC.md §13): it is left pending here.
     let mut pending = None;
     let flock = match blake2s {
-        Blake2s::Flock(variant) if mode == Claims::Point && variant.slices != Slices::Claim => {
+        Blake2s::Flock(variant) if mode == Claims::Point => {
             let (point, end, left) = flock_min::verify_deferred(flock_log_n, variant, channel)?;
-            pending = Some(left);
+            pending = Some((left, point.clone()));
             Some((point, end, None))
         }
         Blake2s::Flock(variant) => {
             let reduced = flock_min::verify(flock_log_n, variant, channel)?;
-            Some((reduced.point, reduced.end, Some(reduced.matrices)))
+            Some((reduced.point, Some(reduced.end), Some(reduced.matrices)))
         }
         Blake2s::Omitted => None,
     };
@@ -632,7 +632,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     let mut bit_slice = Relations::default();
     let mut ring_map: Option<Vec<S>> = None;
     let tower = matches!(blake2s, Blake2s::Flock(Variant { slices: Slices::Tower, .. }));
-    if let Some((flock_point, flock_end, flock_matrices)) = flock {
+    if let Some((flock_point, Some(flock_end), flock_matrices)) = flock {
         match flock_end {
             End::Ring { map, target, .. } if tower && mode == Claims::Point => {
                 // One term for the whole weight, evaluated at the batch's point (SPEC.md §13).
@@ -733,8 +733,14 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
             openings
         }
         Claims::Point => {
-            let (openings, deferred) =
-                batch(channel, &combined, &layouts, bit_slice, ring_map.as_deref(), pending.as_ref())?;
+            let (openings, deferred) = batch(
+                channel,
+                &combined,
+                &layouts,
+                bit_slice,
+                ring_map.as_deref(),
+                pending.as_ref().map(|(p, point)| (p, &point[..])),
+            )?;
             if deferred.is_some() {
                 matrices = deferred;
             }
@@ -898,7 +904,7 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
     layouts: &[(Commitment, StackLayout)],
     bit_slice: Option<Combined<S>>,
     ring_map: Option<&[S]>,
-    pending: Option<&flock_min::Pending<S>>,
+    pending: Option<(&flock_min::Pending<S>, &[S])>,
 ) -> Result<(Vec<(Commitment, Opening<S>)>, Option<MatrixClaim<S>>), VerifierError> {
     let _phase = enter("claims: batching sumcheck to point claims");
     let lambda = channel.sample();
@@ -909,17 +915,14 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
         target += scale * claim.value;
         scale *= lambda;
     }
-    if let Some(pending) = pending {
+    if let Some((pending, _)) = pending {
         assert!(pending.rounds() <= vars);
         target += scale * pending.claim;
     }
     let (r, last) = sumcheck(channel, target, 3, &vec![None; vars])?;
     let values = channel.next_scalars(combined.len())?;
     let matrices = match pending {
-        Some(pending) => {
-            let (a, b) = (channel.next_scalar()?, channel.next_scalar()?);
-            Some((pending.terminal(&r, a, b)?, pending.rounds()))
-        }
+        Some(_) => Some((channel.next_scalar()?, channel.next_scalar()?)),
         None => None,
     };
     let _weights = enter("claims: the batch's weights at its point (eq, selectors, twists)");
@@ -942,11 +945,40 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
             },
         ));
     }
-    let matrices = matrices.map(|((value, claim), rounds)| {
-        let extension = (rounds..vars).fold(S::one(), |acc, j| acc * (S::one() + r[j]));
-        sum += scale * value * extension;
-        claim
-    });
+    let mut claim = None;
+    if let (Some((pending, flock_point)), Some((a, b))) = (pending, matrices) {
+        let extension = (pending.rounds()..vars).fold(S::one(), |acc, j| acc * (S::one() + r[j]));
+        if pending.has_slices() {
+            let (value, matrices) = pending.terminal(&r, a, b)?;
+            sum += scale * value * extension;
+            claim = Some(matrices);
+        } else {
+            // Flock (a): the terminal leaves Σ_i μ_i ẑ(i, p) = sum + last, a bit-slice claim joining C1's call.
+            let (weights, matrices) = pending.combination(&r, a, b, extension, scale)?;
+            let mut relation = Relations::default();
+            relation.push(
+                weights
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &coefficient)| Term {
+                        column: Column::QflockBits,
+                        point: flock_point.to_vec(),
+                        twist: i as u8,
+                        coefficient,
+                    })
+                    .collect(),
+                sum + last,
+            );
+            let combination = relation.combine(Commitment::C1, S::one());
+            for (commitment, opening) in openings.iter_mut() {
+                if let (Commitment::C1, Opening::Point { bit_slice, .. }) = (commitment, opening) {
+                    *bit_slice = combination.clone();
+                }
+            }
+            claim = Some(matrices);
+            return Ok((openings, claim));
+        }
+    }
     channel.require_zero(sum + last, VerifierError::StackBatchTerminal)?;
-    Ok((openings, matrices))
+    Ok((openings, claim))
 }
