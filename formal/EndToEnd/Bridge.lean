@@ -2,6 +2,7 @@
 import Bridge.Opening
 import Bridge.Chain
 import Bridge.Verifier
+import Bridge.Extractor
 
 /-!
 # The bridge: the statement's definitions are the proof layers'
@@ -18,4 +19,6 @@ definitions equal to the proofs' (see `README.md` of this package):
 * `Bridge/Verifier.lean`: the statement's verifier is `Soundness.verifyES` (F4's chain and three
   openings with the statement's early stops), given the claims (`verifyWith_eq_verifyES`,
   `verifierBridge_of_claims`: `Soundness.VerifierBridge`).
+* `Bridge/Extractor.lean`: the extractor's read-back of the witness table is F4's table of the stack
+  (`witnessEntries_eq`).
 -/
