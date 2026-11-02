@@ -1,0 +1,82 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+#
+# The bridge between the end statements and the proofs: ONE Lake workspace in which the statement
+# (`formal/Statement`, library `PcsQuotient`) and the proof layers (`formal/Circuit`,
+# `QuotientSecurity`, `QuotientRpm`, `WhirBridge`, `Compose`, `Completeness`, `QuotientZk`,
+# `Implementation`, `Field`) are all visible, and `EndToEnd/Bridge/*.lean`, the proofs that the
+# statement's definitions are the proof layers' transcriptions. It builds as `Compose` and
+# `Completeness` do, against a built checkout of leanerVM (https://github.com/Verified-zkEVM/leanerVM,
+# commit 6175f1a07f0dc33bd3d640de0063d1006143ee91) at `../leanervm`, sharing that checkout's
+# `lean_vm` packages (Mathlib, VCVio, CompPoly, ArkLib, mumbai's `statement` and `common`), so
+# nothing of them is fetched; every library of this repository is compiled from its sources in
+# `formal/` (`srcDir`), the statement's against the same mumbai `statement` package the proofs use.
+# See README.md.
+name = "pcs-quotient-end-to-end"
+version = "0.1.0"
+defaultTargets = ["EndToEnd"]
+packagesDir = "../leanervm/lean_vm/.lake/packages"
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[require]]
+name = "lean-vm"
+path = "../leanervm/lean_vm"
+
+# The statement (definitions and end statements only), from `formal/Statement`.
+[[lean_lib]]
+name = "PcsQuotient"
+srcDir = "../Statement"
+globs = ["PcsQuotient", "PcsQuotient.+"]
+
+# The deployed circuit (F0b), from `formal/Circuit`.
+[[lean_lib]]
+name = "Circuit"
+srcDir = "../Circuit"
+globs = ["Circuit", "Circuit.+"]
+
+# `F192` (F0c), from `formal/Field`.
+[[lean_lib]]
+name = "Field"
+srcDir = ".."
+
+# The reduction (F1) and the circuit's theorems (F0a), from `formal/QuotientSecurity`.
+[[lean_lib]]
+name = "QuotientSecurity"
+srcDir = ".."
+
+# The reduction's Keccak-256 chain (F4a), from `formal/QuotientRpm`.
+[[lean_lib]]
+name = "QuotientRpm"
+srcDir = ".."
+
+# The WHIR openings (F2), from `formal/WhirBridge`.
+[[lean_lib]]
+name = "WhirBridge"
+srcDir = "../WhirBridge"
+
+# The composition (F4), from `formal/Compose`.
+[[lean_lib]]
+name = "Compose"
+srcDir = "../Compose"
+
+# End-to-end completeness, from `formal/Completeness`.
+[[lean_lib]]
+name = "Completeness"
+srcDir = "../Completeness"
+
+# Zero knowledge (F3b), from `formal/QuotientZk`.
+[[lean_lib]]
+name = "QuotientZk"
+srcDir = ".."
+
+# The implementation is the model (F5), from `formal/Implementation`.
+[[lean_lib]]
+name = "Implementation"
+srcDir = ".."
+
+# The bridge: the statement's definitions are the proofs' transcriptions.
+[[lean_lib]]
+name = "EndToEnd"
+globs = ["EndToEnd", "EndToEnd.+"]
