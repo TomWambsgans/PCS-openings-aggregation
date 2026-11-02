@@ -520,8 +520,9 @@ fn model_matches_the_prover() {
     assert_eq!(opening::verify(&layout, &committed.root, &claims, &proof), Ok(()));
 
     // Replay the transcript's lane rounds.
-    let (iv, statement) = opening::seed(&committed.root, &claims);
-    let mut transcript = Transcript::new(&proof, Digest(iv), Digest(statement), true);
+    let iv = opening::iv(&layout, &claims);
+    let mut transcript = Transcript::new(&proof, Digest(iv), Digest(opening::PUBLIC_DIGEST), true);
+    transcript.next_scalars(2).unwrap();
     let to = |x: E| F192::new(x.c0, x.c1, x.c2);
     let from = |x: F192| E::new(x.c0, x.c1, x.c2);
     let lambdas = powers(to(transcript.sample()), 2);
@@ -705,9 +706,16 @@ pub(crate) fn guessed_witness(
 /// The review's calldata-only distinguisher, turned around: for a candidate witness the four `a_j` still pin
 /// the twelve mask coefficients, but the witness table's root also commits to its padding, so recomputing it
 /// confirms neither candidate; and the same cells and masks under another seed commit to another root.
+///
+/// **What this does not show.** The verifier's guess at the padding is one seed, `[0; 32]`, so the test passes for
+/// any design whose padding is secret: it shows that the root commits to the padding, not that the root hides the
+/// witness. It also checks that with the prover's own padding the root confirms the true candidate and only it:
+/// the verdict rests on the padding's secrecy alone. The evidence that the roots and openings are independent of
+/// the witness is HIDING.md's argument, run on the real prover by `review_hiding.rs`'s translation tests
+/// (`translation_holds_on_real_openings`, `translation_holds_at_the_benchmark_size`), and [`openings_hide_the_tables`].
 #[test]
 fn calldata_alone_does_not_confirm_a_witness() {
-    use crate::protocol::{Index, label, prove};
+    use crate::protocol::{Index, Randomness, label, prove_with_randomness, table_seed};
     use crate::transcript::{ProverChain, scalars_root};
     let (circuit, inputs, statement) = two_witnesses();
     let index = Index::new(&circuit);
@@ -718,16 +726,11 @@ fn calldata_alone_does_not_confirm_a_witness() {
         let masks: [[F64; 3]; 4] = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
         let seed: [u8; 32] = std::array::from_fn(|_| rng.next_u8());
         let cells = circuit.cells(&inputs(secret));
-        let proof = prove(
-            &circuit,
-            &index,
-            &index_committed.root,
-            &statement,
-            &cells,
-            &masks,
-            &seed,
-        )
-        .proof;
+        let prove = |padding: [u8; 32]| {
+            let randomness = Randomness { masks, padding };
+            prove_with_randomness(&circuit, &index, &index_committed.root, &statement, &cells, &randomness).proof
+        };
+        let proof = prove(seed);
         // Only the proof's nine scalars from here on.
         let s = &proof.stream;
         let root1 = scalars_root(&[s[0], s[1]]).unwrap();
@@ -743,7 +746,7 @@ fn calldata_alone_does_not_confirm_a_witness() {
             .take(m + 1)
             .collect();
         let (w2, w3, wm) = (digits[2], digits[3], digits[m]);
-        let mut verdict = vec![];
+        let (mut verdict, mut knowing_the_padding) = (vec![], vec![]);
         for hypothesis in [false, true] {
             let candidate = circuit.cells(&inputs(hypothesis));
             let mut w_hat = candidate.clone();
@@ -769,20 +772,18 @@ fn calldata_alone_does_not_confirm_a_witness() {
             // The verifier's best guess at the padding: any seed. The root commits to the real one.
             let table = guessed_witness(&circuit, &candidate, &mask, &[0; 32]);
             verdict.push(opening::commit(&table).root == root1);
+            let known = guessed_witness(&circuit, &candidate, &mask, &table_seed(&seed, b"witness"));
+            knowing_the_padding.push(opening::commit(&known).root == root1);
         }
         assert_eq!(verdict, [false, false], "trial {trial}");
+        assert_eq!(
+            knowing_the_padding,
+            [!secret, secret],
+            "trial {trial}: the padding alone hides"
+        );
 
         let again: [u8; 32] = std::array::from_fn(|_| rng.next_u8());
-        let other = prove(
-            &circuit,
-            &index,
-            &index_committed.root,
-            &statement,
-            &cells,
-            &masks,
-            &again,
-        )
-        .proof;
+        let other = prove(again);
         assert_ne!(other.stream[..2], proof.stream[..2], "the root commits to the padding");
     }
 }
@@ -790,9 +791,16 @@ fn calldata_alone_does_not_confirm_a_witness() {
 /// The review's opening distinguisher, turned around: the witness table's opened rows match no row a candidate
 /// witness commits to, whichever candidate; and they say nothing of the masks, for at the opened positions the
 /// overflow lane's random first piece alone reaches every value, so the masks' contributions lie in its span.
+///
+/// **What this does not show.** The candidates are committed with one guessed padding seed, `[0; 32]`, so the
+/// first half passes for any design whose padding is secret; with the prover's own padding, every opened row is a
+/// row of the true candidate's commitment and not every one is of the other's (checked): the verdict rests on the
+/// padding's secrecy alone. The second half (the masks in the first piece's span) is a property of the layout. The evidence
+/// that the openings are independent of the witness is `review_hiding.rs`'s translation tests
+/// (`translation_holds_on_real_openings`, `translation_holds_at_the_benchmark_size`) and [`openings_hide_the_tables`].
 #[test]
 fn opened_rows_do_not_identify_the_witness() {
-    use crate::protocol::{Index, open, prove, witness_layout};
+    use crate::protocol::{Index, Randomness, open, prove_with_randomness, table_seed, witness_layout};
     use std::collections::HashSet;
     let (circuit, inputs, statement) = two_witnesses();
     let index = Index::new(&circuit);
@@ -802,15 +810,8 @@ fn opened_rows_do_not_identify_the_witness() {
     let masks: [[F64; 3]; 4] = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
     let seed: [u8; 32] = std::array::from_fn(|_| rng.next_u8());
     let cells = circuit.cells(&inputs(secret));
-    let proved = prove(
-        &circuit,
-        &index,
-        &index_committed.root,
-        &statement,
-        &cells,
-        &masks,
-        &seed,
-    );
+    let randomness = Randomness { masks, padding: seed };
+    let proved = prove_with_randomness(&circuit, &index, &index_committed.root, &statement, &cells, &randomness);
     let layout = witness_layout(circuit.log_rows);
     let (lanes, log_lane) = (layout.lanes(), layout.log_lane());
     let honest = pcs::whir::commit(&proved.tables.witness.stack, layout.log_n, LANE_FOLD, LOG_INV_RATE).1;
@@ -830,18 +831,26 @@ fn opened_rows_do_not_identify_the_witness() {
             mask[4 * i + j] = c;
         }
     }
-    for hypothesis in [false, true] {
-        let table = guessed_witness(&circuit, &circuit.cells(&inputs(hypothesis)), &mask, &[0; 32]);
+    let found = |hypothesis: bool, padding: &[u8; 32]| {
+        let table = guessed_witness(&circuit, &circuit.cells(&inputs(hypothesis)), &mask, padding);
         let (_, data) = pcs::whir::commit(&table.stack, layout.log_n, LANE_FOLD, LOG_INV_RATE);
         let candidate: HashSet<Vec<u64>> = data
             .codeword
             .chunks_exact(lanes)
             .map(|r| r.iter().map(|w| w.0).collect())
             .collect();
+        rows.iter().filter(|r| candidate.contains(*r)).count()
+    };
+    for hypothesis in [false, true] {
+        assert_eq!(found(hypothesis, &[0; 32]), 0, "dummy = {hypothesis}");
+        // With the prover's padding: every opened row for the true candidate, not all of them for the other (the
+        // two witnesses differ in a few cells, so some rows agree).
+        let known = found(hypothesis, &table_seed(&seed, b"witness"));
         assert_eq!(
-            rows.iter().filter(|r| candidate.contains(*r)).count(),
-            0,
-            "dummy = {hypothesis}"
+            known == rows.len(),
+            hypothesis == secret,
+            "dummy = {hypothesis}, the prover's padding: {known} of {} rows",
+            rows.len()
         );
     }
 

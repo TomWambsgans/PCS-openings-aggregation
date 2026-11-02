@@ -9,6 +9,9 @@
 // `encoded_rows`, the rows an opening reads from it, encoded again; deeper levels whose codeword reaches 1 GiB
 // kept the same way (`LigeroRows`); and `recursive_prover_with_lane_tensors`, the lane rounds on a weight given
 // as lane tensors rather than written out, its committed message freed once the first queries are answered.
+// One comment corrected (no code change): the level-0 query grinding is `QUERY_GRINDING_BITS = 17` bits in the
+// production profile, not "0 bits" as leanVM's comment says (`whir_config.rs`, and the verifier's
+// `QUERY_GRINDING_BITS`); reported in UPSTREAM.md.
 
 //! WHIR with `K = GF(2)[x]/(x^64+x^4+x^3+x+1)` and
 //! `E = K[y]/(y^3+y+1)`.
@@ -1801,8 +1804,10 @@ fn recursive_prover(
     // MLE evaluation is introduced into the running sumcheck.
     send_ood(&mut sc_prover, ps, n1, ood_count(1));
 
-    // Query-phase PoW grinding for L0 (0 bits in the production profile; the
-    // canonical 0 nonce is still absorbed to keep the transcript in lockstep).
+    // Query-phase PoW grinding for L0 (`QUERY_GRINDING_BITS = 17` bits in the
+    // production profile, as at every level; 0 bits, the canonical 0 nonce still
+    // absorbed to keep the transcript in lockstep, only in the test-only
+    // `default_config`). [Comment corrected here: leanVM's said 0 bits.]
     ps.grind(config.grinding_bits[0] as u32);
 
     // Open L0; lane-fold weights = r_lane_fold.

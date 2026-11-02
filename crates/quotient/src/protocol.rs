@@ -143,20 +143,81 @@ pub(crate) fn quotient_chunks(m: usize, spill: usize, tail: usize) -> Vec<(usize
     chunks
 }
 
-/// The seed of one table's randomness, from the proof's: Keccak-256 of a label and the seed.
-fn table_seed(seed: &[u8; 32], table: &[u8]) -> [u8; 32] {
+/// The seed of one table's padding, from the proof's: Keccak-256 of a label, the table's name and the seed.
+pub(crate) fn table_seed(seed: &[u8; 32], table: &[u8]) -> [u8; 32] {
     primitives::hash::hash(&[b"pcs-quotient-pad-".as_slice(), table, seed].concat())
 }
 
-/// Fresh randomness for a proof from `rand`'s thread generator (ChaCha, seeded and reseeded by the operating
-/// system): the masks and the tables' seed that [`prove`] takes.
-pub fn fresh_randomness() -> ([[F64; 3]; 4], [u8; 32]) {
-    use rand::RngCore;
-    let mut rng = rand::rng();
-    let masks = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
+/// The secret randomness of one proof (HIDING.md, "Randomness"): the masks, three `K`-coefficients for each of the
+/// four row polynomials, and the seed of both tables' padding. It must be uniform, secret, and **fresh per proof,
+/// never reused**: two proofs that share the padding's seed have the same random first pieces, and two that share
+/// the masks let the second proof's `a_j` be predicted from the first's for a guessed witness, so either confirms
+/// the guess (`review_hiding.rs`). [`prove`] draws its own; [`prove_with_randomness`] takes it.
+#[derive(Clone)]
+pub struct Randomness {
+    /// `masks[j][i]`: coefficient `i` of row polynomial `j`'s mask.
+    pub masks: [[F64; 3]; 4],
+    /// The tables' padding: each table's is Keccak-256 of a label, its name and this.
+    pub padding: [u8; 32],
+}
+
+/// The key derivation's tags: each in one use, none a prefix of another, each followed by fields of fixed length
+/// or (the cells' digests) after their count.
+const KDF_KEY: &[u8] = b"pcs-quotient-kdf-v1-key";
+const KDF_CELLS: &[u8] = b"pcs-quotient-kdf-v1-cells";
+const KDF_MASKS: &[u8] = b"pcs-quotient-kdf-v1-masks";
+const KDF_PADDING: &[u8] = b"pcs-quotient-kdf-v1-padding";
+
+impl Randomness {
+    /// The randomness of a proof from its 32-byte `seed`, by Keccak-256 with distinct tags. A key binds the seed,
+    /// the transcript's label (the protocol, the circuit's commitment and the statement: [`label`]) and a digest of
+    /// the witness's cells; the masks are the words of Keccak-256(tag ‖ key ‖ `k`) for `k = 0, 1, 2` (word `4k + i`
+    /// is `masks[(4k + i) / 3][(4k + i) % 3]`), the padding is Keccak-256(tag ‖ key). A seed reused for another
+    /// witness or another statement (a generator that repeats, in a forked process or a restored snapshot) gives
+    /// unrelated randomness; reused for the same ones, it gives the same proof again. The seed must still be fresh
+    /// per proof and secret: [`prove`] draws it from the operating system.
+    pub fn derive(seed: &[u8; 32], index_root: &Hash, statement: &Statement, cells: &[F64]) -> Self {
+        let key =
+            primitives::hash::hash(&[KDF_KEY, seed, &label(index_root, statement), &cells_digest(cells)].concat());
+        let words: Vec<u64> = (0..3u8)
+            .flat_map(|k| {
+                let block = primitives::hash::hash(&[KDF_MASKS, &key, &[k]].concat());
+                (0..4).map(move |i| u64::from_le_bytes(block[8 * i..8 * i + 8].try_into().unwrap()))
+            })
+            .collect();
+        Self {
+            masks: std::array::from_fn(|j| std::array::from_fn(|i| F64(words[3 * j + i]))),
+            padding: primitives::hash::hash(&[KDF_PADDING, &key].concat()),
+        }
+    }
+}
+
+/// The cells' digest the key binds: Keccak-256 of its tag, the number of cells, and the digests of their runs of
+/// `2^12` cells (each the Keccak-256 of its cells' words, 8 little-endian bytes each), the runs hashed in parallel.
+fn cells_digest(cells: &[F64]) -> Hash {
+    const RUN: usize = 1 << 12;
+    let runs = parallel::map_collect(cells.len().div_ceil(RUN), |r| {
+        let run = &cells[r * RUN..cells.len().min((r + 1) * RUN)];
+        let bytes: Vec<u8> = run.iter().flat_map(|w| w.0.to_le_bytes()).collect();
+        primitives::hash::hash(&bytes)
+    });
+    let mut hasher = primitives::hash::Hasher::new();
+    hasher.update(KDF_CELLS).update(&(cells.len() as u64).to_le_bytes());
+    runs.iter().for_each(|digest| {
+        hasher.update(digest);
+    });
+    hasher.finalize()
+}
+
+/// A proof's 32-byte seed from the operating system's generator (`rand`'s `OsRng`, that is `getrandom`), which
+/// keeps no state in the process: a forked process does not repeat it. [`prove`] draws one per proof.
+pub fn fresh_seed() -> [u8; 32] {
+    use rand::TryRngCore;
     let mut seed = [0; 32];
-    rng.fill_bytes(&mut seed);
-    (masks, seed)
+    rand::rngs::OsRng
+        .try_fill_bytes(&mut seed)
+        .expect("the operating system's random generator");
+    seed
 }
 
 /// The circuit as the verifier's commitment sees it: the coefficients of its wiring polynomial, which sends a
@@ -332,18 +393,26 @@ pub struct Tables {
     pub quotient_committed: Committed,
 }
 
-/// Prove `statement` from the cells of a witness, against the circuit committed as `index_root`. `masks` and
-/// `seed` (the tables' padding, HIDING.md) must be uniformly random and secret, drawn from a cryptographic
-/// generator such as [`fresh_randomness`]. Panics on a challenge the verifier rejects.
-pub fn prove(
+/// Prove `statement` from the cells of a witness, against the circuit committed as `index_root`, with randomness
+/// of its own, fresh per proof and never reused: a 32-byte seed from the operating system ([`fresh_seed`]), from
+/// which [`Randomness::derive`] makes the masks and the tables' padding. Panics on a challenge the verifier rejects.
+pub fn prove(circuit: &Circuit, index: &Index, index_root: &Hash, statement: &Statement, cells: &[F64]) -> Proved {
+    let randomness = Randomness::derive(&fresh_seed(), index_root, statement, cells);
+    prove_with_randomness(circuit, index, index_root, statement, cells, &randomness)
+}
+
+/// [`prove`] with its randomness given, deterministic: for tests and reproducible benchmarks. The proof hides the
+/// witness only if `randomness` is uniform, secret, and **fresh per proof, never reused** ([`Randomness`]): from
+/// [`Randomness::derive`] of a fresh secret seed, as [`prove`] does. Panics on a challenge the verifier rejects.
+pub fn prove_with_randomness(
     circuit: &Circuit,
     index: &Index,
     index_root: &Hash,
     statement: &Statement,
     cells: &[F64],
-    masks: &[[F64; 3]; 4],
-    seed: &[u8; 32],
+    randomness: &Randomness,
 ) -> Proved {
+    let Randomness { masks, padding } = randomness;
     assert!(
         supported(circuit.log_rows),
         "2^{} rows: the layouts take 2^{MIN_LOG_ROWS} to 2^{MAX_LOG_ROWS}",
@@ -368,7 +437,7 @@ pub fn prove(
     // Hidden, its stack holds the coefficients out of order: they are read back from it where they are needed.
     let witness = Table::hidden(
         witness_layout(circuit.log_rows),
-        &table_seed(seed, b"witness"),
+        &table_seed(padding, b"witness"),
         |start, out| {
             for (i, o) in (start..).zip(out.iter_mut()) {
                 *o = if i < n {
@@ -486,7 +555,7 @@ pub fn prove(
     // of each run it is handed (debug builds check it).
     let fits = q[3 * n + layout.covered(m, 7)..].iter().all(|v| v.is_zero())
         && q_gate[n + layout.covered(m, 9)..].iter().all(|v| v.is_zero());
-    let quotient = Table::hidden_in(layout, values, &table_seed(seed, b"quotient"), |start, out| {
+    let quotient = Table::hidden_in(layout, values, &table_seed(padding, b"quotient"), |start, out| {
         // A run of pieces of one block, or a piece: in one chunk.
         let (c, within) = (start >> m, start & (n - 1));
         let (digit, limb) = (c & 3, c >> 4);
@@ -855,10 +924,6 @@ mod tests {
         }
     }
 
-    fn masks(rng: &mut Rng) -> [[F64; 3]; 4] {
-        std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())))
-    }
-
     fn seed(rng: &mut Rng) -> [u8; 32] {
         std::array::from_fn(|_| rng.next_u8())
     }
@@ -875,9 +940,11 @@ mod tests {
     }
 
     /// The prover's output, pinned: the proof and its three openings on the toy circuit hash to what the prover
-    /// made when the hidden layouts came in (HIDING.md; the pin of commit d940553, before them, was
-    /// `7d2d3430…`), so a change to how the prover computes cannot change a byte of what it proves. The seed of
-    /// the tables' padding is part of the input: a deterministic prover, given it.
+    /// made when the openings' transcripts took leanVM's shape (`opening::iv`), and the randomness came to be
+    /// derived from one seed (the pin before, with the masks and the padding's seed drawn directly, was
+    /// `aebdde8c…`; before the hidden layouts, at d940553, `7d2d3430…`), so a change to how the prover computes
+    /// cannot change a byte of what it proves. The proof's seed is part of the input: [`prove_with_randomness`] is
+    /// deterministic, and the randomness is [`Randomness::derive`]'s, as [`prove`]'s is.
     #[test]
     fn proofs_are_pinned() {
         let mut rng = Rng::new(0x1D);
@@ -888,21 +955,14 @@ mod tests {
         let statement = toy_statement(&x);
         let inputs: Vec<bool> = (0..256).map(|i| (x[i / 8] >> (i % 8)) & 1 == 1).collect();
         let cells = circuit.cells(&inputs);
-        let proved = prove(
-            &circuit,
-            &index,
-            &index_committed.root,
-            &statement,
-            &cells,
-            &masks(&mut rng),
-            &seed(&mut rng),
-        );
+        let randomness = Randomness::derive(&seed(&mut rng), &index_committed.root, &statement, &cells);
+        let proved = prove_with_randomness(&circuit, &index, &index_committed.root, &statement, &cells, &randomness);
         let openings = open(proved.tables, &proved.claims, &index, &index_committed);
         let hex: String = digest(&proved.proof, &openings)
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        assert_eq!(hex, "aebdde8c0b12a3263b42bf8728c1b0a727843844d286e53ad7bb87b6cff3a75c");
+        assert_eq!(hex, "4462f71d9f6a296121c28f4b1ac24ff0389d905f7c8941b724ec7bd7a832d6c0");
     }
 
     /// On a small circuit: an honest proof leaves four true claims that open, and a witness that breaks one gate,
@@ -924,15 +984,7 @@ mod tests {
             assert_eq!(cells[i], cells[next as usize]);
         }
 
-        let proved = prove(
-            &circuit,
-            &index,
-            &index_committed.root,
-            &statement,
-            &cells,
-            &masks(&mut rng),
-            &seed(&mut rng),
-        );
+        let proved = prove(&circuit, &index, &index_committed.root, &statement, &cells);
         assert!(proved.fits);
         assert_eq!(truth(&index, &proved), [true; 4]);
         assert_eq!(proved.proof.stream.len(), 9);
@@ -951,15 +1003,7 @@ mod tests {
         // A proof made for one statement, read against another.
         let mut other = statement;
         other.root[3] ^= 0x10;
-        let wrong = prove(
-            &circuit,
-            &index,
-            &index_committed.root,
-            &other,
-            &cells,
-            &masks(&mut rng),
-            &seed(&mut rng),
-        );
+        let wrong = prove(&circuit, &index, &index_committed.root, &other, &cells);
         assert_eq!(truth(&index, &wrong), [true, true, true, false]);
 
         let input_row = PUBLIC_ROWS + 5;
@@ -1001,18 +1045,46 @@ mod tests {
             tamper(&mut bad);
             let truth = truth(
                 &index,
-                &prove(
-                    &circuit,
-                    &index,
-                    &index_committed.root,
-                    &statement,
-                    &bad,
-                    &masks(&mut rng),
-                    &seed(&mut rng),
-                ),
+                &prove(&circuit, &index, &index_committed.root, &statement, &bad),
             );
             assert!(truth.contains(&false), "{name}: {truth:?}");
             assert!(truth[0] && truth[1], "{name}: {truth:?}");
         }
+    }
+
+    /// [`Randomness::derive`] is a function of the seed, the circuit's commitment, the statement and the cells: the
+    /// same ones give the same randomness, and another seed, commitment or statement, one cell changed or one cell
+    /// fewer give masks and padding that share nothing with it.
+    #[test]
+    fn derived_randomness_binds_the_statement_and_the_witness() {
+        let mut rng = Rng::new(0xD5);
+        let cells: Vec<F64> = (0..(1 << 14) + 5).map(|_| F64(rng.next_u64())).collect();
+        let statement = toy_statement(&[3; 32]);
+        let (s, root) = (seed(&mut rng), [7; 32]);
+        let base = Randomness::derive(&s, &root, &statement, &cells);
+        let again = Randomness::derive(&s, &root, &statement, &cells);
+        assert!(base.masks == again.masks && base.padding == again.padding);
+        let words = base.masks.as_flattened();
+        assert!(
+            (1..12).all(|k| !words[..k].contains(&words[k])),
+            "twelve distinct words"
+        );
+        let mut other_cells = cells.clone();
+        other_cells[9000].0 ^= 1;
+        let mut other_statement = statement;
+        other_statement.y[0] ^= 1;
+        let others = [
+            Randomness::derive(&seed(&mut rng), &root, &statement, &cells),
+            Randomness::derive(&s, &[8; 32], &statement, &cells),
+            Randomness::derive(&s, &root, &other_statement, &cells),
+            Randomness::derive(&s, &root, &statement, &other_cells),
+            Randomness::derive(&s, &root, &statement, &cells[..cells.len() - 1]),
+        ];
+        for (k, other) in others.iter().enumerate() {
+            let shared = other.masks.as_flattened().iter().filter(|w| words.contains(w)).count();
+            assert_eq!(shared, 0, "case {k}: the masks");
+            assert_ne!(base.padding, other.padding, "case {k}: the padding");
+        }
+        assert_ne!(fresh_seed(), fresh_seed(), "the operating system's seeds");
     }
 }

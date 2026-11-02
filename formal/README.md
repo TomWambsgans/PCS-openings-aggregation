@@ -19,10 +19,45 @@ circuit, with ideal commitments.
 |---|---|---|---|
 | F0 | The circuit: a Lean definition of the deployed wiring (`quotient::circuit::membership`), proof that a satisfying assignment is its computation (connecting `cells_determined` to the end theorems: the zero and one pinned by words 5 and 4, the statement embedding with words 4–7 = `(1, 0, 0, 0)`) and that this computation is Keccak-256 membership; the constants (Cantor basis, `τ`, `b`, the bit weights) as computable definitions whose hypotheses are checked | new (found missing by the Lean review: today the end theorems hold for every wiring, so for a degenerate one they say nothing) | in progress |
 | F1 | The reduction (five field elements → four claims): round-by-round knowledge soundness, completeness, honest-verifier ZK, Fiat–Shamir in the ROM, **ideal commitments** | ported from leanVM `formal/quotient` and adapted (below): `2^22` rows, the χ gate on bits (degree 2), degree bounds, the circuit argument (bits, no carries) | done for the reduction: `lake build` green, sorry-free, end theorems on `propext`, `Classical.choice`, `Quot.sound` (761 declarations swept, `formal/Review/Axioms.lean`). Its zero knowledge is for ideal *hiding* commitments only: the deployed roots and openings are F3's (and the masks of the five values have no slack, so nothing else may reveal an evaluation of a witness polynomial). Its theorems hold for every wiring: tying them to the deployed circuit is F0 |
-| F2 | WHIR openings list-sound for our claims (some member of the root's level-0 list satisfies all claims of one opening) | leanerVM `mumbai`, `lean_vm` `Whir/Sound`: `stackedSpec` holds for any multiaffine weights; ours are | round-by-round soundness and the table meaning proved in [`WhirBridge/`](WhirBridge/README.md), and Fiat–Shamir in the ROM for leanVM's transcript shape (claims chosen by the adversary); our own transcript (root hashed into the seed) is a stated gap; level-0 candidates per root exported: ≤ 9,952 (wiring), 7,908 (witness), 3,564 (quotient), leanerVM's certified codes; the seed form the ROM theorem covers (one hash of a fixed prefix and the claims, the root read from the proof) is being adopted in Rust |
+| F2 | WHIR openings list-sound for our claims (some member of the root's level-0 list satisfies all claims of one opening) | leanerVM `mumbai`, `lean_vm` `Whir/Sound`: `stackedSpec` holds for any multiaffine weights; ours are | round-by-round soundness and the table meaning proved in [`WhirBridge/`](WhirBridge/README.md), and Fiat–Shamir in the ROM for leanVM's transcript shape (claims chosen by the adversary); the Rust transcript now has that shape (`opening::iv`; the old one, root hashed into the seed, was the stated gap); level-0 candidates per root exported: ≤ 9,952 (wiring), 7,908 (witness), 3,564 (quotient), leanerVM's certified codes; the Lean mirror `openingVerifyWithHash` and `Test/Check.lean` still model the old seed |
 | F3 | Hiding openings: the padded tables (base field `K = GF(2^64)`, challenges in `E = GF(2^192)`, first fold 6) and the Merkle siblings in the random-permutation model | new (the ZK-WHIR note, adapted to `K ⊂ E`; `membership-zk.md` of leanVM's branch for the sibling argument) | Lean: `formal/QuotientSecurity/Hiding/` (sorry-free): for two tables with the same claims, the views (lane rounds, the folded table, every opened row) have the same distribution on the good challenges (`hidden_view_evalDistEq`), and differ by at most Pr[(R) fails] + ~2^-127 on any event (`hidden_prEvent_le_bound`; (S) bounded by `card_not_span_four_le`); unopened rows keep ≥ 2,368 / 3,840 bits (`unopened_row_le`). Condition (R) (`RoundsReached`) is a hypothesis: provable only to ~2^-54 so far; a layout change that makes it hold for all challenges is being designed. Not modelled: Fiat–Shamir, the random-oracle exchange of Merkle siblings |
-| F4 | Composition: commitments as Merkle trees over Keccak-256 in the random-permutation model, the reduction's Keccak-256 chain, the openings' duplex; extraction from the adversary's transcript (`mumbai`'s `Statement/Extractor.lean` decodes WHIR words by Guruswami–Sudan) | `mumbai` `common` (sponge indifferentiability, ROM→RPM), `lean_vm` extraction | to do |
+| F4 | Composition: commitments as Merkle trees over Keccak-256 in the random-permutation model, the reduction's Keccak-256 chain, the openings' duplex; extraction from the adversary's transcript (`mumbai`'s `Statement/Extractor.lean` decodes WHIR words by Guruswami–Sudan) | `mumbai` `common` (sponge indifferentiability, ROM→RPM), `lean_vm` extraction | **the chain (F4a) done** in [`QuotientRpm/`](#the-keccak-256-chain-f4a) (sorry-free, `propext`, `Classical.choice`, `Quot.sound`): the reduction with `transcript.rs`'s chain, byte for byte, in the ROM and in leanerVM's RPM, ideal commitments (a root is Keccak-256 of an injective encoding of the message). Merkle commitments, the openings' duplex and extraction: to do |
 | F5 | The implementation is the model: the EVM contract and the Rust verifier are generated from one recorded operation graph (`crates/evm/src/record.rs`); emit that graph as a Lean term too and prove it equals the model's verifier | new | to do |
+
+## The Keccak-256 chain (F4a)
+
+`QuotientRpm/` (library `QuotientRpm`, which needs leanerVM `mumbai`'s `statement` and `common` packages,
+pinned in `lakefile.toml`) lifts the reduction's knowledge soundness from an abstract random oracle on
+`(statement, messages)` to the transcript `crates/quotient/src/transcript.rs` computes.
+
+- **The chain** (`Bytes.lean`, `Chain.lean`): the seed is Keccak-256 of the label `pcs-quotient-kc1 ‖
+  index_root ‖ y ‖ root` (112 bytes); each challenge is Keccak-256 of the state and of the scalars sent since
+  the last one, each a 32-byte big-endian word (`[0; 8] ‖ c2 ‖ c1 ‖ c0`, `scalarWord`), and is the state's low
+  192 bits (`stateLimbs`: limb `i` is bytes `24 − 8i .. 32 − 8i`, big-endian); a root is two scalars, its
+  128-bit halves read as little-endian words (`rootScalars`), i.e. sixteen zero bytes and the half reversed
+  (`rootWords_eq`). The verifier (`Wire.verifyWith`, over any hash in any monad): root, `α`, `β`, `γ`, root,
+  `t`, five values, `ρ`, as in `reduce`. A `Wire` holds what the chain reads besides the proof: the circuit's
+  commitment, how the statement's 64 bytes are read as `Params`' statement, the field's limbs, and the two
+  messages' encodings. **Commitments are ideal**: the proof carries the polynomials and the root the chain
+  absorbs is Keccak-256 of an injective encoding of them, binding up to a collision (counted).
+- **Random oracle on transcripts** (`ChainRom.lean`, `FreshBad.lean`, `Uniform.lean`): against a random oracle
+  `H : bytes → 32 bytes`, a fresh query is bad (`chainBad`) when its answer collides with an earlier answer or
+  sits where an earlier input holds a state or a root (`Coll`, at most `(3|H| + 2)/2^256`), or when it is a
+  chain input whose challenge(s) turn the round's state from lost to won (`FirstBad`, `SecondBad`,
+  `ThirdBad`: the first round's three hashes are treated as one triple of uniform states; the parse is unique
+  given a collision-free history, so the three are exclusive, each at most `roundError`). The low 192 bits of
+  a uniform state are uniform (`prEvent_chal`, every limb triple having `256^8` states). An accepted proof of
+  cells that fail the relation makes a fresh query bad (`trace_chainBad`, through `bad_of_accepts` of
+  `Joint.lean`); with an eager-table lemma whose bad events see the history (`prEvent_randomOracle_le_of_freshBad`,
+  after VCVio's `prEvent_randomOracle_le_of_bad_queries`): **`knowledgeSoundness_chain`**, at most
+  `(Q + 8)(roundError + 3(Q + 8)/2^256)` for `Q` adversary queries (the verifier's eight hashes counted).
+- **The random-permutation model** (`Rpm.lean`): the experiment `rpmExperiment` has the adversary (coins, `π`,
+  `π⁻¹`) and the verifier hashing with Keccak-256 over the same `π`; `common`'s `runK_expand`, `runK_relabel`
+  and `keccak256_transfer` move it to the ROM against `advS` (cost `Q²/2^509`, `Q` the permutation calls of
+  the whole game), leanerVM's derandomization removes the simulator's coins (`exists_det`).
+  **`knowledgeSoundness_rpm`**: `(Q + 8)(roundError + 3(Q + 8)/2^256) + Q²/2^509`; at the protocol's sizes
+  (`roundError_le`: `≤ 2^-163`, the identities' degree `2^29` over `2^192`) **`knowledgeSoundness_rpm_bits`**
+  and, for every circuit, **`Instance.soundness_rpm`**: `(Q + 8)(2^-163 + 3(Q + 8)/2^256) + Q²/2^509`.
 
 ## The port to this protocol (F1)
 
