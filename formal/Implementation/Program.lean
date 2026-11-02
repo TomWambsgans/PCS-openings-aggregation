@@ -184,11 +184,14 @@ def backInv : Nat → List (Nat × Nat) → Option (List Nat)
     let tail ← backInv running' rest
     pure (inv :: tail)
 
+/-- `w_1 + 1` for the cells of the second half of a row, `w_1` for the first. -/
+def secondOf (w1 one : Nat) (second : Bool) : Option Nat := if second then add w1 one else some w1
+
 /-- `cell(shift, second)`: `a_0 + (t + shift) a_1 + w_1' (a_2 + (t + shift) a_3)`. -/
 def cell (L : Leaves) (w1 : Nat) (shift : Nat) (second : Bool) : Option Nat := do
   let sh ← cnst shift
   let first ← add L.t sh
-  let snd ← if second then add w1 L.one else pure w1
+  let snd ← secondOf w1 L.one second
   let m1 ← mul first (L.a.getD 1 0)
   let s1 ← add (L.a.getD 0 0) m1
   let m3 ← mul first (L.a.getD 3 0)
@@ -200,6 +203,11 @@ def cell (L : Leaves) (w1 : Nat) (shift : Nat) (second : Bool) : Option Nat := d
 (`1 + coordinate_weight(k)`): bit weights `x^1`, `0`, `x^2`, `x^4`, …, `x^32`, `y`. -/
 def slopeConst (k : Nat) : Nat :=
   1 ^^^ (if k = 0 then 2 else if k = 1 then 0 else if k < 7 then 2 ^ (2 ^ (k - 1)) else B64)
+
+/-- The slope of coordinate `k`: the constant `1 + coordinate_weight(k)` below 8, then
+`1 + γ^(2^(k - 8))`. -/
+def slopeOf (one : Nat) (gammas : List Nat) (k : Nat) : Option Nat :=
+  if k < 8 then cnst (slopeConst k) else add one (gammas.getD (k - 8) 0)
 
 /-- What `reduce` leaves, as indices: the claims' points then values, the sum's value, and the
 product it requires nonzero. -/
@@ -243,7 +251,7 @@ def reduceIds : Option Out := do
           let bc ← cnst (coords.getD (j - k) 0)
           let p ← mul bc (w.getD j 0)
           add acc' p) (w.getD k 0) (List.range' (k + 1) (11 - (k + 1)))
-      let slope ← if k < 8 then cnst (slopeConst k) else add one (gammas.getD (k - 8) 0)
+      let slope ← slopeOf one gammas k
       let cs ← mul coordinate slope
       let o ← add one cs
       mul acc o) pub0 (List.range 11)
