@@ -188,7 +188,6 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     let public = trace.public_input();
     let seed = keccak_seed(&NAME, &contract_iv(&shape, iv, &config.roots), &public);
     let mut writer = KeccakWriter::new(seed);
-    let layouts = layout_words(&shape);
 
     // 0. The six row counts (SPEC.md §13, F1), absorbed with C1's root.
     for &rows in &trace.rows {

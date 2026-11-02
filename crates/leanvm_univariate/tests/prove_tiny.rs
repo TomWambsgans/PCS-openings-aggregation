@@ -333,13 +333,13 @@ fn tiny_executions_are_proven_and_verified() {
             ..config
         };
         let (cross, _) = prove(&trace, None, &[0x77; 32], stand_in).expect("a proof");
-        // The review's prover's streams for these executions (`honest_proofs_at_other_sizes`, point claims, at
-        // leanvm-univariate b948bfc), their Keccak-256's first bytes: the same, byte for byte. A protocol change
-        // re-records them.
+        // The review's prover's streams for these executions (`honest_proofs_at_other_sizes`, point claims, as
+        // iteration 2 has it at leanvm-univariate ad49e74), their Keccak-256's first bytes: the same, byte for byte.
+        // A protocol change re-records them.
         let review: Option<[u8; 8]> = match (memory, bytecode) {
-            (5, 4) => Some([0x46, 0xf7, 0x32, 0xab, 0xb5, 0x70, 0x15, 0x64]),
-            (4, 5) => Some([0x64, 0xe3, 0x78, 0x10, 0xcc, 0xf4, 0x3b, 0xf0]),
-            (5, 5) => Some([0xfe, 0x6d, 0xc4, 0x8f, 0xc5, 0xe4, 0x5b, 0xb0]),
+            (5, 4) => Some([0x2b, 0x8a, 0x35, 0x8b, 0xbd, 0x38, 0xa4, 0x04]),
+            (4, 5) => Some([0xba, 0x29, 0x1b, 0x85, 0x0c, 0x6b, 0xae, 0x84]),
+            (5, 5) => Some([0x0d, 0x7a, 0xe5, 0x82, 0xf1, 0x09, 0xb4, 0x36]),
             _ => None,
         };
         if let Some(review) = review {
