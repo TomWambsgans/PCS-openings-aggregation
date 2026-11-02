@@ -5,6 +5,9 @@ import E2ECompleteness.Regular
 import E2ECompleteness.End
 import E2ECompleteness.WithHash
 import E2ECompleteness.Experiment
+import E2ECompleteness.Staging
+import E2ECompleteness.HashLen
+import E2ECompleteness.Assemble
 
 /-!
 # `PcsQuotient.Completeness`, end to end
@@ -59,3 +62,15 @@ challenges). See the completeness section of `formal/README.md`.
 /-- info: 'E2ECompleteness.completeness_deployed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms E2ECompleteness.completeness_deployed
+
+/-- info: 'E2ECompleteness.completenessExperiment_eq_expH' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.completenessExperiment_eq_expH
+
+/-- info: 'E2ECompleteness.expH_eq_staged' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.expH_eq_staged
+
+/-- info: 'E2ECompleteness.completeness_deployed_staged' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.completeness_deployed_staged
