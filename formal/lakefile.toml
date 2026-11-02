@@ -4,7 +4,7 @@
 # `formal/quotient` (branch PCS-openings-aggregation, commit 651453c6). MIT OR Apache-2.0; see NOTICE.md.
 name = "pcs-quotient-formal"
 version = "0.1.0"
-defaultTargets = ["QuotientSecurity", "QuotientRpm"]
+defaultTargets = ["Field", "QuotientSecurity", "QuotientRpm"]
 
 [leanOptions]
 autoImplicit = false
@@ -56,6 +56,12 @@ subDir = "common"
 name = "Circuit"
 srcDir = "Circuit"
 globs = ["Circuit", "Circuit.+"]
+
+# `F192` of `crates/primitives` (CompPoly's `BF64.Ext3`, the field leanerVM's `mumbai` uses) with
+# the Rust's constructors and limbs, and its test vectors against the Rust (`Field.Test`).
+[[lean_lib]]
+name = "Field"
+globs = ["Field", "Field.+"]
 
 [[lean_lib]]
 name = "QuotientSecurity"
