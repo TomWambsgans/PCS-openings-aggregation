@@ -191,9 +191,10 @@ def checkLine (line : String) : Except String (String × Bool) := do
             (fun acc k ↦ if bits.getD (8 * j.val + k) false then acc ||| (1 <<< k.toUInt8) else acc) 0
           ⟨x, x⟩
       let keccak := fun s ↦ (pure (LeanVM.Semantics.keccakF1600 s) : Id _)
-      let pad (table : String) (L : Layout) := ChaCha.paddingOfSeed seed.toList table L
+      let witnessWords := ChaCha.paddingLanes seed.toList "witness" (witnessLayout c.logRows)
+      let quotientWords := ChaCha.paddingLanes seed.toList "quotient" (quotientLayout c.logRows)
       match Id.run (proveWith (m := Id) keccak (2 ^ 25) c stmt (c.cells bits) masks
-          (pad "witness" (witnessLayout c.logRows)) (pad "quotient" (quotientLayout c.logRows))) with
+          (ChaCha.padOf witnessWords) (ChaCha.padOf quotientWords)) with
       | none => pure ("Q", false)
       | some proof =>
         let indexRoot := Id.run (c.indexRootWith (m := Id) keccak)
@@ -240,8 +241,9 @@ through the hidden layout and the cells' values: they are the inputs. -/
 def extractionTest (bits : List Bool) (masks : Masks) : Bool :=
   let c := smallCircuit
   let mv := cellVars c.logRows
-  let pad := ChaCha.paddingOfSeed ((List.range 32).map (·.toUInt8)) "witness" (witnessLayout c.logRows)
-  let stack := witnessStack c.logRows (Domain.coefficients mv 0 (c.cells bits)) (maskEntries masks) pad
+  let words := ChaCha.paddingLanes ((List.range 32).map (·.toUInt8)) "witness" (witnessLayout c.logRows)
+  let stack := witnessStack c.logRows (Domain.coefficients mv 0 (c.cells bits)) (maskEntries masks)
+    (ChaCha.padOf words)
   let word := LeanVM.Prover.stackWordFast (mv + 1) logInvRate stack
   match LeanVM.Extraction.fastStacks (mv + 1) logInvRate word with
   | stack :: _ => inputBitsOfStack c stack == bits

@@ -61,13 +61,18 @@ open LeanVM.Parameters LeanVM.Protocol PcsQuotient
 /-- The deployed Keccak-256 of bytes, as bytes. -/
 def keccakBytes (data : List UInt8) : List UInt8 := (KeccakHash.keccak256 data).toBytes.toList
 
-/-- **The Rust prover's padding** of table `table` (`"witness"` or `"quotient"`) of layout `L`, from the proof's
-seed: each lane's `2^ℓ` first words. -/
-def paddingOfSeed (seed : List UInt8) (table : String) (L : Layout) : Padding :=
+/-- **The Rust prover's padding words** of table `table` (`"witness"` or `"quotient"`) of layout `L`, from the
+proof's seed: each lane's `2^ℓ` first words. -/
+def paddingLanes (seed : List UInt8) (table : String) (L : Layout) : Array (Array UInt64) :=
   let tableSeed := keccakBytes ("pcs-quotient-pad-".toUTF8.toList ++ table.toUTF8.toList ++ seed)
-  let lanes : Array (Array UInt64) := Array.ofFn (n := L.lanes.length) fun l ↦
+  Array.ofFn (n := L.lanes.length) fun l ↦
     let laneBytes := (List.range 8).map fun k ↦ (l.val.toUInt64 >>> (8 * k).toUInt64).toUInt8
     stdRngWords (keccakBytes (tableSeed ++ laneBytes)) (2 ^ L.logLane)
+
+/-- The padding the words are. The words are an argument, computed once by the caller: a definition
+`let words := …; fun l i ↦ …` is compiled at its full arity, which would expand the seed again at every
+word. -/
+def padOf (lanes : Array (Array UInt64)) : Padding :=
   fun l i ↦ K.ofLane ((lanes.getD l #[]).getD i 0)
 
 end PcsQuotientTest.ChaCha
