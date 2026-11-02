@@ -154,6 +154,7 @@ theorem subW_eval_word (w : Words K) : ∀ k q, q < 2 ^ k → (subW w.v k).eval 
 /-- **The normalizers are nonzero**: `W_k(v_k) = 0` would make `W_k`, of degree `2^k`, vanish on the
 `2^(k+1)` distinct points `K(q)`, `q < 2^(k+1)`. -/
 theorem subRoot_ne_zero (w : Words K) {k : ℕ} (hk : k < 64) : subRoot w.v k ≠ 0 := by
+  classical
   intro h0
   have hvan : ∀ q < 2 ^ (k + 1), (subW w.v k).eval (w.word q) = 0 := by
     intro q hq
@@ -265,7 +266,7 @@ theorem novel_unopened (w : Words K) {ℓ : ℕ} (hℓ8 : 8 ≤ ℓ) (hℓ : ℓ
     (hQ : Fintype.card Q < freeEntries) (q₀ : ℕ) (hq₀ : q₀ < 2 ^ (ℓ + 1)) (hq₀Q : ∀ x, pos x ≠ q₀) :
     ∃ u : Fin (2 ^ ℓ) → K, (∀ y : Fin (2 ^ ℓ), ¬ (y : ℕ) < freeEntries → u y = 0) ∧
       (∀ x, ∑ y, novelEnc w ℓ pos x y * u y = 0) ∧
-      ∑ y, (novel w.v ℓ y).eval (w.word q₀) * u y = 1 := by
+      ∑ y : Fin (2 ^ ℓ), (novel w.v ℓ y).eval (w.word q₀) * u y = 1 := by
   have hm : 247 ≤ 2 ^ ℓ :=
     le_trans (by norm_num) (Nat.pow_le_pow_right (by norm_num) hℓ8 : 2 ^ 8 ≤ 2 ^ ℓ)
   have h64 : 2 ^ (ℓ + 1) ≤ 2 ^ 64 := Nat.pow_le_pow_right (by norm_num) hℓ
@@ -321,7 +322,7 @@ theorem deployed_Q (w : Words K) (logN : ℕ) (h1 : 15 ≤ logN) (h2 : logN ≤ 
       ∀ q₀ < 2 ^ (logN - 6 + 1), q₀ ∉ S →
         ∃ u : Fin (2 ^ (logN - 6)) → K, (∀ y : Fin (2 ^ (logN - 6)), ¬ (y : ℕ) < freeEntries → u y = 0) ∧
           (∀ x, ∑ y, novelEnc w (logN - 6) (Subtype.val : S → ℕ) x y * u y = 0) ∧
-          ∑ y, (novel w.v (logN - 6) y).eval (w.word q₀) * u y = 1 := by
+          ∑ y : Fin (2 ^ (logN - 6)), (novel w.v (logN - 6) y).eval (w.word q₀) * u y = 1 := by
   intro S
   have hS : Fintype.card S < freeEntries := by
     rw [Fintype.card_coe]
