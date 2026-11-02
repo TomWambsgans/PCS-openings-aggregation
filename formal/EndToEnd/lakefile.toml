@@ -1,0 +1,102 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+#
+# The end-to-end workspace: the statements of `formal/Statement` (`PcsQuotient`: knowledge soundness,
+# completeness, zero knowledge of the deployed membership proof, in mumbai's random-permutation
+# model) proved from the proof layers of `formal/` (F0–F4: the circuit, the reduction, the openings,
+# their composition). It builds as `Compose`, `Completeness` and `WhirBridge` do, against a built
+# checkout of leanerVM (https://github.com/Verified-zkEVM/leanerVM, commit
+# 6175f1a07f0dc33bd3d640de0063d1006143ee91) at `../leanervm`, sharing that checkout's `lean_vm`
+# packages (Mathlib, VCVio, CompPoly, ArkLib, mumbai's `statement` and `common`), so nothing of them
+# is fetched; the libraries of this repository are compiled from their sources in `formal/`
+# (`srcDir`). Each end-to-end library has a root name of its own, distinct from the libraries it
+# compiles from `formal/`.
+name = "pcs-quotient-end-to-end"
+version = "0.1.0"
+defaultTargets = ["Soundness"]
+packagesDir = "../leanervm/lean_vm/.lake/packages"
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[require]]
+name = "lean-vm"
+path = "../leanervm/lean_vm"
+
+# ---- The libraries of `formal/`, compiled from their sources ----
+
+# The reduction (F1) and the circuit's relation (F0a; F0b's deployed instance), `formal/QuotientSecurity`.
+[[lean_lib]]
+name = "QuotientSecurity"
+srcDir = ".."
+
+# The reduction's Keccak-256 chain (F4a), `formal/QuotientRpm`.
+[[lean_lib]]
+name = "QuotientRpm"
+srcDir = ".."
+
+# Zero knowledge (F3b), `formal/QuotientZk`.
+[[lean_lib]]
+name = "QuotientZk"
+srcDir = ".."
+
+# `F192` with the Rust's constructors and limbs, `formal/Field`.
+[[lean_lib]]
+name = "Field"
+srcDir = ".."
+globs = ["Field", "Field.+"]
+
+# The implementation is the model (F5), `formal/Implementation`.
+[[lean_lib]]
+name = "Implementation"
+srcDir = ".."
+
+# The deployed circuit (F0b), `formal/Circuit`.
+[[lean_lib]]
+name = "Circuit"
+srcDir = "../Circuit"
+globs = ["Circuit", "Circuit.+"]
+
+# The WHIR openings (F2), `formal/WhirBridge`.
+[[lean_lib]]
+name = "WhirBridge"
+srcDir = "../WhirBridge"
+
+# The composition (F4), `formal/Compose`.
+[[lean_lib]]
+name = "Compose"
+srcDir = "../Compose"
+
+# Completeness's proof layer, `formal/Completeness`.
+[[lean_lib]]
+name = "Completeness"
+srcDir = "../Completeness"
+
+# The reviewer-facing statement, `formal/Statement` (`PcsQuotient`; its test library is not built
+# here).
+[[lean_lib]]
+name = "PcsQuotient"
+srcDir = "../Statement"
+globs = ["PcsQuotient", "PcsQuotient.+"]
+
+# ---- The end-to-end libraries ----
+
+# `PcsQuotient.KnowledgeSoundness` from `Compose`'s random-permutation theorem (`Soundness.lean`,
+# `Soundness/*.lean`).
+[[lean_lib]]
+name = "Soundness"
+
+# `PcsQuotient.ZeroKnowledge` (`ZK.lean`, `ZK/*.lean`).
+[[lean_lib]]
+name = "ZK"
+
+# The Statement's definitions are the proof layers' (`Bridge.lean`, `Bridge/*.lean`).
+[[lean_lib]]
+name = "Bridge"
+
+# `PcsQuotient.Completeness` (`Completeness/E2ECompleteness.lean`,
+# `Completeness/E2ECompleteness/*.lean`).
+[[lean_lib]]
+name = "E2ECompleteness"
+srcDir = "Completeness"
+globs = ["E2ECompleteness", "E2ECompleteness.+"]
