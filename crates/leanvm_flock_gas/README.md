@@ -4,7 +4,7 @@
 
 **Question.** How much gas does the PIOP of a leanVM proof cost to verify in an EVM contract, for leanVM as it was
 before it switched to Keccak (commit `42422001`: the VM hashes with BLAKE2s and proves it with Flock), when the PCS
-openings are not paid in the contract but go to the block-level `PCS_OPEN` precompile of this repository's README
+openings are not paid in the contract but go to the block-level `PCS_OPEN` precompile of this repository's design
 (at a price `c` per claim)? Fiat–Shamir is a Keccak-256 chain (EVM-friendly); everything else of the PIOP is
 leanVM's.
 
@@ -149,9 +149,9 @@ signatures). Per signature at 1,290: about 835 gas.
 | `A0` (`2^28` words) | storage slot 1 | 1 | 28 | A |
 | `B0` (`2^28` words) | storage slot 2 | 1 | 28 | A |
 
-One claim per commitment, so every call holds all the claims on its commitment (the README's requirement), and the
-stack's claim is at a point drawn after the root (the batching sumcheck's), which the list-binding argument of the
-README needs. Without the batching sumcheck, the stack would carry 113 claims, one of them not an evaluation (the ring
+One claim per commitment, so every call holds all the claims on its commitment (the requirement of "What the
+implementation and its reviews add": no OOD sample at WHIR's first commitment), and the stack's claim is at a point
+drawn after the root (the batching sumcheck's), which that list-binding argument needs. Without the batching sumcheck, the stack would carry 113 claims, one of them not an evaluation (the ring
 switch's weight is a sum of 64 eq's at Frobenius-twisted points: 64 claims, their values sent): about 176 claims in
 one call. Modelled: the contract would save the batch's rounds and its weights at the point (~127,000 of execution),
 but write some 5,000 words of `PCS_OPEN` input (~60,000), send 1.5 KB more calldata and pay 176`c`: under EIP-7623 the
