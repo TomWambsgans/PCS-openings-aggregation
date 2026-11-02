@@ -871,7 +871,7 @@ fn weight_at<S: Scalar>(
         let row = if twist == RING_TWIST {
             let map = ring_map.expect("the ring map of a ring-switch term");
             let _phase = enter("claims: the ring switch's weight at the batch's point");
-            ring_tower::weight_at(&point[..len], &cache.one_plus_r()[..len], map)
+            S::ring_weight(&point[..len], &cache.one_plus_r()[..len], map)
         } else {
             cache.row(base_id + p, point, len, twist)
         };

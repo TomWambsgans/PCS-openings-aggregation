@@ -546,3 +546,13 @@ Each entry says what changed, why, and what the prover must change (none if the 
     Prover: place table `T`'s `c` active rows, in order, at `active_positions(c, r)` (and BLAKE2S's `q_flock`
     instances with them, position by position); padding rows everywhere else. The heap's leaves follow the positions
     (`is_active`).
+11. **Lever 3a: the ring weight as hand-scheduled code** (`leanvm_flock_gas::evm::kernel`, `Scalar::ring_weight`,
+    `Node::RingWeight`; opt-in for the leanVM crates, `crates/evm` untouched). The generic compilation spends about
+    47 gas a twisted factor: the chain value `p_n^(2^k)` and `a_n` go to memory and back. The kernel keeps a block
+    of 13 twists' products on the stack, the coordinates inner, so a coordinate's chain value and `a_n` stay on top
+    for the block's squarings and factors, each factor multiplied into its product in place (`DUP`, `FIELD_MUL`,
+    `SWAP`, `POP`): about 40 gas a factor, and half the code bytes. It uses the memory below the slots (the hashing's
+    scratch, free between nodes). The parity tests check it word for word against the Rust (`ring_tower::weight_at`).
+    Measured, main line: the ring weight 81,757 → 74,286; straight 188,918 → 182,104; code 77,678 → 67,209 bytes,
+    so 3 contracts instead of 4; deployed 202,394 → 192,392; tx (EIP-7623, `c = 0`, deployed) 315,810 → 305,808.
+    (The report's `FIELD_MUL` count is the graph's, without the kernel's 3,500.) Prover: nothing.

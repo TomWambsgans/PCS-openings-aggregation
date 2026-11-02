@@ -47,6 +47,12 @@ pub trait Scalar: Copy + Debug + Add<Output = Self> + Mul<Output = Self> + AddAs
     fn bits(self, _shift: usize, _width: usize) -> Self {
         unimplemented!("bit fields of an integer scalar")
     }
+
+    /// The ring switch's weight `Φ(eq(point, ·))` at `r`, given `1 + r` ([`crate::ring_tower::weight_at`]). The
+    /// recorder's symbol makes it one node of hand-scheduled code (`crate::evm::kernel`).
+    fn ring_weight(point: &[Self], one_plus_r: &[Self], map: &[Self]) -> Self {
+        crate::ring_tower::weight_at(point, one_plus_r, map)
+    }
 }
 
 impl Scalar for E {

@@ -35,6 +35,9 @@ pub enum Node {
     Low(u32),
     /// `(v >> shift) mod 2^width` of an integer `v` (an [`Node::Input`] of at most 8 bytes, or bits of one).
     Bits(u32, u8, u8),
+    /// The ring switch's weight at a point (`crate::evm::kernel`): kernel `.0` of [`Graph::kernels`], `.1`
+    /// coordinates.
+    RingWeight(u32, u8),
 }
 
 #[derive(Default)]
@@ -46,6 +49,8 @@ pub struct Graph {
     /// The values the verifier requires to be zero, then to be nonzero, with what it reports if one is not.
     pub zero: Vec<(u32, VerifierError)>,
     pub nonzero: Vec<(u32, VerifierError)>,
+    /// Each [`Node::RingWeight`]'s operands: the point, `1 + r`, the map.
+    pub kernels: Vec<Vec<u32>>,
 }
 
 thread_local! {
@@ -139,6 +144,16 @@ impl Scalar for Sym {
             Some(v) => Self::constant(v.bits(shift, width)),
             None => Self::new(Node::Bits(self.0, shift as u8, width.min(255) as u8)),
         }
+    }
+
+    fn ring_weight(point: &[Self], one_plus_r: &[Self], map: &[Self]) -> Self {
+        assert_eq!(point.len(), one_plus_r.len());
+        let operands: Vec<u32> = point.iter().chain(one_plus_r).chain(map).map(|s| s.0).collect();
+        let kernel = GRAPH.with_borrow_mut(|graph| {
+            graph.kernels.push(operands);
+            graph.kernels.len() as u32 - 1
+        });
+        Self::new(Node::RingWeight(kernel, point.len() as u8))
     }
 }
 
