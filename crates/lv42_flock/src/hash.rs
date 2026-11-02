@@ -1,6 +1,7 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/flock/src/hash.rs.
 // Modified here: `ring_claim` and `ring_switch_open` (leanVM's PCS packaging of the slices) left out, with the imports
 // only they used. The transcript is `lv42_fiat_shamir`'s trait, which the univariate prover's Keccak-256 chain implements.
+// Added: `Blake2sSetup::prove_reduction_skip`, the reduction with a zerocheck skip of 3 to 6.
 // MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
 //! Monolithic BLAKE2s compression-function R1CS: one R1CS instance per
 //! `compress(h, m, t, f0, f1) → h'` call, encoding the 16-word state init, all
@@ -785,6 +786,74 @@ impl Blake2sSetup {
     ) -> SliceClaim {
         let stage = self.prove_zerocheck(z_packed, a_packed_words, b_packed_words, ps);
         self.prove_lincheck(stage, z_packed_lincheck, ps)
+    }
+
+    /// **The reduction with a zerocheck skip of `k`** (3 to 6; this repository's addition): leanVM's
+    /// [`Self::prove_reduction_precomputed`] at `k = 6`; below, the zerocheck of [`crate::zerocheck::skip`], then the
+    /// lincheck at the row weights it leaves, `L(z) ⊗ eq(ρ_(<6-k)) ⊗ eq(x_inner_rest)` (the skip's `k` bits, the
+    /// zerocheck's first `6 - k` rounds, the next 8), which leaves the same 64 slices at the same kind of point.
+    pub fn prove_reduction_skip(
+        &self,
+        k: usize,
+        z_packed: &[u64],
+        a_packed_words: &[u64],
+        b_packed_words: &[u64],
+        z_packed_lincheck: &[u8],
+        ps: &mut fiat_shamir::transcript::ProverState,
+    ) -> SliceClaim {
+        if k == K_SKIP {
+            return self.prove_reduction_precomputed(z_packed, a_packed_words, b_packed_words, z_packed_lincheck, ps);
+        }
+        let zc = {
+            let _span = tracing::info_span!("Zerocheck").entered();
+            let packed_len = 1usize << (self.m() - 6);
+            assert_eq!(z_packed.len(), packed_len, "wrong packed witness length");
+            assert_eq!(a_packed_words.len(), packed_len, "wrong packed A·z length");
+            assert_eq!(b_packed_words.len(), packed_len, "wrong packed B·z length");
+            let padding = crate::zerocheck::PaddingSpec {
+                k_log: K_LOG,
+                useful_bits_per_block: USEFUL_BITS,
+            };
+            crate::zerocheck::skip::prove_skip(
+                packed_bytes(a_packed_words),
+                packed_bytes(b_packed_words),
+                packed_bytes(z_packed),
+                self.m(),
+                k,
+                &padding,
+                ps,
+            )
+        };
+        let _span = tracing::info_span!("Lincheck").entered();
+        assert_eq!(
+            z_packed_lincheck.len(),
+            K << self.n_blocks_log.saturating_sub(3),
+            "wrong lincheck stripe length"
+        );
+        let chi = &zc.mlv_challenges;
+        let (low, rest) = chi.split_at(K_SKIP - k);
+        let (x_inner_rest, x_outer) = rest.split_at(K_LOG - K_SKIP);
+        let skip = primitives::multilinear::lagrange_weights_naive(k, zc.z);
+        let low_weights: Vec<F192> = primitives::multilinear::eq_table(low)
+            .iter()
+            .flat_map(|&e| skip.iter().map(move |&l| l * e))
+            .collect();
+        let eq_inner: Vec<F192> = primitives::multilinear::eq_table(x_inner_rest)
+            .iter()
+            .flat_map(|&e| low_weights.iter().map(move |&l| l * e))
+            .collect();
+        let lc_claim = crate::lincheck::prove_padded_capture_s_hat_v_rows(
+            z_packed_lincheck,
+            self.m(),
+            K_LOG,
+            K_SKIP,
+            USEFUL_BITS,
+            &WalkLincheckCircuit,
+            &eq_inner,
+            x_outer,
+            ps,
+        );
+        reduction_claim(&lc_claim, x_outer)
     }
 
     /// **Flock reduction, first stage (prover): the zerocheck.** Reduces

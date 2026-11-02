@@ -1,5 +1,6 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/flock/src/zerocheck/multilinear.rs.
-// MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
+// Changed here: the bit-round kernels also take rows of 1, 2 and 4 bytes (for a univariate skip below 6); the rest is
+// unchanged. MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
 // CREDIT: https://github.com/succinctlabs/flock (flock-core), MIT OR Apache-2.0.
 //! Multilinear sumcheck: rounds 2..(m − k_skip + 1) of the zerocheck protocol.
 //!
@@ -318,6 +319,9 @@ impl RoundPair {
 /// The linear `c` term reaches `G(1)` only.
 pub fn bit_round_pair(bits: PackedWitness<'_>, fold: &BitFold, r_eq: &[F192], padding: &PaddingSpec) -> RoundPair {
     match fold.n_chunks() {
+        1 => bit_round_pair_kernel::<1>(bits, fold, r_eq, padding),
+        2 => bit_round_pair_kernel::<2>(bits, fold, r_eq, padding),
+        4 => bit_round_pair_kernel::<4>(bits, fold, r_eq, padding),
         8 => bit_round_pair_kernel::<8>(bits, fold, r_eq, padding),
         16 => bit_round_pair_kernel::<16>(bits, fold, r_eq, padding),
         32 => bit_round_pair_kernel::<32>(bits, fold, r_eq, padding),
@@ -337,6 +341,9 @@ pub fn bit_round_materialize(
     padding: &PaddingSpec,
 ) -> ((F192, F192), [Vec<F192>; 3]) {
     match fold.n_chunks() {
+        1 => bit_round_store_kernel::<1>(bits, fold, r_eq, padding),
+        2 => bit_round_store_kernel::<2>(bits, fold, r_eq, padding),
+        4 => bit_round_store_kernel::<4>(bits, fold, r_eq, padding),
         8 => bit_round_store_kernel::<8>(bits, fold, r_eq, padding),
         16 => bit_round_store_kernel::<16>(bits, fold, r_eq, padding),
         32 => bit_round_store_kernel::<32>(bits, fold, r_eq, padding),

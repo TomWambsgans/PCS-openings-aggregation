@@ -28,3 +28,4 @@ lv42_parallel = { path = "../lv42_parallel" }
 
 [dev-dependencies]
 bench.workspace = true
+lv42_pcs = { path = "../lv42_pcs" }
