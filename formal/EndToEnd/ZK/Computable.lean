@@ -47,12 +47,15 @@ opened positions `slotsW`, `slotsQ` of the challenges), the view simulator `depl
    `6 + 40·2^19`, `9 + 63·2^22`; the quotient values read `v_rows(t)`, `2^22` products, and
    `pub(γ)(t)`, `2·10^3`); **the two level-0 views** (`viewW`, `viewQ`, stored once in arrays):
    the encoding's table (`ℓ²` operations per opened position, `ℓ = 19, 22`; `224`, `225` positions),
-   the six lane rounds (each `2^(ℓ+6)` reads of the batched weight and of the stack, a read of the
-   weight `|ι|·6` comparisons and `m + 1 ≤ 3` claim weights of `Layout.claimW`, about `4·10^3` and
-   `7·10^3` operations), the folded table (`2^ℓ · |ι|` products), the opened rows
+   the six lane rounds (`laneRounds` on folded tables read through their closures: the message at
+   depth `j` reads at most `2^(ℓ+7)` entries of the batched weight and as many of the stack; reading
+   message `j` evaluates those at depths `≤ j`, `21` in all at most; a read of the weight is
+   `|ι|·6` comparisons and `m + 1 ≤ 3` claim weights of `Layout.claimW`, about `4·10^3` and `7·10^3`
+   operations each, a read of the stack `|ι|·6` comparisons and the layout's membership tests, the
+   first piece's `247` entries), the folded table (`2^ℓ·|ι|` products), the opened rows
    (`|Q|·|ι|·2^ℓ` reads of the encoding, at most `ℓ` products each; `|ι| = 40, 63`). The total is
-   dominated by the lane rounds' weights: about `6 · 2^25 · 2 · 8·10^3 ≈ 3·10^12` (witness) and
-   `6 · 2^28 · 2 · 2·10^4 ≈ 7·10^13` (quotient) operations, then the opened rows (`≈ 10^11`,
+   dominated by the lane rounds' weights: **at most about `21 · 2^26 · 8·10^3 ≈ 1.2·10^13` (witness) and
+   `21 · 2^29 · 2·10^4 ≈ 2.3·10^14` (quotient) operations**, then the opened rows (`≈ 10^11`,
    `≈ 1.3·10^12`).
 3. **The messages** (`outP`, at each of the `394` steps the skeleton reads): the claims' bytes
    (`claimMsgP`; at step `242` one `v_rows(t)`, `2^22` products) and the renderer's message
