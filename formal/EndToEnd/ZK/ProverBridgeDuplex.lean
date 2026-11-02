@@ -15,7 +15,11 @@ waiting scalars are the same (`Rel`). Then, with the permutation `π` the oracle
 
 * the permutation's input is the same (`input_eq`);
 * absorbing a scalar keeps them related (`absorb_rel`);
-* a draw's challenge is the squeeze's, as limbs, and the states after them are related (`draw_rel`).
+* a draw's challenge is the squeeze's, as limbs, and the states after them are related (`draw_rel`);
+* a grinding try is a proof-of-work step (`tryNonce_rel`), and when the statement's search finds the
+  nonce `e` within its fuel, the skeleton's grind (more fuel, the same start) finds `e` too, its state
+  related to the statement's step at `e`, the challenges untouched (`grind_rel`): the skeleton's
+  grinding past `2^25` never happens where the statement's prover makes a proof.
 -/
 
 open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.Compile
