@@ -37,7 +37,7 @@ open scoped ENNReal
 namespace Compose
 
 open QuotientRpm QuotientSecurity QuotientSecurity.Params LeanVM LeanVM.Protocol LeanVM.Semantics
-open LeanVM.Parameters LeanVM.Protocol.Compile LeanVM.Extraction WhirBridge
+open LeanVM.Parameters LeanVM.Protocol.Compile LeanVM.Protocol.EndToEnd WhirBridge
 open LeanVM.Protocol.Rom (romExperiment romExperiment_map)
 
 attribute [local irreducible] LeanVM.Protocol.Compile.instFintypeDigest
@@ -231,5 +231,117 @@ theorem prEvent_EQ_le (A : OracleComp KeccakCalls (RootProof F × OpenProofs)) (
           (readsInl_openingDoomed D.LQ D.R
             fun y : ((S0 F × Bool) × Transcript) × Bool => qIn D y.1.1.1)
     _ ≤ openingBound (Q + 6 + QO + QO) := hs
+
+/-! ## The decoders and the claims -/
+
+/-- **The witness table's decoder and claims**: the decoder lists every candidate of mumbai's
+extraction, read back as F1's first message (`read`), and a candidate whose table satisfies the
+witness opening's claims reads back as a message satisfying F1's witness claim. -/
+structure WitnessMatch (c₁ : TableCode B.Msg₁) where
+  read : Column D.Lw.logN → B.Msg₁
+  height : c₁.height = rootHeight D.Lw.logN D.R
+  leaf : c₁.leafLen = 8 * 2 ^ laneFold
+  complete : ∀ (w : Fin (2 ^ c₁.height) → Option (List UInt8)) (q : Column D.Lw.logN),
+    q ∈ Candidates D.Lw.logN D.R (code₀ D.Lw.logN D.R).thr
+      (wordOfMerkle c₁.height (2 ^ laneFold) w) → read q ∈ c₁.dec w
+  claims : ∀ (π : RootProof F) (ch : Chals F) (q : Column D.Lw.logN),
+    (∀ cl ∈ (D.clW π ch).claims, D.Lw.tableEval q cl.point = cl.value) →
+      witnessClaim (read q).1 ch.t ch.ρ π.v.1
+
+/-- **The quotient table's decoder and claims**, as `WitnessMatch` for the second message and
+the two quotient claims. -/
+structure QuotientMatch (c₂ : TableCode B.Msg₂) where
+  read : Column D.LQ.logN → B.Msg₂
+  height : c₂.height = rootHeight D.LQ.logN D.R
+  leaf : c₂.leafLen = 8 * 2 ^ laneFold
+  complete : ∀ (w : Fin (2 ^ c₂.height) → Option (List UInt8)) (q : Column D.LQ.logN),
+    q ∈ Candidates D.LQ.logN D.R (code₀ D.LQ.logN D.R).thr
+      (wordOfMerkle c₂.height (2 ^ laneFold) w) → read q ∈ c₂.dec w
+  claims : ∀ (π : RootProof F) (ch : Chals F) (q : Column D.LQ.logN),
+    (∀ cl ∈ (D.clQ π ch).claims, D.LQ.tableEval q cl.point = cl.value) →
+      quotientClaims P (W.decode π.stmt) (read q).1 ch.α ch.β ch.γ ch.t π.v.1 π.v.2 ch.ρ
+
+/-! ## Runs against a table -/
+
+theorem run_keep {α β : Type} (mx : OracleComp KeccakCalls α) (g : α → OracleComp KeccakCalls β)
+    (T : KTable) :
+    tableQueryLog (mx >>= fun x => (x, ·) <$> g x) T =
+        tableQueryLog mx T ++ tableQueryLog (g (evalWithAnswerFn (QueryImpl.ofFn T) mx)) T ∧
+      evalWithAnswerFn (QueryImpl.ofFn T) (mx >>= fun x => (x, ·) <$> g x) =
+        (evalWithAnswerFn (QueryImpl.ofFn T) mx,
+          evalWithAnswerFn (QueryImpl.ofFn T) (g (evalWithAnswerFn (QueryImpl.ofFn T) mx))) := by
+  constructor
+  · rw [tableQueryLog_bind, map_eq_bind_pure_comp, tableQueryLog_bind, Function.comp_apply,
+      tableQueryLog_pure, List.append_nil]
+  · simp only [evalWithAnswerFn_bind, evalWithAnswerFn_map]
+
+theorem run_logged {α : Type} (v : OracleComp KeccakCalls α) (T : KTable) :
+    tableQueryLog ((simulateQ logImplKC v).run []) T = tableQueryLog v T ∧
+      evalWithAnswerFn (QueryImpl.ofFn T) ((simulateQ logImplKC v).run []) =
+        (evalWithAnswerFn (QueryImpl.ofFn T) v, (tableQueryLog v T).filterMap inlEntry) := by
+  refine ⟨log_loggedKC_run T v [], ?_⟩
+  have := eval_loggedKC_run T v []
+  rwa [List.nil_append] at this
+
+/-- The adversary and the chain against a table. -/
+theorem DA_run (A : OracleComp KeccakCalls (RootProof F × OpenProofs)) (T : KTable) :
+    let p := evalWithAnswerFn (QueryImpl.ofFn T) A
+    let x₀ := W.label p.1.stmt
+    let x₁ := Wire.afterRoot (viewT T x₀) p.1.r₁
+    let x₂ := (viewT T x₁).toList
+    let x₃ := (viewT T x₂).toList
+    let x₄ := Wire.afterRoot (viewT T x₃) p.1.r₂
+    let x₅ := W.afterValues (viewT T x₄) p.1.v
+    (tableQueryLog (DA W A) T).map Sigma.fst =
+        (tableQueryLog A T).map Sigma.fst ++
+          [.inl x₀, .inl x₁, .inl x₂, .inl x₃, .inl x₄, .inl x₅] ∧
+      evalWithAnswerFn (QueryImpl.ofFn T) (DA W A) =
+        ⟨p.1, p.2, (tableQueryLog A T).filterMap inlEntry,
+          ⟨W.chal (viewT T x₁), W.chal (viewT T x₂), W.chal (viewT T x₃), W.chal (viewT T x₄),
+            W.chal (viewT T x₅)⟩⟩ := by
+  intro p x₀ x₁ x₂ x₃ x₄ x₅
+  obtain ⟨hl, he⟩ := run_logged A T
+  have hl' : tableQueryLog (loggedKC A) T = tableQueryLog A T := hl
+  have he' : evalWithAnswerFn (QueryImpl.ofFn T) (loggedKC A) =
+      (p, (tableQueryLog A T).filterMap inlEntry) := he
+  constructor
+  · unfold DA
+    rw [tableQueryLog_bind, hl', he']
+    simp only [chainWith, hash256, callKeccak256, bind_assoc, pure_bind,
+      tableQueryLog_bind, tableQueryLog_pure, List.map_append, List.append_nil,
+      evalWithAnswerFn_liftM_query]
+    rfl
+  · unfold DA
+    rw [evalWithAnswerFn_bind, he']
+    simp only [chainWith, hash256, callKeccak256, bind_assoc, pure_bind,
+      evalWithAnswerFn_bind, evalWithAnswerFn_liftM_query, evalWithAnswerFn_pure]
+    rfl
+
+/-- A transcript of a run against a table answers as the table, on the Keccak-256 inputs the run
+asked. -/
+theorem lookTr_filterMap (T : KTable) (x : List UInt8) :
+    ∀ l : List ((d : List UInt8 ⊕ KeccakState) × KeccakCalls d), (∀ q ∈ l, q.2 = T q.1) →
+      lookTr (l.filterMap inlEntry) x =
+        if x ∈ (l.map Sigma.fst).filterMap Sum.getLeft? then
+          some (LeanVM.Digest.ofRpm (viewT T x)) else none
+  | [], _ => by simp [lookTr]
+  | ⟨d, u⟩ :: l, h => by
+    have ih := lookTr_filterMap T x l fun q hq => h q (List.mem_cons_of_mem _ hq)
+    have hu : u = T d := h ⟨d, u⟩ List.mem_cons_self
+    cases d with
+    | inr s =>
+      rw [List.filterMap_cons_none (rfl : inlEntry ⟨.inr s, u⟩ = none)]
+      simpa using ih
+    | inl y =>
+      simp only [List.filterMap_cons, inlEntry, List.map_cons, Sum.getLeft?_inl, List.mem_cons]
+      by_cases hxy : y = x
+      · subst hxy
+        subst hu
+        simp [lookTr]
+        rfl
+      · have : lookTr ((y, toB u) :: l.filterMap inlEntry) x = lookTr (l.filterMap inlEntry) x := by
+          simp [lookTr, hxy]
+        rw [this, ih]
+        simp [Ne.symm hxy]
 
 end Compose
