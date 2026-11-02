@@ -12,6 +12,8 @@ import E2ECompleteness.Duplex
 import E2ECompleteness.Grinding
 import E2ECompleteness.Final
 import E2ECompleteness.Closed
+import E2ECompleteness.Cost
+import E2ECompleteness.Done
 
 /-!
 # `PcsQuotient.Completeness`, end to end
@@ -139,3 +141,7 @@ What stays a hypothesis: the block count of the deployed staged run (`2^48`, `Co
 /-- info: 'E2ECompleteness.completeness_deployed_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms E2ECompleteness.completeness_deployed_closed
+
+/-- info: 'E2ECompleteness.completeness_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.completeness_end
