@@ -14,13 +14,13 @@ import LeanVM.Protocol.EndToEnd.Sound.Glue
 /-!
 # The opening check
 
-`opening::verify(layout, root, claims, proof)` (`crates/quotient/src/opening.rs:728-806`):
+`opening::verify(layout, root, claims, proof)` (`crates/quotient/src/opening.rs:728-819`):
 
 1. reject unless every claim's point has the table's `vars` coordinates;
 2. start the transcript from the IV `keccak256(prefix(layout) ‖ claims)` and a zero public digest
    (`iv`, `opening.rs:592-602`), read the root as the proof's first two scalars and reject unless it
    is the root expected;
-3. sample `λ`, set `λ_i = λ^i`, the target `Σ λ_i v_i`, and the weight closure (`opening.rs:756-797`):
+3. sample `λ`, set `λ_i = λ^i`, the target `Σ λ_i v_i`, and the weight closure (`opening.rs:777-807`):
    per claim, its point's lane coordinates and its scales (`Layout::scales`, `opening.rs:253-268`)
    times `λ_i`, then, at a stack point `x = low ‖ high`,
    * a **public** layout (`log_piece = None`): `eq(p[..ℓ], low) · (on(0) + on(1))`, `on(odd)` the
@@ -59,7 +59,7 @@ def laneFold : ℕ := 6
 /-- `LOG_INV_RATE` (`opening.rs:549`): rate `1/2`. -/
 def logInvRate : ℕ := 1
 
-/-- A claim (`opening.rs:55-59`): the table's multilinear extension at `point` is `value`. The
+/-- A claim (`opening.rs:54-59`): the table's multilinear extension at `point` is `value`. The
 Rust holds `F192` limbs; `ext` (`opening.rs:697-699`) reads them as the verifier's `E`, the same
 field `K[y]/(y^3 + y + 1)`, `K = GF(2)[x]/(x^64 + x^4 + x^3 + x + 1)`. -/
 structure Claim where
@@ -67,15 +67,15 @@ structure Claim where
   value : E
 
 /-- `eq_bits(point, index)` (`opening.rs:345-349`), and the verifier's `eq_index`
-(`opening.rs:770-774`): `Π_k (bit k of index ? p_k : 1 + p_k)`. -/
+(`opening.rs:772-776`): `Π_k (bit k of index ? p_k : 1 + p_k)`. -/
 def eqBits (point : List E) (index : ℕ) : E :=
   point.zipIdx.foldl (fun w pk ↦ w * if (index >>> pk.2) % 2 = 1 then pk.1 else 1 + pk.1) 1
 
-/-- The powers `verify` builds (`opening.rs:745-748`): `[1]`, then `last · λ` until there is one
+/-- The powers `verify` builds (`opening.rs:747-750`): `[1]`, then `last · λ` until there is one
 per claim; at least one. -/
 def lambdas (lam : E) (n : ℕ) : List E := powers lam (max n 1)
 
-/-- The target (`opening.rs:749-752`): `Σ λ_i v_i`, the claims zipped with the powers. -/
+/-- The target (`opening.rs:751-754`): `Σ λ_i v_i`, the claims zipped with the powers. -/
 def target (ls : List E) (claims : List Claim) : E :=
   (claims.zip ls).foldl (fun acc cl ↦ acc + cl.2 * cl.1.value) 0
 
@@ -201,12 +201,12 @@ def new (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ)) : Layout where
   pieces := []
   share := none
 
-/-- A hidden layout's whole blocks (`opening.rs:140-147`). -/
+/-- A hidden layout's whole blocks (`opening.rs:140-148`). -/
 def hiddenBlocks (logChunk logLane : ℕ) (chunks : List (ℕ × ℕ)) : List ℕ :=
   chunks.flatMap fun c ↦ (List.range (c.2 >>> logLane)).map fun j ↦ (c.1 <<< (logChunk - logLane)) + j
 
 /-- A hidden layout's tails: the pieces of what each chunk holds past its whole blocks
-(`opening.rs:140-147`). -/
+(`opening.rs:140-148`). -/
 def hiddenTails (logChunk logLane logPiece : ℕ) (chunks : List (ℕ × ℕ)) : List ℕ :=
   chunks.flatMap fun c ↦
     let first := c.1 <<< (logChunk - logLane)
@@ -215,11 +215,11 @@ def hiddenTails (logChunk logLane logPiece : ℕ) (chunks : List (ℕ × ℕ)) :
     let tail := c.2 - (whole <<< logLane)
     (List.range ((tail + 2 ^ logPiece - 1) / 2 ^ logPiece)).map fun j ↦ start + j
 
-/-- The odd random lanes (`opening.rs:155-158`): `2 (k · pairs / (random − 1)) + 1`. -/
+/-- The odd random lanes (`opening.rs:156-160`): `2 (k · pairs / (random − 1)) + 1`. -/
 def oddRandoms (total random : ℕ) : List ℕ :=
   (List.range (random - 1)).map fun k ↦ 2 * (k * ((total - 2) / 2) / (random - 1)) + 1
 
-/-- The lanes before the blocks fill them (`opening.rs:151-158`): the last random, the one before
+/-- The lanes before the blocks fill them (`opening.rs:149-160`): the last random, the one before
 it the overflow lane, the odd random lanes written last. -/
 def slots (total random : ℕ) : List (Option Lane) :=
   (List.range total).map fun i ↦
@@ -228,7 +228,7 @@ def slots (total random : ℕ) : List (Option Lane) :=
     else if i = total - 1 then some .random
     else none
 
-/-- The blocks fill the free lanes in order (`opening.rs:160-164`). -/
+/-- The blocks fill the free lanes in order (`opening.rs:161-165`). -/
 def fillBlocks : List (Option Lane) → List ℕ → List Lane
   | [], _ => []
   | some l :: rest, bs => l :: fillBlocks rest bs
@@ -269,50 +269,50 @@ def pieceScales (L : Layout) (point : List E) : List E :=
 
 end Layout
 
-/-! ## The weight closure (`opening.rs:686-797`) -/
+/-! ## The weight closure (`opening.rs:718-807`) -/
 
-/-- `ClaimWeight` (`opening.rs:686-694`): a claim's lane coordinates, and its lanes' and pieces'
+/-- `ClaimWeight` (`opening.rs:718-725`): a claim's lane coordinates, and its lanes' and pieces'
 scales. -/
 structure Part where
   low : List E
   lanes : List E
   pieces : List E
 
-/-- The scales times `λ_i` (`opening.rs:754-760`). -/
+/-- The scales times `λ_i` (`opening.rs:756-768`). -/
 def Part.scale (l : E) (p : Part) : Part := ⟨p.low, p.lanes.map (l * ·), p.pieces.map (l * ·)⟩
 
 /-- A claim's part before its power of `λ`. -/
 def Layout.part (L : Layout) (c : Claim) : Part :=
   ⟨c.point.take L.logLane, L.laneScales c.point, L.pieceScales c.point⟩
 
-/-- `parts` (`opening.rs:754-763`). -/
+/-- `parts` (`opening.rs:756-768`). -/
 def Layout.parts (L : Layout) (ls : List E) (claims : List Claim) : List Part :=
   (claims.zip ls).map fun cl ↦ (L.part cl.1).scale cl.2
 
-/-- `eq1` (`opening.rs:768`). -/
+/-- `eq1` (`opening.rs:770`). -/
 def eq1 (c p : E) : E := c * p + (1 + c) * (1 + p)
 
-/-- `eq` (`opening.rs:769`): zipping. -/
+/-- `eq` (`opening.rs:771`): zipping. -/
 def eqZ (a b : List E) : E := (a.zip b).foldl (fun w cp ↦ w * eq1 cp.1 cp.2) 1
 
-/-- `Π (1 + p)` (`opening.rs:786-787`). -/
+/-- `Π (1 + p)` (`opening.rs:796-797`). -/
 def onePlusProd (l : List E) : E := l.foldl (fun w p ↦ w * (1 + p)) 1
 
-/-- One lane's term of `on(odd)` (`opening.rs:780-785`). -/
+/-- One lane's term of `on(odd)` (`opening.rs:783-786`). -/
 def onStep (scales laneEq : List E) (odd : ℕ) (sum : E) (ll : Lane × ℕ) : E :=
   match ll.1 with
   | .block _ => if ll.2 &&& 1 = odd then sum + scales.getD ll.2 0 * laneEq.getD ll.2 0 else sum
   | _ => sum
 
-/-- `on(odd)` (`opening.rs:779-786`): the block lanes of one parity, each its scale times its
+/-- `on(odd)` (`opening.rs:782-787`): the block lanes of one parity, each its scale times its
 `eq_index`. -/
 def onParity (lanes : List Lane) (scales laneEq : List E) (odd : ℕ) : E :=
   lanes.zipIdx.foldl (onStep scales laneEq odd) 0
 
-/-- `lane_eq` (`opening.rs:778`): `eq_index(high, l)` for each lane. -/
+/-- `lane_eq` (`opening.rs:780`): `eq_index(high, l)` for each lane. -/
 def laneEqs (n : ℕ) (high : List E) : List E := (List.range n).map fun l ↦ eqBits high l
 
-/-- One part's term of the weight (`opening.rs:779-796`): the public branch, or the hidden one. -/
+/-- One part's term of the weight (`opening.rs:781-806`): the public branch, or the hidden one. -/
 def Layout.term (L : Layout) (laneEq low : List E) (part : Part) : E :=
   let on := onParity L.lanes part.lanes laneEq
   match L.logPiece with
@@ -330,7 +330,7 @@ def Layout.term (L : Layout) (laneEq low : List E) (part : Part) : E :=
     let onOverflow := laneEq.getD L.overflow 0 + laneEq.getD (L.share.getD 0) 0
     below * (even * on 0 + odd * on 1 + pieces * onOverflow)
 
-/-- **The weight closure** (`opening.rs:776-797`), at a stack point `x`: the lane's coordinates
+/-- **The weight closure** (`opening.rs:777-807`), at a stack point `x`: the lane's coordinates
 first, then the lane index's six. -/
 def Layout.weight (L : Layout) (ls : List E) (claims : List Claim) (x : List E) : E :=
   let low := x.take L.logLane
@@ -338,7 +338,7 @@ def Layout.weight (L : Layout) (ls : List E) (claims : List Claim) (x : List E) 
   let laneEq := laneEqs L.lanes.length high
   (L.parts ls claims).foldl (fun acc part ↦ acc + L.term laneEq low part) 0
 
-/-- **The opening check** `opening::verify` (`opening.rs:728-806`) past its transcript's start, as a
+/-- **The opening check** `opening::verify` (`opening.rs:728-819`) past its transcript's start, as a
 program of mumbai's verifier language, at rate exponent `R` (`LOG_INV_RATE = 1`): the length
 check, the batching challenge, then `verify_whir` with the target and the weight. -/
 def Layout.check (L : Layout) (R : ℕ) (claims : List Claim) : Prog Unit := do

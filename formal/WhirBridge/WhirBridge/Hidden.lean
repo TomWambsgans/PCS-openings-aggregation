@@ -265,7 +265,7 @@ theorem Layout.HiddenOK.block_inj {L : Layout} {s : ℕ} (hL : L.HiddenOK s) {i 
 
 /-! ## `Table::read` -/
 
-/-- The stack's entry `y` of lane `l` (`lane(l)[y]`, `opening.rs:482-484`). -/
+/-- The stack's entry `y` of lane `l` (`lane(l)[y]`, `opening.rs:481`). -/
 def stackAt {n : ℕ} (q : Column n) (logLane l y : ℕ) : K := q.values.getD (y + 2 ^ logLane * l) 0
 
 /-- **`Table::read`** (`opening.rs:476-502`), entry by entry, for a hidden layout with pieces of

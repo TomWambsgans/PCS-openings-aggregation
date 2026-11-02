@@ -16,9 +16,9 @@ import LeanVM.Protocol.EndToEnd.Front.LayoutArith
 
 mumbai's doom (`StackedPre`) and its extractor speak of *stacks*: a candidate `q` of the level-0
 word satisfies a stack claim `(w, v)` when `Σ_x w(x) q(x) = v` over the stack's cube
-(`StackClaim.Holds`). `opening.rs` commits a table of `vars` variables as the stack of its blocks:
-lane `l` holds the table's block `blocks[l]` of `2^ℓ` entries, `ℓ = log_n − 6`, and the table is
-zero outside them. `Blocks.table L q` is that table read back from a stack, and
+(`StackClaim.Holds`). A public layout (`Layout::new`) commits a table of `vars` variables as the
+stack of its blocks: lane `l` holds the table's block `blocks[l]` of `2^ℓ` entries, `ℓ = log_n − 6`,
+and the table is zero outside them (a hidden layout's table is `Hidden.lean`'s). `Blocks.table L q` is that table read back from a stack, and
 `Blocks.tableEval L q p` its multilinear extension at `p`.
 
 `holds_iff`: **for every stack `q`, `q` satisfies the stack claim of a claim `c` exactly when the
@@ -43,7 +43,7 @@ structure Blocks.Valid (L : Blocks) : Prop where
   lanes_le : L.lanes ≤ 2 ^ laneFold
   block_lt : ∀ b ∈ L.blocks, b < 2 ^ (L.vars - L.logLane)
 
-/-- **The table a stack stands for** (`opening.rs:36-37, 113-119`): entry `o + 2^ℓ·b`
+/-- **The table a public stack stands for** (`Table::new`, `opening.rs:392-412`): entry `o + 2^ℓ·b`
 (`o < 2^ℓ`) is entry `o + 2^ℓ·l` of the stack for the lane `l` holding block `b`, and `0` where no
 lane holds it; written as the sum over the lanes holding the block, which is that one entry for
 distinct blocks (as `Layout::new` lists them). -/
@@ -51,7 +51,7 @@ def Blocks.table (L : Blocks) (q : Column L.logN) (t : ℕ) : K :=
   ∑ l ∈ range L.lanes, if L.blocks.getD l 0 = t / 2 ^ L.logLane then
     q.values.getD (t % 2 ^ L.logLane + 2 ^ L.logLane * l) 0 else 0
 
-/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:122-130`). -/
+/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:504-516`). -/
 def Blocks.tableEval (L : Blocks) (q : Column L.logN) (p : List E) : E :=
   ∑ t ∈ range (2 ^ L.vars), ofK (L.table q t) * eqEval (boolPoint L.vars t) p
 

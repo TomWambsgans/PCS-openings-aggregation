@@ -13,13 +13,13 @@ import WhirBridge.Layouts
 # `opening::verify` and its soundness
 
 `openingVerifyWithHash H F L R root claims π` is `opening::verify(layout, root, claims, proof)`
-(`opening.rs:728-806`) with Keccak-256 `H` and Keccak-f[1600] `F` in any monad, step by step:
+(`opening.rs:728-819`) with Keccak-256 `H` and Keccak-f[1600] `F` in any monad, step by step:
 
 1. reject unless every claim's point has the table's `vars` coordinates;
 2. the IV `H(prefix(L) ‖ claims)` (`iv`, `opening.rs:592-602`; `openingPrefix`: `LABEL`, `VERSION = 2`,
    the layout's id, `log_n`, the rate, 76 bytes; the claims as `claimsBytes`), the sponge
    `F(IV ‖ 0 ‖ 0)` (`Transcript::new(proof, iv, PUBLIC_DIGEST = 0, true)`);
-3. reject unless the proof's first two scalars encode the expected root (`opening.rs:740-744`);
+3. reject unless the proof's first two scalars encode the expected root (`opening.rs:742-745`);
 4. the program `ourProg`: read those two scalars as the commitment (absorbed), then `Layout.check`
    (the batching challenge, the target, the weight closure, `verify_whir`), accepting when it
    accepts and the proof is read whole.
@@ -66,7 +66,7 @@ def version : ℕ := 2
 /-- An integer as 8 little-endian bytes (`(n as u64).to_le_bytes()`). -/
 def u64 (n : ℕ) : Bytes := wordBytes n.toUInt64
 
-/-- A lane's kind and block in the layout's encoding (`opening.rs:637-642`): `0` a block, `1` the
+/-- A lane's kind and block in the layout's encoding (`opening.rs:639-647`): `0` a block, `1` the
 overflow lane, `2` a random lane. -/
 def Lane.code : Lane → ℕ × ℕ
   | .block b => (0, b)
@@ -118,7 +118,7 @@ section Run
 
 variable {m : Type → Type} [Monad m] (H : Bytes → m Digest) (F : KeccakState → m KeccakState)
 
-/-- **`opening::verify`** (`opening.rs:728-806`) over a hash `H` and a permutation `F`. -/
+/-- **`opening::verify`** (`opening.rs:728-819`) over a hash `H` and a permutation `F`. -/
 def openingVerifyWithHash (L : Layout) (R : ℕ) (root : Digest) (claims : List Claim)
     (π : Proof) : m Bool :=
   if ∀ c ∈ claims, c.point.length = L.vars then do
