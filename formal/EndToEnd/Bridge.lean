@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Bridge.Opening
 import Bridge.Chain
+import Bridge.Verifier
 
 /-!
 # The bridge: the statement's definitions are the proof layers'
@@ -14,4 +15,7 @@ definitions equal to the proofs' (see `README.md` of this package):
   read-back of a hidden table) are F2's (`WhirBridge`).
 * `Bridge/Chain.lean`: the reduction's Keccak-256 chain (label, roots, values, challenges) is F4's
   `chainWith` (`Compose`, F4a's bytes), then the statement's claims (`reduceWith_eq`).
+* `Bridge/Verifier.lean`: the statement's verifier is `Soundness.verifyES` (F4's chain and three
+  openings with the statement's early stops), given the claims (`verifyWith_eq_verifyES`,
+  `verifierBridge_of_claims`: `Soundness.VerifierBridge`).
 -/
