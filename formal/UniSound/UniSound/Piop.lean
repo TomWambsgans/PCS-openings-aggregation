@@ -110,12 +110,19 @@ def uniRounds (flockRounds : List Compose.RoundSpec) (nV V : ℕ) : List Compose
   `main_of_polys`: all zero, the bus and constraint state holds; `deg_le`: their degrees sum to at
   most `degSum`.
 * `diffs … t vals`: for each commitment, each of its relations' `Σ terms + value` at `t` with the
-  values `vals` (zero when the relation holds; the verifier's relations, in `combine`'s order);
-  `diffs_eval`: all zero, every identity vanishes at `t`; `diffs_flock`: all zero, Flock's claim
-  on `q_flock` holds (it is one of `C1`'s relations).
-* `prod … ρ λ`: the batch's `g = Σ_k λ^k W_k C_k` (`ProdSum`, over `V` variables), `target` its
-  claimed sum `Σ_k λ^k v_k`; `batch_start`: `Σ_u g(u) + target` is the combination by `λ` of the
-  commitments' combinations by `ρ` of their relations' `diffs` (`combine`, `weightAt`). -/
+  values `vals` (zero when the relation holds; the verifier's relations, in `combine`'s order),
+  and as a fourth entry the pending reduction's `Σ G L̂ ŝ + claim`; `diffs_eval`: all zero, every
+  identity vanishes at `t`; `diffs_flock`: all zero, Flock's claim on `q_flock` holds (it is one
+  of `C1`'s relations).
+* `prod … ρ λ`: the batch's `g = Σ_{k<3} λ^k W_k C_k + λ³ G L` (`ProdSum`, over `V` variables;
+  iteration 2's lever 4a: the pending matrices' sum is the fourth product), `target` its claimed
+  sum `Σ_k λ^k v_k + λ³ claim`; `batch_start`: `Σ_u g(u) + target` is the combination by `λ` of
+  the commitments' combinations by `ρ` of their relations' `diffs` (`combine`, `weightAt`).
+
+The model must cover **every row count the verifier accepts**, `0 … 2^h` of a table of height
+`h` (iteration 2 checks only the range), at Lv42's sizes `D.sizes rows` (`τ = ⌈log₂ rows⌉`, below
+`h` for a count up to `2^(h−1)`, where honest quotients do not fit: soundness must hold there all
+the same). -/
 structure UniIds (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) where
   nV : ℕ
   V : ℕ
@@ -132,7 +139,7 @@ structure UniIds (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) where
   diffs : USt → Stk → List E → Done → Stk → E → List E → List (List E)
   nRel : ℕ
   diffs_len : ∀ s c1 ch fd c2 t vals, ∀ d ∈ diffs s c1 ch fd c2 t vals, d.length ≤ nRel
-  diffs_count : ∀ s c1 ch fd c2 t vals, (diffs s c1 ch fd c2 t vals).length ≤ 3
+  diffs_count : ∀ s c1 ch fd c2 t vals, (diffs s c1 ch fd c2 t vals).length ≤ 4
   diffs_eval : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
     ∀ P ∈ polys s c1 ch c2, P.eval t = 0
   diffs_flock : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
@@ -252,9 +259,9 @@ section States
 
 variable {D : Deployment} {κ : ℕ} (Fl : FlockSound κ) (I : UniIds D Fl)
 
-/-- **Flock's end**: its rounds completed, its checks pass, its claims on `A0`, `B0` hold. -/
+/-- **Flock's end**: its rounds completed, its pending reduction's claim its sum. -/
 def FlockDone (fd : Done) : Prop :=
-  DoneFits Fl.prog.rounds fd ∧ Fl.prog.ZerosVanish fd [] ∧ FlockMatricesHold (Fl.prog.out fd [])
+  DoneFits Fl.prog.rounds fd ∧ PendingHolds (Fl.prog.out fd []).2.2
 
 /-- **The state after the completed rounds `q`** (`q` nonempty). -/
 def uniS (s : USt) (q : Op Stk) : Prop :=
@@ -303,7 +310,7 @@ noncomputable def uniErr (j : ℕ) : ℝ≥0∞ :=
   else if j ≤ Fl.prog.rounds.length then Fl.err (j - 1)
   else if j = Fl.prog.rounds.length + 1 then (I.degSum : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)
   else if j = Fl.prog.rounds.length + 2 then
-    ((I.nRel - 1 + (3 - 1) : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)
+    ((I.nRel - 1 + (4 - 1) : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)
   else ((2 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)
 
 end States

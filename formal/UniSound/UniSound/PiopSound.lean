@@ -63,8 +63,7 @@ theorem uniPre_pre_post (s : USt) (p : Op Stk) (m : Option Stk × List E) (c : L
     obtain ⟨c1, c2, h1, -, hP, hEnd, hDone⟩ := h
     refine ⟨c1, h1, ?_⟩
     rw [ite_eq_left (le_of_eq hq), hq, Nat.add_sub_cancel, List.take_length]
-    exact ⟨I.main_of_polys _ _ _ _ hP, hDone.1,
-      Fl.finish _ _ hDone.1 hDone.2.1 hEnd hDone.2.2⟩
+    exact ⟨I.main_of_polys _ _ _ _ hP, hDone.1, Fl.finish _ _ hDone.1 hEnd hDone.2⟩
   · rw [ite_eq_right hq] at h
     exact h
 
@@ -193,7 +192,7 @@ theorem uniSound_c2 (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.lengt
 theorem uniSound_vals (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.length + 2)
     (m : Option Stk × List E) :
     Pr{let c ← Compose.draws E 2}[¬ uniPre Fl I s p m ∧ uniPost Fl I s p m c] ≤
-      ((I.nRel - 1 + (3 - 1) : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
+      ((I.nRel - 1 + (4 - 1) : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
   rw [uniPre_ne Fl I s p m (by omega) (by omega)]
   have hlt : 0 < p.length := by omega
   have hlt1 : Fl.prog.rounds.length + 1 < p.length := by omega
@@ -218,7 +217,7 @@ theorem uniSound_vals (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.len
   by_cases hbad : ∃ d ∈ I.diffs s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2
       ((rd p (Fl.prog.rounds.length + 1)).2.headD 0) m.2, ∃ x ∈ d, x ≠ 0
   · have hb := prEvent_twoLevel_le (I.diffs s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2
-      ((rd p (Fl.prog.rounds.length + 1)).2.headD 0) m.2) I.nRel 3
+      ((rd p (Fl.prog.rounds.length + 1)).2.headD 0) m.2) I.nRel 4
       (I.diffs_len s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2
         ((rd p (Fl.prog.rounds.length + 1)).2.headD 0) m.2)
       (I.diffs_count s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2
