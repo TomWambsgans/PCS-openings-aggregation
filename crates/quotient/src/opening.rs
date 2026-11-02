@@ -13,7 +13,9 @@
 //! outside some blocks, so it is committed as the **stack** of those blocks, one WHIR lane each, in the order
 //! the [`Layout`] lists them. A claim stays a plain multilinear claim on the whole table: its weight on the
 //! stack is the claim's `eq`, read wherever the stack holds the table's entries. All the claims on one
-//! commitment are opened together, as one random combination, which is what binds them to one table.
+//! commitment are opened together, as one random combination, which binds them to one table of the root's
+//! level-0 Johnson list (leanVM's WHIR takes no out-of-domain sample at level 0): claims on one commitment must never
+//! be opened separately.
 //!
 //! A **hidden** layout ([`Layout::hidden`]) makes the commitment and its opening independent of the table given
 //! the claims (`HIDING.md`): every lane's first piece of `2^LOG_PIECE` entries is random, the pieces the table's
@@ -351,6 +353,30 @@ fn fill_random(rng: &mut StdRng, out: &mut [F64]) {
     out.iter_mut().for_each(|w| *w = F64(rng.next_u64()));
 }
 
+/// In debug builds, what a reused buffer's words are set to before a table is filled in it: none may be left.
+#[cfg(debug_assertions)]
+const UNWRITTEN: F64 = F64(0x7E57_ED0B_AD5E_ED11);
+
+/// `buffer` resized to `len` words, for fills that must overwrite every word they are handed. In debug builds,
+/// the words it brings are first set to `UNWRITTEN`, which [`check_written`] then looks for.
+fn reuse(mut buffer: Vec<F64>, len: usize) -> Vec<F64> {
+    buffer.truncate(len);
+    #[cfg(debug_assertions)]
+    buffer.fill(UNWRITTEN);
+    buffer.resize(len, F64::ZERO);
+    buffer
+}
+
+/// In debug builds, that a fill wrote every word of `out`, a run of a buffer from [`reuse`] it was handed.
+fn check_written(out: &[F64]) {
+    #[cfg(debug_assertions)]
+    assert!(
+        !out.contains(&UNWRITTEN),
+        "a table's fill left words of a reused buffer: it must write every word it is handed"
+    );
+    let _ = out;
+}
+
 impl Table {
     /// The table whose lane `l`, holding block `b`, `fill(l, b, lane)` writes whole. The layout is not hidden.
     pub fn new(layout: Layout, fill: impl Fn(usize, usize, &mut [F64]) + Sync) -> Self {
@@ -359,11 +385,17 @@ impl Table {
 
     /// [`Self::new`], its stack in `buffer`'s allocation when that holds it: a buffer the caller is done with,
     /// whose words `fill` overwrites.
-    pub fn new_in(layout: Layout, mut buffer: Vec<F64>, fill: impl Fn(usize, usize, &mut [F64]) + Sync) -> Self {
+    ///
+    /// `fill` must write every word of the lane it is handed: where it does not, the stack keeps the buffer's
+    /// old words (where [`Self::new`] has zeros). Debug builds check it.
+    pub fn new_in(layout: Layout, buffer: Vec<F64>, fill: impl Fn(usize, usize, &mut [F64]) + Sync) -> Self {
         assert!(layout.log_piece.is_none(), "a hidden layout takes `Table::hidden`");
         let lane = 1 << layout.log_lane();
-        buffer.resize(layout.placed(), F64::ZERO);
-        parallel::chunks_mut(&mut buffer, lane, |l, out| fill(l, layout.block(l), out));
+        let mut buffer = reuse(buffer, layout.placed());
+        parallel::chunks_mut(&mut buffer, lane, |l, out| {
+            fill(l, layout.block(l), out);
+            check_written(out);
+        });
         Self { layout, stack: buffer }
     }
 
@@ -375,9 +407,12 @@ impl Table {
     }
 
     /// [`Self::hidden`], its stack in `buffer`'s allocation when that holds it.
+    ///
+    /// `entries` must write every word of the run it is handed: where it does not, the stack keeps the buffer's
+    /// old words (where [`Self::hidden`] has zeros). Debug builds check it.
     pub fn hidden_in(
         layout: Layout,
-        mut buffer: Vec<F64>,
+        buffer: Vec<F64>,
         seed: &[u8; 32],
         entries: impl Fn(usize, &mut [F64]) + Sync,
     ) -> Self {
@@ -386,7 +421,11 @@ impl Table {
         let piece = 1 << s;
         let held = layout.pieces.len();
         let share = layout.share.expect("a share lane");
-        buffer.resize(layout.placed(), F64::ZERO);
+        let mut buffer = reuse(buffer, layout.placed());
+        let entries = |start: usize, out: &mut [F64]| {
+            entries(start, out);
+            check_written(out);
+        };
         parallel::chunks_mut(&mut buffer, 1 << log_lane, |l, out| {
             let mut rng = lane_rng(seed, l);
             match layout.lanes[l] {
@@ -696,6 +735,9 @@ fn layout_overflow(lanes: &[Lane]) -> usize {
         .position(|&lane| lane == Lane::Overflow)
         .expect("an overflow lane")
 }
+
+#[cfg(test)]
+mod adversarial;
 
 #[cfg(test)]
 mod tests {

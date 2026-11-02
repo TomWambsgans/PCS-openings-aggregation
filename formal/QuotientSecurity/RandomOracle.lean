@@ -77,7 +77,7 @@ variable (P B)
 
 /-- The largest of the three round errors. -/
 noncomputable def roundError : ℝ≥0 :=
-  max (max (((2 * P.nCells ^ 2 + 4 * P.nCells + P.words : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0))
+  max (max (((4 * P.nCells + P.words : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0))
     (((B.identity : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0)))
     (((3 : ℕ) : ℝ≥0) / (Fintype.card F : ℝ≥0))
 
@@ -175,6 +175,20 @@ theorem knowledgeSoundness_bits (hq : Fintype.card F = 2 ^ 192) (hN : P.nCells =
   have h1 := rbrError_le P B hq hN hw hd ⟨⟨1, by norm_num⟩, rfl⟩
   have h3 := rbrError_le P B hq hN hw hd ⟨⟨3, by norm_num⟩, rfl⟩
   have h5 := rbrError_le P B hq hN hw hd ⟨⟨5, by norm_num⟩, rfl⟩
+  exact max_le (max_le h1 h3) h5
+
+/-- **The margin for the lists, in the random-oracle model.** With identities of degree at most
+`2^28` and any `L ≤ 2^18`, the largest round error times `L^2` is at most `2^-128`: a query's
+error, union-bounded over at most two level-0 Johnson lists of at most `L` words, stays below
+`2^-128`. -/
+theorem roundError_mul_sq_le (hq : Fintype.card F = 2 ^ 192) (hN : P.nCells = 2 ^ 24)
+    (hw : P.words = 8) (hd : B.identity ≤ 2 ^ 28) (L : ℕ) (hL : L ≤ 2 ^ 18) :
+    (L : ℝ≥0) ^ 2 * roundError P B ≤ 1 / 2 ^ 128 := by
+  have h1 := rbrError_mul_sq_le P B hq hN hw hd L hL ⟨⟨1, by norm_num⟩, rfl⟩
+  have h3 := rbrError_mul_sq_le P B hq hN hw hd L hL ⟨⟨3, by norm_num⟩, rfl⟩
+  have h5 := rbrError_mul_sq_le P B hq hN hw hd L hL ⟨⟨5, by norm_num⟩, rfl⟩
+  unfold roundError
+  rw [mul_max_of_nonneg _ _ (zero_le (α := ℝ≥0)), mul_max_of_nonneg _ _ (zero_le (α := ℝ≥0))]
   exact max_le (max_le h1 h3) h5
 
 end QuotientSecurity

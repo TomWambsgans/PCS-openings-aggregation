@@ -21,7 +21,7 @@ use crate::protocol::{Channel, Q_SPILL, extension, quotient_chunks, reduce, sum_
 use crate::transcript::TranscriptError;
 
 /// The `K` coordinates of an `E` value.
-fn coords(x: F192) -> [F64; 3] {
+pub(crate) fn coords(x: F192) -> [F64; 3] {
     [F64(x.c0), F64(x.c1), F64(x.c2)]
 }
 
@@ -66,7 +66,7 @@ impl Span {
 }
 
 /// The rank of a set of `K`-rows.
-fn rank(rows: impl IntoIterator<Item = Vec<F64>>) -> usize {
+pub(crate) fn rank(rows: impl IntoIterator<Item = Vec<F64>>) -> usize {
     let mut span = Span::new();
     rows.into_iter().for_each(|row| {
         span.insert(row);
@@ -75,7 +75,7 @@ fn rank(rows: impl IntoIterator<Item = Vec<F64>>) -> usize {
 }
 
 /// A basis of the kernel of the `K`-matrix `m` (`n` columns).
-fn kernel(m: &[Vec<F64>], n: usize) -> Vec<Vec<F64>> {
+pub(crate) fn kernel(m: &[Vec<F64>], n: usize) -> Vec<Vec<F64>> {
     let mut rows: Vec<Vec<F64>> = m.to_vec();
     let mut pivots = vec![];
     let mut r = 0;
@@ -111,7 +111,7 @@ fn kernel(m: &[Vec<F64>], n: usize) -> Vec<Vec<F64>> {
 
 /// A lane's codeword at domain position `position`, as a form in its `2^log_lane` entries: entry `y` weighs
 /// `Π_{k ∈ y} Ŵ_k(x)`, the novel basis at `x`, with the subspace polynomials the verifier uses.
-fn column(log_lane: usize, position: usize) -> Vec<F64> {
+pub(crate) fn column(log_lane: usize, position: usize) -> Vec<F64> {
     let mut roots = vec![F64::ONE];
     let mut layer: Vec<F64> = (1..=log_lane).map(|i| F64(1 << i)).collect();
     for _ in 0..log_lane {
@@ -141,7 +141,7 @@ fn eq_prefix(phi: &[F192], j: usize, l: usize) -> F192 {
 }
 
 /// `eq(φ, bits of l)`: lane `l`'s weight in the first fold.
-fn fold_weight(phi: &[F192], l: usize) -> F192 {
+pub(crate) fn fold_weight(phi: &[F192], l: usize) -> F192 {
     eq_prefix(phi, phi.len(), l)
 }
 
@@ -203,7 +203,7 @@ fn lane_rounds(layout: &Layout, weight: &[F192], phi: &[F192]) -> Vec<Vec<F192>>
 
 /// Whether the round values `values` (twelve) leave the last round's value at its challenge unchanged: what
 /// every change that keeps the claims and `f¹` must do (`h_5(φ_5) = Σ W̃(·, φ)·f¹`).
-fn keeps_last_claim(values: &[F192], phi: &[F192]) -> bool {
+pub(crate) fn keeps_last_claim(values: &[F192], phi: &[F192]) -> bool {
     let mut claim = F192::ZERO;
     for j in 0..LANE_FOLD {
         let (at_zero, quadratic) = (values[2 * j], values[2 * j + 1]);
@@ -336,7 +336,7 @@ fn leak(layout: &Layout, points: &[Vec<F192>], queries: usize, rng: &mut Rng) ->
 /// The random unknowns at in-lane entry `y` past the first piece, each as the lanes whose entry `y` it is part
 /// of: every random lane's own entry (the share lane's at a held piece being part of the overflow lane's too),
 /// and the overflow lane's where it holds none of the table.
-fn random_at(layout: &Layout, y: usize) -> Vec<Vec<usize>> {
+pub(crate) fn random_at(layout: &Layout, y: usize) -> Vec<Vec<usize>> {
     let s = layout.log_piece().expect("a hidden layout");
     let overflow = layout.overflow().expect("an overflow lane");
     let held = (1..=layout.pieces().len()).contains(&(y >> s));
@@ -360,7 +360,7 @@ fn random_at(layout: &Layout, y: usize) -> Vec<Vec<usize>> {
 /// its K-dimension over `samples` entries where the overflow lane holds the table and as many where it does
 /// not (all of them if fewer), exact once it reaches 33, and condition (S): the K-dimension of the fold weights
 /// of the random lanes but the share, which are random at every entry (3 when they span `E`).
-fn round_freedom(
+pub(crate) fn round_freedom(
     layout: &Layout,
     points: &[Vec<F192>],
     lambdas: &[F192],
@@ -457,7 +457,7 @@ impl Channel<F192> for RandomChannel {
 }
 
 /// The reduction's claim points at random challenges: the witness table's, and the quotient table's two.
-fn reduced_points(log_rows: usize, seed: u64) -> (Vec<F192>, Vec<Vec<F192>>) {
+pub(crate) fn reduced_points(log_rows: usize, seed: u64) -> (Vec<F192>, Vec<Vec<F192>>) {
     let reduced = reduce(&mut RandomChannel(Rng::new(seed)), log_rows).expect("a nondegenerate challenge");
     (reduced.witness.0, vec![reduced.quotient.0, sum_point(log_rows)])
 }
@@ -485,7 +485,7 @@ fn small_witness(m: usize, log_piece: usize, random: usize) -> Layout {
 }
 
 /// The full-size hidden layouts with `witness` and `quotient` random lanes.
-fn full_layouts(log_rows: usize, witness: usize, quotient: usize) -> (Layout, Layout) {
+pub(crate) fn full_layouts(log_rows: usize, witness: usize, quotient: usize) -> (Layout, Layout) {
     let m = log_rows + 2;
     (
         Layout::hidden(m + 1, m, m + 1, &[(0, 1 << m), (1, 16)], witness),
@@ -655,7 +655,7 @@ fn rounds_are_free_at_full_size() {
 }
 
 /// A toy circuit with one input bit the statement does not depend on: two witnesses of one statement.
-fn two_witnesses() -> (
+pub(crate) fn two_witnesses() -> (
     crate::circuit::Circuit,
     impl Fn(bool) -> Vec<bool>,
     crate::statement::Statement,
@@ -681,7 +681,7 @@ fn two_witnesses() -> (
 }
 
 /// The witness table a verifier who guesses the cells, the masks and the padding's seed would commit.
-fn guessed_witness(
+pub(crate) fn guessed_witness(
     circuit: &crate::circuit::Circuit,
     cells: &[F64],
     mask: &[F64; 16],
