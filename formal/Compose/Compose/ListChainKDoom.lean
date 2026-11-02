@@ -88,7 +88,7 @@ structure WhirShape where
 
 /-- **A public layout of `2^24 ..= 2^28` words that `Layout::new` accepts** (`NewOK`): F2's
 `ours_sound_public_at`, at the shape's own query count `QO = largeQueries log_n`. -/
-noncomputable def WhirShape.large (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ))
+@[reducible] noncomputable def WhirShape.large (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ))
     (hS : NewOK vars logChunk logN chunks) (h1 : largeMin ≤ logN) (h2 : logN ≤ largeMax) :
     WhirShape where
   L := Layout.new vars logChunk logN chunks
@@ -101,7 +101,7 @@ noncomputable def WhirShape.large (vars logChunk logN : ℕ) (chunks : List (ℕ
 
 /-- **The deployed layouts** (witness, wiring, quotient at `17 ≤ log_rows ≤ 22`): F2's
 `ours_sound`, at the uniform `10122` queries. -/
-noncomputable def WhirShape.small (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r)
+@[reducible] noncomputable def WhirShape.small (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r)
     (h2 : r ≤ WhirBridge.maxLogRows) (L : Layout) (hL : L = witnessLayout r ∨ L = wiringLayout r ∨ L = quotientLayout r) : WhirShape where
   L := L
   R := logInvRate
