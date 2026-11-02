@@ -160,6 +160,21 @@ section Spec
 
 variable {m : Type → Type} [Monad m] (H : Bytes → m Digest) (F : KeccakState → m KeccakState)
 
+/-- **The prover's end** (`proveWithH` after `t`): the reduction on its own proof, then the three
+openings, the quotient table's two claims in one. -/
+def finishSpec (fuel logRows : ℕ) (stmt : Statement) (indexTree witnessTree quotientTree : Tree)
+    (sigmaHat wStack qStack : Array K) (proof : ReductionProof) : m (Option PcsQuotient.Proof) := do
+  match ← reduceWithH H logRows indexTree.root stmt proof with
+  | none => return none
+  | some r =>
+    let some witness ← proveOpeningWithH H F fuel (witnessLayout logRows) witnessTree wStack
+      [r.claims.witness] | return none
+    let some wiring ← proveOpeningWithH H F fuel (wiringLayout logRows) indexTree sigmaHat
+      [r.claims.wiring] | return none
+    let some quotient ← proveOpeningWithH H F fuel (quotientLayout logRows) quotientTree
+      qStack [r.claims.quotient, r.claims.sum] | return none
+    return some ⟨proof, witness, wiring, quotient⟩
+
 /-- **`proveWithH` with its computations named.** -/
 def proveSpec (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array K) (masks : Masks)
     (witnessPad quotientPad : Padding) : m (Option PcsQuotient.Proof) := do
@@ -190,16 +205,8 @@ def proveSpec (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array
   let (t, _) ← squeezeWithH H c
   let proof : ReductionProof := ⟨witnessRoot, quotientRoot, rowValuesAt circuit.logRows wHat mask t,
     nextAt circuit.logRows sigmaHat t⟩
-  match ← reduceWithH H circuit.logRows indexTree.root stmt proof with
-  | none => return none
-  | some r =>
-    let some witness ← proveOpeningWithH H F fuel (witnessLayout circuit.logRows) witnessTree wStack
-      [r.claims.witness] | return none
-    let some wiring ← proveOpeningWithH H F fuel (wiringLayout circuit.logRows) indexTree sigmaHat
-      [r.claims.wiring] | return none
-    let some quotient ← proveOpeningWithH H F fuel (quotientLayout circuit.logRows) quotientTree
-      qStack [r.claims.quotient, r.claims.sum] | return none
-    return some ⟨proof, witness, wiring, quotient⟩
+  finishSpec H F fuel circuit.logRows stmt indexTree witnessTree quotientTree sigmaHat wStack qStack
+    proof
 
 /-- **`proveWithH` is `proveSpec`**: the same program, its computations named. -/
 theorem proveWithH_eq_spec (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array K)
