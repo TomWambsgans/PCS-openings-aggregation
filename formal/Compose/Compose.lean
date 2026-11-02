@@ -6,4 +6,5 @@ import Compose.Bits
 import Compose.Final
 import Compose.TwoOracle
 import Compose.ComposedKC
+import Compose.Extract
 import Compose.Axioms
