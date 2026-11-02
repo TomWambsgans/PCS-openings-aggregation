@@ -30,6 +30,7 @@ import QuotientZk.RpmDiscipline
 import QuotientZk.Deployed.Fresh
 import QuotientZk.Deployed.Fresh.Setup
 import QuotientZk.FreshJoint
+import QuotientZk.Instance.Builder
 import QuotientZk.Instance.Main
 import QuotientZk.Instance.Nondeg
 

@@ -101,7 +101,8 @@ theorem claimsMap_stackD_sparse (L : GadgetLayout ι Y) {m : ℕ} (Wc : Fin m �
     · by_cases hp : L.randPos p.1.1 p.1.2
       · rw [hW j _ _ hp]
         simp
-      · rw [if_neg hp, if_pos rfl, Algebra.smul_def, mul_comm]
+      · simp only [hp, ↓reduceIte, Prod.mk.eta]
+        rw [Algebra.smul_def, mul_comm]
     · intro y _ hy
       have : p.1 ≠ (p.1.1, y) := fun h => hy (congrArg Prod.snd h).symm
       simp [this]
@@ -703,3 +704,23 @@ theorem claims_simTQ {rep : Rep K E} {P₀ : Params E} {stmt : Fin P₀.words �
 end Tables
 
 end QuotientZk.Instance
+
+/-! ## Axioms -/
+
+/--
+info: 'QuotientZk.Instance.Builder.solveElim_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms QuotientZk.Instance.Builder.solveElim_spec
+
+/--
+info: 'QuotientZk.Instance.claims_simTW' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms QuotientZk.Instance.claims_simTW
+
+/--
+info: 'QuotientZk.Instance.claims_simTQ' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in
+#print axioms QuotientZk.Instance.claims_simTQ
