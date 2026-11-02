@@ -37,15 +37,18 @@ deployed Keccak-f[1600], independent of `π`.
   (`formal/EndToEnd/ZK`) proves `ZeroKnowledgeWith` for `formal/QuotientZk`'s simulator in this shape
   (`README.md`, "The simulator").
 
-**The bounds are parameters** (`ε`, `δ`, `ζ`): they are not yet known, and the end theorem will fix
-them (`README.md` gives the targets). A bound is part of what is proved: `KnowledgeSoundness ε` for
-`ε = 1` says nothing.
+**The bounds are parameters** (`ε`, `δ`, `ζ`). A bound is part of what is proved: `KnowledgeSoundness ε`
+for `ε = 1` says nothing. The end theorems (`formal/EndToEnd`) fix them: `KnowledgeSoundness
+Soundness.ksBound` (about `2^-62` at `Q = 2^64`) and `Completeness E2ECompleteness.deltaDeployed` (below
+`2^-162`) are proved with no hypothesis; `ZeroKnowledgeWith` for `formal/QuotientZk`'s simulator, at about
+`2^-113`, is in progress (`README.md`, "What is proved").
 
 **Zero knowledge rests on the hidden layouts** (`crates/quotient/HIDING.md`): the prover pads its two
 secret tables (`Layout.hidden`), and its opening of a table is then distributed as that of any other table
-with the same claims, under conditions (S) and (R) on the challenges that `HIDING.md` checks at random
-challenges but does not prove for every claim point. The statement's prover takes its padding uniform; the
-deployed one expands a 32-byte seed by ChaCha12 (a pseudorandom generator, outside this model).
+with the same claims, under conditions (S) and (R) on the challenges, which `formal/QuotientSecurity/Hiding`
+proves for the deployed layouts outside a small set of challenges (`deployed_prEvent_le`). The statement's
+prover takes its padding uniform; the deployed one expands a 32-byte seed by ChaCha12 (a pseudorandom
+generator, outside this model).
 
 **One Keccak-256.** Deployed, one Keccak-256 serves the reduction's chain, the WHIR Merkle trees
 (`hash_pair` is byte for byte the relation's `pair`), the openings' duplex and the relation. As in mumbai, the
@@ -274,14 +277,20 @@ def StatementBinds : Prop :=
 
 /-! ### The end theorems -/
 
-/-- **The end theorems**, at the bounds `ε`, `δ`, `ζ` the proofs will fix (`README.md`). -/
+/-- **The end theorems**, at the bounds `ε`, `δ`, `ζ`. The first two fields are proved in
+`formal/EndToEnd` (`Soundness.knowledgeSoundness` at `ε = Soundness.ksBound`,
+`E2ECompleteness.completeness_end` at `δ = E2ECompleteness.deltaDeployed`); `zeroKnowledge` is about this
+package's heuristic `simulator`, which no theorem covers (the zero-knowledge end theorem, in progress, is
+`ZeroKnowledgeWith` for `formal/QuotientZk`'s simulator); `statementBinds` is immediate and not proved in
+Lean (`README.md`, "What is proved"). -/
 structure Theorems (ε : ℕ → ℝ≥0∞) (δ : ℝ≥0∞) (ζ : ℕ → ℝ≥0∞) : Prop where
   /-- Knowledge soundness for the straight-line `extractor`. -/
   knowledgeSoundness : KnowledgeSoundness ε
   /-- Completeness of the honest `prover`. -/
   completeness : Completeness δ
   /-- Statistical zero knowledge for `simulator` (the tables hidden as `crates/quotient/HIDING.md` says;
-  its conditions (S), (R) on the challenges are part of what `ζ` must cover). -/
+  its conditions (S), (R) on the challenges are part of what `ζ` must cover). `simulator` is a tested
+  heuristic: no theorem covers it. -/
   zeroKnowledge : ZeroKnowledge ζ
   /-- The statement binds `x` up to a collision of the deployed Keccak-256 (needed by no other field: an
   extracted secret satisfies the relation exactly). -/

@@ -10,8 +10,9 @@ proof layers' (`formal/Compose`, `formal/QuotientSecurity`, `formal/WhirBridge`)
 proposition about definitions only (no probability), at the constants `c` (`beta()`'s words and
 `row_vanishing`'s `tau`, `Reduce.Consts`) and F1's instance `inst c h` (`beta()`'s basis, the
 deployed wiring, `coordinate_weight`'s weights). The
-end theorem (`Final.lean`) takes them as hypotheses; the definitions' bridge
-(`formal/EndToEnd/Bridge`) is to prove them.
+definitions' bridge proves all three at the Statement's constants (`formal/EndToEnd/Bridge/Facts.lean`:
+`Bridge.setupBridge_final`, `Bridge.verifierBridge_final`, `Bridge.readsSecret_final`), and the end
+theorem (`Final.lean`) uses those proofs, so it has no hypothesis.
 
 * **`SetupBridge`** (the circuit's commitment): the Statement's wiring table
   (`(membership 22).wiringTable`) is a stack of `2^24` words whose table's polynomial carries the
