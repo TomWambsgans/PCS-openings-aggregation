@@ -184,7 +184,13 @@ What the port changes in `ListChain`/`ListChainK` (found by this proof; the fram
   `contractIvWith`), not one `Bytes32`; the adversary is given three roots (`rpm_le_kcG` for a
   setup of any type);
 * the row counts are read with `C1`'s root (round `0`'s absorbed bytes), the statement's rows:
-  the chain's label is not the statement, the first step absorbs part of it. -/
+  the chain's label is not the statement, the first step absorbs part of it.
+
+Its proof also needs, of the deployment: the five stacks at `2^24 … 2^28` words (`C1`, `C2`, the
+setup, `A0`, `B0`: `WhirShape.large`, lists at most `largeList ≤ 9952`, `QO ≤ 10122`), the setup's
+Keccak-256 calls below `2^26`, the verifier's calls of `π` below `2^80` (`hVπ`), and `uniExtractor`'s
+decoders listing the chain's candidates (`fastStacks`, `uniqueStacks`, `decodeStacks` at `C1`'s
+`2^μ`, against `Compose`'s `tableCode`). -/
 def FsLayer (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ) (C : UniCode D Fl nV V) :
     Prop :=
   ∀ (R : RbrPiop (uniRounds Fl.prog.rounds nV V) USt Stk) (e : ℝ≥0∞), (∀ j, R.err j ≤ e) →

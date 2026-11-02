@@ -29,6 +29,37 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `Bus.lean` | Round `0` from `formal/Heap`: the bus model (`BusModel`), **`BusModel.mainSound`** (`4N/|E|` and the constraints' batching), `UniIds.ofBus`. |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
 
+## What is proved, what is assumed
+
+**Proved** (sorry-free, Lean's three axioms): the univariate PIOP's round-by-round soundness
+(`uniPiop`: round `0` from the bus model, `BusModel.mainSound`, `busError N + (ncv − 1)/|E|`; Flock's
+rounds from Flock's interface; `t` by Schwartz–Zippel over every identity, `degSum / |E|`; `ρ, λ` by
+the two combinations, `(nRel − 1 + 3) / |E|`; each batching-sumcheck round `2 / |E|`, generic in
+the weights, the pending matrices' sum as one more product); its first state is the relation and
+its last follows from the verifier's checks with true claims (`hpre_uniPiop`, `hlink_uniPiop`);
+the bound in bits (`uniBound_le_bits`).
+
+**Assumed** (the end theorem's hypotheses, each a named Lean object):
+
+1. `hFlock : FlockSound κ` — **Flock** (`FlockInterface.lean`; the Flock agent's).
+2. `B : BusModel D κ` — round `0`'s bridges: the verifier's heap `hd` well formed and realizing
+   Lv42's bus when the limb copies hold (`realizes`; `formal/Heap`'s open items: the leaves as
+   Lv42's flushes, the padded rows' leaves `1`), the constraint vectors' vanishing giving
+   `ConstraintsVanish`, `CountsNonzero`, `PublicLinesHold` and the copies (`cvec_ok`), Flock's
+   column as Lv42's region (`aux_of_flock`), the tuple counts (`hpush`, `hpull`).
+3. `J : UniIdsRest D hFlock B` — the identities as polynomials in `t` (`polys`, `deg_le`,
+   `main_of_polys`: zero polynomials give the heap and the batched constraints on the domain,
+   Heap's `tree_of_quotient`, `leaf_of_padded`, the restriction `R_b`, the coset reading), the
+   relations at `t` (`diffs`, `diffs_eval`, `diffs_flock`, `diffs_pending`), the batch's products
+   (`prod`, `target`, `batch_start`: `combine` and `weightAt` are the `ρ`- and `λ`-combinations).
+4. `C : UniCode D hFlock nV V` — the code-level link: `reduceWith` after the row counts is the
+   chain program on `uniRounds`.
+5. `hFin : UniFinal …` — the last link: the batch's terminal with true claims is the last state.
+6. `hFs : FsLayer …` — the Fiat–Shamir layer: `ListChainK`'s closed random-permutation theorem
+   ported to the univariate transcript, its five openings, its setup and `uniExtractor`.
+7. Numbers: `4 N + ncv ≤ 2^32`, Flock's rounds' errors at most `2^32 / |E|`, `degSum ≤ 2^32`,
+   `nRel + 2 ≤ 2^32`.
+
 The build fails if the end theorems' axioms grow beyond Lean's three standard ones.
 -/
 
