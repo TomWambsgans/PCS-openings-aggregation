@@ -24,7 +24,8 @@ instantiated at the second:
   Compose's: the statement's `y ‖ root`, the two roots its scalars name (`digestOfScalars`), the
   four values and `next`, and the three opening proofs (mumbai's format on both sides);
 * **the verifier with the Statement's early stops** (`verifyES`): the chain, then the three
-  openings, each run only if the reduction (`reduce`) and the openings before it accept.
+  openings, each run only if the reduction (`reduce`) and the openings before it accept, an opening
+  whose proof holds no root rejected before any query (`ourVerifierEarly`).
 -/
 
 set_option linter.unusedSectionVars false
@@ -146,18 +147,30 @@ def convAdv (A : PcsQuotient.Adversary) :
 
 variable {P : Params E} {B : P.Bounds}
 
+/-- **An opening with the Statement's first stop**: a proof whose scalar stream holds fewer than two
+scalars (no root) is rejected before any query (`PcsQuotient.openingWith` reads the root first);
+otherwise `opening::verify` (`ourVerifier`), which rejects it too, after its seed. -/
+def ourVerifierEarly (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking) × Proof) :
+    OracleComp KeccakCalls Bool :=
+  match w.2.stream with
+  | _ :: _ :: _ => ourVerifier L R w
+  | _ => pure false
+
 /-- **The deployed verifier with the Statement's early stops**: the chain; `false` if `reduce`
-rejects (a vanishing denominator); then the witness, wiring and quotient openings of `deployD c 22`,
-each run only if the one before accepted (`protocol::verify` then `verify_openings`). -/
+rejects (a vanishing denominator); then the witness, wiring and quotient openings of `deployD c 22`
+(`ourVerifierEarly`), each run only if the one before accepted (`protocol::verify` then
+`verify_openings`). -/
 def verifyES (W : Wire P B) (c : Consts) (po : RootProof E × OpenProofs) :
     OracleComp KeccakCalls Bool :=
   chainWith W hash256 po.1 >>= fun ch =>
     if (reduceOf c 22 po.1 ch).isSome then
-      ourVerifier (deployD c 22).Lw (deployD c 22).R (wIn (deployD c 22) ⟨po.1, po.2, [], ch⟩) >>=
-        fun bW => if bW then
-          ourVerifier (deployD c 22).Lσ (deployD c 22).R (σIn (deployD c 22) ⟨po.1, po.2, [], ch⟩) >>=
-            fun bσ => if bσ then
-              ourVerifier (deployD c 22).LQ (deployD c 22).R
+      ourVerifierEarly (deployD c 22).Lw (deployD c 22).R
+          (wIn (deployD c 22) ⟨po.1, po.2, [], ch⟩) >>= fun bW =>
+        if bW then
+          ourVerifierEarly (deployD c 22).Lσ (deployD c 22).R
+              (σIn (deployD c 22) ⟨po.1, po.2, [], ch⟩) >>= fun bσ =>
+            if bσ then
+              ourVerifierEarly (deployD c 22).LQ (deployD c 22).R
                 (qIn (deployD c 22) ⟨po.1, po.2, [], ch⟩)
             else pure false
         else pure false
