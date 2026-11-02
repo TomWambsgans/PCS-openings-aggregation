@@ -131,6 +131,7 @@ fn along(j: usize, k: usize) -> usize {
 }
 
 /// The transpose of theta, rho, pi on weight vectors: `<w, L(a)> = <L^T(w), a>`.
+#[allow(clippy::useless_vec)] // as leanVM writes it
 fn linear_transpose<S: Scalar>(w: &[S]) -> Vec<S> {
     let mut g = vec![S::zero(); BITS]; // the weight each position of theta's output carries
     for lane in 0..STATE_LANES {

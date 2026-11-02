@@ -1,11 +1,15 @@
 #!/bin/sh
-# Applies the gas-study dump to the copy of leanVM 42422001 in /root/pcs-quotient-fv/leanvm-flock-gas/leanvm-42422001.
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+# Adds `leanvm gas-dump` to a checkout of leanVM (https://github.com/leanEthereum/leanVM) at commit 42422001:
+# `sh apply.sh <leanVM checkout>`, then, in the checkout,
+# `cargo run --release -p leanvm-cli -- --log-inv-rate 1 gas-dump --xmss 1290 --out <dir>/xmss1290`.
+# (At 4af2cddd, the Keccak version, `dump.rs`'s `flock_stream_end` line prints `summary.keccak_scalars` instead.)
 set -e
-cd /root/pcs-quotient-fv/leanvm-flock-gas/leanvm-42422001
-cat ../patch/export.rs >> crates/rec_aggregation/src/aggregation.rs
-cp ../patch/dump.rs bins/leanvm/src/dump.rs
+here=$(cd "$(dirname "$0")" && pwd)
+cd "$1"
+cat "$here/export.rs" >> crates/rec_aggregation/src/aggregation.rs
+cp "$here/dump.rs" bins/leanvm/src/dump.rs
 python3 - <<'PY'
-import re
 p = 'bins/leanvm/src/main.rs'
 s = open(p).read()
 s = s.replace("mod benchmark;\n", "mod benchmark;\nmod dump;\n", 1)

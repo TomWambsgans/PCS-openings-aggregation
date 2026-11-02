@@ -1,4 +1,6 @@
 
+// Part of PCS-openings-aggregation (crates/leanvm_flock_gas/dump), appended to leanVM's
+// crates/rec_aggregation/src/aggregation.rs by apply.sh. MIT OR Apache-2.0.
 /// Gas study (`leanvm_flock_gas` in PCS-openings-aggregation): not part of leanVM.
 impl EthereumProof {
     /// The stacked bytecode's words, the public input as the `verifier` crate takes it, the proof in that crate's

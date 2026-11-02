@@ -1,3 +1,5 @@
+// Part of PCS-openings-aggregation (crates/leanvm_flock_gas/dump), copied into leanVM's bins/leanvm/src by apply.sh.
+// MIT OR Apache-2.0.
 //! Gas study (`leanvm_flock_gas` in PCS-openings-aggregation): not part of leanVM. Prove one leaf aggregate and write
 //! what the gas study reads: the bytecode, the public input, the proof's stream and raw openings, and its shape.
 

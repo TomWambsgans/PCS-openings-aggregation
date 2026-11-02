@@ -190,7 +190,8 @@ fn verify_flock_lincheck<S: Scalar>(
             // both sides at once (against the skip weights and alpha times them), and the blocks are weighed by
             // eq(chi_in)'s table, in the order the walk fills them, the output rows (blocks 4 to 7, which need the whole
             // walk) last. So each value of the walk is used soon after it is made, and the contract does not hold
-            // them in memory. Products: 64 + 256 more than leanVM's.
+            // them in memory. Products: 575 against leanVM's 511 (alpha times the 64 skip
+            // weights, eq(chi_in)'s table and the weighing, for two folds and alpha).
             let alpha_skip: Vec<S> = skip_weights.iter().map(|&weight| alpha * weight).collect();
             let block_weights = eq_kernel(chi_in);
             let walk_order = (0..4).chain(8..high.len()).chain(4..8);

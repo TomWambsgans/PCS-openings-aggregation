@@ -1,6 +1,6 @@
 // Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 //! The proofs the gas is measured for: leaf aggregates of leanXMSS signatures by leanVM 42422001's aggregation
-//! guest (`crates/rec_aggregation/guests/lean_ethereum.py`), proved by leanVM's `leanvm gas-dump` (`dump/`), with
+//! guest (`crates/rec_aggregation/guests/lean_ethereum.py`), proved by leanVM's `leanvm gas-dump` (`dump/apply.sh`), with
 //! `--log-inv-rate 1` as leanVM's README benchmark. Their announced sizes, as the proofs announce them.
 
 use crate::{N_TABLES, Shape};
