@@ -164,6 +164,7 @@ def stagedRun : OracleComp KeccakCalls (Bool × (E × E × E)) :=
 end Stages
 
 /-- **The two-call experiment is the staged run's verdict.** -/
+set_option maxHeartbeats 400000 in
 theorem expH_eq_staged (stmt : Statement) (w : Secret) (coins : Masks × Padding × Padding) :
     expH stmt w coins = (·.1) <$> stagedRun stmt w coins := by
   simp only [expH, proverWithH, proveWithH, stagedRun, staged, stageA, stageB, stageC, proverTail,

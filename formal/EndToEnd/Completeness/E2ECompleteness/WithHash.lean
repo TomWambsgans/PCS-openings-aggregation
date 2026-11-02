@@ -74,8 +74,7 @@ def reduceWithH (logRows : ℕ) (indexRoot : Digest) (stmt : Statement) (p : Red
 
 /-- `openingSpongeWith` with Keccak-256 `H`. -/
 def openingSpongeWithH (L : PcsQuotient.Layout) (claims : List PcsQuotient.Claim) : m Sponge := do
-  let layoutId ← H L.encoding
-  let pre := openingLabel ++ u64Bytes openingVersion ++ digestBytes layoutId ++ u64Bytes L.logN ++
+  let pre := openingLabel ++ u64Bytes openingVersion ++ digestBytes L.id ++ u64Bytes L.logN ++
     u64Bytes logInvRate
   let iv ← H (pre ++ claimBytes claims)
   return ⟨← F (seedInput iv zeroDigest), []⟩
