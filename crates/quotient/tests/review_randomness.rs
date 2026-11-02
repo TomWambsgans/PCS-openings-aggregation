@@ -177,8 +177,9 @@ fn kdf_hash_inputs_are_separated() {
         assert!(!secret_lengths.contains(&(KDF_CELLS.len() + 8 + 32 * runs)));
     }
     assert!(!secret_lengths.contains(&(8 << 12)));
-    // Public hash inputs: Merkle nodes, the leaves of every level of the three layouts, the reduction's chain.
-    let mut public = vec![64usize];
+    // Public hash inputs: Merkle nodes, the leaves of every level of the three layouts, the reduction's chain and its
+    // label, a statement's `pair`, the openings' IVs (one or two claims) and the layouts' encodings.
+    let mut public = vec![64usize, 112];
     for log_rows in MIN_LOG_ROWS..=MAX_LOG_ROWS {
         for layout in [
             witness_layout(log_rows),
@@ -186,6 +187,8 @@ fn kdf_hash_inputs_are_separated() {
             quotient_layout(log_rows),
         ] {
             public.push(8 * layout.lanes());
+            public.extend([1, 2].map(|k| PREFIX_LEN + 24 * (layout.vars + 1) * k));
+            public.push(encode(&fields(&layout)).len());
         }
     }
     public.extend([8 * 64, 3 * 8 * 16]);
@@ -1000,7 +1003,11 @@ fn root_scalars_are_canonical_and_checked_first() {
     for keep in [0, 1, 2, 3] {
         let mut cut = proof.clone();
         cut.stream.truncate(keep);
-        assert_eq!(check(&cut, &committed.root), Err(VerifierError::StreamExhausted), "{keep} scalars");
+        assert_eq!(
+            check(&cut, &committed.root),
+            Err(VerifierError::StreamExhausted),
+            "{keep} scalars"
+        );
     }
 }
 
