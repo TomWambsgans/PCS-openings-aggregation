@@ -144,6 +144,26 @@ theorem readsInl_openingDoomed {α : Type} (L : Layout) (R : ℕ)
   have hc : (fun x => c (.inl x)) = fun x => c' (.inl x) := funext h
   simp only [OpeningDoomed, hc]
 
+/-- **An opening makes at most `10122` queries** (F2's `variantQueries`): the seed's two, then the
+program's, whose cost F2 bounds (`isTotalQueryBound_fam`); a rejected root stops after the seed,
+and an empty claim list is rejected before any query. -/
+theorem ourVerifier_queryBound (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking) × Proof) :
+    IsTotalQueryBound (ourVerifier L R w) 10122 := by
+  rw [ourVerifier_eq]
+  by_cases he : w.1.2.claims.isEmpty = false
+  swap
+  · simp only [he]
+    trivial
+  simp only [he, ↓reduceIte]
+  by_cases hc : rootOf w.2 = some w.1.1
+  · simp only [hc, ↓reduceIte]
+    rw [← verifierFam_eq L R w, ← variantQueries_eq]
+    exact isTotalQueryBound_fam (openingPrefix L R) (w.1.2, w.2)
+  · simp only [hc, ↓reduceIte]
+    simp only [seedComp, callKeccak256, callKeccakF1600, bind_assoc]
+    refine isTotalQueryBound_query_bind_iff.mpr ⟨by norm_num, fun _ => ?_⟩
+    exact isTotalQueryBound_query_bind_iff.mpr ⟨by norm_num, fun _ => trivial⟩
+
 theorem isTotalQueryBound_DA (A : OracleComp KeccakCalls (RootProof F × OpenProofs)) (Q : ℕ)
     (hQ : IsTotalQueryBound A Q) : IsTotalQueryBound (DA W A) (Q + 6) := by
   have h : ∀ pt : (RootProof F × OpenProofs) × Transcript, IsTotalQueryBound
@@ -756,13 +776,13 @@ theorem isTotalQueryBound_withSetup (setup : OracleComp KeccakCalls Bytes32)
 computed with the oracle (`setup`, of at most `QS` queries; `wiringSetup` for the deployed wiring
 table) before the adversary (of at most `Q` queries) runs, and is the root the chain's label and
 the wiring opening read. The extractor reads the setup's and the adversary's queries (the setup is
-public). The bound is `knowledgeSoundness_deployed`'s with `QS + Q` queries before the chain. -/
+public). The bound is `knowledgeSoundness_deployed`'s with `QS + Q` queries before the chain and
+`10122` per opening (`ourVerifier_queryBound`). -/
 theorem knowledgeSoundness_deployed_setup (c₁ : TableCode B.Msg₁) (c₂ : TableCode B.Msg₂)
     (mW : WitnessMatch D c₁) (mQ : QuotientMatch W D c₂)
     (setup : OracleComp KeccakCalls Bytes32)
-    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) (QS Q QO : ℕ)
+    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) (QS Q : ℕ)
     (hS : IsTotalQueryBound setup QS) (hQ : ∀ ir, IsTotalQueryBound (A ir) Q)
-    (hO : ∀ (L : Layout) w, IsTotalQueryBound (ourVerifier L D.R w) QO)
     (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r) (h2 : r ≤ WhirBridge.maxLogRows)
     (hLw : D.Lw = witnessLayout r ∨ D.Lw = wiringLayout r ∨ D.Lw = quotientLayout r)
     (hLQ : D.LQ = witnessLayout r ∨ D.LQ = wiringLayout r ∨ D.LQ = quotientLayout r)
@@ -771,11 +791,12 @@ theorem knowledgeSoundness_deployed_setup (c₁ : TableCode B.Msg₁) (c₂ : Ta
       WDd (P := P) z] ≤ εσ) :
     Pr{let z ← (simulateQ randomOracle (deployedExp W D (withSetup setup A))).run' ∅}[
         BreaksD W c₁ z] ≤
-      openingBound (QS + Q + 6) + εσ + openingBound (QS + Q + 6 + QO + QO) +
-        ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) * ((listFactor c₁.commit.bound c₂.commit.bound :
-          ℝ≥0∞) * (roundError P B : ℝ≥0∞) +
-          5 * ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) / 2 ^ 256) :=
-  knowledgeSoundness_deployed W D c₁ c₂ mW mQ (withSetup setup A) (QS + Q) QO
-    (isTotalQueryBound_withSetup setup A QS Q hS hQ) hO r h1 h2 hLw hLQ hR εσ hσ
+      openingBound (QS + Q + 6) + εσ + openingBound (QS + Q + 6 + 10122 + 10122) +
+        ((QS + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) *
+          ((listFactor c₁.commit.bound c₂.commit.bound : ℝ≥0∞) * (roundError P B : ℝ≥0∞) +
+          5 * ((QS + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) / 2 ^ 256) :=
+  knowledgeSoundness_deployed W D c₁ c₂ mW mQ (withSetup setup A) (QS + Q) 10122
+    (isTotalQueryBound_withSetup setup A QS Q hS hQ) (fun L w => ourVerifier_queryBound L D.R w)
+    r h1 h2 hLw hLQ hR εσ hσ
 
 end Compose
