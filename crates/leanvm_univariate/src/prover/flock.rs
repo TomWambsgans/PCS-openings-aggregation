@@ -64,6 +64,42 @@ impl FlockWitness {
             z_lincheck: bytes[at..at + n[4]].to_vec(),
         })
     }
+
+    /// The instances at the BLAKE2S rows' positions ([`super::trace::Trace::place`]): instance `i` to `to[i]` in
+    /// `z`, `A z` and `B z` (blocks of `2^14` bits), and the lincheck's stripes rebuilt from `z`. Every instance
+    /// satisfies the R1CS alone, so the witness stays one.
+    pub fn place(&mut self, to: &[usize]) {
+        assert_eq!(to.len() << 8, self.z.len(), "one instance a row");
+        self.z = super::trace::permute_blocks(&self.z, to);
+        self.a = super::trace::permute_blocks(&self.a, to);
+        self.b = super::trace::permute_blocks(&self.b, to);
+        // Stripe `g` byte `j` holds bit `j` of instances `8g..8g + 8`, bit `r` instance `8g + r`
+        // (`lv42_flock::lincheck`'s layout): an 8×8 bit transpose of the eight instances' byte `j / 8`.
+        let block_words = 1usize << (BLAKE2S_R1CS_LOG_SIZE - 6);
+        let stripe = 1usize << BLAKE2S_R1CS_LOG_SIZE;
+        assert_eq!(self.z_lincheck.len(), (to.len() / 8) * stripe, "one stripe per eight instances");
+        let z = &self.z;
+        parallel::chunks_mut(&mut self.z_lincheck, stripe, |g, out| {
+            for byte in 0..stripe / 8 {
+                let word = (0..8).fold(0u64, |w, r| {
+                    let instance = &z[(8 * g + r) * block_words..(8 * g + r + 1) * block_words];
+                    w | (instance[byte / 8] >> (8 * (byte % 8)) & 0xff) << (8 * r)
+                });
+                out[8 * byte..8 * byte + 8].copy_from_slice(&transpose_8x8(word).to_le_bytes());
+            }
+        });
+    }
+}
+
+/// The 8×8 bit matrix whose byte `r` is row `r`, transposed: bit `8 r + c` to bit `8 c + r` (Hacker's Delight 7-3).
+fn transpose_8x8(mut x: u64) -> u64 {
+    let t = (x ^ (x >> 7)) & 0x00AA_00AA_00AA_00AA;
+    x ^= t ^ (t << 7);
+    let t = (x ^ (x >> 14)) & 0x0000_CCCC_0000_CCCC;
+    x ^= t ^ (t << 14);
+    let t = (x ^ (x >> 28)) & 0x0000_0000_F0F0_F0F0;
+    x ^= t ^ (t << 28);
+    x
 }
 
 /// The contract's chain as leanVM's flock prover's transcript: a scalar sent is 24 calldata bytes, a challenge one

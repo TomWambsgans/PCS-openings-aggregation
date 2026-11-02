@@ -202,13 +202,30 @@ fn flock_end_to_end_at_every_skip() {
         .collect();
     let n_blocks_log = lv42_flock::hash::min_n_blocks_log(n_blocks);
     let (z, a, b, z_lincheck) = lv42_flock::hash::generate_witness_with_ab_packed_and_lincheck(&blocks, n_blocks_log);
-    let witness = FlockWitness {
+    let mut witness = FlockWitness {
         n_blocks,
         z,
         a,
         b,
         z_lincheck,
     };
+    // The placement's stripes are the generator's: unmoved, the witness is the same; moved, it is the instances'.
+    let generated = witness.z_lincheck.clone();
+    let identity: Vec<usize> = (0..n_blocks).collect();
+    witness.place(&identity);
+    assert_eq!(witness.z_lincheck, generated, "the stripes rebuilt from z");
+    let moved: Vec<usize> = (0..n_blocks).map(|i| (i * 37 + 5) % n_blocks).collect();
+    let mut blocks_moved = blocks.clone();
+    for (i, &p) in moved.iter().enumerate() {
+        blocks_moved[p] = blocks[i];
+    }
+    witness.place(&moved);
+    let regenerated = lv42_flock::hash::generate_witness_with_ab_packed_and_lincheck(&blocks_moved, n_blocks_log);
+    assert_eq!(
+        (&witness.z, &witness.a, &witness.b, &witness.z_lincheck),
+        (&regenerated.0, &regenerated.1, &regenerated.2, &regenerated.3),
+        "a placed witness is the moved instances'"
+    );
     let log_n = 14 + n_blocks_log;
     for k in 3..=6 {
         for slices in [Slices::Tower, Slices::Weighted] {

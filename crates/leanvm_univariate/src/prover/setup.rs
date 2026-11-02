@@ -34,13 +34,8 @@ pub fn matrices() -> [(Vec<F64>, Committed); 2] {
     })
 }
 
-/// The three setup roots a contract is built with.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SetupRoots {
-    pub f: Hash,
-    pub a0: Hash,
-    pub b0: Hash,
-}
+/// The three setup roots a contract is built with (the contract's type: its IV binds them, SPEC.md §13, F2).
+pub use crate::contract::SetupRoots;
 
 /// The setup roots of `shape`'s contract for the program whose setup polynomials are `setup`.
 pub fn roots(shape: &Shape, setup: &SetupPolys) -> SetupRoots {

@@ -5,7 +5,7 @@
 //! [`Quotient::degree`] is the highest nonzero coefficient, which must be below the verifier's count.
 
 use leanvm_flock_gas::layout::{OP_BLAKE2S, OP_JUMP, SEP_MEM, tables};
-use leanvm_univariate_domain::{prefix_factors, suffix_factors};
+use leanvm_univariate_domain::{active_factors, padding_factors};
 use primitives::field::{F64, F192};
 
 use super::bus::Bus;
@@ -15,31 +15,25 @@ use super::trace::Trace;
 
 /// The domain helpers the vanishing polynomials need, kept apart for the tests.
 mod leanvm_univariate_domain {
-    /// `[0, rows)` as aligned cosets `ω_a + V_b`: the factors `(b, a)` of `Z_act = Π (w_b + ω_a)`.
-    pub fn prefix_factors(rows: u64) -> Vec<(usize, u64)> {
-        let mut out = Vec::new();
-        let mut start = 0u64;
-        for b in (0..64).rev() {
-            if rows >> b & 1 == 1 {
-                out.push((b, start >> b));
-                start += 1 << b;
-            }
+    /// The active rows of a height-`r` table of `rows` rows as aligned cosets `ω_a + V_b`, the factors `(b, a)` of
+    /// `Z_act = Π (w_b + ω_a)`: bit `b < r` of `rows` owns `[2^r - 2^(b+1), 2^r - 2^b)`, `a = 2^(r-b) - 2`, and a full
+    /// table is `V_r` (`crate::domain::active_positions`, SPEC.md §13, F1b).
+    pub fn active_factors(rows: u64, r: usize) -> Vec<(usize, u64)> {
+        if rows == 1 << r {
+            return vec![(r, 0)];
         }
-        out
+        (0..r).rev().filter(|&b| rows >> b & 1 == 1).map(|b| (b, (1 << (r - b)) - 2)).collect()
     }
 
-    /// `[rows, 2^r)` likewise: the factors of `Z_pad` (`crate::domain::suffix_vanishing`).
-    pub fn suffix_factors(rows: u64, r: usize) -> Vec<(usize, u64)> {
-        let mut out = Vec::new();
-        let mut start = rows;
-        while start < 1 << r {
-            let mut b = (start.trailing_zeros() as usize).min(r);
-            while start + (1 << b) > 1 << r {
-                b -= 1;
-            }
-            out.push((b, start >> b));
-            start += 1 << b;
+    /// The padding rows likewise, the factors of `Z_pad = w_r / Z_act`: the cosets of the count's unset bits below
+    /// `r`, and the last row `2^r - 1`, unless the table is full.
+    pub fn padding_factors(rows: u64, r: usize) -> Vec<(usize, u64)> {
+        if rows == 1 << r {
+            return Vec::new();
         }
+        let mut out: Vec<(usize, u64)> =
+            (0..r).rev().filter(|&b| rows >> b & 1 == 0).map(|b| (b, (1 << (r - b)) - 2)).collect();
+        out.push((0, (1 << r) - 1));
         out
     }
 }
@@ -114,7 +108,8 @@ fn vanishing_on(factors: &[(usize, u64)], first: usize, r: usize, pts: &[F64]) -
 }
 
 /// Table `t`'s leaf quotient: `((R P + P') Z_pad + (R + 1) Z_act) / w_r`, `R` the heap's block (its novel
-/// coefficients `r_novel`), `P`, `P'` the row's pull and push products.
+/// coefficients `r_novel`), `P`, `P'` the row's pull and push products, `Z_act`, `Z_pad` the vanishing polynomials of
+/// the active and the padding rows' fixed cosets (SPEC.md §13, F1b; the verifier checks it times `Z_act`).
 pub fn table_leaf(trace: &Trace, t: usize, c1: &C1Polys, bus: &Bus, r_novel: &[F192], count: u64) -> Quotient {
     let r = trace.heights[t];
     let n = 1usize << r;
@@ -125,7 +120,7 @@ pub fn table_leaf(trace: &Trace, t: usize, c1: &C1Polys, bus: &Bus, r_novel: &[F
     used.sort_unstable();
     used.dedup();
     let pts = points(r);
-    let (act, pad) = (prefix_factors(rows), suffix_factors(rows, r));
+    let (act, pad) = (active_factors(rows, r), padding_factors(rows, r));
     let width = c1.tables[t].len();
     let mut q = vec![F192::ZERO; 1 << m];
     for (j, out) in q.chunks_exact_mut(n).enumerate() {
@@ -273,9 +268,6 @@ pub fn constraints(
         let t = table.opcode;
         let r = trace.heights[t];
         let n = 1usize << r;
-        let rows = trace.rows[t];
-        let pts = points(r);
-        let pad = suffix_factors(rows, r);
         let cols = &c1.tables[t];
         let index = |name: &str| table.columns.iter().position(|&c| c == name).expect("a column");
         let jump = (t == OP_JUMP).then(|| (next(), next(), index("v_cond"), index("w"), index("b")));
@@ -306,7 +298,6 @@ pub fn constraints(
             let first = (1 << m) + j * n;
             // w_(r_W) / w_r is constant on the coset.
             let lift = F192::from(omega(first >> r_w) * omega(first >> r).inv());
-            let z_pad = vanishing_on(&pad, first, r, &pts);
             let value = |c: usize| on_coset(&cols[c].novel, first);
             let counter_values: Vec<Vec<F64>> = counters.iter().map(|&c| value(c)).collect();
             let inverse = on_coset(&c1.inverses[t].novel, first);
@@ -327,8 +318,9 @@ pub fn constraints(
                     sum += g1.mul_base(b[i] + cond[i] * w[i]);
                     sum += g2.mul_base(cond[i] * (b[i] + F64::ONE));
                 }
+                // The counters are nonzero on every row (SPEC.md §13, F1): z Π c + 1, without Z_pad.
                 let product = counter_values.iter().fold(inverse[i], |acc, c| acc * c[i]);
-                sum += g_counter.mul_base((product + F64::ONE) * z_pad[i]);
+                sum += g_counter.mul_base(product + F64::ONE);
                 for (g, copy, composed) in &shifted {
                     sum += g.mul_base(copy[i] + composed[i]);
                 }

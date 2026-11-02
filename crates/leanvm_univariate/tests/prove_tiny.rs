@@ -1,5 +1,6 @@
 // Part of this repository. The tiny executions (`Rng`, `row_of`, `execution`) are copied from tests/review_honest.rs
-// (review M1's independent honest prover), unchanged but for `Witness` keeping only what a trace needs.
+// (review M1's independent honest prover) as iteration 2 has them (the rows placed at the fixed cosets, SPEC.md
+// §13), unchanged but for `Witness` keeping only what a trace needs.
 // MIT OR Apache-2.0; see NOTICE.md.
 //! The prover at tiny and uneven sizes: the review's 15- to 31-cycle executions over all six tables (memory and
 //! bytecode of `2^4` and `2^5`, tables of 0 to 6 rows, DEREF's gated store), as a leanVM trace, proven by the prover
@@ -16,6 +17,8 @@ use leanvm_flock_gas::layout::{
     Table, gpow, tables,
 };
 use leanvm_univariate::prover::prove::{Config, prove, verify};
+use leanvm_univariate::contract::SetupRoots;
+use leanvm_univariate::domain::active_positions;
 use leanvm_univariate::prover::trace::Trace;
 use leanvm_univariate::{Blake2s, Claims, Shape};
 use primitives::field::F64;
@@ -217,16 +220,27 @@ fn execution(rng: &mut Rng) -> Witness {
         slots[2] = ZERO;
     }
     let counts: [u64; N_TABLES] = std::array::from_fn(|t| active[t].len() as u64);
-    let heights = shape_of(counts).heights();
+    let shape = shape_of(counts);
+    let heights = shape.heights();
     let mut rows = Vec::new();
     for table in &tables {
-        let n = 1usize << heights[table.opcode];
-        let mut all = active[table.opcode].clone();
-        while all.len() < n {
-            all.push(table.padding.clone());
+        let r = heights[table.opcode];
+        let n = 1usize << r;
+        // Padding rows are free, but the counters' constraint holds on every row (SPEC.md §13): nonzero counters,
+        // here 1.
+        let mut padding = table.padding.clone();
+        for c in table.count_columns() {
+            padding[c] = ONE;
+        }
+        // The active rows sit at the fixed cosets of their count's set bits (SPEC.md §13), in order.
+        let mut all = vec![padding; n];
+        let count = active[table.opcode].len() as u64;
+        for (row, at) in active[table.opcode].iter().zip(active_positions(count, r)) {
+            all[at as usize] = row.clone();
         }
         rows.push(all);
     }
+    // q_flock: instance i's slots are BLAKE2S row i's limbs (padding rows included); the other words random.
     let h_b = heights[OP_BLAKE2S];
     let mut qflock: Vec<E> = (0..1usize << (h_b + 8)).map(|_| rng.k()).collect();
     let blake = &tables[OP_BLAKE2S];
@@ -283,6 +297,8 @@ fn trace_of(w: &Witness) -> Trace {
             .map(|t| (0..t.width()).map(|c| w.rows[t.opcode].iter().map(|row| k(row[c])).collect()).collect())
             .collect(),
         bytecode,
+        // The review's execution places its rows as the verifier wants them (SPEC.md §13, F1b).
+        placed: true,
     }
 }
 
@@ -299,13 +315,14 @@ fn tiny_executions_are_proven_and_verified() {
             check: true,
             garbage: false,
             stand_in_roots: None,
+            roots: SetupRoots::REFERENCE,
         };
         let (proof, report) = prove(&trace, None, &[0x77; 32], config).expect("a proof");
         assert!(report.checks.iter().all(|(_, ok)| *ok), "{:?}", report.checks);
         for (name, degree, count, _) in &report.quotients {
             assert!(*degree < *count as i64, "{name}");
         }
-        verify(&trace.shape(), &[0x77; 32], &trace.public_input(), &proof, Blake2s::Omitted).expect("accepted");
+        verify(&trace.shape(), &[0x77; 32], &trace.public_input(), &proof, Blake2s::Omitted, false).expect("accepted");
         // The review's honest prover sends these stand-in roots (it commits nothing): with them, the stream is the
         // one it writes for the same execution, byte for byte, if the two provers agree on every value.
         let stand_in = Config {

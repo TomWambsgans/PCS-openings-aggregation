@@ -8,9 +8,10 @@
 use std::path::Path;
 
 use leanvm_flock_gas::N_TABLES;
-use leanvm_flock_gas::layout::tables;
+use leanvm_flock_gas::layout::{OP_BLAKE2S, tables};
 use primitives::field::F64;
 
+use crate::domain::{active_positions, is_active};
 use crate::verifier::Shape;
 
 /// One execution: every column leanVM 42422001 commits or carries, at its padded height.
@@ -31,6 +32,33 @@ pub struct Trace {
     pub tables: Vec<Vec<Vec<F64>>>,
     /// leanVM's stacked bytecode: word `instruction + 2^log_bytecode · slot`.
     pub bytecode: Vec<F64>,
+    /// Whether the rows sit at the verifier's positions ([`Trace::place`]); leanVM's trace has the active rows first.
+    pub placed: bool,
+}
+
+/// Where row `i` of a height-`r` table of `rows` active rows goes: the active rows (leanVM's first `rows`) to
+/// `domain::active_positions(rows, r)`, in order, the padding rows to the other positions, in order.
+pub fn placement(rows: u64, r: usize) -> Vec<usize> {
+    let n = 1u64 << r;
+    let mut to: Vec<usize> = active_positions(rows, r).into_iter().map(|p| p as usize).collect();
+    to.extend((0..n).filter(|&i| !is_active(i, rows, r)).map(|i| i as usize));
+    assert_eq!(to.len() as u64, n);
+    to
+}
+
+/// `data` cut into `to.len()` equal blocks, block `i` moved to `to[i]`.
+pub fn permute_blocks<T: Copy + Send + Sync>(data: &[T], to: &[usize]) -> Vec<T> {
+    let block = data.len() / to.len();
+    assert_eq!(block * to.len(), data.len());
+    let mut from = vec![0usize; to.len()];
+    for (i, &p) in to.iter().enumerate() {
+        from[p] = i;
+    }
+    let mut out = data.to_vec();
+    parallel::chunks_mut(&mut out, block, |p, chunk| {
+        chunk.copy_from_slice(&data[from[p] * block..(from[p] + 1) * block]);
+    });
+    out
 }
 
 fn words(bytes: &[u8]) -> Vec<F64> {
@@ -107,7 +135,36 @@ impl Trace {
             qflock,
             tables: tables_columns,
             bytecode,
+            placed: false,
         })
+    }
+
+    /// The rows at the verifier's positions (SPEC.md §13, F1b and F1): table `t`'s active rows, in order, at
+    /// `domain::active_positions(rows, r)`, its padding rows at the others, in order ([`placement`]); BLAKE2S's
+    /// `q_flock` instances with its rows; the padding rows' counters 1, so that every row's are nonzero. leanVM puts
+    /// the active rows first; the rows' order is no part of its statement (the bus is a multiset, padding rows are
+    /// free). Flock's witness moves likewise ([`super::flock::FlockWitness::place`]).
+    pub fn place(&mut self) {
+        assert!(!self.placed, "placed once");
+        let layout = tables();
+        for (t, table) in layout.iter().enumerate() {
+            let to = placement(self.rows[t], self.heights[t]);
+            let rows = self.rows[t] as usize;
+            let counters: Vec<usize> = table.count_columns().collect();
+            let columns = std::mem::take(&mut self.tables[t]);
+            self.tables[t] = parallel::map_collect(columns.len(), |c| {
+                let column = &columns[c];
+                let mut placed = vec![F64::ZERO; column.len()];
+                for (i, &p) in to.iter().enumerate() {
+                    placed[p] = if i >= rows && counters.contains(&c) { F64::ONE } else { column[i] };
+                }
+                placed
+            });
+            if t == OP_BLAKE2S {
+                self.qflock = permute_blocks(&self.qflock, &to);
+            }
+        }
+        self.placed = true;
     }
 
     /// The shape the verifier is built for.

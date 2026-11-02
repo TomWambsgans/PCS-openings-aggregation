@@ -96,6 +96,16 @@ impl Channel<E> for Replay<'_> {
         Ok(E::new(limb(0), limb(1), limb(2)))
     }
 
+    fn next_integer(&mut self, bytes: usize) -> Result<E, VerifierError> {
+        assert!((1..=8).contains(&bytes));
+        let data = self
+            .data
+            .get(self.cursor..self.cursor + bytes)
+            .ok_or(VerifierError::StreamExhausted)?;
+        self.cursor += bytes;
+        Ok(E::new(data.iter().fold(0u64, |acc, &b| acc << 8 | b as u64), 0, 0))
+    }
+
     fn next_root(&mut self) -> Result<[E; 2], VerifierError> {
         let mut half = || -> Result<E, VerifierError> {
             let bytes = self.take::<16>()?;

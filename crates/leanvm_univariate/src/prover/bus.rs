@@ -10,6 +10,7 @@ use primitives::field::{F64, F192, g_powers};
 use super::fingerprint::Fingerprint;
 use super::poly::{batch_invert, from_v};
 use super::trace::Trace;
+use crate::domain::is_active;
 use crate::heap::{HeapLayout, Leaves};
 
 /// The bus challenges and every table's flush fingerprints, compiled.
@@ -67,12 +68,15 @@ impl Bus {
 /// Table `t`'s leaves: `Π_j D'_j / Π_j D_j` on its active rows, 1 on its padding rows. Fails (returns the row) if
 /// a pulled fingerprint vanishes.
 pub fn table_leaves(trace: &Trace, t: usize, bus: &Bus) -> Result<Vec<F192>, usize> {
+    assert!(trace.placed, "the rows at the verifier's positions");
     let columns = &trace.tables[t];
-    let n = 1usize << trace.heights[t];
-    let rows = trace.rows[t] as usize;
+    let r = trace.heights[t];
+    let n = 1usize << r;
+    let rows = trace.rows[t];
+    let active = |i: usize| is_active(i as u64, rows, r);
     let (pull, push) = (&bus.pull[t], &bus.push[t]);
     let mut den: Vec<F192> = parallel::map_collect(n, |i| {
-        if i >= rows {
+        if !active(i) {
             return F192::ONE;
         }
         pull.iter().fold(F192::ONE, |acc, f| acc * f.at(|c| columns[c][i]))
@@ -82,7 +86,7 @@ pub fn table_leaves(trace: &Trace, t: usize, bus: &Bus) -> Result<Vec<F192>, usi
     }
     batch_invert(&mut den);
     parallel::for_each_mut(&mut den, |i, slot| {
-        if i < rows {
+        if active(i) {
             *slot *= push.iter().fold(F192::ONE, |acc, f| acc * f.at(|c| columns[c][i]));
         }
     });
