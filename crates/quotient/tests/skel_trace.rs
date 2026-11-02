@@ -1467,7 +1467,11 @@ fn skel_structure_18_21() {
     for log_rows in 18..=21 {
         let run = run_prover(log_rows, Mode::Light);
         let trees = trees_light(&run.records);
-        rep.say(format!("2^{log_rows}: {} records, {} trees", run.records.len(), trees.len()));
+        rep.say(format!(
+            "2^{log_rows}: {} records, {} trees",
+            run.records.len(),
+            trees.len()
+        ));
         check_structure(&run, &trees, &mut rep);
     }
     finish(rep, "18_21", &dir);
