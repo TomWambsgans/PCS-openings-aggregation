@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. Review experiment (F0a/F2/F4 review).
 -- Addressed: the deployed experiment now computes the circuit's commitment with the oracle before the
--- adversary runs (`Compose/Deployed.lean`, `withSetup`, `wiringSetup`); the label holds the proof's `ir`.
+-- adversary runs (`Compose/Deployed.lean`, `withSetup`, `wiringSetup`); the label holds the proof's `ir`,
+-- and the setup's root commits to the wiring stack (`Compose/WiringSetup.lean`, `extract_wiringSetup`).
 import Compose.Final
 
 /-!
