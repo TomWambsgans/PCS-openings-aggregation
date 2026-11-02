@@ -231,12 +231,17 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     // the batching sumcheck (SPEC.md §13, lever 4a), as `verifier::reduce` has it.
     let mut pending = None;
     let mut slices_end = None;
+    // The slices, when the stream does not carry them (extension B, `Slices::Claim`).
+    let mut flock_slices: Option<Vec<E>> = None;
     if let Blake2s::Flock(variant) = config.blake2s {
         let witness = flock.ok_or("Flock needs leanVM's Flock inputs (flock.bin)")?;
         let log_n = leanvm_flock_gas::layout::BLAKE2S_R1CS_LOG_SIZE + trace.heights[OP_BLAKE2S];
         let deferred = config.claims == Claims::Point;
         let out = super::flock::prove(&mut writer, witness, variant, log_n, deferred)?;
         slices_end = Some(out.slices_end);
+        if variant.slices == leanvm_flock_gas::flock_min::Slices::Claim {
+            flock_slices = Some(out.slices.clone());
+        }
         match out.matrices {
             Matrices::Done { point, a, b } => report.flock = Some((point, a, b)),
             Matrices::Pending(p) => pending = Some(p),
@@ -403,18 +408,22 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     clock.lap(&mut report, "values at t");
 
     // 8. ρ, and the combined claims: the verifier's own, on the stream so far, in weighted mode (which reads nothing
-    // after ρ). With the matrices' reduction pending, weighted mode reads it after the slices: `Replay` serves it there
-    // outside the chain (`replay.rs`).
+    // after ρ). With the matrices' reduction pending, weighted mode reads it after the slices: `Replay` serves it there,
+    // an honest prover's at fixed challenges, outside the chain (`replay.rs`).
     let rho = writer.sample();
     let combined: Vec<(Commitment, Combined<E>)> = {
         let (insert_at, scalars, samples) = match (&pending, slices_end) {
-            (Some(p), Some(at)) => (at, 2 * p.rounds() + 2, p.rounds()),
-            _ => (0, 0, 0),
+            (Some(p), Some(at)) => {
+                let challenges = super::replay::challenges(p.rounds());
+                (at, p.off_chain(&challenges)?, challenges)
+            }
+            _ => (0, Vec::new(), Vec::new()),
         };
         let mut channel = Replay::new(seed, &writer.stream, insert_at, scalars, samples);
         let words: [E; 4] = std::array::from_fn(|k| E::new(u64::from_be_bytes(public[8 * k..8 * k + 8].try_into().unwrap()), 0, 0));
         let reduced = reduce(&shape, words, &mut channel, config.blake2s, Claims::Weighted).map_err(|e| format!("{e:?}"))?;
         channel.finish().map_err(|e| format!("the verifier reads the stream so far: {e}"))?;
+        report.checks.push(("the verifier's checks on the stream so far (weighted mode)".into(), channel.checks_hold()));
         for (commitment, vars) in &reduced.stack_vars {
             let mine = match commitment {
                 Commitment::C1 => stack1.layout.vars,
@@ -429,6 +438,23 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
             .openings
             .into_iter()
             .map(|(c, o)| match o {
+                // Without the slices (extension B), weighted mode adds their combination's terms to C1's claim; point
+                // mode makes it the batch's terminal instead, a bit-slice claim of C1's call. Its terms leave C1's
+                // claim here, and their part of its value, `Σ coefficient s_twist` at the true slices (the
+                // combination holds: an honest prover's at the inserted challenges).
+                Opening::Weighted(mut claim) if c == Commitment::C1 && flock_slices.is_some() => {
+                    let slices = flock_slices.as_ref().expect("the slices");
+                    let mut part = E::default();
+                    claim.terms.retain(|&(column, _, twist, coefficient)| {
+                        let bits = column == Column::QflockBits;
+                        if bits {
+                            part += coefficient * slices[twist as usize];
+                        }
+                        !bits
+                    });
+                    claim.value += part;
+                    (c, claim)
+                }
                 Opening::Weighted(claim) => (c, claim),
                 Opening::Point { .. } => unreachable!("weighted mode"),
             })
@@ -539,6 +565,9 @@ fn merkle_bytes(paths: &fiat_shamir::merkle::PrunedMerklePaths) -> usize {
 /// `contract::rust_verifier` binds `SetupRoots::REFERENCE` (the reference shape's) in its IV, whatever the shape: with
 /// `reference_shape`, the setup opening's root must be its `F`; at another shape the setup's own root (another `F`)
 /// is opened, which a contract for that shape would bind (PROVER.md, "Notes for the verifier").
+///
+/// With extension B (`Slices::Claim`), `C1`'s call also carries a bit-slice claim, which a WHIR opening cannot prove
+/// (`PCS_OPEN` would ring-switch it): it is returned, for the caller to check against `q_flock`.
 pub fn verify(
     trace_shape: &crate::verifier::Shape,
     iv: &[u8; 32],
@@ -546,7 +575,8 @@ pub fn verify(
     proof: &Proof,
     blake2s: Blake2s,
     reference_shape: bool,
-) -> Result<(), String> {
+) -> Result<Option<Combined<E>>, String> {
+    let mut unproven = None;
     let (reduced, zero, nonzero) =
         crate::contract::rust_verifier(trace_shape, iv, public, &proof.stream, blake2s, Claims::Point).map_err(|e| format!("reduce: {e:?}"))?;
     if let Some(i) = zero.iter().position(|x| *x != E::default()) {
@@ -562,8 +592,12 @@ pub fn verify(
         let Opening::Point { point, value, bit_slice } = opening else {
             return Err("point claims".into());
         };
-        if bit_slice.is_some() {
-            return Err("no bit-slice claim on the main line".into());
+        if let Some(claim) = bit_slice {
+            let ext_b = matches!(blake2s, Blake2s::Flock(v) if v.slices == leanvm_flock_gas::flock_min::Slices::Claim);
+            if *commitment != Commitment::C1 || !ext_b {
+                return Err("a bit-slice claim is extension B's, on C1".into());
+            }
+            unproven = Some(claim.clone());
         }
         if *commitment != mine.commitment || from_v(*value) != mine.value || point.iter().map(|&x| from_v(x)).collect::<Vec<_>>() != mine.point {
             return Err(format!("{commitment:?}: the opening is not of the verifier's claim"));
@@ -596,5 +630,5 @@ pub fn verify(
         (None, Blake2s::Omitted) => {}
         _ => return Err("Flock's matrices' claims".into()),
     }
-    Ok(())
+    Ok(unproven)
 }

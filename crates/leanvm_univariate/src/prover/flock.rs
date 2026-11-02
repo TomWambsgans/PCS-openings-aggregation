@@ -183,7 +183,35 @@ fn sliced(k: usize, low: &[E], chi_in: &[E], chi_in_prime: &[E], alpha: E) -> Ve
 }
 
 /// `Σ_i Π_t tables[t][i]` by a sumcheck, low bit first, each variable of degree 2: messages `(c0, c2)`.
-fn product_sum(writer: &mut KeccakWriter, mut tables: Vec<Vec<E>>, rounds: usize) -> Vec<E> {
+fn product_sum(writer: &mut KeccakWriter, tables: Vec<Vec<E>>, rounds: usize) -> Vec<E> {
+    product_rounds(tables, rounds, |c0, c2| {
+        writer.send(c0);
+        writer.send(c2);
+        writer.sample()
+    })
+}
+
+impl Pending {
+    /// The matrices' reduction run on its own, as the verifier's weighted mode reads it (`flock_min::verify`), at the
+    /// given round challenges instead of the chain's: its `k + 6` rounds' messages, then `a`, `b`. What
+    /// [`super::replay::Replay`] serves where the point-claim stream has none (its challenges outside the chain), so
+    /// that weighted mode's claims are an honest prover's.
+    pub fn off_chain(&self, challenges: &[E]) -> Result<Vec<E>, String> {
+        assert_eq!(challenges.len(), self.rounds());
+        let mut messages = Vec::with_capacity(2 * self.rounds() + 2);
+        let mut next = challenges.iter();
+        let point = product_rounds(self.tables.to_vec(), self.rounds(), |c0, c2| {
+            messages.extend([c0, c2]);
+            *next.next().expect("a challenge a round")
+        });
+        let (_, a, b) = self.claim(&point)?;
+        messages.extend([a, b]);
+        Ok(messages)
+    }
+}
+
+/// The product sum's rounds, each message `(c0, c2)` handed to `round`, which returns the round's challenge.
+fn product_rounds(mut tables: Vec<Vec<E>>, rounds: usize, mut round: impl FnMut(E, E) -> E) -> Vec<E> {
     let mut point = Vec::with_capacity(rounds);
     for _ in 0..rounds {
         let half = tables[0].len() / 2;
@@ -204,9 +232,7 @@ fn product_sum(writer: &mut KeccakWriter, mut tables: Vec<Vec<E>>, rounds: usize
             }
         }
         assert_eq!(coefficients[3], ZERO, "degree 2 in every variable");
-        writer.send(coefficients[0]);
-        writer.send(coefficients[2]);
-        let r = writer.sample();
+        let r = round(coefficients[0], coefficients[2]);
         point.push(r);
         for table in &mut tables {
             for i in 0..half {
@@ -229,12 +255,10 @@ pub fn prove(
     deferred: bool,
 ) -> Result<FlockOut, String> {
     let k = variant.skip;
-    if !(lv42_flock::zerocheck::skip::MIN_SKIP..=PACKING).contains(&k) || variant.slices == Slices::Claim {
-        return Err(format!(
-            "Flock {variant:?}: a prover for a skip of 3 to 6 with the slices sent (the bit-slice claim of \
-             Slices::Claim has no opening here)"
-        ));
+    if !(lv42_flock::zerocheck::skip::MIN_SKIP..=PACKING).contains(&k) {
+        return Err(format!("Flock {variant:?}: a prover for a skip of 3 to 6"));
     }
+    let sent = variant.slices != Slices::Claim;
     lv42_parallel::init();
     let setup = lv42_flock::hash::Blake2sSetup::new(witness.n_blocks);
     if setup.m() != log_n {
@@ -267,6 +291,12 @@ pub fn prove(
         return Err("Flock's slices are not at the point the verifier derives".into());
     }
     let slices: Vec<E> = claim.s_hat_v.iter().map(|x| E::new(x.c0, x.c1, x.c2)).collect();
+    if !sent {
+        // Extension B (`Slices::Claim`): the lincheck's slices, its last 64 scalars, are not sent; nothing was drawn
+        // since, so the chain has not absorbed them.
+        let len = writer.stream.len() - 24 * K_BITS;
+        writer.stream.truncate(len);
+    }
     let slices_end = writer.stream.len();
 
     // The matrices' reduction: Σ_(x, y) L(x) s(y) G'(x, y) over the skip's k row bits and the 6 packing bits.
@@ -291,9 +321,11 @@ pub fn prove(
         writer.send(b);
         Matrices::Done { point, a, b }
     };
-    // The ring map's challenges.
-    for _ in 0..RING_MAP_CHALLENGES {
-        writer.sample();
+    // The ring map's challenges, if the slices were sent (without them there is no ring switch here).
+    if sent {
+        for _ in 0..RING_MAP_CHALLENGES {
+            writer.sample();
+        }
     }
     Ok(FlockOut {
         point,
