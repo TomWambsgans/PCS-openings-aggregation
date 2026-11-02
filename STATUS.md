@@ -48,8 +48,7 @@ Part of this repository. Updated as work lands.
   accounting omits a factor leanerVM proves (leanerVM's certified parameters are fine; forwarded to the F2 bridge);
   the opening seed now binds the layout and a version, in the form F2 proves. Two concrete ZK attacks on the pre-hiding code
   (solving the masks from the opened mask lane; per-coset fingerprints that deanonymize the Merkle path) → being
-  re-run against the hidden layouts by the hiding reviewer. Fourteen overclaims → wording corrected (README section
-  after the design note, doc comments, `formal/README.md`).
+  re-run against the hidden layouts by the hiding reviewer. Fourteen overclaims → wording corrected (`AGENTS.md`, doc comments, `formal/README.md`).
 - **Prover memory / `pcs` changes**: the claim holds (identical proofs across 674 randomized WHIR cases, 160 opening
   layouts, thread counts, x86 NTT constants; 5.58 GiB measured). Found: an aliasing pattern in the NTT encode that Miri
   flags as UB — pre-existing in leanVM, copied once more by the memory work — and an empty-claims panic → fix agent
