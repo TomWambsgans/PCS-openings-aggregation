@@ -1,0 +1,24 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+#
+# The WHIR bridge: this repository's opening check (`crates/quotient/src/opening.rs`, `verify`) as a
+# program of leanerVM `mumbai`'s verifier language, and its soundness from mumbai's WHIR theorems.
+#
+# It builds against a built checkout of leanerVM (https://github.com/Verified-zkEVM/leanerVM, commit
+# 6175f1a07f0dc33bd3d640de0063d1006143ee91) placed at `../leanervm`, and shares that checkout's
+# `lean_vm` packages (Mathlib, VCVio, CompPoly, ArkLib, ...), so nothing of them is fetched or
+# rebuilt here. See README.md.
+name = "whir-bridge"
+version = "0.1.0"
+defaultTargets = ["WhirBridge"]
+packagesDir = "../leanervm/lean_vm/.lake/packages"
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[require]]
+name = "lean-vm"
+path = "../leanervm/lean_vm"
+
+[[lean_lib]]
+name = "WhirBridge"

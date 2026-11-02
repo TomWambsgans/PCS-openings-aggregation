@@ -11,7 +11,9 @@ Part of this repository. Updated as work lands.
 | Openings with leanVM's WHIR, unchanged verifier | `crates/quotient/src/opening.rs` | tested |
 | Hiding (zero-knowledge) layouts for the secret tables | `crates/quotient/HIDING.md`, `src/hiding.rs` | exact rank tests; Lean proof in progress |
 | EVM verifier (generated from the Rust verifier): selector `verify(bytes32,bytes32,bytes)` = `0xde12c640`, packed 252-byte calldata, index root in storage (owner-gated `setIndexRoot`), three fail-closed `PCS_OPEN` calls, returns the word 1 | `crates/evm` | parity with Rust, adversarial tests |
-| Lean: the reduction (F1) for this protocol: knowledge soundness (Q+3)/2^128, HVZK for ideal hiding commitments, completeness, ROM | `formal/` | green, sorry-free, 752 declarations on propext, Classical.choice, Quot.sound |
+| Lean: the reduction (F1) for this protocol: knowledge soundness (Q+3)/2^128 (rounds 2^-166, 2^-164, 3/q, with margin for list unions up to 2^18), HVZK for ideal hiding commitments, completeness, ROM | `formal/` | green, sorry-free, 761 declarations on propext, Classical.choice, Quot.sound |
+| Lean: WHIR openings (F2): leanerVM `mumbai`'s proven `stackedSpec` covers our opening check; ROM soundness for leanVM's transcript shape | `formal/WhirBridge` (built on h1 against mumbai's `lean_vm`) | sorry-free; our current opening seed is the gap → being changed to the proven form |
+| Lean: hiding (F3): same view distribution for two tables with the same claims on the good challenges; unopened rows keep ≥ 2,368 / 3,840 bits | `formal/QuotientSecurity/Hiding/` | sorry-free; condition (R) is a hypothesis (provable only to ~2^-54 so far) → layout redesign in progress |
 
 ## Numbers (M4 Max, 16 cores)
 
@@ -61,17 +63,29 @@ Part of this repository. Updated as work lands.
 - **Implementation (#1)**: no soundness break. ZK was broken as built (calldata-only distinguisher; unpadded
   openings) → fixed by the hiding layouts (both attacks are regression tests that now fail). `log_rows` range:
   fixed. Gas formulas correct.
+- **Prover memory / `pcs` (adversarial, on 411866f)**: the lean paths make the dense prover's bytes. Differential
+  tests cover commitments, re-encoded rows, lean levels, the lane-tensor prover and openings. The whole-protocol
+  digests are pinned. Fixed:
+  - aliasing UB in the in-place NTT encodes, leanVM's included (Miri, both borrow models; reported in
+    `UPSTREAM.md`);
+  - an opening of no claims panicked.
+
+  `Table::new_in` / `hidden_in` now check, in debug builds, that the fill writes every word. Noted, not changed:
+  `prove` recomputes σ's coset values for every proof.
 
 ## In progress
 
-Reviews: prover-memory/`pcs` changes; end-to-end cryptography; the hiding design. FV: F0a (end theorem for a χ
-circuit), F0b (the deployed circuit in Lean, Keccak gadget proofs), F2 (WHIR soundness bridge to leanerVM `mumbai`),
-F3 (hiding layouts in Lean), F4a (the Keccak-256 chain in the random-permutation model), the `Statement` package
-(explicit computable extractor/simulator, executable verifier differential-tested against Rust).
+Rust: per-proof randomness (OS RNG + KDF binding statement and witness) and the opening seed in the form F2 proves
+(fixed prefix with layout and version, root read from the proof); a hidden layout for which condition (R) holds for
+every challenge. FV: F0a (end theorem for χ circuits: zero/one pinning, statement embedding), F0b (the deployed
+circuit in Lean, Keccak gadget proofs), F4a (the Keccak-256 chain in the random-permutation model), the `Statement`
+package (computable extractor/simulator, executable verifier differential-tested against Rust).
 
 ## Known open items
 
 - End-to-end Lean theorem (F0–F5 of `formal/README.md`).
-- The hiding conditions are checked exactly at random challenges/claim points, not yet proven for all (F3).
+- Condition (R) of the hiding layouts: proven only to ~2^-54 (layout redesign in progress).
+- `UPSTREAM.md`: issues in vendored leanVM code to report upstream (an aliasing UB, now fixed here; a planner
+  divide-by-zero; documentation errors).
 - Possible gas saving: absorb the index root into the transcript in the byte order `PCS_OPEN` takes, to drop the
   132-gas byte reversal.
