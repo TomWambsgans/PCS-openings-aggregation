@@ -12,11 +12,11 @@ import WhirBridge.Table
 /-!
 # The claims on a hidden layout are claims on the table
 
-A hidden layout (`Layout::hidden_with`, `opening.rs:153-203`) stacks a table in lanes of `2^ℓ`
+A hidden layout (`Layout::hidden_with`, `opening.rs:154-204`) stacks a table in lanes of `2^ℓ`
 entries, `ℓ = log_n − 6`, cut in pieces of `2^s`: block lane `l` holds its block but its first
 piece at its pieces `k ≥ 1` (its piece `0` is random), the overflow lane holds, at its piece
 `k + 1`, the table's piece `pieces[k]` (the blocks' first pieces, then the chunks' tails).
-`Layout.readHidden` is `Table::read` (`opening.rs:525-545`), entry by entry: the table a stack
+`Layout.readHidden` is `Table::read` (`opening.rs:527-547`), entry by entry: the table a stack
 stands for.
 
 `holds_iff_hidden`: **for every stack `q`, `q` satisfies the stack claim of a claim `c` (with the
@@ -233,10 +233,10 @@ theorem Layout.HiddenOK.block_inj {L : Layout} {s : ℕ} (hL : L.HiddenOK s) {i 
 
 /-! ## `Table::read` -/
 
-/-- The stack's entry `y` of lane `l` (`lane(l)[y]`, `opening.rs:530`). -/
+/-- The stack's entry `y` of lane `l` (`lane(l)[y]`, `opening.rs:532`). -/
 def stackAt {n : ℕ} (q : Column n) (logLane l y : ℕ) : K := q.values.getD (y + 2 ^ logLane * l) 0
 
-/-- **`Table::read`** (`opening.rs:525-545`), entry by entry, for a hidden layout with pieces of
+/-- **`Table::read`** (`opening.rs:527-547`), entry by entry, for a hidden layout with pieces of
 `2^s` entries: the table's entry `t`, in piece `p = t >> s` at `o = t mod 2^s`, is the overflow
 lane's at its piece `k + 1` if `p` is the overflow lane's `k`-th piece; else the entry of the block
 lane holding `p`'s block at its piece `p mod 2^(ℓ−s)`; else zero. -/
@@ -257,7 +257,7 @@ def Layout.table (L : Layout) (q : Column L.logN) (t : ℕ) : K :=
   | some s => L.readHidden s q t
   | none => L.toBlocks.table q t
 
-/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:547-582`). -/
+/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:549-581`). -/
 def Layout.tableEval (L : Layout) (q : Column L.logN) (p : List E) : E :=
   ∑ t ∈ range (2 ^ L.vars), ofK (L.table q t) * eqEval (boolPoint L.vars t) p
 

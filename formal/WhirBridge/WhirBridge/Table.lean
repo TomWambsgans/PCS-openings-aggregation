@@ -43,7 +43,7 @@ structure Blocks.Valid (L : Blocks) : Prop where
   lanes_le : L.lanes ≤ 2 ^ laneFold
   block_lt : ∀ b ∈ L.blocks, b < 2 ^ (L.vars - L.logLane)
 
-/-- **The table a public stack stands for** (`Table::new`, `opening.rs:392-412`): entry `o + 2^ℓ·b`
+/-- **The table a public stack stands for** (`Table::new`, `opening.rs:449-467`): entry `o + 2^ℓ·b`
 (`o < 2^ℓ`) is entry `o + 2^ℓ·l` of the stack for the lane `l` holding block `b`, and `0` where no
 lane holds it; written as the sum over the lanes holding the block, which is that one entry for
 distinct blocks (as `Layout::new` lists them). -/
@@ -51,7 +51,7 @@ def Blocks.table (L : Blocks) (q : Column L.logN) (t : ℕ) : K :=
   ∑ l ∈ range L.lanes, if L.blocks.getD l 0 = t / 2 ^ L.logLane then
     q.values.getD (t % 2 ^ L.logLane + 2 ^ L.logLane * l) 0 else 0
 
-/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:504-516`). -/
+/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:549-561`). -/
 def Blocks.tableEval (L : Blocks) (q : Column L.logN) (p : List E) : E :=
   ∑ t ∈ range (2 ^ L.vars), ofK (L.table q t) * eqEval (boolPoint L.vars t) p
 

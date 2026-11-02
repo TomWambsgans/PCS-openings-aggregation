@@ -14,15 +14,15 @@ import LeanVM.Protocol.EndToEnd.Sound.Glue
 /-!
 # The opening check
 
-`opening::verify(layout, root, claims, proof)` (`crates/quotient/src/opening.rs:780-887`):
+`opening::verify(layout, root, claims, proof)` (`crates/quotient/src/opening.rs:782-892`):
 
 1. reject unless every claim's point has the table's `vars` coordinates;
 2. start the transcript from the IV `keccak256(prefix(layout) ‖ claims)` and a zero public digest
-   (`iv`, `opening.rs:633-643`), read the root as the proof's first two scalars and reject unless it
+   (`iv`, `opening.rs:635-645`), read the root as the proof's first two scalars and reject unless it
    is the root expected;
 3. sample `λ`, set `λ_i = λ^i` for `i ≤ m` (`m` claims: one power more than the claims, the
-   gadget's), the target `Σ_{i<m} λ_i v_i`, and the weight closure (`opening.rs:841-876`): per
-   claim, its point's lane coordinates and its scales (`Layout::scales`, `opening.rs:284-301`) times
+   gadget's), the target `Σ_{i<m} λ_i v_i`, and the weight closure (`opening.rs:846-881`): per
+   claim, its point's lane coordinates and its scales (`Layout::scales`, `opening.rs:285-301`) times
    `λ_i`, then, at a stack point `x = low ‖ high`, the sum of the claims' terms and the gadget's:
    * a **public** layout (`log_piece = None`): `eq(p[..ℓ], low) · on_blocks`, `on_blocks` the
      lane sum `Σ_l scale_l · eq_index(high, l)` over the block lanes; no gadget;
@@ -34,8 +34,8 @@ import LeanVM.Protocol.EndToEnd.Sound.Glue
 4. `verify_whir(transcript, log_n, placed, LOG_INV_RATE, target, root, &weight)`, then
    `transcript.finish()`.
 
-`Layout` mirrors the Rust struct field by field (`opening.rs:104-115`), `Layout.new` and
-`Layout.hidden` its two constructors (`opening.rs:119-203`, the latter `hidden_with`), and
+`Layout` mirrors the Rust struct field by field (`opening.rs:104-116`), `Layout.new` and
+`Layout.hidden` its two constructors (`opening.rs:120-204`, the latter `hidden_with`), and
 `Layout.check L R claims` is steps 1, 3 and 4 as a program of mumbai's language (`Prog`), each
 definition below transcribing the Rust it names. Step 2 is `WhirBridge/Verifier.lean`
 (`openingVerifyWithHash`); `placed` (the pruned Merkle form's zero prefix, which mumbai's full-leaf
@@ -59,29 +59,29 @@ namespace WhirBridge
 open LeanVM.Parameters LeanVM.Protocol.Compile LeanVM.Protocol.Verifier
 open LeanVM.Protocol.Whir.Sound (IsMultiaffine)
 
-/-- `LANE_FOLD` (`opening.rs:50`): the first fold of leanVM's WHIR, `2^6` lanes. -/
+/-- `LANE_FOLD` (`opening.rs:51`): the first fold of leanVM's WHIR, `2^6` lanes. -/
 def laneFold : ℕ := 6
 
-/-- `LOG_INV_RATE` (`opening.rs:590`): rate `1/2`. -/
+/-- `LOG_INV_RATE` (`opening.rs:592`): rate `1/2`. -/
 def logInvRate : ℕ := 1
 
-/-- A claim (`opening.rs:84-89`): the table's multilinear extension at `point` is `value`. The
-Rust holds `F192` limbs; `ext` (`opening.rs:749-751`) reads them as the verifier's `E`, the same
+/-- A claim (`opening.rs:85-89`): the table's multilinear extension at `point` is `value`. The
+Rust holds `F192` limbs; `ext` (`opening.rs:751-753`) reads them as the verifier's `E`, the same
 field `K[y]/(y^3 + y + 1)`, `K = GF(2)[x]/(x^64 + x^4 + x^3 + x + 1)`. -/
 structure Claim where
   point : List E
   value : E
 
-/-- `eq_bits(point, index)` (`opening.rs:400-404`), and the verifier's `eq_index`
-(`opening.rs:836-840`): `Π_k (bit k of index ? p_k : 1 + p_k)`. -/
+/-- `eq_bits(point, index)` (`opening.rs:401-405`), and the verifier's `eq_index`
+(`opening.rs:841-845`): `Π_k (bit k of index ? p_k : 1 + p_k)`. -/
 def eqBits (point : List E) (index : ℕ) : E :=
   point.zipIdx.foldl (fun w pk ↦ w * if (index >>> pk.2) % 2 = 1 then pk.1 else 1 + pk.1) 1
 
-/-- The powers `verify` builds (`opening.rs:798-802`): `[1]`, then `last · λ` while there are at
-most as many as claims: one per claim and one more, the gadget's (`opening.rs:824`). -/
+/-- The powers `verify` builds (`opening.rs:801-805`): `[1]`, then `last · λ` while there are at
+most as many as claims: one per claim and one more, the gadget's (`opening.rs:827`). -/
 def lambdas (lam : E) (n : ℕ) : List E := powers lam (n + 1)
 
-/-- The target (`opening.rs:803-806`): `Σ λ_i v_i`, the claims zipped with the powers. -/
+/-- The target (`opening.rs:806-809`): `Σ λ_i v_i`, the claims zipped with the powers. -/
 def target (ls : List E) (claims : List Claim) : E :=
   (claims.zip ls).foldl (fun acc cl ↦ acc + cl.2 * cl.1.value) 0
 
@@ -148,7 +148,7 @@ def logLane (L : Blocks) : ℕ := L.logN - laneFold
 def lanes (L : Blocks) : ℕ := L.blocks.length
 
 /-- Each lane's weight in a claim at `point`, `eq` of the point's high coordinates at the lane's
-block (`Layout::scales` of a public layout, `opening.rs:284-292`). -/
+block (`Layout::scales` of a public layout, `opening.rs:285-293`). -/
 def laneWeights (L : Blocks) (point : List E) : List E :=
   L.blocks.map fun b ↦ eqBits (point.drop L.logLane) b
 
@@ -166,9 +166,9 @@ def claimWeight (L : Blocks) (c : Claim) (x : List E) : E :=
 def stackClaims (L : Blocks) (claims : List Claim) : List StackClaim :=
   claims.map fun c ↦ (claimWeight L c, c.value)
 
-/-! ## The layout (`opening.rs:50-301`) -/
+/-! ## The layout (`opening.rs:51-301`) -/
 
-/-- What a lane of the stack holds (`Lane`, `opening.rs:91-101`). -/
+/-- What a lane of the stack holds (`Lane`, `opening.rs:92-100`). -/
 inductive Lane where
   /-- The table's block `b` (in a hidden layout, all of it but its first piece). -/
   | block (b : ℕ)
@@ -178,7 +178,7 @@ inductive Lane where
   | random
   deriving DecidableEq, Repr
 
-/-- **`Layout`** (`opening.rs:104-115`), field by field: the table's variables, the stack's, what
+/-- **`Layout`** (`opening.rs:104-116`), field by field: the table's variables, the stack's, what
 each lane holds, a hidden layout's piece `2^log_piece` (`none` for a public layout), and the table's
 pieces the overflow lane holds at its pieces `1, 2, ...`. -/
 structure Layout where
@@ -189,45 +189,45 @@ structure Layout where
   pieces : List ℕ
   deriving DecidableEq, Repr
 
-/-- `GADGET` (`opening.rs:60`): the gadget's entries, the last of every lane's first piece. -/
+/-- `GADGET` (`opening.rs:61`): the gadget's entries, the last of every lane's first piece. -/
 def gadget : ℕ := 9
 
-/-- `OVERFLOW_LANE` (`opening.rs:64`): the hidden layouts' overflow lane. -/
+/-- `OVERFLOW_LANE` (`opening.rs:65`): the hidden layouts' overflow lane. -/
 def overflowLane : ℕ := 32
 
-/-- `gadget_lanes(g)` (`opening.rs:71-74`): the lanes of gadget pattern `g`, `0` and `31`, `1`
+/-- `gadget_lanes(g)` (`opening.rs:72-75`): the lanes of gadget pattern `g`, `0` and `31`, `1`
 and `30`, the overflow lane alone (none past pattern `2`, where the Rust panics). -/
 def gadgetLanes (g : ℕ) : List ℕ := [[0, 31], [1, 30], [overflowLane]].getD g []
 
-/-- `gadget_beta(i)` (`opening.rs:77-81`): the `F192` of limbs `c_i = 1`, the others `0`, as the
+/-- `gadget_beta(i)` (`opening.rs:78-82`): the `F192` of limbs `c_i = 1`, the others `0`, as the
 verifier's `E` (`ext`): `β = 1, t, t²`. -/
 def gadgetBeta (i : ℕ) : E :=
   E.ofLimbs (K.ofLane (if i = 0 then 1 else 0)) (K.ofLane (if i = 1 then 1 else 0))
     (K.ofLane (if i = 2 then 1 else 0))
 
-/-- `Layout::gadget_entry(g, i)` (`opening.rs:247-250`), for pieces of `2^s`: `2^s − 9 + 3g + i`. -/
+/-- `Layout::gadget_entry(g, i)` (`opening.rs:248-251`), for pieces of `2^s`: `2^s − 9 + 3g + i`. -/
 def gadgetEntry (s g i : ℕ) : ℕ := 2 ^ s - gadget + 3 * g + i
 
 namespace Layout
 
-/-- `log_lane` (`opening.rs:205-207`). -/
+/-- `log_lane` (`opening.rs:206-208`). -/
 def logLane (L : Layout) : ℕ := L.logN - laneFold
 
-/-- `placed` (`opening.rs:219-221`): whole lanes. -/
+/-- `placed` (`opening.rs:220-222`): whole lanes. -/
 def placed (L : Layout) : ℕ := L.lanes.length * 2 ^ L.logLane
 
-/-- `Layout::overflow` (`opening.rs:242-244`): the first overflow lane (the lanes' count if there
+/-- `Layout::overflow` (`opening.rs:243-245`): the first overflow lane (the lanes' count if there
 is none, where the Rust panics). -/
 def overflow (L : Layout) : ℕ := L.lanes.findIdx (· == Lane.overflow)
 
-/-- The blocks `Layout::new` lists (`opening.rs:119-128`): for each chunk `(chunk, len)` of
+/-- The blocks `Layout::new` lists (`opening.rs:120-129`): for each chunk `(chunk, len)` of
 `2^log_chunk` entries, the blocks of `2^(log_n − 6)` entries covering its leading `len`. -/
 def newBlocks (logChunk logN : ℕ) (chunks : List (ℕ × ℕ)) : List ℕ :=
   chunks.flatMap fun c ↦
     (List.range ((c.2 + 2 ^ (logN - laneFold) - 1) / 2 ^ (logN - laneFold))).map fun j ↦
       c.1 <<< (logChunk - (logN - laneFold)) ||| j
 
-/-- **`Layout::new`** (`opening.rs:119-142`): a public layout, a lane per block. -/
+/-- **`Layout::new`** (`opening.rs:120-142`): a public layout, a lane per block. -/
 def new (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ)) : Layout where
   vars := vars
   logN := logN
@@ -235,12 +235,12 @@ def new (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ)) : Layout where
   logPiece := none
   pieces := []
 
-/-- A hidden layout's whole blocks (`opening.rs:168-172`). -/
+/-- A hidden layout's whole blocks (`opening.rs:168-173`). -/
 def hiddenBlocks (logChunk logLane : ℕ) (chunks : List (ℕ × ℕ)) : List ℕ :=
   chunks.flatMap fun c ↦ (List.range (c.2 >>> logLane)).map fun j ↦ (c.1 <<< (logChunk - logLane)) + j
 
 /-- A hidden layout's tails: the pieces of what each chunk holds past its whole blocks
-(`opening.rs:173-176`). -/
+(`opening.rs:169-177`). -/
 def hiddenTails (logChunk logLane logPiece : ℕ) (chunks : List (ℕ × ℕ)) : List ℕ :=
   chunks.flatMap fun c ↦
     let first := c.1 <<< (logChunk - logLane)
@@ -257,7 +257,7 @@ def hiddenLanes (blocks : List ℕ) (random : ℕ) : List Lane :=
   (blocks.take lower).map .block ++ List.replicate (overflowLane - lower) .random ++ [.overflow] ++
     List.replicate random .random ++ (blocks.drop lower).map .block
 
-/-- **`Layout::hidden_with`** (`opening.rs:153-203`; `Layout::hidden` is `log_piece = LOG_PIECE`):
+/-- **`Layout::hidden_with`** (`opening.rs:154-204`; `Layout::hidden` is `log_piece = LOG_PIECE`):
 the lanes `hiddenLanes`; the overflow lane's pieces are each block lane's first piece
 (`b << (ℓ − s)`), in lane order, then the chunks' tails. The Rust's assertions
 (`GADGET < 2^log_piece`, `random ≥ 7`, at most `64` lanes, fewer pieces than a lane's) are not
@@ -275,7 +275,7 @@ def hidden (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ)) (random logPi
     logPiece := some logPiece
     pieces := givenUp ++ hiddenTails logChunk logLane logPiece chunks }
 
-/-- `Layout::scales` (`opening.rs:284-301`), the lanes': `eq` of the point's high coordinates at
+/-- `Layout::scales` (`opening.rs:285-301`), the lanes': `eq` of the point's high coordinates at
 each block lane's block, zero on the other lanes. -/
 def laneScales (L : Layout) (point : List E) : List E :=
   L.lanes.map fun
@@ -288,7 +288,7 @@ def pieceScales (L : Layout) (point : List E) : List E :=
   | some s => L.pieces.map fun p ↦ eqBits (point.drop s) p
   | none => []
 
-/-- The gadget (`opening.rs:824-833`), in a hidden layout: per pattern, its lanes and its entries
+/-- The gadget (`opening.rs:827-838`), in a hidden layout: per pattern, its lanes and its entries
 with their weights `scale · β_i`; none in a public layout. -/
 def gadgetParts (L : Layout) (scale : E) : List (List ℕ × List (ℕ × E)) :=
   match L.logPiece with
@@ -298,49 +298,49 @@ def gadgetParts (L : Layout) (scale : E) : List (List ℕ × List (ℕ × E)) :=
 
 end Layout
 
-/-! ## The weight closure (`opening.rs:770-876`) -/
+/-! ## The weight closure (`opening.rs:772-881`) -/
 
-/-- `ClaimWeight` (`opening.rs:770-777`): a claim's lane coordinates, and its lanes' and pieces'
+/-- `ClaimWeight` (`opening.rs:772-779`): a claim's lane coordinates, and its lanes' and pieces'
 scales. -/
 structure Part where
   low : List E
   lanes : List E
   pieces : List E
 
-/-- The scales times `λ_i` (`opening.rs:808-819`). -/
+/-- The scales times `λ_i` (`opening.rs:811-822`). -/
 def Part.scale (l : E) (p : Part) : Part := ⟨p.low, p.lanes.map (l * ·), p.pieces.map (l * ·)⟩
 
 /-- A claim's part before its power of `λ`. -/
 def Layout.part (L : Layout) (c : Claim) : Part :=
   ⟨c.point.take L.logLane, L.laneScales c.point, L.pieceScales c.point⟩
 
-/-- `parts` (`opening.rs:808-819`). -/
+/-- `parts` (`opening.rs:811-822`). -/
 def Layout.parts (L : Layout) (ls : List E) (claims : List Claim) : List Part :=
   (claims.zip ls).map fun cl ↦ (L.part cl.1).scale cl.2
 
-/-- `eq1` (`opening.rs:834`). -/
+/-- `eq1` (`opening.rs:839`). -/
 def eq1 (c p : E) : E := c * p + (1 + c) * (1 + p)
 
-/-- `eq` (`opening.rs:835`): zipping. -/
+/-- `eq` (`opening.rs:840`): zipping. -/
 def eqZ (a b : List E) : E := (a.zip b).foldl (fun w cp ↦ w * eq1 cp.1 cp.2) 1
 
-/-- `Π (1 + p)` (`opening.rs:858-859`). -/
+/-- `Π (1 + p)` (`opening.rs:863-864`). -/
 def onePlusProd (l : List E) : E := l.foldl (fun w p ↦ w * (1 + p)) 1
 
-/-- One lane's term of `on_blocks` (`opening.rs:846-849`). -/
+/-- One lane's term of `on_blocks` (`opening.rs:851-854`). -/
 def onStep (scales laneEq : List E) (sum : E) (ll : Lane × ℕ) : E :=
   match ll.1 with
   | .block _ => sum + scales.getD ll.2 0 * laneEq.getD ll.2 0
   | _ => sum
 
-/-- `on_blocks` (`opening.rs:846-849`): the block lanes, each its scale times its `eq_index`. -/
+/-- `on_blocks` (`opening.rs:851-854`): the block lanes, each its scale times its `eq_index`. -/
 def onBlocks (lanes : List Lane) (scales laneEq : List E) : E :=
   lanes.zipIdx.foldl (onStep scales laneEq) 0
 
-/-- `lane_eq` (`opening.rs:844`): `eq_index(high, l)` for each lane. -/
+/-- `lane_eq` (`opening.rs:849`): `eq_index(high, l)` for each lane. -/
 def laneEqs (n : ℕ) (high : List E) : List E := (List.range n).map fun l ↦ eqBits high l
 
-/-- One part's term of the weight (`opening.rs:845-867`): the public branch, or the hidden one. -/
+/-- One part's term of the weight (`opening.rs:850-872`): the public branch, or the hidden one. -/
 def Layout.term (L : Layout) (laneEq low : List E) (part : Part) : E :=
   let on := onBlocks L.lanes part.lanes laneEq
   match L.logPiece with
@@ -355,16 +355,16 @@ def Layout.term (L : Layout) (laneEq low : List E) (part : Part) : E :=
     let onOverflow := laneEq.getD L.overflow 0
     below * ((above + firstAbove * firstPiece) * on + pieces * onOverflow)
 
-/-- The gadget's term of the weight (`opening.rs:868-874`): per pattern, its lanes' `eq_index`
+/-- The gadget's term of the weight (`opening.rs:873-879`): per pattern, its lanes' `eq_index`
 (`lane_eq[l]`, `0` past the lanes, where the Rust panics) times its entries' weighted
 `eq_index(low, y)`. -/
 def gadgetSum (parts : List (List ℕ × List (ℕ × E))) (laneEq low : List E) : E :=
   parts.foldl (fun acc pe ↦ acc + pe.1.foldl (fun sum l ↦ sum + laneEq.getD l 0) 0 *
     pe.2.foldl (fun sum yb ↦ sum + yb.2 * eqBits low yb.1) 0) 0
 
-/-- **The weight closure** (`opening.rs:841-876`), at a stack point `x`: the lane's coordinates
+/-- **The weight closure** (`opening.rs:846-881`), at a stack point `x`: the lane's coordinates
 first, then the lane index's six; the claims' terms, then the gadget's, scaled by the power after
-the claims' (`lambdas[claims.len()]`, `opening.rs:824`). -/
+the claims' (`lambdas[claims.len()]`, `opening.rs:827`). -/
 def Layout.weight (L : Layout) (ls : List E) (claims : List Claim) (x : List E) : E :=
   let low := x.take L.logLane
   let high := x.drop L.logLane
@@ -372,7 +372,7 @@ def Layout.weight (L : Layout) (ls : List E) (claims : List Claim) (x : List E) 
   (L.parts ls claims).foldl (fun acc part ↦ acc + L.term laneEq low part) 0 +
     gadgetSum (L.gadgetParts (ls.getD claims.length 0)) laneEq low
 
-/-- **The opening check** `opening::verify` (`opening.rs:780-887`) past its transcript's start, as a
+/-- **The opening check** `opening::verify` (`opening.rs:782-892`) past its transcript's start, as a
 program of mumbai's verifier language, at rate exponent `R` (`LOG_INV_RATE = 1`): the length
 check, the batching challenge, then `verify_whir` with the target and the weight. -/
 def Layout.check (L : Layout) (R : ℕ) (claims : List Claim) : Prog Unit := do

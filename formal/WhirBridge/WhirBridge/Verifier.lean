@@ -13,13 +13,13 @@ import WhirBridge.Layouts
 # `opening::verify` and its soundness
 
 `openingVerifyWithHash H F L R root claims π` is `opening::verify(layout, root, claims, proof)`
-(`opening.rs:780-887`) with Keccak-256 `H` and Keccak-f[1600] `F` in any monad, step by step:
+(`opening.rs:782-892`) with Keccak-256 `H` and Keccak-f[1600] `F` in any monad, step by step:
 
 1. reject unless there is a claim and every claim's point has the table's `vars` coordinates;
-2. the IV `H(prefix(L) ‖ claims)` (`iv`, `opening.rs:633-643`; `openingPrefix`: `LABEL`, `VERSION = 2`,
+2. the IV `H(prefix(L) ‖ claims)` (`iv`, `opening.rs:635-645`; `openingPrefix`: `LABEL`, `VERSION = 2`,
    the layout's id, `log_n`, the rate, 76 bytes; the claims as `claimsBytes`), the sponge
    `F(IV ‖ 0 ‖ 0)` (`Transcript::new(proof, iv, PUBLIC_DIGEST = 0, true)`);
-3. reject unless the proof's first two scalars encode the expected root (`opening.rs:794-797`);
+3. reject unless the proof's first two scalars encode the expected root (`opening.rs:797-800`);
 4. the program `ourProg`: read those two scalars as the commitment (absorbed), then `Layout.check`
    (the batching challenge, the target, the weight closure, `verify_whir`), accepting when it
    accepts and the proof is read whole.
@@ -53,32 +53,32 @@ open scoped ENNReal
 
 attribute [local irreducible] instFintypeDigest instFintypeKState
 
-/-! ## The prefix (`opening.rs:606-706`) -/
+/-! ## The prefix (`opening.rs:608-708`) -/
 
-/-- `LABEL` (`opening.rs:40`): the ASCII bytes of `pcs-quotient-opening`. -/
+/-- `LABEL` (`opening.rs:41`): the ASCII bytes of `pcs-quotient-opening`. -/
 def label : Bytes :=
   [0x70, 0x63, 0x73, 0x2d, 0x71, 0x75, 0x6f, 0x74, 0x69, 0x65, 0x6e, 0x74, 0x2d, 0x6f, 0x70, 0x65,
     0x6e, 0x69, 0x6e, 0x67]
 
-/-- `VERSION` (`opening.rs:47`). -/
+/-- `VERSION` (`opening.rs:48`). -/
 def version : ℕ := 2
 
 /-- An integer as 8 little-endian bytes (`(n as u64).to_le_bytes()`). -/
 def u64 (n : ℕ) : Bytes := wordBytes n.toUInt64
 
-/-- A lane's kind and block in the layout's encoding (`opening.rs:680-688`): `0` a block, `1` the
+/-- A lane's kind and block in the layout's encoding (`opening.rs:682-690`): `0` a block, `1` the
 overflow lane, `2` a random lane. -/
 def Lane.code : Lane → ℕ × ℕ
   | .block b => (0, b)
   | .overflow => (1, 0)
   | .random => (2, 0)
 
-/-- An optional field (`opening.rs:673-676`): `0`, or `1` then the value. -/
+/-- An optional field (`opening.rs:675-678`): `0`, or `1` then the value. -/
 def optBytes : Option ℕ → Bytes
   | none => u64 0
   | some v => u64 1 ++ u64 v
 
-/-- The gadget's field (`opening.rs:692-705`): `0` in a public layout; in a hidden one of pieces
+/-- The gadget's field (`opening.rs:694-707`): `0` in a public layout; in a hidden one of pieces
 `2^s`, `GADGET`, then each pattern's number of lanes, its lanes and its three entries. -/
 def gadgetBytes : Option ℕ → Bytes
   | none => u64 0
@@ -86,16 +86,16 @@ def gadgetBytes : Option ℕ → Bytes
       u64 (gadgetLanes g).length ++ (gadgetLanes g).flatMap u64 ++
         (List.range 3).flatMap fun i ↦ u64 (gadgetEntry s g i)
 
-/-- `encode_layout` (`opening.rs:665-706`): every field of the layout, then the gadget. -/
+/-- `encode_layout` (`opening.rs:667-708`): every field of the layout, then the gadget. -/
 def encodeLayout (L : Layout) : Bytes :=
   u64 L.vars ++ u64 L.logN ++ u64 L.lanes.length ++
     L.lanes.flatMap (fun l ↦ u64 l.code.1 ++ u64 l.code.2) ++ optBytes L.logPiece ++
     u64 L.pieces.length ++ L.pieces.flatMap u64 ++ gadgetBytes L.logPiece
 
-/-- `layout_id` (`opening.rs:659-663`): Keccak-256 of the encoding, its 32 bytes. -/
+/-- `layout_id` (`opening.rs:661-665`): Keccak-256 of the encoding, its 32 bytes. -/
 def layoutId (L : Layout) : Bytes := digestBytes (keccak256 (encodeLayout L))
 
-/-- **`prefix`** (`opening.rs:614-624`): `LABEL`, `VERSION`, the layout's id, `log_n` and the
+/-- **`prefix`** (`opening.rs:616-626`): `LABEL`, `VERSION`, the layout's id, `log_n` and the
 rate, in fixed-width fields. -/
 def openingPrefix (L : Layout) (R : ℕ) : Bytes :=
   label ++ u64 version ++ layoutId L ++ u64 L.logN ++ u64 R
@@ -103,7 +103,7 @@ def openingPrefix (L : Layout) (R : ℕ) : Bytes :=
 theorem openingPrefix_length (L : Layout) (R : ℕ) : (openingPrefix L R).length = 76 := by
   simp [openingPrefix, u64, wordBytes, layoutId, digestBytes, label]
 
-/-- `PUBLIC_DIGEST` (`opening.rs:646`): zero. -/
+/-- `PUBLIC_DIGEST` (`opening.rs:648`): zero. -/
 def publicDigest : Digest := #v[0, 0, 0, 0]
 
 theorem publicDigest_eq : publicDigest = default := rfl
@@ -126,8 +126,8 @@ section Run
 
 variable {m : Type → Type} [Monad m] (H : Bytes → m Digest) (F : KeccakState → m KeccakState)
 
-/-- **`opening::verify`** (`opening.rs:780-887`) over a hash `H` and a permutation `F`: no claim,
-or a point of the wrong length, is rejected first (`opening.rs:789-791`). -/
+/-- **`opening::verify`** (`opening.rs:782-892`) over a hash `H` and a permutation `F`: no claim,
+or a point of the wrong length, is rejected first (`opening.rs:792-794`). -/
 def openingVerifyWithHash (L : Layout) (R : ℕ) (root : Digest) (claims : List Claim)
     (π : Proof) : m Bool :=
   if claims.isEmpty = false ∧ ∀ c ∈ claims, c.point.length = L.vars then do

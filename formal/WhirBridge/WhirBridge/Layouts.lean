@@ -43,7 +43,7 @@ def minLogRows : ℕ := 17
 /-- `MAX_LOG_ROWS` (`protocol.rs:108`). -/
 def maxLogRows : ℕ := 22
 
-/-- `LOG_PIECE` (`opening.rs:55`). -/
+/-- `LOG_PIECE` (`opening.rs:56`). -/
 def logPieceDeployed : ℕ := 8
 
 /-- `WITNESS_RANDOM_LANES` (`protocol.rs:98`). -/

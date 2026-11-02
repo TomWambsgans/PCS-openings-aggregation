@@ -22,7 +22,7 @@ mumbai's random-oracle theorem covers a verifier program whose commitments are *
 proof** (`Prog.commit`: the root's two halves absorbed into the duplex, `verifier.py`'s
 `Digest.from_halves(*next_scalars(2))`), run from a seed of hash steps and one permutation whose
 root history has no commitment (`Compile.Rom.RootOk`). `opening.rs` has that shape since its
-version 2 (the root the proof's first two scalars, `opening.rs:742-745`). This file proves the
+version 2 (the root the proof's first two scalars, `opening.rs:797-800`). This file proves the
 theorem for a fixed statement; `Family.lean` for claims the adversary chooses, `Verifier.lean` for
 `opening::verify` itself:
 
@@ -188,7 +188,7 @@ theorem isTotalQueryBound_variant (label : Bytes) (D : Digest) (z : Unit × Proo
 /-! ## The root read from the proof -/
 
 /-- **The root the proof's first two scalars encode** (`Digest::from_halves(next_scalars(2))`,
-`opening.rs:742-745`; mumbai's `digestOfScalars`), if they are two and encode one. -/
+`opening.rs:797-800`; mumbai's `digestOfScalars`), if they are two and encode one. -/
 def rootOf (π : Proof) : Option Digest :=
   match π.stream with
   | x0 :: x1 :: _ => digestOfScalars (x0, x1)

@@ -174,10 +174,10 @@ theorem fam_eq_of_prefix {x x' : Stmt L} {h : List Ev} (hx : famHistory x <+: h)
 
 /-! ## The seedings -/
 
-/-- A scalar's bytes as `iv` writes them (`opening.rs:595-599`): its three limbs, little-endian. -/
+/-- A scalar's bytes as `iv` writes them (`opening.rs:638-642`): its three limbs, little-endian. -/
 def scalarBytes (x : E) : Bytes := kBytes (x.limb 0) ++ kBytes (x.limb 1) ++ kBytes (x.limb 2)
 
-/-- The claims' bytes, as `iv` writes them after the prefix (`opening.rs:592-602`): each claim's
+/-- The claims' bytes, as `iv` writes them after the prefix (`opening.rs:635-645`): each claim's
 point, then its value. -/
 def claimsBytes (cs : List Claim) : Bytes := (flat cs).flatMap scalarBytes
 
