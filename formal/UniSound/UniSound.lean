@@ -8,6 +8,7 @@ import UniSound.PiopSound
 import UniSound.Fs
 import UniSound.Bus
 import UniSound.Final
+import UniSound.Mle
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001
@@ -27,6 +28,7 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `PiopSound.lean` | **`uniPiop`**: the PIOP is round-by-round sound (every round proved). |
 | `Fs.lean` | The code-level link (`UniCode`), the last link (`UniFinal`), the Fiat–Shamir layer (`FsLayer`), the bound (`uniBound`). |
 | `Bus.lean` | Round `0` from `formal/Heap`: the bus model (`BusModel`), **`BusModel.mainSound`** (`4N/|E|` and the constraints' batching), `UniIds.ofBus`. |
+| `Mle.lean` | The sumcheck's folds are the claims' multilinear extensions (`foldAll_eq_sum`, `mleStk_eq_foldAll`): glue for `UniFinal`. |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
 
 ## What is proved, what is assumed
