@@ -55,6 +55,15 @@ option. Every file says where it comes from in its first lines.
     `src/prover/dump/apply.sh` copies into a leanVM checkout. It transforms them with `crates/quotient/src/domain.rs`'s
     additive NTT, and commits and opens them with the vendored WHIR (`crates/pcs`, `crates/verifier`, leanVM
     `c445e3d5`), its openings in the transcript shape of `crates/quotient/src/opening.rs`.
+  - Its Flock prover is leanVM `42422001`'s own, vendored for it:
+    - `crates/lv42_primitives`, `crates/lv42_parallel` and `crates/lv42_flock` are leanVM `42422001`'s
+      `primitives`, `parallel` and `flock`. They are renamed, since the workspace's `primitives` and `parallel` are
+      `c445e3d5`'s, and copied unchanged but for a header line. The exception is `flock/src/hash.rs`, which leaves
+      out the PCS packaging of the slices.
+    - `crates/lv42_pcs` is the part of `42422001`'s `pcs` that `flock` uses: the GF(2^8) additive NTT, its inverse
+      table, the packing constants and one inner product.
+    - `crates/lv42_fiat_shamir` (new here) states as a trait the transcript methods `flock` calls (leanVM's
+      `ProverState`'s), which the univariate prover's Keccak-256 chain implements.
 - **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
   Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
   proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's

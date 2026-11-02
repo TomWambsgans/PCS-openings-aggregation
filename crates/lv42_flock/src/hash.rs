@@ -1,5 +1,6 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/flock/src/hash.rs.
-// Modified here: `ring_claim` and `ring_switch_open` (leanVM's PCS packaging of the slices) left out; the transcript is `lv42_fiat_shamir`'s trait, which the univariate prover's Keccak-256 chain implements.
+// Modified here: `ring_claim` and `ring_switch_open` (leanVM's PCS packaging of the slices) left out, with the imports
+// only they used. The transcript is `lv42_fiat_shamir`'s trait, which the univariate prover's Keccak-256 chain implements.
 // MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
 //! Monolithic BLAKE2s compression-function R1CS: one R1CS instance per
 //! `compress(h, m, t, f0, f1) → h'` call, encoding the 16-word state init, all

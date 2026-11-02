@@ -1,5 +1,5 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/flock/src/lib.rs.
-// Modified here: the transcript is `lv42_fiat_shamir`'s trait.
+// Unchanged but for this header; the crate's `fiat_shamir` is `crates/lv42_fiat_shamir` (the transcript as a trait).
 // MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
 // CREDIT: https://github.com/succinctlabs/flock, MIT OR Apache-2.0.
 //! flock: a batched R1CS proving system for hash circuits over GF(2), reduced
