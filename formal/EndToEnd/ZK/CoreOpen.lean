@@ -87,4 +87,85 @@ theorem fillOpening_eq (evs : List Render.Ev) (L : PcsQuotient.Layout) (tree : T
     [(tree.root, L.logN - laneFold + logInvRate, 2 ^ laneFold)], []⟩)).run)) = _
   rw [h1', Option.map_some, h2, List.nil_append]
 
+/-! ## The skeleton's opening -/
+
+section Skel
+
+variable {S₀ : Type} (P : QuotientZk.Proto S₀ QuotientZk.Deployed.Inp QuotientZk.Deployed.Out
+  QuotientZk.Deployed.Msg QuotientZk.Deployed.Tbl QuotientZk.Deployed.Pos)
+  (gH : List UInt8 → QuotientZk.Deployed.KSt) (gF : QuotientZk.Deployed.KSt → DigestBytes) (s : S₀)
+
+local notation "G" => Gof (kDet π) π gH gF
+
+open Merkle (runDet_bind runDet_pure)
+
+/-- **The skeleton's opening is the statement's run**: from the claims' bytes `cb` (the first message),
+the seed related to the opening's sponge (`hseed`), the level-0 tree the statement's `tree` (of depth
+`sh.depth₀`), the renderer's later messages its drive of the script `Sc` from the statement's tree
+(`hmsg`), the skeleton's stream is the root's two scalars then the run's stream, its multiproofs the
+run's. -/
+theorem opening_eq (sh : QuotientZk.Deployed.OpenShape) (L : PcsQuotient.Layout)
+    (cls : List PcsQuotient.Claim) (tree : Tree) (cb : List UInt8) (hist₀ : List QuotientZk.Deployed.Out)
+    (Sc : Script Unit) (str : List E) (ops : List Opening) (ms : List Multi)
+    (hfuel : fuel < 2 ^ 64) (hT : TreeOK π tree) (hd : tree.height = sh.depth₀)
+    (hH : HeightsOK (Render.openingEv sh) [tree.height])
+    (hL : (Render.openingEv sh).getLast? = some .draw)
+    (hq : sh.levels.length ≤ (sh.queries.drop 1).length)
+    (hn : hist₀.length + drawsIn (Render.openingEv sh) ≤ P.n)
+    (hm0 : P.msgFn s hist₀ = [QuotientZk.Deployed.Item.bytes cb])
+    (hseed : Duplex.Rel ⟨π (QuotientZk.Deployed.seedInput (kDet π (sh.ivPrefix ++ cb))), []⟩
+      (openingSpongeWith (permId π) L cls).run)
+    (hmsg : ∀ chs : List QuotientZk.Deployed.Out, 1 ≤ chs.length →
+      chs.length < drawsIn (Render.openingEv sh) →
+      P.msgFn s (hist₀ ++ chs) = Render.lastMsg (Render.evRun (Render.openingEv sh) chs
+        ⟨some Sc, [(tree.height, tree.word)], [], [], []⟩))
+    (hr : runEvS π fuel (Render.openingEv sh) (some Sc) (startSponge π L cls tree.root) [tree] [] =
+      some (str, ops, ms)) :
+    (runDet P G s (QuotientZk.Deployed.opening sh (treeBytesOf tree)) hist₀).1 =
+      (((digestScalars tree.root).1 :: (digestScalars tree.root).2 :: str).map limbsOf, ms) := by
+  have hroot : QuotientZk.Deployed.rootOf (treeBytesOf tree) = Digest.toBytes tree.root := by
+    have h1 := Merkle.tree_root π tree.height tree.word
+    rw [← Merkle.tree_levels] at h1
+    unfold Merkle.treeBytes at h1
+    rw [← hT] at h1
+    exact h1
+  obtain ⟨a1, a2⟩ := absorbAll_rel P π gH gF s [(digestScalars tree.root).1,
+    (digestScalars tree.root).2] _ _ hist₀ hseed
+  simp only [List.map_cons, List.map_nil] at a1 a2
+  have e3 : ∀ iv, runDet P G s (QuotientZk.Deployed.seed iv) hist₀ =
+      (⟨π (QuotientZk.Deployed.seedInput iv), []⟩, hist₀) := fun iv ↦ by
+    unfold QuotientZk.Deployed.seed
+    rw [runDet_bind, Duplex.runDet_perm, runDet_pure]
+  unfold QuotientZk.Deployed.opening
+  rw [runDet_bind, runDet_getMsg, hm0]
+  simp only
+  rw [runDet_bind, Merkle.runDet_hashH, runDet_bind, e3, runDet_bind, hroot, rootLimbs_toBytes]
+  dsimp only [Gof]
+  rw [a1]
+  set o₀ : QuotientZk.Deployed.OSt := ⟨(runDet P G s (QuotientZk.Deployed.Dx.absorbAll ⟨π (QuotientZk.Deployed.seedInput
+    (kDet π (sh.ivPrefix ++ cb))), []⟩ [limbsOf (digestScalars tree.root).1,
+      limbsOf (digestScalars tree.root).2]) hist₀).1, [], [treeBytesOf tree],
+    [limbsOf (digestScalars tree.root).1, limbsOf (digestScalars tree.root).2], []⟩ with ho₀
+  show (runDet P G s (openTail sh o₀) hist₀).1 = _
+  rw [openTail_run P G s sh o₀ (treeBytesOf tree) rfl (by
+    rw [← hd]; unfold treeBytesOf; rw [List.length_map, Array.length_toList, hT];
+    exact (Merkle.treeLevels_length π _ _)) hq hist₀, runDet_bind, runDet_pure]
+  have hI : DriveInv o₀ ⟨some Sc, [(tree.height, tree.word)], [], [], []⟩ (some Sc)
+      (startSponge π L cls tree.root) [tree] [] (Render.openingEv sh) :=
+    ⟨a2, rfl, rfl, rfl, rfl, Or.inr rfl⟩
+  obtain ⟨e1, e2⟩ := drive P π gH gF s fuel hfuel _ o₀ [] hist₀ _ _ [tree] _ str ops ms hI
+    (by simpa using hT) (by simpa using hH) (Or.inr hL) hn hmsg hr
+  rw [e1, e2]
+  rfl
+
+end Skel
+
 end PcsQuotient.EndToEnd.Core
+
+/-- info: 'PcsQuotient.EndToEnd.Core.opening_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms PcsQuotient.EndToEnd.Core.opening_eq
+
+/-- info: 'PcsQuotient.EndToEnd.Core.fillOpening_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms PcsQuotient.EndToEnd.Core.fillOpening_eq
