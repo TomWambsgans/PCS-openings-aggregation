@@ -194,6 +194,27 @@ weights, Cantor basis) with no hypothesis left (`completeness_deployed_concrete`
   `Q² / 2^256`), one experiment holding both the chain and the openings' proofs of work, `log_rows < 22`, and
   that the Rust is this Lean (F5; the claims' values by F1's review, the openings by F2's tests).
 
+**To the Statement's `Completeness δ`** (`EndToEnd/Completeness/`, library `E2ECompleteness`; sorry-free,
+`propext`, `Classical.choice`, `Quot.sound`, checked by `#guard_msgs` in `E2ECompleteness.lean`):
+`completeness_of_staged` proves `PcsQuotient.Completeness ((17 · 2^24 + 8) / 2^192 + 2 / 2^256 + εpow +
+N² / 2^508)` and `completeness_deployed` the deployed `δ < 2^-162` (`N = 2^48` block calls,
+`εpow = 3 · 2^-277`, `deltaDeployed_lt`), from the staged form of the experiment (`Staged.Holds`). Proved: the
+**random-oracle theorem for the chain's honest challenges** (`Chain.lean`, `prEvent_staged_le`: in the two-call
+random-oracle model the `α`, `β`, `t` queries are fresh by their lengths, `96` and `32` bytes, which the Merkle
+trees and the label never hash, but for `s₂ = s₁` or `s₃ = s₀`, so `(α, β, t)` lies in `Bad` with probability at
+most `|Bad| / 2^576 + 2 / 2^256`, for any challenge map with at most `2^64` digests per value); the transcript's
+`challengeOf` is such a map (`Regular.lean`); the transfer from the random permutation to the two random oracles
+for any honest computation following the duplex discipline (`Transfer.lean`, `rpm_le_rom`, mumbai's
+indifferentiability, `N² / 2^508`); `Bad` is `completeness_deployed_concrete`'s set for the secret and the masks
+(`badSet`, density `badSet_density`). **The hypothesis left**, `Staged.Holds` for the Statement's experiment: it
+is, in distribution, the coins then a two-call computation of the chain's shape (`staged`: the setup's, index and
+witness trees and the label's hash; `s₁ … s₃`; the quotient tree; `s₄`; the rest) whose permutation calls follow
+the duplex discipline, of at most `N` block calls, hashing before `α` and between `γ` and `t` nothing of `32` or
+`96` bytes; and in the two-call random-oracle model its honest proof is rejected at non-degenerate challenges
+with probability at most `εpow` (`completeness_deployed_concrete` for every hash and permutation, given the
+Statement's prover and verifier as `honestProve`, `deployedVerify` (`EndToEnd/Bridge`), and mumbai's
+proof-of-work potential for the openings' grinding, `ours_romComplete`'s `2^-277` per opening).
+
 ## The port to this protocol (F1)
 
 `README.upstream.md` describes leanVM's circuit; this protocol differs in three ways, and the Lean files now
