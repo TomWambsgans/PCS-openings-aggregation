@@ -345,6 +345,93 @@ theorem trip_ivSeed (pre b : List UInt8) (pres : List (List UInt8)) (hpre : pre.
   · obtain ⟨p, hp, c, v', hv', hwv⟩ := hs₁ y hy w hw hz
     exact ⟨p, by simp [hp], c, v', he.1.cache _ _ hv', hwv⟩
 
+/-- The IV and the seed, then the rest. -/
+theorem trip_ivSeed_bind {β : Type} (pre b : List UInt8) (pres : List (List UInt8))
+    (hpre : pre.length = 76) (hpres : ∀ p ∈ pres, p.length = 76 ∧ p ≠ pre)
+    (hx : (.inl (pre ++ b) : Inp) ∉ K0) (st₀ : DSt) (k : Dx → OracleComp DSpec β)
+    (post : β → DSt → Prop)
+    (hk : ∀ dx, Trip P s cw K0 (fun st => ExtP (fun _ => True) st₀ st ∧ CapFresh K0 st dx ∧
+      dx.pend = [] ∧ Seeds (pres ++ [pre]) st) (k dx) post) :
+    Trip P s cw K0 (fun st => st = st₀ ∧ Seeds pres st₀)
+      (hashH (pre ++ b) >>= fun iv => seed iv >>= k) post := by
+  have := Trip.bind (trip_ivSeed pre b pres hpre hpres hx st₀) hk
+  rwa [bind_assoc] at this
+
+/-- **An opening**: every draw's input is fresh; `openChals sh` challenges appended; its seed
+logged. -/
+theorem trip_opening (sh : OpenShape) (hsh : ShapeOK sh) (lv₀ : List (List Bytes32))
+    (hlv : lv₀.length = sh.depth₀ + 1) (n₀ k : ℕ) (cwj : Bytes32 → List UInt8)
+    (hcl : ClaimsAt P n₀ k cwj) (pres : List (List UInt8)) (hpre : sh.ivPrefix.length = 76)
+    (hpres : ∀ p ∈ pres, p.length = 76 ∧ p ≠ sh.ivPrefix) (st₀ : DSt) :
+    Trip P s cw K0
+      (fun st => st = st₀ ∧ st₀.hist.length = n₀ ∧
+        WFact K0 sh.ivPrefix (cwj (st₀.hist.getD k default).1) ∧ Seeds pres st₀)
+      (opening sh lv₀)
+      (fun _ st => Ext (fun _ => True) st₀ st ∧ HistGrow P.n (openChals sh) st₀ st ∧
+        Seeds (pres ++ [sh.ivPrefix]) st) := by
+  unfold opening
+  refine Trip.ginv (Trip.intro fun st' ⟨hg, h1, hlen, hw, hseeds⟩ => ?_)
+  subst h1
+  obtain ⟨b, rest, hmsg, hb⟩ := hcl s st'.hist hlen
+  refine Trip.bind (mid := fun m st => st = st' ∧ m = .bytes b :: rest)
+    ((trip_getMsg _).mono (fun st hst => ⟨hst, by rw [hst]; exact hmsg⟩) (fun _ _ h => h))
+    fun m => Trip.intro fun st₁ ⟨h1, hm⟩ => ?_
+  subst h1 hm
+  have hx : (.inl (sh.ivPrefix ++ b) : Inp) ∉ K0 := fun hK => hw b hK hb
+  refine (trip_ivSeed_bind sh.ivPrefix b pres hpre hpres hx st₁ _ _ fun dx => ?_).mono
+    (fun st hst => ⟨hst, hseeds⟩) (fun _ _ h => h)
+  refine Trip.intro fun st₂ ⟨he₂, hc₂, hp₂, hs₂⟩ => ?_
+  refine Trip.bind ((trip_absorbAll dx _ st₂).mono (fun st h => ⟨h, hc₂⟩) (fun _ _ h => h))
+    fun dx₁ => Trip.intro fun st₃ ⟨he₃, hc₃, hp₃⟩ => ?_
+  refine Trip.bind ((trip_drawO _ st₃).mono (fun st h => ⟨h, hc₃.inp⟩) (fun _ _ h => h))
+    fun r₄ => Trip.intro fun st₄ ⟨he₄, hh₄, hc₄, hp₄, ht₄⟩ => ?_
+  refine Trip.bind ((trip_sendK r₄.2 2 st₄).mono (fun st h => ⟨h, hc₄⟩) (fun _ _ h => h))
+    fun o₅ => Trip.intro fun st₅ ⟨he₅, hc₅, hp₅, ht₅⟩ => ?_
+  refine Trip.bind ((trip_rounds o₅ 6 st₅).mono (fun st h => ⟨h, hc₅⟩) (fun _ _ h => h))
+    fun o₆ => Trip.intro fun st₆ ⟨he₆, hh₆, hc₆, hp₆, ht₆⟩ => ?_
+  refine Trip.bind ((trip_commitNext o₆ sh.depth₁ st₆).mono (fun st h => ⟨h, hc₆⟩)
+    (fun _ _ h => h)) fun o₇ => Trip.intro fun st₇ ⟨he₇, hc₇, hp₇, ht₇⟩ => ?_
+  refine Trip.bind ((trip_ood o₇ sh.ood₀ hsh.1 st₇).mono (fun st h => ⟨h, hc₇⟩)
+    (fun _ _ h => h)) fun o₈ => Trip.intro fun st₈ ⟨he₈, hh₈, hc₈, hp₈, ht₈⟩ => ?_
+  refine Trip.bind ((trip_queryPhase o₈ 0 _ st₈ (by omega)).mono (fun st h => ⟨h, hc₈⟩)
+    (fun _ _ h => h)) fun o₉ => Trip.intro fun st₉ ⟨he₉, hh₉, hc₉, hp₉, ht₉⟩ => ?_
+  refine Trip.bind ((trip_middle o₉ 1 sh.levels _ st₉ hsh.2.1).mono (fun st h => ⟨h, hc₉, hp₉⟩)
+    (fun _ _ h => h)) fun o₁₀ => Trip.intro fun st₁₀ ⟨he₁₀, hh₁₀, hc₁₀, hp₁₀, ht₁₀⟩ => ?_
+  refine Trip.bind ((trip_rounds o₁₀ sh.lastFolds st₁₀).mono (fun st h => ⟨h, hc₁₀⟩)
+    (fun _ _ h => h)) fun o₁₁ => Trip.intro fun st₁₁ ⟨he₁₁, hh₁₁, hc₁₁, hp₁₁, ht₁₁⟩ => ?_
+  refine Trip.bind ((trip_sendK o₁₁ _ st₁₁).mono (fun st h => ⟨h, hc₁₁⟩) (fun _ _ h => h))
+    fun o₁₂ => Trip.intro fun st₁₂ ⟨he₁₂, hc₁₂, hp₁₂, ht₁₂⟩ => ?_
+  have hp₁₂' : o₁₂.dx.pend.length < 4 := by
+    rw [hp₁₂, hp₁₁, hp₁₀]
+    have := hsh.2.2
+    split_ifs <;> exact this
+  refine Trip.bind ((trip_queryPhase o₁₂ _ _ st₁₂ hp₁₂').mono (fun st h => ⟨h, hc₁₂⟩)
+    (fun _ _ h => h)) fun o₁₃ => Trip.intro fun st₁₃ ⟨he₁₃, hh₁₃, hc₁₃, hp₁₃, ht₁₃⟩ => ?_
+  refine Trip.bind ((trip_rounds o₁₃ _ st₁₃).mono (fun st h => ⟨h, hc₁₃⟩) (fun _ _ h => h))
+    fun o₁₄ => Trip.intro fun st₁₄ ⟨he₁₄, hh₁₄, hc₁₄, hp₁₄, ht₁₄⟩ => ?_
+  refine Trip.bind ((trip_drawO o₁₄ st₁₄).mono (fun st h => ⟨h, hc₁₄.inp⟩) (fun _ _ h => h))
+    fun r₁₅ => Trip.intro fun st₁₅ ⟨he₁₅, hh₁₅, hc₁₅, hp₁₅, ht₁₅⟩ => ?_
+  refine (Trip.pure _ _).mono (fun st hst => ?_) (fun _ _ h => h)
+  subst hst
+  -- the commitments' levels
+  have hT₈ : o₈.trees.map List.length = [sh.depth₀ + 1, sh.depth₁ + 1] := by
+    rw [ht₈, ht₇, ht₆, ht₅, ht₄]; simp [hlv]
+  have hT₁₂ : o₁₂.trees.map List.length =
+      middleLens [sh.depth₀ + 1, sh.depth₁ + 1] sh.levels (sh.queries.drop 1) := by
+    rw [ht₁₂, ht₁₁, ht₁₀, ht₉, hT₈]
+  rw [hT₈] at hh₉
+  rw [ht₉, hT₈] at hh₁₀
+  rw [hT₁₂] at hh₁₃
+  -- the extensions
+  have E : Ext DFrame st₂ st := he₃.1.trans (he₄.trans (he₅.1.trans (he₆.trans (he₇.1.trans
+    (he₈.trans (he₉.trans (he₁₀.trans (he₁₁.trans (he₁₂.1.trans (he₁₃.trans (he₁₄.trans
+      he₁₅)))))))))))
+  refine ⟨he₂.1.trans (E.mono fun _ _ => trivial), ?_, hs₂.ext E⟩
+  have g := (((((((((((((HistGrow.of_eq he₂.2 hg.hist rfl).congr he₃.2).trans hh₄).congr
+    he₅.2).trans hh₆).congr he₇.2).trans hh₈).trans hh₉).trans hh₁₀).trans hh₁₁).congr
+    he₁₂.2).trans hh₁₃).trans hh₁₄).trans hh₁₅
+  exact g.cast (by unfold openChals; omega)
+
 end Opening
 
 end QuotientZk.Deployed.Fresh
