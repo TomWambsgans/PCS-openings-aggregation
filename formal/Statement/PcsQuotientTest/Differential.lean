@@ -260,6 +260,38 @@ def simulationTest (stmt : Statement) : IO Bool := do
       verifyWith Simulator.simPermutation c.logRows root stmt proof
   OracleComp.runIO (run.run' {})
 
+/-- A pseudorandom element of `E`. -/
+def eFrom (seed : ℕ) : E :=
+  let w (k : ℕ) : K := K.ofLane (UInt64.ofNat ((seed * 6364136223846793005 + 1442695040888963407 * k) % 2 ^ 64))
+  E.ofLimbs (w 1) (w 2) (w 3)
+
+/-- **The weight's two forms agree** on the small circuit's hidden layouts: the prover's and the simulator's
+`Layout.weightAt` at entry `y` of lane `l` is the verifier's `stackWeight` at that stack point (the bits of `y`,
+then of `l`), at pseudorandom claim points and positions; and `fakeStack`'s condition is met: the weighted sum of
+a stack conditioned on a claim is its value. Returns the number of mismatches. -/
+def weightTest : IO ℕ := do
+  let mut bad := 0
+  for L in [witnessLayout 17, quotientLayout 17] do
+    let lane := 2 ^ L.logLane
+    for trial in List.range 4 do
+      let c : Claim := ⟨(List.range L.vars).map fun k ↦ eFrom (1000 * trial + k + 1), eFrom (7 * trial + 3)⟩
+      let w := L.claimWeights c
+      for probe in List.range 64 do
+        let l := (probe * 37 + trial) % L.lanes.length
+        let y := (probe * 2654435761 + trial * 97) % lane
+        let x := (List.range L.logLane).map (fun k ↦ if y.testBit k then (1 : E) else 0) ++
+          (List.range 6).map (fun k ↦ if l.testBit k then (1 : E) else 0)
+        if L.weightAt w l y ≠ stackWeight L c x then bad := bad + 1
+      -- The quotient table's claims are a generic one and one at the sum's point.
+      let claims := if L.vars = cellVars 17 + 6 then [c, ⟨sumPoint 17, eFrom (trial + 11)⟩] else [c]
+      let stack ← OracleComp.runIO (Simulator.fakeStack L claims)
+      for d in claims do
+        let wd := L.claimWeights d
+        let sum := (List.range stack.size).foldl
+          (fun acc p ↦ acc + L.weightAt wd (p / lane) (p % lane) * ofK (stack.getD p 0)) 0
+        if sum ≠ d.value then bad := bad + 1
+  return bad
+
 /-- Pseudorandom bits for the self-tests. -/
 def bitsFrom (seed count : ℕ) : List Bool :=
   (List.range count).map fun i ↦ ((seed * 6364136223846793005 + 1442695040888963407 * (i + 1)) >>> 33) % 2 = 1
@@ -268,6 +300,10 @@ end PcsQuotientTest
 
 open PcsQuotientTest in
 def main (args : List String) : IO UInt32 := do
+  if args.contains "--weights" then
+    let bad ← weightTest
+    IO.println s!"weights (tensor form vs the verifier's, and fakeStack's claims): {bad} mismatches"
+    return if bad = 0 then 0 else 1
   if args.contains "--self-test" then
     let inverted := inversionTest
     IO.println s!"extractor (Merkle inversion through a transcript): {inverted}"

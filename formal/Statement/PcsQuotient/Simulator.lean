@@ -155,20 +155,43 @@ def programmedTree (height : ℕ) (word : Word) (root : Digest) : SimM Tree := d
 
 /-! ### Fake tables -/
 
+/-- Reduce `v` by an echelon basis (each vector `1` at its pivot and `0` at the pivots before it). -/
+def reduceBy (basis : List (ℕ × Array K)) (v : Array K) : Array K :=
+  basis.foldl (fun v (i, b) ↦
+    let c := v.getD i 0
+    if c = 0 then v else Array.zipWith (fun x y ↦ x + c * y) v b) v
+
+/-- **The free positions** of a system of `k` linear equations over `K` whose column at stack position `p` is
+`column p`: the first `k` positions (in stack order) whose columns are independent, chosen greedily by
+incremental elimination; fewer if the system has rank below `k`. They depend on the claims only. -/
+def freePositions (k size : ℕ) (column : ℕ → Array K) : List ℕ :=
+  ((List.range size).foldl
+    (fun (acc : List (ℕ × Array K) × List ℕ) p ↦
+      if acc.2.length = k then acc
+      else
+        let v := reduceBy acc.1 (column p)
+        match (List.range k).find? (fun i ↦ v.getD i 0 ≠ 0) with
+        | none => acc
+        | some i => (acc.1 ++ [(i, v.map (· * (v.getD i 0)⁻¹))], acc.2 ++ [p]))
+    ([], [])).2
+
 /-- **A uniform stack conditioned on claims**: uniform words on the layout's lanes, then `k = 3·#claims` of
-them solved for (the last `k` entries of lane `0`, a block lane, where the claims weigh), so that each claim's
-value is the stack's (the claims are linear over `K`, one equation per claim and limb, their weight on the
-stack `Layout.weightAt`; Gauss–Jordan elimination, `Domain.eliminate`). In a hidden layout this is a
-uniform table conditioned on its claims, padded uniformly: the stack is an affine bijection of the table and
-the padding, and the claims weigh the table only. A singular system (negligible) leaves the words uniform. -/
+them solved for, so that each claim's value is the stack's (the claims are linear over `K`, one equation per
+claim and limb, their weight on the stack `Layout.weightAt`): the free positions are the first whose columns
+are independent (`freePositions`; a claim's weight may vanish on whole lanes, as the sum claim's on lane `0`),
+the system solved by Gauss–Jordan elimination (`Domain.eliminate`). In a hidden layout this is a uniform table
+conditioned on its claims, padded uniformly: the stack is an affine bijection of the table and the padding,
+and the claims weigh the table only. A system of rank below `k` (claims that contradict each other) leaves
+the words uniform. -/
 def fakeStack (L : Layout) (claims : List Claim) : ProbComp (Array K) := do
   let lane := 2 ^ L.logLane
   let size := L.lanes.length * lane
   let r ← (Array.range size).mapM fun _ ↦ uniformK
   let k := 3 * claims.length
-  let free : List ℕ := (List.range k).map (lane - 1 - ·)
   let weights := claims.map L.claimWeights
   let weightAt (w : ClaimWeights) (p : ℕ) : E := L.weightAt w (p / lane) (p % lane)
+  let free : List ℕ := freePositions k size fun p ↦ Array.ofFn (n := k) fun e ↦
+    LeanVM.Prover.limbAt (weightAt (weights.getD (e.val / 3) ⟨[], [], #[], #[]⟩) p) (e.val % 3)
   -- The fixed part of each claim: the weights on every position but the free ones.
   let rows : Array (Array K) := Array.ofFn (n := k) fun e ↦
     let (c, w) := (claims.getD (e.val / 3) ⟨[], 0⟩, weights.getD (e.val / 3) ⟨[], [], #[], #[]⟩)
