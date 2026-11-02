@@ -15,13 +15,30 @@ import WhirBridge.Gaps
 `opening::verify` of `crates/quotient/src/opening.rs` under leanerVM `mumbai`'s theorems: its
 Fiat-Shamir soundness in the random-oracle model for every valid layout (`opening_sound`) and for
 the protocol's witness, wiring and quotient layouts at every supported size (`ours_sound`), in
-table terms (`Layout.holds_iff`, `Table::read` for the hidden layouts). The headline theorems use
-only `propext`, `Classical.choice` and `Quot.sound`.
+table terms (`Layout.holds_iff`, `Table::read` for the hidden layouts; the hidden layouts' gadget,
+one more stack claim of value zero, `gadget_holds_iff`). The headline theorems use only `propext`,
+`Classical.choice` and `Quot.sound`.
 -/
 
 /-- info: 'WhirBridge.isMultiaffine_layoutClaimWeight' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms WhirBridge.isMultiaffine_layoutClaimWeight
+
+/-- info: 'WhirBridge.isMultiaffine_gadgetWeight' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms WhirBridge.isMultiaffine_gadgetWeight
+
+/-- info: 'WhirBridge.gadget_holds_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms WhirBridge.gadget_holds_iff
+
+/-- info: 'WhirBridge.Layout.joint_of_not_doom' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms WhirBridge.Layout.joint_of_not_doom
+
+/-- info: 'WhirBridge.layouts_shape' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms WhirBridge.layouts_shape
 
 /-- info: 'WhirBridge.Layout.check_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

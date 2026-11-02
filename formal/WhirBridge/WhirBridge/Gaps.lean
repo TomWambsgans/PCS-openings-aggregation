@@ -18,27 +18,28 @@ for the witness, wiring and quotient layouts at every supported size. What it do
    is classical and fixed before they are sampled. mumbai moves leanVM's theorem to one random
    permutation (`LeanVMRpm.lean`, at `q²/2^508`); this bridge stops at the two-oracle model. The
    layout's id in the prefix is a constant of the verifier, computed with the deployed Keccak-256,
-   not an oracle answer. Statements carry at most `2^46 + 1` claims (`Stmt.short`; the protocol
-   opens one or two per root).
+   not an oracle answer. Statements carry at most `2^46 + 1` stack claims, a hidden layout's
+   gadget counted (`Stmt.short`; the protocol opens one or two claims per root).
 2. **The Rust is the model** (test evidence, not proof): `Layout.check` and
    `openingVerifyWithHash` transcribe `opening.rs`, `Layout.new`, `Layout.hidden` and the protocol's
    layouts transcribe `opening.rs` and `protocol.rs`, mumbai's `verifyWhir` transcribes the Python
    verifier at `c445e3d5`, of which the vendored `verify_whir` is a byte-identical copy of leanVM's
    Rust (mumbai fuzzes the two). `Test/Check.lean` runs `openingVerifyWithHash` with the deployed
    Keccak on openings of the Rust prover (a public layout, the deployed witness and quotient
-   layouts) and recomputes the 76-byte prefix of all 18 layouts. A change of the hidden layout
-   (condition (R) of the hiding layer) changes `Layout.hidden` and the protocol's layouts, which
-   must be transcribed again; the theorems are stated for every layout with `Layout.Valid`, so the
-   proofs do not change unless the weight's shape does.
+   layouts) and recomputes the 76-byte prefix of all 18 layouts. The hidden layout's redesign for
+   condition (R) of the hiding layer (no share lane, the overflow lane `32`, the gadget batched as
+   one more stack claim of value zero) is transcribed: `Layout.hidden`, `Table::read`, the weight
+   closure with its gadget term and the layout's encoding, the gadget an extra stack claim of the
+   stacking (`Layout.extra`); a further change must be transcribed again.
 3. **Pruned Merkle paths and `placed`**: the Rust verifier reads pruned batches whose level-0 rows
    leave out the zero lanes past `placed`; mumbai's `Proof` has one full path per query. The
    expansion (`PrunedMerklePaths::expand`, `crates/verifier/src/merkle.rs`) checks the same roots,
    so it only restricts what is accepted; it is not formalised (as for leanVM).
 4. **List decoding, no out-of-domain sample at level 0**: an accepted opening yields a candidate
-   among the up to `L₀` tables of the root's Johnson list satisfying all its claims jointly
-   (`Layout.joint_of_not_doom`), not a unique table: the reduction's soundness must hold for each
-   of the `L₀ ≤ 9952` candidates fixed by each root (`candidates_ours`; mumbai's global bound
-   `2^18`), a union bound, and claims on one root must not be split over openings.
+   among the up to `L₀` tables of the root's Johnson list satisfying all its claims jointly (and
+   the gadget, `Layout.joint_of_not_doom`), not a unique table: the reduction's soundness must
+   hold for each of the `L₀ ≤ 9952` candidates fixed by each root (`candidates_ours`; mumbai's
+   global bound `2^18`), a union bound, and claims on one root must not be split over openings.
 5. **Composition** of the three openings' transcripts with the reduction's: the reduction must read
    the words extracted when each root entered its transcript (mumbai's `extract_take_eq`).
 6. **Extraction from the adversary's queries only**: the extracted word is read off the final
