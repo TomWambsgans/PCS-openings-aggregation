@@ -20,9 +20,8 @@ field of characteristic 2. Its values on the Boolean cube are the weights the mo
 * `weight_bool`: **the closure at the Boolean point of `(y, l)` is `Σ_c λ^c W_c(l, y) + λ^m G(l, y)`**,
   `G = gadgetW pos β`, and `weight_combinedW`: it is the model's `combinedW pos (withGadget W G)
   (λ^·)` at the lane's index;
-* `combinedW_gent` (any `GadgetLayout`): with `WeightsFit` and the gadget appended, the combined weight
-  at the gadget's entries is the gadget's, `μ·β_i·patE p` (`GadgetLayout.roundsReached`'s `hWg`);
-  `deployed_hWg` at the deployed layouts.
+* `powers_snoc`: the closure's powers `λ^c` (`c ≤ m`) are `Fin.snoc (λ^·) (λ^m)`, the end theorem's
+  claims' powers and gadget scale `μ = λ^m`.
 -/
 
 namespace QuotientSecurity.Hiding
@@ -30,64 +29,6 @@ namespace QuotientSecurity.Hiding
 open Finset
 
 set_option linter.unusedSectionVars false
-
-/-! ### The gadget's entries: the combined weight is the gadget's (any `GadgetLayout`) -/
-
-namespace GadgetLayout
-
-variable {E : Type} [Field E]
-variable {ι Y : Type} [Fintype ι] [DecidableEq ι] [Fintype Y] [DecidableEq Y]
-variable (L : GadgetLayout ι Y)
-
-theorem gadgetW_gent (pos : ι → (Fin 6 → Bool)) (β : Fin 3 → E) (l : ι) (p i : Fin 3) :
-    L.gadgetW pos β l (L.gent p i) = β i * patE p (pos l) := by
-  simp only [gadgetW]
-  rw [sum_eq_single p, sum_eq_single i]
-  · simp
-  · intro i' _ hi'
-    rw [if_neg]
-    intro he
-    exact hi' (L.gent_inj p i' p i he).2
-  · simp
-  · intro p' _ hp'
-    refine sum_eq_zero fun i' _ => ?_
-    rw [if_neg]
-    intro he
-    exact hp' (L.gent_inj p' i' p i he).1
-  · simp
-
-/-- **`hWg` of `roundsReached`**: with the claims fitting the layout and the gadget appended as the
-last claim (scale `μ`), the combined weight at the gadget's entry `(p, i)` is `μ·β_i·patE p`, at every
-lane index, given that the patterns weigh only lanes of the layout. -/
-theorem combinedW_gent {m : ℕ} (pos : ι → (Fin 6 → Bool)) (hpos : Function.Injective pos)
-    (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc) (β : Fin 3 → E) (lam : Fin m → E) (μ : E)
-    (hpat : ∀ p b, patE (E := E) p b ≠ 0 → b ∈ Set.range pos) (p i : Fin 3) (b : Fin 6 → Bool) :
-    HiddenLayout.combinedW pos (withGadget Wc (L.gadgetW pos β)) (Fin.snoc lam μ) b (L.gent p i) =
-      μ * β i * patE p b := by
-  have hcol : ∀ l, (∑ c : Fin (m + 1), (Fin.snoc lam μ : Fin (m + 1) → E) c *
-      withGadget Wc (L.gadgetW pos β) c l (L.gent p i)) = μ * β i * patE p (pos l) := by
-    intro l
-    rw [Fin.sum_univ_castSucc]
-    simp only [withGadget, Fin.snoc_castSucc, Fin.snoc_last, hW.gadget _ l _ (L.atGadget_gent p i),
-      mul_zero, sum_const_zero, zero_add, gadgetW_gent]
-    ring
-  simp only [HiddenLayout.combinedW, hcol]
-  by_cases hb : b ∈ Set.range pos
-  · obtain ⟨l₀, rfl⟩ := hb
-    rw [sum_eq_single l₀]
-    · simp
-    · intro l _ hl
-      simp [hpos.ne hl]
-    · simp
-  · have h0 : patE (E := E) p b = 0 := by
-      by_contra hne
-      exact hb (hpat p b hne)
-    rw [h0, mul_zero]
-    refine sum_eq_zero fun l _ => ?_
-    have : pos l ≠ b := fun he => hb ⟨l, he⟩
-    simp [this]
-
-end GadgetLayout
 
 namespace Deployed
 
@@ -409,8 +350,8 @@ theorem claimTerm_part (laneEq low : List E) (lam : E) (point : List E) :
   ring
 
 omit h2 in
-theorem lane_pos_iff (h : L.OK) (l : Fin L.lanes.length) (l' : ℕ) (hl' : l' < 64) :
-    L.pos l = lane ⟨l', hl'⟩ ↔ (l : ℕ) = l' := by
+theorem lane_pos_iff (h : L.OK) (l : Fin L.lanes.length) (l' : Fin 64) :
+    L.pos l = lane l' ↔ (l : ℕ) = l' := by
   rw [pos_eq_lane h]
   constructor
   · intro he
@@ -427,15 +368,17 @@ theorem patE_pos (h : L.OK) (p : Fin 3) (l : Fin L.lanes.length) :
   · simp only [patE, pattern0, pairCol, unitCol, flipC_lane0, Pi.add_apply, Pi.smul_apply,
       smul_eq_mul, one_mul, gadgetLanes, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
       add_zero]
-    trace_state
-    sorry
+    simp only [lane_pos_iff h l]
+    rfl
   · simp only [patE, pattern1, pairCol, unitCol, flipC_lane1, Pi.add_apply, Pi.smul_apply,
       smul_eq_mul, one_mul, gadgetLanes, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
       add_zero]
-    simp only [lane_pos_iff h l 1 (by norm_num), lane_pos_iff h l 30 (by norm_num)]
+    simp only [lane_pos_iff h l]
+    rfl
   · simp only [patE, pattern2, unitCol, gadgetLanes, overflowLane, List.map_cons, List.map_nil,
       List.sum_cons, List.sum_nil, add_zero]
-    simp only [lane_pos_iff h l 32 (by norm_num)]
+    simp only [lane_pos_iff h l]
+    rfl
 
 theorem gadgetTerm_bool (h : L.OK) (beta : Fin 3 → E) (scale : E) (l : Fin L.lanes.length)
     (y : Fin (2 ^ L.logLane)) :
@@ -508,18 +451,6 @@ theorem powers_snoc (lam : E) (m : ℕ) :
   refine Fin.lastCases ?_ (fun c => ?_) c
   · simp
   · simp
-
-/-- **`hWg` at the deployed layouts**: the combined weight of the deployed claims and gadget at the
-gadget's entry `(p, i)` is `λ^m·β_i·patE p`, at every lane index. -/
-theorem deployed_hWg (h : L.OK) {m : ℕ} (points : Fin m → List E) (lam : E) (beta : Fin 3 → E)
-    (p i : Fin 3) (b : Fin 6 → Bool) :
-    HiddenLayout.combinedW L.pos
-        (GadgetLayout.withGadget (L.claimW points) ((L.toGadget h).gadgetW L.pos beta))
-        (fun c : Fin (m + 1) => lam ^ (c : ℕ)) b ((L.toGadget h).gent p i) =
-      lam ^ m * beta i * patE p b := by
-  rw [powers_snoc]
-  exact (L.toGadget h).combinedW_gent L.pos (pos_injective h) _ (weightsFit h2 h points) beta _ _
-    (fun p b hb => pos_pat h p b hb) p i b
 
 end Layout
 

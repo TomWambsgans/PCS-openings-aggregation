@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import QuotientSecurity.Hiding.GadgetLayout
+import QuotientSecurity.Hiding.Solve
 import QuotientSecurity.Hiding.NovelBasis
 
 /-!
@@ -15,8 +16,8 @@ transcribed:
   lanes, the other blocks, the given-up pieces then the tails); `witnessLayout r`, `quotientLayout r`:
   the protocol's two hidden tables at `2^r` rows.
 * `Layout.OK`: what the model needs of a layout (pieces of `2^8`, lanes of more, `40 ≤ L ≤ 64` lanes,
-  the overflow lane `32` and no other, lanes `30` and `31` blocks, the held pieces within the overflow
-  lane), decided for both layouts at every supported size (`deployed_ok`, `decide +kernel`), with their
+  the overflow lane `32` and no other, blocks on lanes `0 .. 32`, random lanes `33 .. 40`, the held
+  pieces within the overflow lane, `log_n ≤ 28`), decided for both layouts at every supported size (`deployed_ok`, `decide +kernel`), with their
   shapes (`deployed_shape`: `40` and `63` lanes, `33` and `167` pieces, the random lanes exactly
   `33 .. 40`).
 * `Layout.toGadget`: **the `GadgetLayout`** of such a layout, on its lanes `Fin L` and entries
@@ -25,8 +26,8 @@ transcribed:
 * `hiddenWord_eq`: **the stack `Table::hidden` writes is `stackD d + stackR r`**, `d` the table's
   entries where the layout holds them (`place`), `r` the lanes' random words: the model's randomness
   (with the pairs' copies and the overflow lane's zeros) and its table part are the Rust's.
-* The lanes `GadgetLayout.roundsReached` and `Solve.hsolve_of_cube` ask for (`pos_injective`,
-  `pos_pairA0`, …, `pos_ov`, `pos_low`, `pos_33`, `pos_cube`, `pos_pat`).
+* The lanes the end theorem (`GadgetLayout.prEvent_le_bound`) asks for: `pos_injective`, `pos_pairA0`,
+  …, `pos_ov`, `pos_low`, `pos_cube`, `pos_rand`, `pairA_not_rand` (and `pos_33`, `pos_pat`).
 -/
 
 namespace QuotientSecurity.Hiding
@@ -153,24 +154,26 @@ structure Layout.OK (L : Layout) : Prop where
   overflow : L.overflow = overflowLane
   at_ov : L.lanes[overflowLane]? = some .overflow
   ov_unique : ∀ l < L.lanes.length, L.lanes[l]? = some .overflow → l = overflowLane
-  block30 : L.lanes[30]?.map Lane.isBlock = some true
-  block31 : L.lanes[31]?.map Lane.isBlock = some true
+  lower : ∀ l < 32, L.lanes[l]?.map Lane.isBlock = some true
+  upper : ∀ l, 33 ≤ l → l < 40 → L.lanes[l]? = some .random
   fits : (L.pieces.length + 1) * 2 ^ logPieceD ≤ 2 ^ L.logLane
+  logN_le : L.logN ≤ 28
 
 /-- `Layout.OK` as one decidable conjunction. -/
 def Layout.OKb (L : Layout) : Prop :=
   L.logPiece = logPieceD ∧ logPieceD < L.logLane ∧ 40 ≤ L.lanes.length ∧ L.lanes.length ≤ 64 ∧
     L.overflow = overflowLane ∧ L.lanes[overflowLane]? = some .overflow ∧
     (∀ l < L.lanes.length, L.lanes[l]? = some .overflow → l = overflowLane) ∧
-    L.lanes[30]?.map Lane.isBlock = some true ∧ L.lanes[31]?.map Lane.isBlock = some true ∧
-    (L.pieces.length + 1) * 2 ^ logPieceD ≤ 2 ^ L.logLane
+    (∀ l < 32, L.lanes[l]?.map Lane.isBlock = some true) ∧
+    (∀ l, 33 ≤ l → l < 40 → L.lanes[l]? = some .random) ∧
+    (L.pieces.length + 1) * 2 ^ logPieceD ≤ 2 ^ L.logLane ∧ L.logN ≤ 28
 
 instance (L : Layout) : Decidable L.OKb := by
   unfold Layout.OKb; infer_instance
 
 theorem Layout.OKb.toOK {L : Layout} (h : L.OKb) : L.OK :=
   ⟨h.1, h.2.1, h.2.2.1, h.2.2.2.1, h.2.2.2.2.1, h.2.2.2.2.2.1, h.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.1,
-    h.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2⟩
+    h.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.1, h.2.2.2.2.2.2.2.2.2.2⟩
 
 theorem deployed_okb : ∀ r, 17 ≤ r → r ≤ 22 → (witnessLayout r).OKb ∧ (quotientLayout r).OKb := by
   decide +kernel
@@ -269,12 +272,12 @@ def toGadget (h : L.OK) : GadgetLayout (Fin L.lanes.length) (Fin (2 ^ L.logLane)
     fin_cases p
     · show ¬ L.lanes[31]? = some .random
       intro h'
-      have := h.block31
+      have := h.lower 31 (by norm_num)
       rw [h'] at this
       simp [Lane.isBlock] at this
     · show ¬ L.lanes[30]? = some .random
       intro h'
-      have := h.block30
+      have := h.lower 30 (by norm_num)
       rw [h'] at this
       simp [Lane.isBlock] at this
   pairB_ne_ov p := by
@@ -314,6 +317,30 @@ theorem pos_33 (h : L.OK) : lane 33 ∈ Set.range L.pos :=
 /-- The upper cube `32 .. 40` is lanes of the layout (`Solve.cube_true_subset`'s hypothesis). -/
 theorem pos_cube (h : L.OK) : ∀ l : Fin 64, 32 ≤ (l : ℕ) → (l : ℕ) < 40 → lane l ∈ Set.range L.pos :=
   fun l _ hl2 => ⟨⟨l, by have := h.lanes_ge; omega⟩, rfl⟩
+
+theorem upper_cube_lanes : ∀ b : Fin 6 → Bool, b 3 = false → b 4 = false → b (Fin.last 5) = true →
+    b ≠ lane 32 → ∃ l : Fin 64, 33 ≤ (l : ℕ) ∧ (l : ℕ) < 40 ∧ lane l = b := by
+  decide +kernel
+
+/-- The upper cube but the overflow lane's corner is random lanes (the end theorem's `hrand`). -/
+theorem pos_rand (h : L.OK) :
+    ∀ b ∈ cube true, b ≠ lane 32 → ∃ r, L.pos r = b ∧ (L.toGadget h).isRand r := by
+  rintro b ⟨h3, h4, h5⟩ hb
+  obtain ⟨l, hl1, hl2, rfl⟩ := upper_cube_lanes b h3 h4 h5 hb
+  exact ⟨⟨l, by have := h.lanes_ge; omega⟩, rfl, h.upper l hl1 hl2⟩
+
+/-- The pairs' first lanes `0` and `1` are blocks, not random (the end theorem's `hA`). -/
+theorem pairA_not_rand (h : L.OK) : ∀ p, ¬ (L.toGadget h).isRand ((L.toGadget h).pairA p) := by
+  intro p hr
+  fin_cases p
+  · change L.lanes[0]? = some .random at hr
+    have := h.lower 0 (by norm_num)
+    rw [hr] at this
+    simp [Lane.isBlock] at this
+  · change L.lanes[1]? = some .random at hr
+    have := h.lower 1 (by norm_num)
+    rw [hr] at this
+    simp [Lane.isBlock] at this
 
 /-- The gadget's patterns weigh only lanes of the layout. -/
 theorem pos_pat {E : Type} [Field E] (h : L.OK) (p : Fin 3) (b : Fin 6 → Bool)
