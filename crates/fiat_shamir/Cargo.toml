@@ -13,3 +13,8 @@ workspace = true
 parallel.workspace = true
 primitives.workspace = true
 serde.workspace = true
+
+[features]
+# Test-only: record the duplex's permutations, draws and grinds (`primitives::trace`), for the
+# differential test of the Lean skeleton. Off in every production build.
+trace = ["primitives/trace"]

@@ -18,6 +18,9 @@ serde.workspace = true
 # Test-only helpers (`test_rng`) used by this and other crates' tests.
 # Kept off the default build so `rand` stays out of the production graph.
 test-util = ["dep:rand"]
+# Test-only: record every Keccak call (`primitives::trace`), for the differential test of the Lean
+# skeleton (`crates/quotient/tests/skel_trace.rs`). Off in every production build.
+trace = []
 
 [dev-dependencies]
 primitives = { path = ".", features = ["test-util"] }

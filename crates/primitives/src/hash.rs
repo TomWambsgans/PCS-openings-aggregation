@@ -313,7 +313,10 @@ impl Hasher {
     pub fn finalize(&self) -> [u8; OUT_LEN] {
         let mut state = self.state;
         absorb(&mut state, &final_block(&self.buf[..self.buf_len]));
-        digest_of(&state)
+        let out = digest_of(&state);
+        #[cfg(feature = "trace")]
+        crate::trace::stream(&out);
+        out
     }
 }
 
@@ -326,7 +329,10 @@ impl Default for Hasher {
 /// Keccak-256 of `data`, Ethereum's `keccak256`: FIPS 202's sponge over Keccak-f\[1600\] with
 /// rate [`RATE`] and Keccak's original padding.
 pub fn hash(data: &[u8]) -> [u8; OUT_LEN] {
-    hash_from_state(data, &[0; STATE_LANES])
+    let out = hash_from_state(data, &[0; STATE_LANES]);
+    #[cfg(feature = "trace")]
+    crate::trace::hash(data, &out);
+    out
 }
 
 /// The state after absorbing `n_blocks` all-zero blocks.
@@ -645,7 +651,9 @@ pub fn hash_many_from_state(data: &[u8], len: usize, state: &[u64; STATE_LANES],
     assert_eq!(out.len(), n * OUT_LEN);
     assert_eq!(data.len(), n * len);
     // SAFETY: the asserts pin the buffer sizes, and the backend is gated on the features its intrinsics need.
-    unsafe { hash_many_with::<Backend>(data, len, state, out) }
+    unsafe { hash_many_with::<Backend>(data, len, state, out) };
+    #[cfg(feature = "trace")]
+    crate::trace::many(data, len, state, out);
 }
 
 /// Keccak-f\[1600\] of every state in place, [`LANES`] at a time.
