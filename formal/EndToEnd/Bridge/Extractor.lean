@@ -157,6 +157,31 @@ theorem inputBits_eq (c : Compose.Reduce.Consts) (hβ : c.beta = PcsQuotient.Dom
   rw [QuotientSecurity.natVal, dif_pos hr']
   exact ofK_eq_bitF hrow
 
+/-! ## The extractor's reading -/
+
+/-- **What the circuit's bridge gives the extractor's reading**: the input bits of a computation `v`
+of the deployed circuit, read as the statement's secret (`secretOfInputs`), prove the statement F0's
+secret of `v` (`QuotientSecurity.secretOf`) hashes to. -/
+def SecretMatches : Prop :=
+  ∀ (stmt : PcsQuotient.Statement) (v : Fin (2 ^ 22) → Bool),
+    QuotientSecurity.bytes32 (QuotientSecurity.secretOf v).y = (fun i => stmt.y.get i) →
+    QuotientSecurity.bytes32 (QuotientSecurity.secretOf v).root = (fun i => stmt.root.get i) →
+      PcsQuotient.Relation stmt (PcsQuotient.secretOfInputs
+        ((PcsQuotient.membership 22).inputs.toList.map (QuotientSecurity.natVal v)))
+
+/-- **`Soundness.ReadsSecret`**, given the circuit's bridge (`SecretMatches`, and the input rows
+below `2^22`): a stack whose table's cells prove membership of `(y, root)` spells a secret of the
+statement. -/
+theorem readsSecret_of (c : Compose.Reduce.Consts) (hβ : c.beta = PcsQuotient.Domain.betaAt)
+    (h : Compose.IsCantor c.beta) (hin : ∀ r ∈ (PcsQuotient.membership 22).inputs, r < 2 ^ 22)
+    (hsec : SecretMatches) : Soundness.ReadsSecret c h := by
+  intro stmt q hP
+  obtain ⟨v, hcomp, hy, hroot⟩ := hP
+  show PcsQuotient.Relation stmt
+    (PcsQuotient.secretOfInputs (PcsQuotient.inputBitsOfStack (PcsQuotient.membership 22) q.values))
+  rw [inputBits_eq c hβ h q v hcomp hin]
+  exact hsec stmt v hy hroot
+
 end Bridge
 
 /-- info: 'Bridge.witnessEntries_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -170,3 +195,7 @@ end Bridge
 /-- info: 'Bridge.inputBits_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms Bridge.inputBits_eq
+
+/-- info: 'Bridge.readsSecret_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.readsSecret_of
