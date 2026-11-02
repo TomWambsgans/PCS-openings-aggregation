@@ -2,7 +2,7 @@
 import Bridge.Verifier
 import Bridge.Extractor
 import Bridge.Circuit
-import Bridge.Claims.Reduce
+import Bridge.Claims
 import Bridge.Setup
 import Bridge.Circuit.Secret
 
@@ -20,7 +20,10 @@ own constants (`Bridge.statementConsts`: `PcsQuotient.Domain.betaAt` and `rowVan
 * **`setupBridge_statementConsts`**: `Soundness.SetupBridge statementConsts h` (the circuit's
   commitment: `Bridge.Setup.setupBridge` with the circuit's `σ`, `Bridge.Circuit.membership_sigma`);
 * **`readsSecret`**: `Soundness.ReadsSecret statementConsts h` (`readsSecret_of_secretMatches` with the
-  circuit's `Bridge.Circuit.secretMatches`).
+  circuit's `Bridge.Circuit.secretMatches`);
+* **`setupBridge_final`**, **`verifierBridge_final`**, **`readsSecret_final`**: the three at
+  `h := isCantor_statementConsts` (`Bridge/Claims/Constants.lean`; `RowVanishing statementConsts 22`
+  is `rowVanishing_statementConsts` there).
 -/
 
 namespace Bridge
@@ -56,6 +59,21 @@ theorem readsSecret (h : Compose.IsCantor statementConsts.beta) :
     Soundness.ReadsSecret statementConsts h :=
   readsSecret_of_secretMatches h Circuit.secretMatches
 
+/-! ## At the statement's constants, with their Cantor property -/
+
+/-- **SETUP**, with nothing left: `Soundness.SetupBridge` at the statement's constants and their
+Cantor property (`isCantor_statementConsts`). -/
+theorem setupBridge_final : Soundness.SetupBridge statementConsts isCantor_statementConsts :=
+  setupBridge_statementConsts isCantor_statementConsts
+
+/-- **VERIFIER**, with nothing left. -/
+theorem verifierBridge_final : Soundness.VerifierBridge statementConsts isCantor_statementConsts :=
+  verifierBridge isCantor_statementConsts
+
+/-- **EXTRACTOR READING**, with nothing left. -/
+theorem readsSecret_final : Soundness.ReadsSecret statementConsts isCantor_statementConsts :=
+  readsSecret isCantor_statementConsts
+
 end Bridge
 
 /-- info: 'Bridge.claimsMatch_statementConsts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -77,3 +95,15 @@ end Bridge
 /-- info: 'Bridge.readsSecret' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms Bridge.readsSecret
+
+/-- info: 'Bridge.setupBridge_final' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.setupBridge_final
+
+/-- info: 'Bridge.verifierBridge_final' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.verifierBridge_final
+
+/-- info: 'Bridge.readsSecret_final' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.readsSecret_final

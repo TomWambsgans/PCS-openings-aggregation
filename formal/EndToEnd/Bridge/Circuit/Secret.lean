@@ -216,3 +216,49 @@ theorem secretMatches : ∀ (stmt : PcsQuotient.Statement) (v : Fin (2 ^ 22) →
   rw [h1, h2]
 
 end Bridge.Circuit
+
+/-! ## Axioms -/
+
+/-- info: 'Bridge.Circuit.membership_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.membership_eq
+
+/-- info: 'Bridge.Circuit.membership_sigma' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.membership_sigma
+
+/-- info: 'Bridge.Circuit.membership_rows' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.membership_rows
+
+/-- info: 'Bridge.Circuit.membership_inputs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.membership_inputs
+
+/-- info: 'Bridge.Circuit.membership_inputs_lt' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.membership_inputs_lt
+
+/-- info: 'Bridge.Circuit.membership_logRows' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.membership_logRows
+
+/-- info: 'Bridge.Circuit.membership_usedRows' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.membership_usedRows
+
+/-- info: 'Bridge.Circuit.sim_membershipBuilder' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.sim_membershipBuilder
+
+/-- info: 'Bridge.Circuit.wiring_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.wiring_eq
+
+/-- info: 'Bridge.Circuit.secretMatches' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.secretMatches
+
+/-- info: 'Bridge.Circuit.secretOfInputs_fields' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Circuit.secretOfInputs_fields
