@@ -215,7 +215,24 @@ theorem finishSpec_id_some {fuel logRows : ℕ} {stmt : Statement}
 
 /-! ### The run's fields -/
 
+/-- The witness stack is the layout's stack of `witnessEntry`. -/
+theorem witnessStack_eq (lr : ℕ) (wHat mask : Array K) (pad : Padding) :
+    witnessStack lr wHat mask pad =
+      (witnessLayout lr).stackOf (witnessEntry (2 ^ cellVars lr) wHat mask) pad := by
+  unfold witnessStack
+  rfl
+
+/-- The quotient stack is the layout's stack of `quotientEntry`. -/
+theorem quotientStack_eq (lr : ℕ) (hHat qHat : Array E) (qGateHat : Array K) (pad : Padding) :
+    quotientStack lr hHat qHat qGateHat pad =
+      (quotientLayout lr).stackOf (quotientEntry lr hHat qHat qGateHat) pad := by
+  unfold quotientStack
+  rfl
+
 section Fields
+
+attribute [local irreducible] commitWithH Layout.stackOf witnessStack quotientStack
+  Domain.coefficients Domain.values hValues qValuesOf qGateValuesOf
 
 variable (circuit : Circuit) (stmt : Statement) (cells : Array K) (masks : Masks)
   (wp qp : Padding)
@@ -232,9 +249,8 @@ theorem runOf_wHat : (runOf H circuit stmt cells masks wp qp).wHat =
 theorem runOf_mask : (runOf H circuit stmt cells masks wp qp).mask = maskEntries masks := rfl
 
 theorem runOf_wStack : (runOf H circuit stmt cells masks wp qp).wStack =
-    (witnessLayout circuit.logRows).stackOf (witnessEntry (2 ^ cellVars circuit.logRows)
-      (runOf H circuit stmt cells masks wp qp).wHat (runOf H circuit stmt cells masks wp qp).mask) wp :=
-  rfl
+    witnessStack circuit.logRows (runOf H circuit stmt cells masks wp qp).wHat
+      (runOf H circuit stmt cells masks wp qp).mask wp := rfl
 
 theorem runOf_witnessTree : (runOf H circuit stmt cells masks wp qp).witnessTree =
     commitWithH (m := Id) H (cellVars circuit.logRows + 1)
@@ -264,9 +280,9 @@ theorem runOf_qGateHat : (runOf H circuit stmt cells masks wp qp).qGateHat =
         (blocksOf circuit.logRows (runOf H circuit stmt cells masks wp qp).γ)) := rfl
 
 theorem runOf_qStack : (runOf H circuit stmt cells masks wp qp).qStack =
-    (quotientLayout circuit.logRows).stackOf (quotientEntry circuit.logRows
-      (runOf H circuit stmt cells masks wp qp).hHat (runOf H circuit stmt cells masks wp qp).qHat
-      (runOf H circuit stmt cells masks wp qp).qGateHat) qp := rfl
+    quotientStack circuit.logRows (runOf H circuit stmt cells masks wp qp).hHat
+      (runOf H circuit stmt cells masks wp qp).qHat (runOf H circuit stmt cells masks wp qp).qGateHat
+      qp := rfl
 
 theorem runOf_quotientTree : (runOf H circuit stmt cells masks wp qp).quotientTree =
     commitWithH (m := Id) H (cellVars circuit.logRows + 4)

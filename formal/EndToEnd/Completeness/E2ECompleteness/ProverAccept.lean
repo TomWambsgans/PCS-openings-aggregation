@@ -199,139 +199,238 @@ theorem verifyWithH_id (H : Bytes → Digest) (F : KeccakState → KeccakState) 
   simp only [verifyWithH, id_bind, id_pure, hred, h1, h2, h3]
   rfl
 
+/-! ## The honest tail, at a function -/
+
+section Tail
+
+variable (H : Bytes → Digest)
+
+/-- The wiring table of the wiring `sigma`. -/
+def sigmaHatOf (sigma : Array ℕ) : Array K := coefficients 24 0 (sigma.map point)
+
+/-- The cells' coefficients. -/
+def wHatOf (cells : Array K) : Array K := coefficients 24 0 cells
+
+/-- The witness stack. -/
+def wStackOf (cells : Array K) (masks : Masks) (wp : Padding) : Array K :=
+  (witnessLayout 22).stackOf (witnessEntry (2 ^ 24) (wHatOf cells) (maskEntries masks)) wp
+
+/-- The sum's polynomial's coefficients. -/
+def hHatOf (cells : Array K) (sigma : Array ℕ) (α β γ : E) : Array E :=
+  coefficients 24 0 (hValues 22 cells sigma α β γ)
+
+/-- The copy quotient's coefficients. -/
+def qHatOf (cells : Array K) (sigma : Array ℕ) (masks : Masks) (α β γ : E) : Array E :=
+  coefficients 26 (betaAt 26) (qValuesOf 22 (wValuesOf 22 (wHatOf cells) (maskEntries masks))
+    (sigmaValuesOf 22 (sigmaHatOf sigma)) (q0Of 22 (hHatOf cells sigma α β γ)) (blocksOf 22 γ) α β)
+
+/-- The gate quotient's coefficients. -/
+def qGateHatOf (cells : Array K) (masks : Masks) (γ : E) : Array K :=
+  coefficients 26 (betaAt 26) (qGateValuesOf 22 (wValuesOf 22 (wHatOf cells) (maskEntries masks))
+    (blocksOf 22 γ))
+
+/-- The quotient stack. -/
+def qStackOf (cells : Array K) (sigma : Array ℕ) (masks : Masks) (qp : Padding) (α β γ : E) :
+    Array K :=
+  (quotientLayout 22).stackOf (quotientEntry 22 (hHatOf cells sigma α β γ)
+    (qHatOf cells sigma masks α β γ) (qGateHatOf cells masks γ)) qp
+
+/-- **The honest reduction proof** at `H`: the two roots, the values at `t`. -/
+def proofOf (cells : Array K) (sigma : Array ℕ) (masks : Masks) (wp qp : Padding) (α β γ t : E) :
+    ReductionProof :=
+  ⟨digestScalars (commitWithH (m := Id) H 25 (wStackOf cells masks wp)).root,
+    digestScalars (commitWithH (m := Id) H 28 (qStackOf cells sigma masks qp α β γ)).root,
+    rowValuesAt 22 (wHatOf cells) (maskEntries masks) t, nextAt 22 (sigmaHatOf sigma) t⟩
+
+end Tail
+
 /-! ## The prover bridge -/
 
 section Main
 
 attribute [local irreducible] commitWithH proveOpeningWithH openingWithH witnessStack quotientStack
-  Domain.coefficients Domain.values hValues qValuesOf qGateValuesOf
+  Domain.coefficients Domain.values hValues qValuesOf qGateValuesOf nextAt rowValuesAt novelEval
+  Layout.stackOf deployedSigma
 
-/-- **The prover bridge**, from the bridges' statements: at every hash function and permutation, the
-Statement's honest proof of a witness is accepted when the run's challenges avoid `badSet`. -/
-theorem verifyWithH_proverWithH_of (hK : Constants) (hcl : Bridge.ClaimsMatch stmtConsts)
-    (hcirc : CircuitMatch) (hT : TablesMatch) (hO : OpeningAccepts)
-    (H : Bytes → Digest) (F : KeccakState → KeccakState) (stmt : Statement) (w : PcsQuotient.Secret)
-    (hrel : Relation stmt w) (masks : Masks) (witnessPad quotientPad : Padding)
-    (π : PcsQuotient.Proof)
-    (hπ : proverWithH (m := Id) H F nonceFuel stmt w masks witnessPad quotientPad = some π)
-    (hgood : chainChallenges H (setupWithH (m := Id) H) stmt π.reduction ∉ badSet w masks) :
-    verifyWithH (m := Id) H F logRows (setupWithH (m := Id) H) stmt π = true := by
-  -- The prover is its run, then its end.
-  have hπ' : proveWithH (m := Id) H F nonceFuel (membership logRows) stmt (cellsOf w) masks
-      witnessPad quotientPad = some π := hπ
-  rw [proveWithH_eq_spec, proveSpec_id] at hπ'
-  obtain ⟨red, hred, hoW, hoσ, hoQ, hpr⟩ := finishSpec_id_some H F hπ'
-  have hroots := runOf_roots H (membership logRows) stmt (cellsOf w) masks witnessPad quotientPad
-  have hch := runOf_chain H (membership logRows) stmt (cellsOf w) masks witnessPad quotientPad
-  set r := runOf H (membership logRows) stmt (cellsOf w) masks witnessPad quotientPad with hr
-  have hlr : (membership logRows).logRows = 22 := rfl
-  have hsetup : setupWithH (m := Id) H = r.indexTree.root := rfl
-  rw [hlr, reduceWithH_id H _ stmt _ hroots.1 hroots.2, hch.1, hch.2.1, hch.2.2.1, hch.2.2.2]
-    at hred
-  rw [hlr] at hoW hoσ hoQ
+variable (hK : Constants) (hcl : Bridge.ClaimsMatch stmtConsts) (hT : TablesMatch)
+  (H : Bytes → Digest) (stmt : Statement) (w : PcsQuotient.Secret) (hrel : Relation stmt w)
+  (masks : Masks) (wp qp : Padding) (cells : Array K) (sigma : Array ℕ)
+  (hcs : cells.size = 2 ^ 24)
+  (hcells : ∀ b, cells.getD (Completeness.idx b) 0 =
+    Completeness.cellBitsK Completeness.deployedMembership (secretOf w) b)
+  (hss : sigma.size = 2 ^ 24)
+  (hsig : ∀ b, point (sigma.getD (Completeness.idx b) 0) = deployedBasis.point (deployedSigma b))
+  (α β γ t : E)
+  (hα : (chainH H (commitWithH (m := Id) H 24 (sigmaHatOf sigma)).root stmt
+    (proofOf H cells sigma masks wp qp α β γ t)).1 = α)
+  (hβ : (chainH H (commitWithH (m := Id) H 24 (sigmaHatOf sigma)).root stmt
+    (proofOf H cells sigma masks wp qp α β γ t)).2.1 = β)
+  (hγ : (chainH H (commitWithH (m := Id) H 24 (sigmaHatOf sigma)).root stmt
+    (proofOf H cells sigma masks wp qp α β γ t)).2.2.1 = γ)
+  (ht : (chainH H (commitWithH (m := Id) H 24 (sigmaHatOf sigma)).root stmt
+    (proofOf H cells sigma masks wp qp α β γ t)).2.2.2.1 = t)
+  (hgood : (α, β, t) ∉ badSet w masks)
+
+include hK hcl hT hrel hcs hcells hss hsig hα hβ hγ ht hgood in
+/-- **The reduction on the honest proof returns Completeness's claims**, true of the honest tables,
+when the chain's challenges avoid `badSet`. -/
+theorem reduce_honest :
+    ∃ cl : Claims,
+      reduceWithH (m := Id) H 22 (commitWithH (m := Id) H 24 (sigmaHatOf sigma)).root stmt
+          (proofOf H cells sigma masks wp qp α β γ t) =
+        some ⟨(commitWithH (m := Id) H 25 (wStackOf cells masks wp)).root,
+          (commitWithH (m := Id) H 28 (qStackOf cells sigma masks qp α β γ)).root, cl⟩ ∧
+      (cl.witness.point.length = 25 ∧
+        Completeness.tableEvalN 25 (fun i ↦ witnessEntry (2 ^ 24) (wHatOf cells) (maskEntries masks) i)
+          cl.witness.point = cl.witness.value) ∧
+      (cl.wiring.point.length = 24 ∧
+        Completeness.tableEvalN 24 (fun i ↦ (sigmaHatOf sigma).getD i 0) cl.wiring.point =
+          cl.wiring.value) ∧
+      (∀ c ∈ [cl.quotient, cl.sum], c.point.length = 30 ∧
+        Completeness.tableEvalN 30 (Completeness.natTable (Completeness.quotientTable
+          Completeness.limbE (22 + 2 + 1 + 1) (Params.honest (I).params (honestMsg w masks) α β γ)
+          (Completeness.qGateKOf (Params.honest (I).params (honestMsg w masks) α β γ))))
+          c.point = c.value) := by
+  have h₁ : digestOfScalars (proofOf H cells sigma masks wp qp α β γ t).witnessRoot =
+      some (commitWithH (m := Id) H 25 (wStackOf cells masks wp)).root :=
+    digestOfScalars_digestScalars _
+  have h₂ : digestOfScalars (proofOf H cells sigma masks wp qp α β γ t).quotientRoot =
+      some (commitWithH (m := Id) H 28 (qStackOf cells sigma masks qp α β γ)).root :=
+    digestOfScalars_digestScalars _
+  rw [reduceWithH_id H _ stmt _ h₁ h₂, hα, hβ, hγ, ht]
   -- The challenges avoid the bad set.
-  rw [hsetup, hpr, chainChallenges_eq, hch.1, hch.2.1, hch.2.2.2] at hgood
   simp only [badSet, Finset.mem_filter, Finset.mem_univ, true_and, not_or] at hgood
   obtain ⟨hab, hdeg⟩ := hgood
-  set g := honestMsg w masks with hg
-  set ρ := (chainH H r.indexTree.root stmt r.proof).2.2.2.2 with hρ
+  set ρ := (chainH H (commitWithH (m := Id) H 24 (sigmaHatOf sigma)).root stmt
+    (proofOf H cells sigma masks wp qp α β γ t)).2.2.2.2
   -- The tables.
   set f := Completeness.cellBitsK Completeness.deployedMembership (secretOf w) with hf
   set cW := Completeness.witnessTable deployedBasis f masks with hcW
-  have hW : ∀ i, witnessEntry (2 ^ 24) r.wHat r.mask i = Completeness.natTable cW i :=
-    hT.witness f (cellsOf w) (cellsOf_size w) (hcirc.cells w) masks
-  have hσ : ∀ i, r.sigmaHat.getD i 0 =
+  have hW : ∀ i, witnessEntry (2 ^ 24) (wHatOf cells) (maskEntries masks) i =
+      Completeness.natTable cW i := hT.witness f cells hcs hcells masks
+  have hσ : ∀ i, (sigmaHatOf sigma).getD i 0 =
       Completeness.natTable (Completeness.wiringTableK deployedBasis deployedSigma) i :=
-    hT.wiring (membership logRows).sigma hcirc.sigmaSize hcirc.sigma
-  set R := Params.honest (I).params g r.α r.β r.γ with hR
-  set cQ := Completeness.quotientTable Completeness.limbE (22 + 2 + 1 + 1) R
-    (Completeness.qGateKOf R) with hcQ
-  have hQ : ∀ i, (Completeness.quotientHeld i ∨ PastChunks 24 8 (quotientChunks 24) i) →
-      quotientEntry 22 r.hHat r.qHat r.qGateHat i = Completeness.natTable cQ i :=
-    hT.quotient f (cellsOf w) (cellsOf_size w) (hcirc.cells w) (membership logRows).sigma
-      hcirc.sigmaSize hcirc.sigma masks r.α r.β r.γ hab
+    hT.wiring sigma hss hsig
   -- The values.
-  have hvals : r.proof.values = Vector.ofFn (Params.opened g r.t) := by
-    have h := rowValuesAt_eq cW r.wHat r.mask (by simp [r, runOf, maskEntries]) hW r.t
+  have hvals : (proofOf H cells sigma masks wp qp α β γ t).values =
+      Vector.ofFn (Params.opened (honestMsg w masks) t) := by
+    have h := rowValuesAt_eq cW (wHatOf cells) (maskEntries masks) (by simp [maskEntries]) hW t
     apply Vector.ext
     intro j hj
     rw [Vector.getElem_ofFn]
     exact h ⟨j, hj⟩
-  have hnext : r.proof.next = (I).params.sigmaPoly.eval r.t := by
-    rw [Completeness.sigmaPoly_eq_wiringTableK (algebraMap K E) I deployedBasis (fun _ ↦ rfl)]
-    exact nextAt_eq _ r.sigmaHat hσ r.t
+  have hsp : (I).params.sigmaPoly = tablePoly fun b ↦
+      algebraMap K E (Completeness.wiringTableK deployedBasis deployedSigma b) :=
+    Completeness.sigmaPoly_eq_wiringTableK (algebraMap K E) I deployedBasis (fun _ ↦ rfl)
+  have hnext : (proofOf H cells sigma masks wp qp α β γ t).next = (I).params.sigmaPoly.eval t := by
+    rw [hsp]
+    exact nextAt_eq _ (sigmaHatOf sigma) hσ t
   -- The claims are Completeness's.
   obtain ⟨cl, hcls, cWl, cσl, cQl, cSl⟩ := claimsAt_honest hK hcl stmt
     (statementWords Primitives.F192.G Primitives.F192.Y (secretOf w).statement.y
-      (secretOf w).statement.root) g r.α r.β r.γ r.t ρ (target_stmt w stmt hrel r.γ) hdeg
-  rw [hvals, hnext, hcls, Option.map_some, Option.some.injEq] at hred
-  subst hred
+      (secretOf w).statement.root) (honestMsg w masks) α β γ t ρ (target_stmt w stmt hrel γ) hdeg
+  rw [hvals, hnext, hcls]
+  refine ⟨cl, rfl, ?_⟩
   -- They are true.
-  obtain ⟨tW, tσ, tQ, tS⟩ := honest_claims_at H w masks r.α r.β r.γ r.t ρ hab hdeg
+  obtain ⟨tW, tσ, tQ, tS⟩ := honest_claims_at H w masks α β γ t ρ hab hdeg
   have pt : ∀ {c : PcsQuotient.Claim} {c' : WhirBridge.Claim}, claimTrH c = c' →
       c.point = c'.point ∧ c.value = c'.value := fun h ↦ by subst h; exact ⟨rfl, rfl⟩
-  refine verifyWithH_id H F 22 _ stmt π _ (by rw [hpr]; exact hred) ?_ ?_ ?_
+  obtain ⟨p1, p2⟩ := pt cWl
+  obtain ⟨σ1, σ2⟩ := pt cσl
+  obtain ⟨q1, q2⟩ := pt cQl
+  obtain ⟨s1, s2⟩ := pt cSl
+  refine ⟨⟨by rw [p1]; simp [Completeness.witnessClaim], ?_⟩,
+    ⟨by rw [σ1]; simp [Completeness.wiringClaim], ?_⟩, fun c hc ↦ ?_⟩
+  · rw [show (fun i ↦ witnessEntry (2 ^ 24) (wHatOf cells) (maskEntries masks) i) =
+      Completeness.natTable cW from funext hW, p1, p2]
+    exact tW
+  · rw [show (fun i ↦ (sigmaHatOf sigma).getD i 0) =
+      Completeness.natTable (Completeness.wiringTableK deployedBasis deployedSigma) from funext hσ,
+      σ1, σ2]
+    exact tσ
+  · simp only [List.mem_cons, List.mem_nil_iff, or_false] at hc
+    rcases hc with rfl | rfl
+    · exact ⟨by rw [q1]; simp [Completeness.quotientClaim], by rw [q1, q2]; exact tQ⟩
+    · exact ⟨by rw [s1]; simp [Completeness.sumClaim], by rw [s1, s2]; exact tS⟩
+
+include hK hcl hT hrel hcs hcells hss hsig hα hβ hγ ht hgood in
+/-- **The honest proof is accepted** (the core of the prover bridge): when the chain's challenges
+avoid `badSet` and each honest opening of the reduction's claims returned a proof, the verifier
+accepts the honest proof. -/
+theorem accept_core (hO : OpeningAccepts) (F : KeccakState → KeccakState) (fuel : ℕ)
+    (πW πσ πQ : Compile.Proof)
+    (hoW : ∀ red : Reduced, reduceWithH (m := Id) H 22
+        (commitWithH (m := Id) H 24 (sigmaHatOf sigma)).root stmt
+        (proofOf H cells sigma masks wp qp α β γ t) = some red →
+      proveOpeningWithH (m := Id) H F fuel (witnessLayout 22)
+        (commitWithH (m := Id) H 25 (wStackOf cells masks wp)) (wStackOf cells masks wp)
+        [red.claims.witness] = some πW ∧
+      proveOpeningWithH (m := Id) H F fuel (wiringLayout 22)
+        (commitWithH (m := Id) H 24 (sigmaHatOf sigma)) (sigmaHatOf sigma)
+        [red.claims.wiring] = some πσ ∧
+      proveOpeningWithH (m := Id) H F fuel (quotientLayout 22)
+        (commitWithH (m := Id) H 28 (qStackOf cells sigma masks qp α β γ))
+        (qStackOf cells sigma masks qp α β γ) [red.claims.quotient, red.claims.sum] = some πQ) :
+    verifyWithH (m := Id) H F 22 (commitWithH (m := Id) H 24 (sigmaHatOf sigma)).root stmt
+      ⟨proofOf H cells sigma masks wp qp α β γ t, πW, πσ, πQ⟩ = true := by
+  obtain ⟨cl, hred, ⟨wl, wt⟩, ⟨σl, σt⟩, hq⟩ := reduce_honest hK hcl hT H stmt w hrel masks wp qp
+    cells sigma hcs hcells hss hsig α β γ t hα hβ hγ ht hgood
+  obtain ⟨hoW', hoσ', hoQ'⟩ := hoW _ hred
+  refine verifyWithH_id H F 22 _ stmt _ _ hred ?_ ?_ ?_
   · -- The witness opening.
-    obtain ⟨p1, p2⟩ := pt cWl
-    refine hO H F nonceFuel _ (Or.inl rfl) r.wStack [cl.witness] (List.cons_ne_nil _ _)
-      (fun c hc ↦ ?_) ?_ (stackClaims_multilinear _ (Or.inl rfl) _ fun c hc ↦ ?_) π.witness hoW
-    · rw [List.mem_singleton.mp hc, p1]; simp [Completeness.witnessClaim]; rfl
-    · refine witness_stackClaims_hold (witnessEntry (2 ^ 24) r.wHat r.mask)
-        (Completeness.natTable cW)
-        (fun i hi ↦ Completeness.witness_inChunks deployedBasis f masks i hi)
-        (fun i _ ↦ hW i) (fun i hi ↦ ?_) witnessPad [cl.witness] (fun c hc ↦ ?_)
-      · obtain ⟨c, hc, j, hj1, hj2, rfl⟩ := hi
-        simp only [List.mem_cons, List.mem_nil_iff, or_false] at hc
-        rcases hc with rfl | rfl
-        · simp at hj1 hj2; omega
-        · simp only at hj1 hj2
-          simp only [witnessEntry, r, runOf]
-          rw [if_neg (by omega), Array.getD_eq_getD_getElem?, Array.getElem?_eq_none (by
-            simp [maskEntries]; omega)]
-          rfl
-      · rw [List.mem_singleton.mp hc, p1, p2]
-        exact ⟨by simp [Completeness.witnessClaim], tW⟩
-    · rw [List.mem_singleton.mp hc, p1]; simp [Completeness.witnessClaim]; rfl
-  · -- The wiring opening.
-    obtain ⟨p1, p2⟩ := pt cσl
-    have hsz : r.sigmaHat.size = 2 ^ 24 := by
-      show (coefficients _ 0 _).size = _
-      rw [Bridge.Ntt.coefficients_size, Array.size_map, hcirc.sigmaSize]
-    refine hO H F nonceFuel _ (Or.inr (Or.inl rfl)) r.sigmaHat [cl.wiring] (List.cons_ne_nil _ _)
-      (fun c hc ↦ ?_) ?_ (stackClaims_multilinear _ (Or.inr (Or.inl rfl)) _ fun c hc ↦ ?_)
-      π.wiring hoσ
-    · rw [List.mem_singleton.mp hc, p1]; simp [Completeness.wiringClaim]; rfl
-    · refine wiring_stackClaims_hold r.sigmaHat hsz [cl.wiring] fun c hc ↦ ?_
-      rw [List.mem_singleton.mp hc, p1, p2]
-      refine ⟨by simp [Completeness.wiringClaim], ?_⟩
-      rw [show (fun i ↦ r.sigmaHat.getD i 0) =
-        Completeness.natTable (Completeness.wiringTableK deployedBasis deployedSigma) from funext hσ]
-      exact tσ
-    · rw [List.mem_singleton.mp hc, p1]; simp [Completeness.wiringClaim]; rfl
-  · -- The quotient opening.
-    obtain ⟨q1, q2⟩ := pt cQl
-    obtain ⟨s1, s2⟩ := pt cSl
-    have hlen : ∀ c ∈ [cl.quotient, cl.sum], c.point.length = 30 := by
-      intro c hc
+    refine hO H F fuel _ (Or.inl rfl) (wStackOf cells masks wp) [cl.witness] (List.cons_ne_nil _ _)
+      (fun c hc ↦ by rw [List.mem_singleton.mp hc]; exact wl) ?_
+      (stackClaims_multilinear _ (Or.inl rfl) _ fun c hc ↦ by rw [List.mem_singleton.mp hc]; exact wl)
+      πW hoW'
+    set f := Completeness.cellBitsK Completeness.deployedMembership (secretOf w) with hf
+    have hW : ∀ i, witnessEntry (2 ^ 24) (wHatOf cells) (maskEntries masks) i =
+        Completeness.natTable (Completeness.witnessTable deployedBasis f masks) i :=
+      hT.witness f cells hcs hcells masks
+    refine witness_stackClaims_hold (witnessEntry (2 ^ 24) (wHatOf cells) (maskEntries masks))
+      (Completeness.natTable (Completeness.witnessTable deployedBasis f masks))
+      (fun i hi ↦ Completeness.witness_inChunks deployedBasis f masks i hi)
+      (fun i _ ↦ hW i) (fun i hi ↦ ?_) wp [cl.witness] (fun c hc ↦ ?_)
+    · obtain ⟨c, hc, j, hj1, hj2, rfl⟩ := hi
       simp only [List.mem_cons, List.mem_nil_iff, or_false] at hc
       rcases hc with rfl | rfl
-      · rw [q1]; simp [Completeness.quotientClaim]
-      · rw [s1]; simp [Completeness.sumClaim]
-    refine hO H F nonceFuel _ (Or.inr (Or.inr rfl)) r.qStack [cl.quotient, cl.sum]
-      (List.cons_ne_nil _ _) hlen ?_ (stackClaims_multilinear _ (Or.inr (Or.inr rfl)) _ hlen)
-      π.quotient hoQ
-    refine quotient_stackClaims_hold (quotientEntry 22 r.hHat r.qHat r.qGateHat)
-      (Completeness.natTable cQ)
+      · simp at hj1 hj2; omega
+      · simp only at hj1 hj2
+        unfold witnessEntry
+        rw [if_neg (by omega), Array.getD_eq_getD_getElem?, Array.getElem?_eq_none (by
+          simp [maskEntries]; omega)]
+        rfl
+    · rw [List.mem_singleton.mp hc]
+      refine ⟨wl, ?_⟩
+      rw [← wt, show (fun i ↦ witnessEntry (2 ^ 24) (wHatOf cells) (maskEntries masks) i) =
+        Completeness.natTable (Completeness.witnessTable deployedBasis f masks) from funext hW]
+  · -- The wiring opening.
+    have hsz : (sigmaHatOf sigma).size = 2 ^ 24 := by
+      rw [sigmaHatOf, Bridge.Ntt.coefficients_size, Array.size_map, hss]
+    refine hO H F fuel _ (Or.inr (Or.inl rfl)) (sigmaHatOf sigma) [cl.wiring]
+      (List.cons_ne_nil _ _) (fun c hc ↦ by rw [List.mem_singleton.mp hc]; exact σl)
+      (wiring_stackClaims_hold (sigmaHatOf sigma) hsz [cl.wiring]
+        fun c hc ↦ by rw [List.mem_singleton.mp hc]; exact ⟨σl, σt⟩)
+      (stackClaims_multilinear _ (Or.inr (Or.inl rfl)) _
+        fun c hc ↦ by rw [List.mem_singleton.mp hc]; exact σl)
+      πσ hoσ'
+  · -- The quotient opening.
+    set R := Params.honest (I).params (honestMsg w masks) α β γ with hR
+    have hab : ¬ Completeness.Reduction.BadAB I (honestMsg w masks) α β := by
+      have hg := hgood
+      simp only [badSet, Finset.mem_filter, Finset.mem_univ, true_and, not_or] at hg
+      exact hg.1
+    have hQ := hT.quotient _ cells hcs hcells sigma hss hsig masks α β γ hab
+    refine hO H F fuel _ (Or.inr (Or.inr rfl)) (qStackOf cells sigma masks qp α β γ)
+      [cl.quotient, cl.sum] (List.cons_ne_nil _ _) (fun c hc ↦ (hq c hc).1) ?_
+      (stackClaims_multilinear _ (Or.inr (Or.inr rfl)) _ fun c hc ↦ (hq c hc).1) πQ hoQ'
+    exact quotient_stackClaims_hold _ (Completeness.natTable (Completeness.quotientTable
+        Completeness.limbE (22 + 2 + 1 + 1) R (Completeness.qGateKOf R)))
       (fun i hi ↦ Completeness.quotient_inChunks R (Completeness.qGateKOf R) i hi)
       (fun i hi ↦ hQ i (Or.inl hi))
       (fun i hi ↦ (hQ i (Or.inr hi)).trans
         (Completeness.quotient_inChunks R (Completeness.qGateKOf R) i
           (pastChunks_not_quotientHeld hi)))
-      quotientPad [cl.quotient, cl.sum] fun c hc ↦ ⟨hlen c hc, ?_⟩
-    simp only [List.mem_cons, List.mem_nil_iff, or_false] at hc
-    rcases hc with rfl | rfl
-    · rw [q1, q2]; exact tQ
-    · rw [s1, s2]; exact tS
+      qp [cl.quotient, cl.sum] hq
 
 end Main
 
@@ -340,3 +439,11 @@ end E2ECompleteness
 /-- info: 'E2ECompleteness.honest_claims_at' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms E2ECompleteness.honest_claims_at
+
+/-- info: 'E2ECompleteness.reduce_honest' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.reduce_honest
+
+/-- info: 'E2ECompleteness.accept_core' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.accept_core
