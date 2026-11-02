@@ -68,6 +68,9 @@ pub enum Item {
     /// Call `PCS_OPEN` on `words` output words from `first` on, and revert unless it attests: unless it succeeds,
     /// returning exactly the word 1.
     PcsOpen { first: usize, words: usize },
+    /// Push the offset at which bytes `offset..offset + len` of the call's calldata are in this contract's: the same
+    /// in one contract or the driver, elsewhere in a part, which is passed only the calldata it reads.
+    Calldata { offset: usize, len: usize },
     /// Pop, and revert if it is nonzero.
     FailIf,
     /// Pop, and jump to the other entry ([`Options::other`]; the revert if there is none) if it is nonzero.
@@ -197,6 +200,7 @@ pub fn assemble(program: &Program, options: &Options) -> Assembled {
         stack_in: Vec::new(),
         imports: Default::default(),
         pinned: Vec::new(),
+        window: None,
         end: End::Program,
     };
     assemble_frame(&frame, program, options)

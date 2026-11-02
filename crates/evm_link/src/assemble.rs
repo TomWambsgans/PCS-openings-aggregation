@@ -8,6 +8,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
+use std::ops::Range;
 
 use crate::op::*;
 use crate::{Assembled, Ending, Item, Options, Program, Tag};
@@ -22,6 +23,9 @@ pub(crate) struct Frame<'a> {
     /// The nodes the run computes for the contracts after it: each keeps one word of the region it returns (the
     /// driver: of the values region), in this order, rather than a reused slot.
     pub pinned: Vec<u32>,
+    /// Where the call's calldata the run reads is: each range of it at an offset of its own (a part's); or (`None`)
+    /// where it is in the call (the driver's, or the one contract's).
+    pub window: Option<Vec<(Range<usize>, usize)>>,
     pub end: End,
 }
 
@@ -30,18 +34,22 @@ pub(crate) enum End {
     Program,
     /// Write the `stack_out` values left on the stack after the pinned ones, and return them all.
     Return { stack_out: usize },
-    /// The driver's: write the stack's values after the pinned ones in the values region, copy calldata just before
-    /// it, then call each other contract on calldata and the values so far, keep what it returns, and return what
-    /// the last returns.
+    /// The driver's: write the stack's values after the pinned ones at the start of the values region, then call each
+    /// other contract on the values so far and the calldata it reads (copied after them), keep what it returns where
+    /// the call says, and return what the last returns.
     Drive { stack_out: usize, calls: Vec<Call> },
 }
 
 /// A `DELEGATECALL` of the driver.
 pub(crate) struct Call {
-    /// Words of the values region it reads: all those written before it.
+    /// Words of the values region it is passed: as many as have been written to before it.
     pub values: usize,
-    /// Words it returns, which the driver writes after them (none for the last call: its return is the driver's).
+    /// Words it returns (none for the last call: its return is the driver's), and the word of the values region
+    /// from which the driver keeps them.
     pub returns: usize,
+    pub at: usize,
+    /// The ranges of the call's calldata it reads, which it is passed after the values, one after the other.
+    pub ranges: Vec<Range<usize>>,
 }
 
 /// Where a frame keeps what it computes, once its slots are allocated.
@@ -101,9 +109,8 @@ fn allocate(frame: &Frame, program: &Program) -> Layout {
 pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options) -> Assembled {
     let layout = allocate(frame, program);
     let w = options.jump_width;
-    let l = program.calldata_len;
-    // The values region of the driver, and the words of it the driver's frame writes.
-    let values_at = layout.region + l;
+    // The values region of the driver.
+    let values_at = layout.region;
     let pinned: HashMap<u32, usize> = frame.pinned.iter().enumerate().map(|(k, &id)| (id, k)).collect();
     let pinned_at = |k: usize| match frame.end {
         End::Drive { .. } => values_at + 32 * k,
@@ -156,6 +163,20 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                     put(&mut code, &mut tag_of, &bytes, tag);
                 }
                 Item::Output(k) => put(&mut code, &mut tag_of, &[&push_usize(returned + 32 * k)[..], &[MSTORE]].concat(), tag),
+                Item::Calldata { offset, len } => {
+                    let at = match &frame.window {
+                        None => offset,
+                        Some(ranges) => {
+                            let end = (offset + len).min(program.calldata_len).max(offset);
+                            let (range, at) = ranges
+                                .iter()
+                                .find(|(range, _)| range.start <= offset && end <= range.end)
+                                .expect("a calldata read within the part's ranges");
+                            at + offset - range.start
+                        }
+                    };
+                    put(&mut code, &mut tag_of, &push_usize(at), tag);
+                }
                 Item::CopyConst { first, words, data } => {
                     let bytes = [
                         &push_usize(32 * words)[..],
@@ -215,12 +236,21 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                 for t in (0..*stack_out).rev() {
                     put(&mut code, &mut tag_of, &[&push_usize(pinned_at(n + t))[..], &[MSTORE]].concat(), tags.pass);
                 }
-                // `CALLDATACOPY(region, 0, L)`: calldata just before the values, so that a call's input is both.
-                let copy = [&push_usize(l)[..], &[PUSH0], &push_usize(layout.region), &[CALLDATACOPY]];
-                put(&mut code, &mut tag_of, &copy.concat(), tags.pass);
                 for call in calls {
-                    // `DELEGATECALL(gas, part, region, L + 32 values, 0, 0)`: the part runs on this contract's storage.
-                    let head = [&[PUSH0, PUSH0][..], &push_usize(l + 32 * call.values), &push_usize(layout.region), &[PUSH20]].concat();
+                    // `CALLDATACOPY(after, lo, len)`: the calldata the part reads, after the values.
+                    let mut input = 32 * call.values;
+                    for range in &call.ranges {
+                        let copy = [
+                            &push_usize(range.len())[..],
+                            &push_usize(range.start),
+                            &push_usize(values_at + input),
+                            &[CALLDATACOPY],
+                        ];
+                        put(&mut code, &mut tag_of, &copy.concat(), tags.pass);
+                        input += range.len();
+                    }
+                    // `DELEGATECALL(gas, part, values, input, 0, 0)`: the part runs on this contract's storage.
+                    let head = [&[PUSH0, PUSH0][..], &push_usize(input), &push_usize(values_at), &[PUSH20]].concat();
                     put(&mut code, &mut tag_of, &head, tags.call);
                     patches.push(code.len());
                     put(&mut code, &mut tag_of, &[0; 20], tags.call);
@@ -231,7 +261,7 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                         let keep = [
                             &push_usize(32 * call.returns)[..],
                             &[PUSH0],
-                            &push_usize(values_at + 32 * call.values),
+                            &push_usize(values_at + 32 * call.at),
                             &[RETURNDATACOPY],
                         ];
                         put(&mut code, &mut tag_of, &keep.concat(), tags.pass);
@@ -263,8 +293,16 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
         End::Return { stack_out } => (layout.region + 32 * (frame.pinned.len() + stack_out)) / 32,
         End::Drive { stack_out, calls } => {
             let written = frame.pinned.len() + stack_out;
-            let values = calls.iter().map(|call| call.values + call.returns).max().unwrap_or(0).max(written);
-            (values_at + 32 * values).div_ceil(32)
+            let bytes = calls
+                .iter()
+                .map(|call| {
+                    let copied: usize = call.ranges.iter().map(|range| range.len()).sum();
+                    (32 * call.values + copied).max(32 * (call.at + call.returns))
+                })
+                .max()
+                .unwrap_or(0)
+                .max(32 * written);
+            (values_at + bytes).div_ceil(32)
         }
     };
     Assembled {

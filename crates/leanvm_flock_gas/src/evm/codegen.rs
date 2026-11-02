@@ -8,7 +8,7 @@
 //! A recorded graph as EVM bytecode: one contract ([`compile`]), or contracts that each fit EIP-170's limit
 //! ([`compile_deployable`]).
 
-use evm_link::front::{self, Check, Dag, Source};
+use evm_link::front::{self, Check, Dag, Piece, Source};
 use evm_link::op::{
     AND, CALLDATACOPY, CALLDATALOAD, CALLDATASIZE, CALLVALUE, FIELD_MUL, KECCAK256, MSTORE, OR, PUSH0, SHR, SLOAD,
     XOR, push, push_usize,
@@ -95,60 +95,52 @@ impl Dag for Nodes<'_> {
         matches!(self.graph.nodes[id as usize], Node::Const(_))
     }
 
-    fn code(&self, id: u32) -> Vec<u8> {
+    fn code(&self, id: u32) -> Vec<Piece> {
+        let bytes = |bytes: &[&[u8]]| Piece::Code(bytes.concat());
+        let read = |offset: usize, len: usize| Piece::Calldata { offset, len };
         match self.graph.nodes[id as usize] {
-            Node::Const(limbs) => push(&word(limbs)),
-            Node::Statement(k) => [
-                &push_usize(PUBLIC_INPUT + 8 * k as usize)[..],
-                &[CALLDATALOAD],
-                &push_usize(192),
-                &[SHR],
-            ]
-            .concat(),
-            Node::Input { offset, len } => [
-                &push_usize(STREAM + offset as usize)[..],
-                &[CALLDATALOAD],
-                &push_usize(256 - 8 * len as usize),
-                &[SHR],
-            ]
-            .concat(),
-            Node::Add(..) => vec![XOR],
-            Node::Mul(..) => vec![FIELD_MUL],
+            Node::Const(limbs) => front::code(push(&word(limbs))),
+            Node::Statement(k) => vec![
+                read(PUBLIC_INPUT + 8 * k as usize, 32),
+                bytes(&[&[CALLDATALOAD], &push_usize(192), &[SHR]]),
+            ],
+            Node::Input { offset, len } => vec![
+                read(STREAM + offset as usize, 32),
+                bytes(&[&[CALLDATALOAD], &push_usize(256 - 8 * len as usize), &[SHR]]),
+            ],
+            Node::Add(..) => front::code(vec![XOR]),
+            Node::Mul(..) => front::code(vec![FIELD_MUL]),
             // The name and the IV, as two overlapping words at 0 and 16, then the public input at 48.
             Node::Seed => {
                 let head = [&self.entry.name[..], &self.entry.iv[..16]].concat();
-                [
-                    &push(&head)[..],
-                    &[PUSH0, MSTORE],
-                    &push(&self.entry.iv),
-                    &push_usize(16),
-                    &[MSTORE],
-                    &push_usize(32),
-                    &push_usize(PUBLIC_INPUT),
-                    &push_usize(48),
-                    &[CALLDATACOPY],
-                    &push_usize(80),
-                    &[PUSH0, KECCAK256],
+                vec![
+                    bytes(&[
+                        &push(&head),
+                        &[PUSH0, MSTORE],
+                        &push(&self.entry.iv),
+                        &push_usize(16),
+                        &[MSTORE],
+                        &push_usize(32),
+                    ]),
+                    read(PUBLIC_INPUT, 32),
+                    bytes(&[&push_usize(48), &[CALLDATACOPY], &push_usize(80), &[PUSH0, KECCAK256]]),
                 ]
-                .concat()
             }
             // The state (evaluated first: its evaluation may hash too) at 0, then the stream's bytes.
             Node::Hash(_, from, to) => {
-                let bytes = (to - from) as usize;
-                let mut code = vec![PUSH0, MSTORE];
-                if bytes > 0 {
-                    let copy = [
-                        &push_usize(bytes)[..],
-                        &push_usize(STREAM + from as usize),
-                        &push_usize(32),
-                        &[CALLDATACOPY],
-                    ];
-                    code.extend(copy.concat());
+                let len = (to - from) as usize;
+                let mut code = vec![bytes(&[&[PUSH0, MSTORE]])];
+                if len > 0 {
+                    code.extend([
+                        bytes(&[&push_usize(len)]),
+                        read(STREAM + from as usize, len),
+                        bytes(&[&push_usize(32), &[CALLDATACOPY]]),
+                    ]);
                 }
-                code.extend([&push_usize(32 + bytes)[..], &[PUSH0, KECCAK256]].concat());
+                code.push(bytes(&[&push_usize(32 + len), &[PUSH0, KECCAK256]]));
                 code
             }
-            Node::Low(_) => [&push(&[0xff; 24])[..], &[AND]].concat(),
+            Node::Low(_) => front::code([&push(&[0xff; 24])[..], &[AND]].concat()),
         }
     }
 
@@ -204,10 +196,17 @@ fn program(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, link
         .map(|word| match *word {
             Word::Node(id) => front::Word::Node(id),
             Word::Const(bytes) => front::Word::Const(bytes),
-            Word::Stream(offset) => {
-                front::Word::Code([&push_usize(STREAM + offset)[..], &[CALLDATALOAD]].concat(), CALLS)
-            }
-            Word::Stored(slot) => front::Word::Code([&push_usize(slot.into())[..], &[SLOAD]].concat(), ROOTS),
+            Word::Stream(offset) => front::Word::Code(
+                vec![
+                    Piece::Calldata {
+                        offset: STREAM + offset,
+                        len: 32,
+                    },
+                    Piece::Code(vec![CALLDATALOAD]),
+                ],
+                CALLS,
+            ),
+            Word::Stored(slot) => front::Word::Code(front::code([&push_usize(slot.into())[..], &[SLOAD]].concat()), ROOTS),
         })
         .collect();
     // Below the slots: the hashing scratch, a state and the longest run of the stream absorbed (and the seed's 80).

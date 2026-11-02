@@ -13,6 +13,20 @@
 
 use crate::{Ending, Item, Program, Tag};
 
+/// A piece of a node's code: instructions, or a push of a calldata offset (which [`crate::link`] may move).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Piece {
+    Code(Vec<u8>),
+    /// Push the offset of bytes `offset..offset + len` of the call's calldata, which the code reads (`len`: 32 for a
+    /// `CALLDATALOAD`, the length of a `CALLDATACOPY`).
+    Calldata { offset: usize, len: usize },
+}
+
+/// Code of instructions only.
+pub fn code(bytes: Vec<u8>) -> Vec<Piece> {
+    vec![Piece::Code(bytes)]
+}
+
 /// A recorded graph: nodes, each after its operands.
 pub trait Dag {
     fn len(&self) -> usize;
@@ -23,7 +37,7 @@ pub trait Dag {
     fn commutative(&self, id: u32) -> bool;
     fn is_const(&self, id: u32) -> bool;
     /// Its code, run with its operands on the stack, leaving its value instead.
-    fn code(&self, id: u32) -> Vec<u8>;
+    fn code(&self, id: u32) -> Vec<Piece>;
     /// What it computes, for the breakdown of the gas; a constant's is its reader's (`None`).
     fn tag(&self, id: u32) -> Option<Tag>;
     /// Stack words its code takes above a lone operand, for the order of evaluation.
@@ -46,7 +60,7 @@ pub enum Word {
     Node(u32),
     Const([u8; 32]),
     /// Code that pushes the word (from calldata, or storage), and what it computes.
-    Code(Vec<u8>, Tag),
+    Code(Vec<Piece>, Tag),
 }
 
 /// What a program is compiled from.
@@ -100,6 +114,15 @@ impl<D: Dag> Compiler<'_, D> {
         self.items.push((Item::Code(bytes), self.tag));
     }
 
+    fn pieces(&mut self, pieces: Vec<Piece>) {
+        for piece in pieces {
+            match piece {
+                Piece::Code(bytes) => self.code(bytes),
+                Piece::Calldata { offset, len } => self.item(Item::Calldata { offset, len }),
+            }
+        }
+    }
+
     fn item(&mut self, item: Item) {
         self.items.push((item, self.tag));
     }
@@ -127,7 +150,7 @@ impl<D: Dag> Compiler<'_, D> {
             }
             _ => operands.iter().for_each(|&operand| self.eval(operand)),
         }
-        self.code(self.dag.code(id));
+        self.pieces(self.dag.code(id));
         if self.shared[at] {
             self.done[at] = true;
             self.item(Item::Store(id));
@@ -265,9 +288,9 @@ pub fn compile<D: Dag>(source: &Source<D>) -> Compiled {
                 continue;
             }
             Word::Const(bytes) => compiler.code(crate::op::push(bytes)),
-            Word::Code(bytes, tag) => {
+            Word::Code(pieces, tag) => {
                 compiler.tag = tag;
-                compiler.code(bytes.clone());
+                compiler.pieces(pieces.clone());
                 compiler.tag = source.calls_tag;
             }
         }

@@ -65,7 +65,7 @@ fn heights(items: &[(Item, crate::Tag)]) -> Vec<usize> {
         let (effect, reads) = match item {
             Item::Code(bytes) => stack_effect(bytes),
             Item::Store(_) => (0, 1),
-            Item::Load(_) => (1, 0),
+            Item::Load(_) | Item::Calldata { .. } => (1, 0),
             Item::Output(_) | Item::FailIf | Item::OtherIf => (-1, 1),
             Item::CopyConst { .. } | Item::PcsOpen { .. } | Item::Seam => (0, 0),
         };
@@ -86,6 +86,8 @@ struct Run {
     imports: HashMap<u32, usize>,
     pinned: Vec<u32>,
     stack_out: usize,
+    /// The ranges of the call's calldata it reads, in order.
+    window: Vec<Range<usize>>,
 }
 
 /// What cutting a program needs to know of it.
@@ -97,6 +99,8 @@ struct Cutter<'a> {
     last_load: HashMap<u32, usize>,
     /// Where the program may be cut.
     cuts: Vec<usize>,
+    /// Before each item, the values kept before it and read at or after it.
+    live: Vec<usize>,
 }
 
 impl<'a> Cutter<'a> {
@@ -126,12 +130,27 @@ impl<'a> Cutter<'a> {
                 _ => {}
             }
         }
+        let mut delta = vec![0isize; n + 2];
+        for (id, &at) in &stored {
+            if let Some(&last) = last_load.get(id) {
+                delta[at + 1] += 1;
+                delta[last + 1] -= 1;
+            }
+        }
+        let live = delta[..=n]
+            .iter()
+            .scan(0, |sum, d| {
+                *sum += d;
+                Some(*sum as usize)
+            })
+            .collect();
         Self {
             program,
             heights: heights(items),
             stored,
             last_load,
             cuts,
+            live,
         }
     }
 
@@ -139,13 +158,17 @@ impl<'a> Cutter<'a> {
     fn run(&self, range: Range<usize>, position: &HashMap<u32, usize>, stack_at: usize, last: bool) -> Run {
         let l = self.program.calldata_len;
         let (a, b) = (range.start, range.end);
-        let stack_in = (0..self.heights[a]).map(|t| l + 32 * (stack_at + t)).collect();
+        let stack_in = (0..self.heights[a]).map(|t| 32 * (stack_at + t)).collect();
         let mut imports = HashMap::new();
         let mut pinned = Vec::new();
+        let mut reads = Vec::new();
         for (item, _) in &self.program.items[range.clone()] {
             match *item {
+                Item::Calldata { offset, len } => {
+                    reads.push(offset..(offset + len).min(l).max(offset));
+                }
                 Item::Load(id) if self.stored[&id] < a => {
-                    imports.insert(id, l + 32 * position[&id]);
+                    imports.insert(id, 32 * position[&id]);
                 }
                 Item::Store(id) if !last && self.last_load.get(&id).is_some_and(|&at| at >= b) => {
                     if !pinned.contains(&id) {
@@ -161,58 +184,175 @@ impl<'a> Cutter<'a> {
             imports,
             pinned,
             stack_out: if last { 0 } else { self.heights[b] },
+            window: ranges(reads),
         }
     }
 
-    fn frame(&self, run: &Run, end: End) -> Frame<'a> {
+    /// The run's frame, a part's passed `values` words of the values region (the driver's: `None`).
+    fn frame(&self, run: &Run, values: Option<usize>, end: End) -> Frame<'a> {
         Frame {
             items: &self.program.items[run.range.clone()],
             stack_in: run.stack_in.clone(),
             imports: run.imports.clone(),
             pinned: run.pinned.clone(),
+            window: values.map(|values| {
+                let mut at = 32 * values;
+                let mut placed = Vec::new();
+                for range in &run.window {
+                    placed.push((range.clone(), at));
+                    at += range.len();
+                }
+                placed
+            }),
             end,
         }
     }
 
-    /// The runs starting at 0 and at each of `starts`, with the values each keeps placed after those before.
-    fn runs(&self, starts: &[usize]) -> Vec<Run> {
+    /// Place run `k`, which ends at item `b`, in `region`: its values and its stack's words, together, at the first
+    /// words free once it has run (those of values no later run reads, and of stacks already taken back).
+    fn place(&self, region: &mut Region, k: usize, run: &Run) {
+        let b = run.range.end;
+        let free = |holder: &Holder| match *holder {
+            Holder::Free => true,
+            Holder::Value(id) => self.last_load.get(&id).is_none_or(|&at| at < b),
+            Holder::Stack(j) => j < k,
+        };
+        let m = run.pinned.len() + run.stack_out;
+        let mut at = 0;
+        while let Some(taken) = (at..at + m).find(|&w| w < region.words.len() && !free(&region.words[w])) {
+            at = taken + 1;
+        }
+        if region.words.len() < at + m {
+            region.words.resize(at + m, Holder::Free);
+        }
+        for (t, &id) in run.pinned.iter().enumerate() {
+            region.words[at + t] = Holder::Value(id);
+            region.position.insert(id, at + t);
+        }
+        for t in 0..run.stack_out {
+            region.words[at + run.pinned.len() + t] = Holder::Stack(k);
+        }
+        region.stack_at = at + run.pinned.len();
+        region.blocks.push((at, region.words.len()));
+    }
+
+    /// The runs starting at 0 and at each of `starts`, placed in order.
+    fn runs(&self, starts: &[usize]) -> (Vec<Run>, Region) {
         let n = self.program.items.len();
         let bounds: Vec<usize> = [&[0][..], starts, &[n]].concat();
-        let mut position = HashMap::new();
-        let (mut values, mut stack_at) = (0, 0);
+        let mut region = Region::default();
         let mut runs = Vec::new();
         for (k, pair) in bounds.windows(2).enumerate() {
             let last = k + 2 == bounds.len();
-            let run = self.run(pair[0]..pair[1], &position, stack_at, last);
-            for &id in &run.pinned {
-                position.insert(id, values);
-                values += 1;
+            let run = self.run(pair[0]..pair[1], &region.position, region.stack_at, last);
+            if !last {
+                self.place(&mut region, k, &run);
             }
-            stack_at = values;
-            values += run.stack_out;
             runs.push(run);
         }
-        runs
+        (runs, region)
     }
 
-    /// Each part's call by the driver: it reads the values written before it, and returns its own.
-    fn calls(runs: &[Run]) -> (Vec<Call>, usize) {
-        let mut calls = Vec::new();
-        let mut written = runs[0].pinned.len() + runs[0].stack_out;
-        for (k, r) in runs.iter().enumerate().skip(1) {
-            let returns = if k + 1 == runs.len() {
-                0
-            } else {
-                r.pinned.len() + r.stack_out
-            };
-            calls.push(Call {
-                values: written,
-                returns,
-            });
-            written += returns;
-        }
-        (calls, written)
+    /// Each part's call by the driver: it is passed the words of the values region written to before it, and its
+    /// own are kept where they were placed.
+    fn calls(runs: &[Run], region: &Region) -> Vec<Call> {
+        (1..runs.len())
+            .map(|k| {
+                let last = k + 1 == runs.len();
+                Call {
+                    values: region.blocks[k - 1].1,
+                    returns: if last {
+                        0
+                    } else {
+                        runs[k].pinned.len() + runs[k].stack_out
+                    },
+                    at: if last { 0 } else { region.blocks[k].0 },
+                    ranges: runs[k].window.clone(),
+                }
+            })
+            .collect()
     }
+
+    /// Bytes an item's code takes, about (a slot's or a value's address in two bytes).
+    fn bytes(item: &Item) -> usize {
+        match item {
+            Item::Code(bytes) => bytes.len(),
+            Item::Store(_) => 5,
+            Item::Load(_) | Item::Output(_) | Item::FailIf | Item::OtherIf => 4,
+            Item::Calldata { .. } => 3,
+            Item::Seam => 0,
+            Item::CopyConst { .. } | Item::PcsOpen { .. } => 30,
+        }
+    }
+
+    /// Among the cuts `candidates` (the last the latest that fits), those in the last [`WINDOW`] bytes of code, the
+    /// cheapest: the fewest values live across it and words on the stack (about [`CROSSING_GAS`] a word: what a cut
+    /// through short-lived values adds), against the code it leaves unused ([`UNUSED_GAS`] hundredths of gas a byte:
+    /// a cold call a part, 2,600 gas, for 24,576 bytes).
+    fn cheapest(&self, candidates: &[usize]) -> usize {
+        let items = &self.program.items;
+        let latest = *candidates.last().expect("a cut");
+        let (mut unused, mut at, mut best) = (0, latest, (u64::MAX, latest));
+        for &cut in candidates.iter().rev() {
+            while at > cut {
+                at -= 1;
+                unused += Self::bytes(&items[at].0);
+            }
+            if unused > WINDOW {
+                break;
+            }
+            let words = (self.live[cut] + self.heights[cut]) as u64;
+            let cost = CROSSING_GAS * 100 * words + UNUSED_GAS * unused as u64;
+            if cost < best.0 {
+                best = (cost, cut);
+            }
+        }
+        best.1
+    }
+}
+
+/// Calldata read, as the ranges copied for it: reads closer than [`GAP`] bytes are one range.
+fn ranges(mut reads: Vec<Range<usize>>) -> Vec<Range<usize>> {
+    reads.sort_by_key(|range| range.start);
+    let mut ranges: Vec<Range<usize>> = Vec::new();
+    for read in reads {
+        match ranges.last_mut() {
+            Some(last) if read.start <= last.end + GAP => last.end = last.end.max(read.end),
+            _ => ranges.push(read),
+        }
+    }
+    ranges
+}
+
+/// Bytes of calldata between two reads below which one copy takes both (a copy is about 15 gas, a word 3).
+const GAP: usize = 128;
+
+/// Gas a word passed between parts costs, about: written to the part's returned region (memory), copied by the driver
+/// (`RETURNDATACOPY`, and its memory).
+const CROSSING_GAS: u64 = 12;
+/// Hundredths of gas a byte of a part left unused costs, about: 2,600 gas (a cold `DELEGATECALL`) for 24,576 bytes.
+const UNUSED_GAS: u64 = 11;
+/// Bytes of code before the latest cut that fits within which a cut is chosen.
+const WINDOW: usize = 2048;
+
+/// What a word of the values region holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Holder {
+    Free,
+    Value(u32),
+    /// A word left on the stack by this run, which the next takes back.
+    Stack(usize),
+}
+
+/// The driver's values region, as runs are placed in it.
+#[derive(Clone, Debug, Default)]
+struct Region {
+    position: HashMap<u32, usize>,
+    words: Vec<Holder>,
+    /// Where the last run placed left its stack's words.
+    stack_at: usize,
+    /// Each run placed: where its words start, and the words of the region written to once they are.
+    blocks: Vec<(usize, usize)>,
 }
 
 /// The program as one contract, all of it in the driver.
@@ -240,7 +380,8 @@ fn wide<'a>(options: &Options<'a>) -> Options<'a> {
 }
 
 /// The program as contracts of at most `limit` bytes each: as one ([`assemble`]'s code, no parts) if it fits,
-/// else a driver and parts, cut at seams so that each run is as long as fits, in order.
+/// else a driver and parts, cut at seams, in order: each part as long as fits, but for a cut a little before that
+/// leaving fewer values to pass ([`Cutter::cheapest`]).
 pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
     let n = program.items.len();
     let mut whole = assemble(program, &wide(options));
@@ -252,7 +393,11 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
     }
     let cutter = Cutter::new(program);
     let wide = wide(options);
-    let fits = |run: &Run, end: End| assemble_frame(&cutter.frame(run, end), program, &wide).code.len() <= limit;
+    // A part laid out as if passed many values (offsets of the widest pushes).
+    let fits = |run: &Run, end: End| {
+        let values = (run.range.start > 0).then_some(1 << 11);
+        assemble_frame(&cutter.frame(run, values, end), program, &wide).code.len() <= limit
+    };
     // The driver's calls are laid out for `reserve` parts, values at the widest offsets, until it has that many.
     let mut reserve = whole.code.len().div_ceil(limit);
     loop {
@@ -262,16 +407,16 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
                 .map(|_| Call {
                     values: 1 << 11,
                     returns: 1 << 11,
+                    at: 1 << 11,
+                    ranges: vec![1 << 16..1 << 17],
                 })
                 .collect(),
         };
         let mut starts: Vec<usize> = Vec::new();
+        let mut region = Region::default();
         let mut a = 0;
         loop {
-            // The runs before `a`, placed.
-            let runs = cutter.runs(&starts);
-            let (position, stack_at) = placed(&runs[..runs.len() - 1]);
-            if a > 0 && fits(&cutter.run(a..n, &position, stack_at, true), End::Program) {
+            if a > 0 && fits(&cutter.run(a..n, &region.position, region.stack_at, true), End::Program) {
                 break;
             }
             let end_of = |run: &Run| {
@@ -288,7 +433,7 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
             let (mut lo, mut hi) = (0usize, candidates.len());
             while lo < hi {
                 let mid = (lo + hi).div_ceil(2);
-                let r = cutter.run(a..candidates[mid - 1], &position, stack_at, false);
+                let r = cutter.run(a..candidates[mid - 1], &region.position, region.stack_at, false);
                 if fits(&r, end_of(&r)) {
                     lo = mid;
                 } else {
@@ -296,8 +441,11 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
                 }
             }
             assert!(lo > 0, "no cut after item {a} gives a part of at most {limit} bytes");
-            a = candidates[lo - 1];
-            starts.push(a);
+            let b = cutter.cheapest(&candidates[..lo]);
+            let run = cutter.run(a..b, &region.position, region.stack_at, false);
+            cutter.place(&mut region, starts.len(), &run);
+            starts.push(b);
+            a = b;
         }
         let linked = link_at(program, options, &starts);
         let fit = std::iter::once(&linked.driver)
@@ -308,21 +456,6 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
         }
         reserve = starts.len().max(reserve + 1);
     }
-}
-
-/// Where the values the runs keep are, and where the last run leaves the stack's: those a run after them reads.
-fn placed(runs: &[Run]) -> (HashMap<u32, usize>, usize) {
-    let mut position = HashMap::new();
-    let (mut values, mut stack_at) = (0, 0);
-    for run in runs {
-        for &id in &run.pinned {
-            position.insert(id, values);
-            values += 1;
-        }
-        stack_at = values;
-        values += run.stack_out;
-    }
-    (position, stack_at)
 }
 
 /// The program cut before each of `starts` (items at seams, increasing): the driver runs the items before the first,
@@ -336,12 +469,11 @@ pub fn link_at(program: &Program, options: &Options, starts: &[usize]) -> Linked
         starts.windows(2).all(|pair| pair[0] < pair[1]) && starts.iter().all(|at| cutter.cuts.contains(at)),
         "cuts at seams, in order"
     );
-    let runs = cutter.runs(starts);
+    let (runs, region) = cutter.runs(starts);
     let count = runs.len();
-    let (calls, values) = Cutter::calls(&runs);
     let driver_end = End::Drive {
         stack_out: runs[0].stack_out,
-        calls,
+        calls: Cutter::calls(&runs, &region),
     };
     let part = |r: &Run, code: Assembled| Part {
         code,
@@ -351,7 +483,7 @@ pub fn link_at(program: &Program, options: &Options, starts: &[usize]) -> Linked
         stack_in: r.stack_in.len(),
         stack_out: r.stack_out,
     };
-    let driver = assemble_frame(&cutter.frame(&runs[0], driver_end), program, options);
+    let driver = assemble_frame(&cutter.frame(&runs[0], None, driver_end), program, options);
     let parts = runs
         .iter()
         .enumerate()
@@ -364,13 +496,14 @@ pub fn link_at(program: &Program, options: &Options, starts: &[usize]) -> Linked
                     stack_out: r.stack_out,
                 }
             };
-            part(r, assemble_frame(&cutter.frame(r, end), program, options))
+            let values = region.blocks[k - 1].1;
+            part(r, assemble_frame(&cutter.frame(r, Some(values), end), program, options))
         })
         .collect();
     Linked {
         driver: part(&runs[0], driver),
         parts,
-        values,
+        values: region.words.len(),
     }
 }
 
