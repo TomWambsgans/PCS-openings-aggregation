@@ -22,8 +22,9 @@ Not part of any library: checked with `lake env lean Review/E2ESoundness.lean` f
    probability (`nonvacuous_of_completeness`). At the review, `Completeness` was not proved
    (`E2ECompleteness` left `RejectGood` and the block count), so non-vacuity was not either. Since then
    `E2ECompleteness.completeness_end` proves `Completeness deltaDeployed` (`< 2^-162`), which with
-   `nonvacuous_of_completeness` gives acceptance with probability at least `1 − 2^-162` (not compiled
-   here: this file does not import `E2ECompleteness`).
+   `nonvacuous_of_completeness` gives acceptance with probability at least `1 − 2^-162`: compiled as
+   `honest_accepted_in_soundness` in `Review/E2ECompletenessReview.lean` (this file does not import
+   `E2ECompleteness`).
 5. **The extractor ignores the adversary's coins** (`extractor_coins`).
 6. **The extractor's fast path fails on one error** (`#eval`, at the smallest stack, `μ = 15`): a
    word one symbol away from a codeword gets no fast candidate. Before the unique-decoding stage, the

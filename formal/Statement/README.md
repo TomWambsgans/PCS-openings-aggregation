@@ -16,8 +16,8 @@ that a reviewer can check what they read and that they are efficient (Lean has n
 the convention is mumbai's: a fixed straight-line extractor reading only the adversary's transcript, its
 cost read off its loops). They are not F1's (`formal/QuotientSecurity`), whose extractor reads the proof's
 polynomials in the ideal model and whose extractor and simulator are `noncomputable`. The proofs are in
-`formal/EndToEnd` (`formal/README.md`, "End-to-end theorems"): knowledge soundness and completeness are proved,
-zero knowledge is in progress ("What is proved", below). `PcsQuotientTest/` is the differential test, not the
+`formal/EndToEnd` (`formal/README.md`, "End-to-end theorems"): knowledge soundness, completeness and zero
+knowledge are proved with no hypotheses ("What is proved", below). `PcsQuotientTest/` is the differential test, not the
 statement.
 
 **The model.** Every end statement with an adversary is in mumbai's random-permutation model: one
@@ -123,9 +123,8 @@ proves each definition here equal to the proof layers' own):
   list is one it returns (`Soundness/Extract.lean`); nothing is needed of the first two stages.
 * **The simulator**: zero knowledge is stated for any simulator, `ZeroKnowledgeWith s₀ sim simOracle ζ`
   (a simulator `Statement → StateT S ProbComp (Option Proof)`, its oracle
-  `QueryImpl RandomPermutationOracles (StateT S ProbComp)`, its initial state `s₀`). The end theorem, in
-  progress (`formal/EndToEnd/ZK`: `zeroKnowledge_end`, `zeroKnowledge_deployed_final`,
-  `zeroKnowledge_deployed_whir`, the last with one hypothesis left, `CoreWhir`), proves it for
+  `QueryImpl RandomPermutationOracles (StateT S ProbComp)`, its initial state `s₀`). The end theorem
+  (`formal/EndToEnd/ZK/CoreMain.lean`, `zeroKnowledge_closed`, no hypothesis) proves it for
   `formal/QuotientZk`'s simulator put in this shape (`zkSimulator`, `rpmSimOracle`; described in
   `formal/README.md`, "Zero knowledge end to end"), so the simulator the theorem covers is named in the
   theorem's statement. This package's own `simulator`
@@ -219,12 +218,15 @@ them:
   `openingBound x = (x + 10122)(2^-128 + 5 (x + 10122) / 2^256)` (F2's term for one opening); the constants
   count the setup's and the verifier's own calls. About `2^-105` at `Q = 0`, `2^-86` at `2^40`, `2^-62` at
   `2^64` (`formal/EndToEnd/Review/E2ESoundnessNumbers.py`, exact rationals).
-* `δ = E2ECompleteness.deltaDeployed = (17 · 2^24 + 8)/2^192 + 2/2^256 + 3 · 2^-277 + (2^48)²/2^508`, below
-  `2^-162`: degenerate challenges, a chain query that is not fresh, the three proofs of work (no nonce among
-  `2^25`), the permutation as two random oracles.
-* `ζ = zkBoundEnd …` (in progress, `formal/EndToEnd/ZK/Main.lean`): about `2^-113` for `Q ≤ 2^126`, its largest
-  term the Fiat–Shamir freshness of the honest prover's queries; `HIDING.md`'s conditions (S) and (R) are proven
-  for the deployed layouts outside a small set of challenges, which the bound counts.
+* `δ = E2ECompleteness.deltaDeployed = (17 · 2^24 + 8)/2^192 + 2/2^256 + 3 · 2^-277 + (2^48)²/2^508`, about
+  `2^-163.91`: degenerate challenges (`2^-163.91`), a chain query that is not fresh (`2^-255`), the proofs of work
+  (`2^-275.4`; no nonce among `2^25`, the whole run's failure below `2^-304`), the permutation as two random
+  oracles (`2^-412`). The same `δ` holds for every fixed value of the coins (`completeness_every_coins`,
+  `formal/EndToEnd/Review/E2ECompletenessReview.lean`).
+* `ζ = zkBoundEnd ((2^24 + 2^70) · 12) fmtBudget (· ↦ deltaNone)` (`formal/EndToEnd/ZK/Main.lean`): about
+  `2^-113` for `Q ≤ 2^126`, its largest term the Fiat–Shamir freshness of the honest prover's queries;
+  `HIDING.md`'s conditions (S) and (R) are proven for the deployed layouts outside a small set of challenges,
+  which the bound counts.
 
 ## The extractor
 
@@ -279,8 +281,8 @@ decoder. That the unique decoder recovers every word within its radius is Gao's 
 ## The simulator
 
 **Which simulator the end theorem covers.** `ZeroKnowledgeWith` takes the simulator as a parameter; the end
-theorem (`formal/EndToEnd/ZK/Main.lean`, `zeroKnowledge_end`; in progress, one hypothesis left, "What is
-proved" below) proves it for `formal/QuotientZk`'s simulator in
+theorem (`formal/EndToEnd/ZK/CoreMain.lean`, `zeroKnowledge_closed`, from `Main.lean`'s `zeroKnowledge_end`)
+proves it for `formal/QuotientZk`'s simulator in
 this shape (`zkSimulator`, `rpmSimOracle`, `formal/EndToEnd/ZK/With.lean` and `Simulator.lean`), whose
 definition and cost `formal/README.md` describes ("Zero knowledge end to end"). It draws every Fiat–Shamir
 challenge first and programs the oracle with them, takes the messages and opened rows from the joint
@@ -352,13 +354,19 @@ check the ones they use by kernel evaluation (`formal/EndToEnd/Bridge/Claims/Con
 * `Completeness E2ECompleteness.deltaDeployed`: **proved, no hypotheses** (`E2ECompleteness.completeness_end`,
   `formal/EndToEnd/Completeness/E2ECompleteness/Done.lean`): the honest prover's claims hold (F1's
   completeness) and its WHIR openings are accepted (mumbai's completeness of its WHIR prover), with the proofs
-  of work, the chain's challenges in the random-oracle model, and the transfer from the permutation.
-* `ZeroKnowledgeWith` for `QuotientZk`'s simulator: **in progress** (`formal/EndToEnd/ZK`:
-  `zeroKnowledge_deployed_final`, and `zeroKnowledge_deployed_whir` with WHIR's honest prover as the renderer;
-  the hypothesis left is `CoreWhir`, the Statement's prover against the skeleton's at a fixed permutation). The
-  simulator's tables are computed; its wiring value is still `noncomputable`. `ZeroKnowledge ζ`, for this
+  of work, the chain's challenges in the random-oracle model, and the transfer from the permutation. It is about
+  this package's `prover`, which the differential test compares with the Rust prover only on the reduction's
+  nine scalars at `2^17` rows (`Q`, below): the deployed Rust prover is trusted for completeness.
+* `ZeroKnowledgeWith` for `QuotientZk`'s simulator: **proved, no hypotheses**
+  (`PcsQuotient.EndToEnd.zeroKnowledge_closed`, `formal/EndToEnd/ZK/CoreMain.lean`), with WHIR's honest prover
+  as the renderer. Two statement changes were needed: the deterministic core is stated off degenerate `α, β`
+  (`CoreWhirG`; `CoreWhir` is false there), those charged to `deltaNone`; `fmt`'s `fillRun` ends at `fail` as at
+  `ret`. The simulator is explicit; its full computability is in progress. `ZeroKnowledge ζ`, for this
   package's heuristic `simulator`, is not proved, so neither is the structure `Theorems` (`Security.lean`),
   whose `zeroKnowledge` field it is.
+* Scope: the three are about `verifyWith` in the random-permutation model; the EVM theorem below holds at the
+  real Keccak-f[1600]. They do not formally compose: a probability over a random permutation does not transfer
+  to a fixed hash.
 * `StatementBinds`: a pigeonhole, immediate; not proved in Lean.
 * The EVM contract: `formal/EndToEnd/Evm` (`evm_accepts_iff_verifyWith`, `evm_accepts_iff_exists`); the
   bytecode equal to the recorded graph and the `PCS_OPEN` mock equal to `openingWith` by tests.
@@ -388,7 +396,8 @@ circuit commitment, WHIR scalars, leaves, siblings, missing, extra and short pat
 the Rust's verdict (`P`); that the Lean builder and commitment give the Rust circuits' sizes and
 commitments, the membership circuit's at `2^22` rows included (`I`, about five minutes); and that the Lean
 prover, given the Rust prover's masks and seed (its padding expanded by ChaCha12 as the Rust's), sends the
-Rust prover's stream and its proof is accepted (`Q`). `--self-test` runs the extractor's Merkle inversion
+Rust prover's stream and its proof is accepted (`Q`; the stream is the reduction's nine scalars, at `2^17` rows
+on a small circuit: the openings are not compared, and the check was not run at `2^22`). `--self-test` runs the extractor's Merkle inversion
 through a transcript (a small tree: mumbai's replay is quadratic), its decoding of an honest hidden witness
 table back to the input bits, and the simulator's proof of a false statement (about two hours at `2^17`
 rows); `--weights` that the prover's and the simulator's weight on a hidden stack (`Layout.weightAt`) is the

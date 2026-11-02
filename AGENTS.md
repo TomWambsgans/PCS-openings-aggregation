@@ -49,7 +49,12 @@ from where.
   - the EVM contract is the Statement's verifier: `Evm.evm_accepts_iff_verifyWith`, `Evm.evm_accepts_iff_exists`
     (the bytecode = the recorded graph, and the `PCS_OPEN` mock = `opening::verify` = the Statement's opening,
     by tests);
-  - zero knowledge: in progress (about 2^-113; `CoreWhir` left, the simulator being made fully computable).
+  - zero knowledge, no hypotheses: `PcsQuotient.EndToEnd.zeroKnowledge_closed`, about 2^-113, for an explicit
+    simulator named in the statement (its full computability in progress).
+
+  The deployed Rust prover is trusted for completeness (the Statement's prover is compared with it on the
+  reduction's nine scalars at 2^17 rows only). The theorems are in the random-permutation model and do not
+  formally compose with the EVM one, which holds at the real Keccak-f[1600].
 
   The models: Keccak-f[1600] as one random permutation, the prover's randomness uniform (deployed: ChaCha12 and a
   Keccak-256 KDF, so computational). The Statement is the Rust by differential tests, not by proof.
@@ -69,5 +74,6 @@ leanerVM `6175f1a0`, which `WhirBridge`, `Compose`, `Completeness` and `EndToEnd
 cd formal/EndToEnd
 systemd-run --scope -p MemoryMax=12G lake build Soundness E2ECompleteness Evm ZK   # end theorems; #guard_msgs checks axioms
 lake env lean Review/E2ESoundness.lean                                            # the knowledge-soundness review
+lake env lean Review/E2ECompletenessReview.lean                                   # the completeness review
 python3 -I Review/E2ESoundnessNumbers.py                                          # ksBound, exact rationals
 ```

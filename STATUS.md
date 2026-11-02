@@ -30,6 +30,8 @@ statements from the layers below. Every theorem in this section is sorry-free an
   the Guruswami–Sudan list decoder beyond that radius (about 2^98 per word: infeasible). The costs are read off
   the loops (`Extractor.lean`'s table), not proved. That Gao's decoder recovers every word within its radius
   is tested, not proved; the soundness proof does not need it.
+- Not vacuous: the honest prover, run as an adversary, is accepted with probability at least 1 − δ
+  (`honest_accepted_in_soundness`, `formal/EndToEnd/Review/E2ECompletenessReview.lean`).
 - Scope: stand-alone knowledge soundness, not simulation-extractability.
 
 **Completeness: proved, no hypotheses.**
@@ -38,8 +40,46 @@ statements from the layers below. Every theorem in this section is sorry-free an
 
 - For every statement and secret of the relation, the Statement's honest prover with uniform coins, then the
   verifier, in one random permutation, rejects with probability at most δ.
-- δ = (17·2^24 + 8)/2^192 + 2/2^256 + 3·2^-277 + (2^48)²/2^508 < 2^-162 (`deltaDeployed_lt`): degenerate
-  challenges, a chain query that is not fresh, the three proofs of work, the permutation as two random oracles.
+- δ = (17·2^24 + 8)/2^192 + 2/2^256 + 3·2^-277 + (2^48)²/2^508 ≈ 2^-163.91 (`deltaDeployed_lt`: below 2^-162).
+  The terms: degenerate challenges (2^-163.91); a chain query that is not fresh (2^-255); the proofs of work
+  (3·2^-277 ≈ 2^-275.4; the proof bounds the whole run's grinding failure by 2^-304, `grinding_le` in
+  `Grinding.lean`); the permutation as two random oracles (2^-412, for at most 2^48 block calls; the run makes
+  exactly 114,098,677,826,653 < 2^47, `hcost_exact`).
+- The coins do not matter: the same δ holds for every fixed value of the masks and the paddings
+  (`completeness_every_coins`, `formal/EndToEnd/Review/E2ECompletenessReview.lean`). So completeness does not
+  depend on the uniform-coins model, only on the coins being independent of π.
+- The prover is the Statement's. A differential test finds it equal to the Rust prover's reduction stream (nine
+  scalars) at 2^17 rows, on a small circuit; it does not compare the openings, and was not run at 2^22. The
+  deployed Rust prover is therefore trusted for completeness.
+
+**Zero knowledge: proved, no hypotheses.**
+`PcsQuotient.EndToEnd.zeroKnowledge_closed : PcsQuotient.ZeroKnowledgeWith s₀ (zkSimulator …) rpmSimOracle
+(zkBoundEnd ((2^24 + 2^70)·12) fmtBudget (· ↦ deltaNone))` (`formal/EndToEnd/ZK/CoreMain.lean`).
+
+- For every statement and secret of the relation and every distinguisher of at most Q calls of π and π⁻¹, fixed
+  after them (non-adaptive), its verdicts on the honest proof and on the simulator's proof (the simulator
+  answering its queries, the permutation programmable) differ in probability by at most ζ(Q).
+- The simulator is explicit and named in the statement (`zkSimulator`, `rpmSimOracle`:
+  `formal/EndToEnd/ZK/With.lean`, `Simulator.lean`). It reads no witness. It draws the Fiat–Shamir challenges
+  first and programs them, takes the messages and opened rows from the joint honest-verifier simulator (WHIR's
+  honest prover on tables built from uniform values), and answers unopened leaves with fresh digests. Its full
+  computability is in progress (its tables are computed by Gaussian elimination,
+  `QuotientZk/Instance/Builder.lean`).
+- The bound: ζ(Q) ≈ 2^-113 for Q ≤ 2^126 (`zkBoundEnd`, `zkBoundEnd_le`). Its terms:
+  - 2^-113, Fiat–Shamir freshness of the honest prover's queries (`fsFresh_setup_deployed_bits`):
+    6·Q'(c + Q')/2^256 ≈ 2^-113.4 for Q' = 2^24 + 2^70 oracle operations (worst-case grinding counted) and
+    c = 2^19 public rows, plus 6(c + Q')·2^-191 ≈ 2^-118.4 (the claims' windows) and c·2^-2368;
+  - 2^-165 + 2^-125 + 2/2^192 (`epsHV`): the joint model's bad challenges, the degenerate scales and row, the
+    degenerate masks;
+  - deltaNone < 2^-162: the prover makes no proof, or meets degenerate α, β (`hbad_deployed`);
+  - 2^-2200: an unopened leaf is asked, or two collide;
+  - (Qp + 2^23 + Q)²/2^508, Qp = 12·(2^24 + 2^70) the prover's calls of π (`hprover_whir`): the permutation as
+    two random oracles (at most 2^-256).
+- Two statement changes on the way. The deterministic core (`CoreWhir`: at a fixed permutation, `fmt` of the
+  skeleton's proof is the Statement's prover's proof) is false at degenerate α, β, where the Statement's coset
+  division is not F1's quotient; it is now stated off them (`CoreWhirG`, proved as `coreD`), and the degenerate
+  α, β are charged to deltaNone. `fmt`'s `fillRun` now ends at the program's `fail` as at its `ret`, as mumbai's
+  `runFrom` does.
 
 **The EVM contract is the Statement's verifier: proved, with tested links.**
 `Evm.evm_accepts_iff_verifyWith`, `Evm.evm_accepts_iff_exists` (`formal/EndToEnd/Evm/`).
@@ -53,41 +93,27 @@ statements from the layers below. Every theorem in this section is sorry-free an
   are the Lean operations (`mulE` is proved to be `F192`'s product); the `PCS_OPEN` mock (`machine.rs`) is the
   Rust `opening::verify`, which is `PcsQuotient.openingWith` (the Statement's differential test). The theorems
   hold for whatever index root is stored (`setIndexRoot` is owner-gated).
-
-**Zero knowledge: in progress.**
-The target is `PcsQuotient.ZeroKnowledgeWith s₀ zkSimulator rpmSimOracle ζ`, with the simulator named in the
-statement (`formal/EndToEnd/ZK/With.lean`, `Simulator.lean`).
-
-- Proved: `zeroKnowledge_deployed_final` (`ZK/Final.lean`: the fields, F1's facts, the honest tables' claims
-  and the coins' bijection discharged) and `zeroKnowledge_deployed_whir` (`ZK/ProverBridge.lean`: WHIR's honest
-  prover as the renderer). Two of their hypotheses are proved: the prover makes no proof with probability
-  δNone < 2^-162 (`E2ECompleteness.hnone_deployed`), and it makes at most 12·(2^24 + 2^70) calls of π
-  (`hprover_whir`, given the wiring rows' length).
-- The bound: ζ(Q) ≈ 2^-113 for Q ≤ 2^126 (`zkBoundEnd`, `zkBoundEnd_le`). Its terms:
-  - 2^-113, Fiat–Shamir freshness of the honest prover's queries (`fsFresh_setup_deployed_bits`):
-    6·Q'(c + Q')/2^256 ≈ 2^-113.4 for Q' = 2^24 + 2^70 oracle operations (worst-case grinding counted) and
-    c = 2^19 public rows, plus 6(c + Q')·2^-191 ≈ 2^-118.4 (the claims' windows) and c·2^-2368;
-  - 2^-165 + 2^-125 + 2/2^192 (`epsHV`): the joint model's bad challenges, the degenerate scales and row, the
-    degenerate masks;
-  - δNone < 2^-162: the prover makes no proof;
-  - 2^-2200: an unopened leaf is asked, or two collide;
-  - (Qp + 2^23 + Q)²/2^508: the permutation as two random oracles (at most 2^-256).
-- Remaining: `CoreWhir`, being proved (a statement about programs, no probability: at a fixed permutation, the
-  Statement's prover's proof is `fmt` of the skeleton's); then one theorem with no hypothesis. The simulator is
-  being made fully computable: its tables are computed by Gaussian elimination
-  (`QuotientZk/Instance/Builder.lean`, run on `F192` in `Test/Builder.lean`); `sigmaAtD` (the wiring value) and
-  `deployedSimV` are still `noncomputable`.
+- Scope: the three theorems above are about `verifyWith` in the random-permutation model; this one holds at the
+  real Keccak-f[1600]. They do not formally compose: a probability over a random permutation does not transfer
+  to a fixed hash.
 
 **Modelling assumptions, for all of the above.**
 
 - Keccak-f[1600] is one random permutation, and Keccak-256 is its sponge. It serves the chain, the Merkle trees,
   the openings' duplex and the circuit's commitment. The relation is over the deployed Keccak-256.
-- The prover's randomness is uniform. As deployed, the masks are Keccak-256 KDF outputs of a 32-byte OS seed and
-  the padding is ChaCha12, so zero knowledge is computational in that generator.
+- The prover's randomness is uniform in the model. As deployed (`Randomness::derive`, `protocol.rs`), a 32-byte
+  seed comes from the OS; a key is Keccak-256 of a tag, the seed, the transcript's label (the circuit's
+  commitment and the statement) and a digest of the witness's cells; the masks are the words of Keccak-256(tag ‖
+  key ‖ k) for k = 0, 1, 2; the padding seed is Keccak-256(tag ‖ key), each table's seed Keccak-256 of a label,
+  the table's name and it (`table_seed`), and each lane's padding is ChaCha12 keyed by Keccak-256(table seed ‖
+  lane) (`opening.rs`). Deployed zero knowledge is therefore computational in that generator. Completeness holds
+  for every fixed coins (above); soundness does not involve the prover.
 - The Statement's definitions are the Rust by differential tests (`formal/Statement/PcsQuotientTest`), not by
-  proof: reductions at 2^16..2^23 rows, whole proofs (honest and tampered) at 2^17 rows and, in the soundness
-  review, at 2^22, the circuit commitments (the membership circuit's at 2^22), the prover's streams. The
-  Statement's WHIR proofs carry full Merkle paths; the test expands the Rust's pruned ones.
+  proof: reductions at 2^16..2^23 rows, whole proofs (honest and tampered) verified at 2^17 rows and, in the
+  soundness review, at 2^22, the circuit commitments (the membership circuit's at 2^22), and the prover's
+  reduction stream at 2^17 (above). The Statement's WHIR proofs carry full Merkle paths; the test expands the
+  Rust's pruned ones. For zero knowledge, the Lean skeleton (which `coreD` relates to the Statement's prover)
+  makes the Rust prover's queries and proof byte for byte at 2^17 rows (`crates/quotient/tests/skel_trace.rs`).
 - Trusted as in mumbai: the Lean kernel, and mumbai's definitions the Statement reuses (Keccak-256, the model,
   the WHIR verifier, its prover's pieces, the list decoder).
 
@@ -140,6 +166,24 @@ statement (`formal/EndToEnd/ZK/With.lean`, `Simulator.lean`).
 
 ## Reviews and their outcome
 
+- **End-to-end completeness (adversarial; `formal/EndToEnd/Review/E2ECompletenessReview.lean`)**: the end
+  theorem is on the three standard axioms, and the statement's closure was swept (`#review_sweep`). Proved there:
+  `Relation` is satisfiable (`relation_self`), and an explicit secret's statement is accepted with probability at
+  least 1 − δ (`w₀_accepted`); the same δ for every fixed coins (`completeness_every_coins`); the exact block
+  count (`hcost_exact`: 114,098,677,826,653 < 2^47); knowledge soundness is not vacuous: the honest prover, run as
+  an adversary in the knowledge-soundness experiment (same setup, same verifier), is accepted with probability at
+  least 1 − δ (`honest_accepted_in_soundness`). Found, and changed in the docs:
+  - the Statement's prover was said to output the Rust prover's stream, but the differential test compares only
+    the reduction's nine scalars, at 2^17 rows on a small circuit → stated so; the deployed Rust prover is
+    trusted for completeness;
+  - the three theorems are about `verifyWith` in the random-permutation model and do not formally compose with
+    the EVM theorem at the real Keccak-f[1600] → stated;
+  - the deployed key derivation, and that completeness holds for every coins → documented;
+  - the proofs-of-work term: the end-to-end proof bounds the whole run's grinding failure by 2^-304
+    (`grinding_le`), not by `ours_romComplete`'s per-opening bound → stated;
+  - stale lines (the completeness hypotheses "left", `E2ECompleteness.lean`'s module doc, "bounds not yet
+    known" in the Statement README and `Security.lean`, "non-vacuity not proved" in `E2ESoundness.lean`,
+    "challenges uniform by assumption" here) → corrected.
 - **End-to-end knowledge soundness (adversarial; `formal/EndToEnd/Review/E2ESoundness.lean`,
   `E2ESoundnessNumbers.py`)**: the end theorem is on the three standard axioms (`#guard_msgs`), and the
   statement's definitional closure was swept for axioms, opaque, `implemented_by` and `extern` constants
@@ -147,10 +191,10 @@ statement (`formal/EndToEnd/ZK/With.lean`, `Simulator.lean`).
   the experiment's at π = Keccak-f[1600] (`deployedVerifier_eq`); the extractor ignores the adversary's coins
   (`extractor_coins`); the honest prover, run as an adversary, is accepted at least as often as in the
   completeness experiment (`honest_accepted_ge`), so completeness makes the theorem non-vacuous
-  (`nonvacuous_of_completeness`; with `completeness_end`, acceptance with probability ≥ 1 − 2^-162, an
-  instantiation not compiled in one file); ksBound recomputed in exact rationals; at 2^22 rows the Lean verifier
-  accepts the Rust's honest proof and rejects 14 tamperings, and the Lean commitment of the circuit is the Rust's
-  (run on h1, not proved). Found, and changed:
+  (`nonvacuous_of_completeness`; with `completeness_end`, acceptance with probability ≥ 1 − 2^-162, since
+  compiled as `honest_accepted_in_soundness` in the completeness review); ksBound recomputed in exact
+  rationals; at 2^22 rows the Lean verifier accepts the Rust's honest proof and rejects 14 tamperings, and the
+  Lean commitment of the circuit is the Rust's (run on h1, not proved). Found, and changed:
   - the extractor was efficient only on words with no errors: its fast path fails on one wrong symbol, and it then
     ran the Guruswami–Sudan decoder (about 2^98 operations per word) → Gao's unique decoder added between the two
     (about 2^34.3 for a word with few wrong columns, at most 2^45.7 within the radius); Guruswami–Sudan only beyond
@@ -205,7 +249,7 @@ statement (`formal/EndToEnd/ZK/With.lean`, `Simulator.lean`).
     is the transcription) → extended: F2 now covers the hidden layouts with the gadget;
   - F3's view is the linear part only: the roots, Merkle siblings, nonces and Fiat–Shamir rest on an unformalised
     random-oracle step, and it is the interactive, per-table, honest-verifier statement → F3b (`formal/QuotientZk`),
-    and zero knowledge end to end, in progress (`formal/EndToEnd/ZK`);
+    and zero knowledge end to end (`formal/EndToEnd/ZK`, `zeroKnowledge_closed`);
   - (R) has no Lean bound; the end theorem is not instantiated with the deployed layout → with the layout
     redesign: (S) and (R) proven, the end theorem instantiated (`deployed_prEvent_le`);
   - the Lean samples uniform padding, the prover a CSPRNG (statistical ZK in the model, computational in the
@@ -214,11 +258,14 @@ statement (`formal/EndToEnd/ZK/With.lean`, `Simulator.lean`).
 
 ## Remaining
 
-- Zero knowledge end to end: prove `CoreWhir`; assemble one theorem with no hypothesis; make the simulator fully
-  computable (`sigmaAtD`, `deployedSimV`).
+- The zero-knowledge simulator's full computability (in progress; its tables are computed, `sigmaAtD` and
+  `deployedSimV` are still `noncomputable`).
 - Tested, not proved: the bytecode computes the graph; `FIELD_MUL` and `KECCAK256` are the Lean operations; the
   `PCS_OPEN` mock is `opening::verify`, and that is `PcsQuotient.openingWith`; the Statement's definitions are the
   Rust; the Rust verifier's expansion of pruned Merkle paths; the extractor's cost table and Gao's decoder.
+- The deployed Rust prover is trusted for completeness: the Statement's prover is compared with it on the
+  reduction's nine scalars at 2^17 rows only (not the openings, not at 2^22).
+- The random-permutation theorems and the EVM theorem (at the real Keccak-f[1600]) do not formally compose.
 - Not stated: simulation-extractability. `StatementBinds` (immediate) is not proved in Lean. The Statement's own
   `simulator` (`ZeroKnowledge ζ`, the field `Theorems.zeroKnowledge`) is a tested heuristic that no theorem covers.
 - Outside the theorems: the `PCS_OPEN` aggregation layer must check all the claims of one call in one opening (the

@@ -42,43 +42,61 @@ Statement's own definitions. Every theorem below is sorry-free and depends only 
   deltaDeployed` (`EndToEnd/Completeness/E2ECompleteness/Done.lean`, library `E2ECompleteness`). For every
   statement and secret of the relation, the Statement's honest prover with uniform coins, then the verifier, in
   one random permutation, rejects with probability at most `deltaDeployed = (17 · 2^24 + 8)/2^192 + 2/2^256 +
-  3 · 2^-277 + (2^48)²/2^508 < 2^-162`: degenerate challenges, a chain query that is not fresh, the three proofs
-  of work, the permutation as two random oracles ("End-to-end completeness", below).
+  3 · 2^-277 + (2^48)²/2^508 ≈ 2^-163.91`: degenerate challenges (`2^-163.91`), a chain query that is not fresh
+  (`2^-255`), the proofs of work (`2^-275.4`; the proof bounds the whole run's grinding failure by `2^-304`,
+  `grinding_le`), the permutation as two random oracles (`2^-412`; the run makes exactly `114 098 677 826 653 <
+  2^47` block calls, `hcost_exact`) ("End-to-end completeness", below). The same `δ` holds for every fixed value
+  of the coins (`completeness_every_coins`, `EndToEnd/Review/E2ECompletenessReview.lean`), so the uniform-coins
+  model does not matter for completeness. The prover is the Statement's; the deployed Rust prover is trusted
+  for completeness (below).
+- **Zero knowledge: proved, no hypotheses.** `PcsQuotient.EndToEnd.zeroKnowledge_closed :
+  PcsQuotient.ZeroKnowledgeWith s₀ (zkSimulator …) rpmSimOracle (zkBoundEnd ((2^24 + 2^70)·12) fmtBudget
+  (· ↦ deltaNone))` (`EndToEnd/ZK/CoreMain.lean`, library `ZK`). For every statement and secret of the relation and
+  every distinguisher of at most `Q` calls of π and π⁻¹ fixed after them, its verdicts on the honest proof and on
+  the simulator's proof (the permutation programmable) differ in probability by at most `ζ Q ≈ 2^-113` for
+  `Q ≤ 2^126`. The simulator is explicit and named in the statement (`zkSimulator`, `rpmSimOracle`); it reads no
+  witness; its full computability is in progress (its tables are computed, `QuotientZk/Instance/Builder.lean`).
+  The largest term of `ζ` is Fiat–Shamir freshness, `2^-113` (`6 Q'(c + Q')/2^256 ≈ 2^-113.4` for the honest
+  prover's `Q' = 2^24 + 2^70` oracle operations, worst-case grinding counted, and `c = 2^19` public rows); the
+  others are `epsHV = 2^-165 + 2^-125 + 2/2^192` (bad challenges, degenerate scales and masks), `deltaNone <
+  2^-162` (the prover makes no proof or meets degenerate `α, β`), `2^-2200` (unopened leaves) and
+  `(Qp + 2^23 + Q)²/2^508 ≤ 2^-256` (the permutation). Two statement changes were needed: the deterministic core
+  `CoreWhir` is false at degenerate `α, β` and is stated off them (`CoreWhirG`, proved as `coreD`), those `α, β`
+  charged to `deltaNone`; `fmt`'s `fillRun` ends at the program's `fail` as at its `ret` (as mumbai's `runFrom`).
+  Details: "Zero knowledge end to end", below.
 - **The EVM contract is the Statement's verifier.** `Evm.evm_accepts_iff_verifyWith` (`EndToEnd/Evm/Contract.lean`,
   library `Evm`): on the calldata of a statement and proof, the contract's recorded operation graph (F5), with the
   stored index root and `PCS_OPEN` modelled by an explicit definition (`pcsOpen`, `Evm/PcsOpen.lean`: the input read
   as the precompile reads it, then `PcsQuotient.opening`), accepts exactly when `PcsQuotient.verifyWith` accepts
   at π = Keccak-f[1600]. `Evm.evm_accepts_iff_exists` (`Evm/Calldata.lean`): over all calldata, the contract accepts
-  exactly the calldata of a proof that `PcsQuotient.verify` accepts. The two theorems above therefore speak about
-  the contract, up to the tested links listed below.
-- **Zero knowledge: in progress.** The statement is `PcsQuotient.ZeroKnowledgeWith s₀ (zkSimulator …) rpmSimOracle
-  ζ`, with the simulator named in it (`EndToEnd/ZK/`, library `ZK`). Proved: `zeroKnowledge_deployed_final`
-  (`ZK/Final.lean`) and `zeroKnowledge_deployed_whir` (`ZK/ProverBridge.lean`, WHIR's honest prover as the
-  renderer), with the prover-failure term (`E2ECompleteness.hnone_deployed`, `< 2^-162`) and the prover's
-  permutation budget (`hprover_whir`) proved. `ζ Q ≈ 2^-113` for `Q ≤ 2^126`, dominated by the Fiat–Shamir
-  freshness term `2^-113` (`6 Q'(c + Q')/2^256 ≈ 2^-113.4` for the honest prover's `Q' = 2^24 + 2^70` oracle
-  operations, worst-case grinding counted, and `c = 2^19` public rows); the other terms are `epsHV = 2^-165 +
-  2^-125 + 2/2^192` (bad challenges, degenerate scales and masks), `< 2^-162` (the prover makes no proof),
-  `2^-2200` (unopened leaves) and `(Qp + 2^23 + Q)²/2^508 ≤ 2^-256` (the permutation). Remaining: `CoreWhir`
-  (being proved: at a fixed permutation, the Statement's prover's proof is `fmt` of the skeleton's), then one
-  theorem with no hypothesis; and the simulator fully computable (its tables are computed,
-  `QuotientZk/Instance/Builder.lean`; `sigmaAtD` and `deployedSimV` are still `noncomputable`). Details: "Zero
-  knowledge end to end", below.
+  exactly the calldata of a proof that `PcsQuotient.verify` accepts. So the contract runs the verifier the three
+  theorems above are about, up to the tested links below; their probabilities are over a random permutation and
+  do not formally transfer to the real Keccak-f[1600] ("Scope", below).
 
 **What is trusted.**
 
 - The Lean kernel and the three standard axioms.
 - **The models**: Keccak-f[1600] is one random permutation, and Keccak-256 is its sponge; every hash of the protocol
   is over that one π (the chain, the Merkle trees, the openings' duplex, the circuit's commitment), and the relation
-  is over the deployed Keccak-256. The prover's randomness is uniform; as deployed, the masks are a Keccak-256 KDF
-  of a 32-byte OS seed and the padding is ChaCha12, so deployed zero knowledge is computational in that generator.
+  is over the deployed Keccak-256. The prover's randomness is uniform. As deployed (`Randomness::derive`,
+  `crates/quotient/src/protocol.rs`): a key is Keccak-256 of a tag, a 32-byte OS seed, the transcript's label (the
+  circuit's commitment, the statement) and a digest of the witness's cells; the masks are the words of
+  Keccak-256(tag ‖ key ‖ k), `k = 0, 1, 2`; the padding seed is Keccak-256(tag ‖ key), each table's seed is
+  derived from it (`table_seed`), and each lane's padding is ChaCha12 keyed by Keccak-256(table seed ‖ lane).
+  Deployed zero knowledge is therefore computational in that generator; completeness holds for every coins.
+- **Scope**: the three theorems are about the Statement's `verifyWith` in the random-permutation model; the EVM
+  theorem holds at the real Keccak-f[1600]. They do not formally compose: a probability over a random
+  permutation does not transfer to a fixed hash.
 - **mumbai's definitions** that the Statement reuses: Keccak-256 and Keccak-f[1600], the random-permutation model,
   the WHIR verifier `verifyStackedOpening` (mumbai tests it against leanVM's), its prover's pieces, the list decoder.
 - **Tested, not proved**:
   - the Statement's definitions are the Rust (`Statement/PcsQuotientTest/Differential.lean`: reductions at `2^16`
-    to `2^23` rows, whole proofs honest and tampered at `2^17` rows, and at `2^22` in the soundness review, the
-    circuit commitments, the prover's streams; the Rust's pruned Merkle paths expanded to the Statement's full
-    ones);
+    to `2^23` rows, whole proofs honest and tampered verified at `2^17` rows, and at `2^22` in the soundness
+    review, the circuit commitments; the Rust's pruned Merkle paths expanded to the Statement's full ones);
+  - the Statement's prover against the Rust's: the reduction's stream of nine scalars, at `2^17` rows on a small
+    circuit only (the openings are not compared); for zero knowledge, the Lean skeleton, which `coreD` relates to
+    the Statement's prover, makes the Rust prover's queries and proof byte for byte at `2^17` rows
+    (`crates/quotient/tests/skel_trace.rs`);
   - the EVM bytecode computes the recorded graph (`crates/evm`'s parity tests); `FIELD_MUL` and `KECCAK256` are
     the Lean operations (`mulE` is proved to be `F192`'s product; the Rust's `F192` arithmetic by test vectors);
   - the `PCS_OPEN` mock (`crates/evm/src/machine.rs`) is the Rust `opening::verify`, which is
@@ -87,8 +105,8 @@ Statement's own definitions. Every theorem below is sorry-free and depends only 
     (`PcsQuotientTest/Decoder.lean`; the soundness proof does not need it).
 - **Outside the theorems**: the `PCS_OPEN` aggregation layer, which must check all the claims of one call in one
   opening; the index root in the contract's storage (the theorems hold for whatever root is stored; a fixed owner
-  may change it). The Rust prover is not trusted for soundness; completeness and zero knowledge are about the
-  Statement's prover, whose stream is the Rust prover's by test.
+  may change it). The Rust prover is not trusted for soundness. Completeness and zero knowledge are about the
+  Statement's prover; the deployed Rust prover is trusted for completeness (the tests above are its only link).
 - **Not covered**: simulation-extractability; the Statement's own heuristic `simulator` (`ZeroKnowledge ζ`);
   `StatementBinds` (immediate, not proved in Lean).
 
@@ -99,6 +117,7 @@ Statement's own definitions. Every theorem below is sorry-free and depends only 
 cd formal/EndToEnd
 lake build Soundness E2ECompleteness Evm ZK        # the end theorems; #guard_msgs checks their axioms
 lake env lean Review/E2ESoundness.lean             # the knowledge-soundness review
+lake env lean Review/E2ECompletenessReview.lean    # the completeness review
 python3 -I Review/E2ESoundnessNumbers.py           # ksBound in exact rationals
 ```
 
@@ -256,8 +275,8 @@ simOracle ζ` (`Statement/PcsQuotient/Security.lean`); `ZeroKnowledge ζ` is tha
 `simulator`, a tested heuristic that no theorem covers. **`zeroKnowledge_end`** (`EndToEnd/ZK/Main.lean`,
 library `ZK`; `propext`, `Classical.choice`, `Quot.sound`, guarded in `ZK/Axioms.lean`) proves
 `ZeroKnowledgeWith s₀ (zkSimulator pp simV skelOf fmt) rpmSimOracle ζ` under named hypotheses: the simulator
-the theorem covers is in its statement. The hypotheses are discharged step by step below; one is left,
-`CoreWhir` ("The renderer and the prover bridge").
+the theorem covers is in its statement. The hypotheses are discharged step by step below;
+**`zeroKnowledge_closed`** (`ZK/CoreMain.lean`) has none.
 
 **The simulator** (`zkSimulator`, `ZK/With.lean`; `rpmSimulator`, `rpmSimOracle`, `ZK/Simulator.lean`; compiled
 definitions). It reads the statement and public data, never the witness: `pp stmt`, the skeleton model's public
@@ -333,18 +352,17 @@ F1's completeness passed to the tables, `ZK/FactsClaims.lean`: `hTWD`, `hTQD`) a
 Gaussian elimination in `deployedRep`'s coordinates); its wiring value (`sigmaAtD`, `P₀D.sigmaPoly.eval`) and
 `deployedSimV` are still `noncomputable` (being made computable).
 
-**The renderer and the prover bridge** (`ZK/ProverBridge*.lean`, `ZK/Budget.lean`). With WHIR's honest prover as
-the renderer (`whirRenderer`), `proverBridge_whir` gives `ProverBridge` at `εR = δ` from **`CoreWhir`** (a
-statement about programs at a fixed permutation: whenever the Statement's prover makes a proof, `fmt` makes it of
-the skeleton's) and `hnone` (the prover makes no proof with probability at most `δ`, for every coins);
-**`zeroKnowledge_deployed_whir`** is the end theorem with them. Proved: `hnone` at `δNone < 2^-162`
-(`E2ECompleteness.hnone_deployed`); the budget `Qp = 12 · (2^24 + 2^70)` (`hprover_whir`); toward `CoreWhir`, the
-duplex and grinding (`ProverBridgeDuplex.lean`), the trees and the expansion of the pruned multiproofs
-(`ProverBridgeMerkle.lean`). **Remaining**: `CoreWhir` (being proved), then the theorem with no hypothesis. The
-bound is then `δNone + 2^-113 + epsHV + 2^-2200 + (Qp + 2^23 + Q)² / 2^508 ≈ 2^-113` for `Q ≤ 2^126`, its
-largest term Fiat–Shamir freshness (`fsFresh_setup_deployed_bits`: `6 Q'(c + Q')/2^256 + 6 (c + Q') 2^-191 +
-c 2^-2368`, `Q' = 2^24 + 2^70` the skeleton's operations with worst-case grinding, `c = 2^19` the setup's public
-rows).
+**The prover bridge's parts and the bound** (`ZK/ProverBridge*.lean`, `ZK/Budget.lean`, `ZK/CoreBad.lean`).
+With WHIR's honest prover as the renderer (`whirRenderer`), `ProverBridge` follows from a deterministic core at
+a fixed permutation and a bound on `badProb`, the probability that the prover makes no proof or meets degenerate
+`α, β` (`proverBridge_of_detG`). Proved: `badProb ≤ deltaNone < 2^-162` (`hbad_deployed`, from completeness's
+staged run; `E2ECompleteness.hnone_deployed` for no proof alone); the prover's budget `Qp = 12 · (2^24 + 2^70)`
+calls of π (`hprover_whir`); the duplex and grinding (`ProverBridgeDuplex.lean`), the trees and the expansion of
+the pruned multiproofs (`ProverBridgeMerkle.lean`). The bound is then `ζ Q = deltaNone + 2^-113 + epsHV +
+2^24 (2^24 + 2^70 + 2^23 + Q) 2^-2368 + 2^48 2^-2368 + (Qp + 2^23 + Q)² / 2^508 ≈ 2^-113` for `Q ≤ 2^126`
+(`zkBoundEnd_le`), its largest term Fiat–Shamir freshness (`fsFresh_setup_deployed_bits`: `6 Q'(c + Q')/2^256 +
+6 (c + Q') 2^-191 + c 2^-2368`, `Q' = 2^24 + 2^70` the skeleton's operations with worst-case grinding,
+`c = 2^19` the setup's public rows).
 
 **Rendered by WHIR's honest prover** (`zeroKnowledge_final`, `ZK/CoreEnd.lean`): the Statement's
 `ZeroKnowledgeWith` at `zkBoundEnd ((2^24 + 2^70)·12) fmtBudget (· ↦ deltaNone)` (`deltaNone < 2^-162`) for
@@ -459,9 +477,13 @@ opening, prover's and verifier's, starts its own duplex at a zero capacity). **T
 `completeness_deployed_cost_rej`, proved**: `RejectGood (3 · 2^-277)` (`Grinding.lean`, `rejectGood_deployed`: in
 the two-call random-oracle model the run is rejected at non-degenerate challenges with probability at most
 `3 · 2^-277`; the Statement's prover is accepted at non-degenerate challenges when its proofs of work succeed, the
-prover bridge `Prover*.lean`, with mumbai's proof-of-work potential for the openings' grinding) and the block count
-(`Cost.lean`, `hcost_deployed`: at most `2^48` block calls, in fact fewer than `2^47`). So **`completeness_end`**
-(`Done.lean`): `PcsQuotient.Completeness deltaDeployed`, no hypothesis.
+prover bridge `Prover*.lean`, with mumbai's proof-of-work potential over the whole run's log: the grinding fails
+with probability below `2^-304`, `grinding_le`, within the stated `3 · 2^-277`; not `formal/Completeness`'s
+per-opening `ours_romComplete`) and the block count (`Cost.lean`, `hcost_deployed`: at most `2^48` block calls;
+exactly `114 098 677 826 653 < 2^47`, the review's `hcost_exact`). So **`completeness_end`** (`Done.lean`):
+`PcsQuotient.Completeness deltaDeployed`, no hypothesis, `deltaDeployed ≈ 2^-163.91`. The review
+(`Review/E2ECompletenessReview.lean`) adds `completeness_every_coins`: the same `δ` for every fixed value of the
+coins.
 
 ## The port to this protocol (F1)
 

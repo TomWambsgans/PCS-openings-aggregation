@@ -60,8 +60,11 @@ layers, with an explicit `δ`:
   prover makes no proof with probability at most `deltaNone < 2^-162` (the prover alone, staged:
   the degenerate challenges, the grinding, the transfer from the random permutation).
 
-What stays a hypothesis: the block count of the deployed staged run (`2^48`, `Common.QueryCostAtMost
-… hashBlocks`). See the completeness section of `formal/README.md`.
+* `Cost.lean`: **`hcost_deployed`**, the block count of the deployed staged run (`2^48`,
+  `Common.QueryCostAtMost … hashBlocks`; the count is `114 098 677 826 653 < 2^47`).
+* `Done.lean`: **`completeness_end`**, `PcsQuotient.Completeness deltaDeployed` with no hypothesis.
+
+Nothing stays a hypothesis. See the completeness section of `formal/README.md`.
 -/
 
 /-- info: 'E2ECompleteness.challengeOf_regular' depends on axioms: [propext, Classical.choice, Quot.sound] -/
