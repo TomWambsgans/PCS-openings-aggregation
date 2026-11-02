@@ -3,6 +3,7 @@
 module
 
 public import UniStatement.Claims
+public import UniStatement.Flock
 
 /-!
 # The stacks (`stacks.rs`, SPEC.md §3) and a claim's weight on them
@@ -16,8 +17,12 @@ column of `2^v` words sits in an aligned block at `offset` (largest first, ties 
 **A claim's weight at a stack point** `r` (`weight_at`): each term's `eq` on its column's blocks, `eq` of the
 (twisted) point on the block's own coordinates, times the block's selector on the coordinates above,
 up to `r`'s length (the batch's point may be longer than the stack: the stack is zero-extended, and so is
-its weight). The Rust caches the `eq` products and the twisted points (`EqCache`); the values are the
-same, computed here directly but for the twisted points, which are built once per point.
+its weight). The Rust caches the `eq` products and the twisted points (`EqCache`), and (iteration 2, lever 1c)
+shares work: a column's limbs share its row, terms on one row add their parts before the row multiplies them,
+and `q_flock`'s slots share their instance coordinates' `eq`; the values are the same (field arithmetic is
+exact), computed here directly term by term but for the twisted points, which are built once per point.
+**The ring-switch term** (iteration 2, lever 1a: twist `ringTwist`, the main line's one term for the whole
+weight `Φ(eq(p, ·))`) is evaluated by the map in tower order, `Flock.towerWeightAt`.
 -/
 
 @[expose] public section
@@ -43,6 +48,9 @@ def StackLayout.new (columns : List (Column × ℕ × Bool)) : StackLayout :=
     (acc.1.push (column, limb, vars, acc.2), acc.2 + 2 ^ vars)) (#[], 0)
   ⟨max (log2Ceil (max offset 2)) 15, blocks.toList⟩
 
+/-- `StackLayout::words`: the words the blocks fill (`placed`, a layout word's last seven bytes). -/
+def StackLayout.words (l : StackLayout) : ℕ := l.blocks.foldl (fun acc (_, _, vars, _) ↦ acc + 2 ^ vars) 0
+
 /-- `limbs(column)`: the column's blocks, as (limb, variables, offset). -/
 def StackLayout.limbs (l : StackLayout) (column : Column) : List (ℕ × ℕ × ℕ) :=
   l.blocks.filterMap fun (c, limb, vars, offset) ↦ if c == column then some (limb, vars, offset) else none
@@ -64,16 +72,32 @@ def selector (r : List E) (fromVar offset : ℕ) : E :=
 def twistedPoints (point : List E) (maxTwist : ℕ) : Array (List E) :=
   (List.range maxTwist).foldl (fun acc _ ↦ acc.push ((acc.back?.getD point).map fun x ↦ x * x)) #[point]
 
+/-- **`RING_TWIST`** (`verifier.rs`, iteration 2): the twist of the term that stands for the whole ring-switch
+weight `Φ(eq(p, ·))` on the main line, which the batch's weight evaluates at its point by the map
+(`Flock.towerWeightAt`) rather than as 64 twisted terms. -/
+def ringTwist : ℕ := 255
+
 /-- **A combined claim's weight at the stack point `r`** (`weight_at`): every term's `eq` weight on its
-column's blocks. -/
-def weightAt (claim : Combined) (layout : StackLayout) (r : List E) : E :=
+column's blocks; the ring-switch term (twist `ringTwist`) by the map `ringMap` (iteration 2:
+`S::ring_weight`, `ring_tower::weight_at` of the point's first `vars` coordinates and of `1 + r`; `0` without
+a map, where the Rust panics). -/
+def weightAt (claim : Combined) (layout : StackLayout) (r : List E) (ringMap : Option (List E) := none) : E :=
   let points := claim.points.toArray
-  -- Every point's twisted forms, up to the largest twist its terms use.
+  let onePlusR := r.map (1 + ·)
+  -- Every point's twisted forms, up to the largest twist its terms use (but the ring-switch term's).
   let maxTwist : Array ℕ := claim.terms.foldl (fun acc (_, p, twist, _) ↦
-    acc.modify p (max twist)) (Array.replicate points.size 0)
+    if twist = ringTwist then acc else acc.modify p (max twist)) (Array.replicate points.size 0)
   let twisted : Array (Array (List E)) :=
     Array.ofFn (n := points.size) fun p ↦ twistedPoints (points.getD p.val []) (maxTwist.getD p.val 0)
   claim.terms.foldl (fun total (column, p, twist, coefficient) ↦
+    if twist = ringTwist then
+      (layout.limbs column).foldl (fun total (limb, vars, offset) ↦
+        let row := match ringMap with
+          | some map => Flock.towerWeightAt ((points.getD p []).take vars) (onePlusR.take vars) map
+          | none => 0
+        let scale := if limb = 0 then coefficient else coefficient * limbBasis.getD limb 0
+        total + scale * (row * selector r vars offset)) total
+    else
     let point := (twisted.getD p #[]).getD twist []
     -- `q_flock`'s word `slot + 256 · instance`: the slot's bits, then the instance's coordinates.
     let (column, row, rowLen) : Column × List E × ℕ := match column with

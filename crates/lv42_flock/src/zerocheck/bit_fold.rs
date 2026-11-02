@@ -53,7 +53,8 @@ impl BitFold {
             weights.len() == 8 * n_chunks && n_chunks.is_power_of_two() && (1..=128).contains(&n_chunks),
             "a row is 1 to 128 bytes, a power of two"
         );
-        if n_chunks < 8 {
+        // The GFNI kernel's transposes hold for any row of 1 to 128 bytes; the byte tables are the portable kernel.
+        if n_chunks < 8 && !GFNI {
             return Self {
                 n_chunks,
                 imp: None,
@@ -441,6 +442,12 @@ pub(crate) mod gfni {
                     let g0 = _mm512_gf2p8affine_epi64_epi8::<0>(pair[0], _mm512_set1_epi64(m[0][o] as i64));
                     let g1 = _mm512_gf2p8affine_epi64_epi8::<0>(pair[1], _mm512_set1_epi64(m[1][o] as i64));
                     acc[o] = _mm512_ternarylogic_epi64::<0x96>(acc[o], g0, g1);
+                }
+            }
+            // A row of one byte is one register (this repository's addition).
+            if CHUNKS == 1 {
+                for o in 0..OUT_BYTES {
+                    acc[o] = _mm512_gf2p8affine_epi64_epi8::<0>(regs[0], _mm512_set1_epi64(matrices[0][o] as i64));
                 }
             }
 

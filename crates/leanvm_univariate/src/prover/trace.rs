@@ -46,19 +46,26 @@ pub fn placement(rows: u64, r: usize) -> Vec<usize> {
     to
 }
 
-/// `data` cut into `to.len()` equal blocks, block `i` moved to `to[i]`.
-pub fn permute_blocks<T: Copy + Send + Sync>(data: &[T], to: &[usize]) -> Vec<T> {
+/// `data` cut into `to.len()` equal blocks, block `i` moved to `to[i]`, in place: only the blocks that move are
+/// copied out and back (a placement leaves the first coset's, half a table or more, where they are).
+pub fn permute_blocks<T: Copy + Send + Sync>(data: &mut [T], to: &[usize]) {
     let block = data.len() / to.len();
     assert_eq!(block * to.len(), data.len());
-    let mut from = vec![0usize; to.len()];
-    for (i, &p) in to.iter().enumerate() {
-        from[p] = i;
+    let moved: Vec<usize> = (0..to.len()).filter(|&i| to[i] != i).collect();
+    // The moved blocks, in `moved`'s order, then where each destination's block comes from in that buffer.
+    let mut temp: Vec<T> = Vec::with_capacity(moved.len() * block);
+    for &i in &moved {
+        temp.extend_from_slice(&data[i * block..(i + 1) * block]);
     }
-    let mut out = data.to_vec();
-    parallel::chunks_mut(&mut out, block, |p, chunk| {
-        chunk.copy_from_slice(&data[from[p] * block..(from[p] + 1) * block]);
+    let mut source = vec![usize::MAX; to.len()];
+    for (j, &i) in moved.iter().enumerate() {
+        source[to[i]] = j;
+    }
+    parallel::chunks_mut(data, block, |p, chunk| {
+        if source[p] != usize::MAX {
+            chunk.copy_from_slice(&temp[source[p] * block..(source[p] + 1) * block]);
+        }
     });
-    out
 }
 
 fn words(bytes: &[u8]) -> Vec<F64> {
@@ -151,17 +158,18 @@ impl Trace {
             let to = placement(self.rows[t], self.heights[t]);
             let rows = self.rows[t] as usize;
             let counters: Vec<usize> = table.count_columns().collect();
-            let columns = std::mem::take(&mut self.tables[t]);
-            self.tables[t] = parallel::map_collect(columns.len(), |c| {
-                let column = &columns[c];
-                let mut placed = vec![F64::ZERO; column.len()];
-                for (i, &p) in to.iter().enumerate() {
-                    placed[p] = if i >= rows && counters.contains(&c) { F64::ONE } else { column[i] };
+            let moved: Vec<(usize, usize)> = to.iter().enumerate().filter(|(i, p)| i != *p).map(|(i, &p)| (i, p)).collect();
+            parallel::for_each_mut(&mut self.tables[t], |c, column| {
+                if counters.contains(&c) {
+                    column[rows..].fill(F64::ONE);
                 }
-                placed
+                let values: Vec<F64> = moved.iter().map(|&(i, _)| column[i]).collect();
+                for (&(_, p), v) in moved.iter().zip(values) {
+                    column[p] = v;
+                }
             });
             if t == OP_BLAKE2S {
-                self.qflock = permute_blocks(&self.qflock, &to);
+                permute_blocks(&mut self.qflock, &to);
             }
         }
         self.placed = true;

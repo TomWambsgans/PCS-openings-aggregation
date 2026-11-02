@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import UniStatement.Run
 import UniStatement.Mapping
+import UniStatement.Opening
 
 /-!
 # The differential runner
@@ -11,9 +12,14 @@ compiled evaluation, not the kernel) on every vector's calldata, compared with t
 **every value it states**: the verdict (stream error or not, and which), every challenge drawn, every value
 it requires to be zero, the accept bit, the number of relations, each stack's variables, every opening
 handed to `PCS_OPEN` (point claims with their points and values, or weighted claims with their points,
-terms and values, and the bit-slice claim) and Flock's claims on `A0`, `B0`. First the self-tests: the
-defining properties of the domain's constants and the heap (the Rust's unit tests), the mapping's transform
-pair, and the bridge to Lv42's instance (`lv42Bridge`). It prints one line per test and per vector and a
+terms and values, and the bit-slice claim) and Flock's claims on `A0`, `B0`; and (iteration 2) the setup's
+constants (the five layout words, the contract's IV from the program's), the row counts the stream announces,
+the run's layouts against the shape's (`layoutsOf`), and on the real prover's proofs every `PCS_OPEN` input
+the contract calls with, word for word (`pcsCalls`). First the self-tests: the defining properties of the
+domain's constants and the heap (the Rust's unit tests), iteration 2's (the fixed cosets, the tower,
+`rowPosition`), the mapping's transform pair, and the bridge to Lv42's instance (`lv42Bridge`). On the honest
+proofs that carry their stacks, the witness read back as Lv42's (`honestChecks`). It prints one line per test and
+per vector and a
 summary, and throws (so `lean` exits with an error) on any failure, disagreement or unreadable vector. The
 interpreter runs the compiled definitions' IR (`#eval`); no kernel reduction of the verifier.
 -/
@@ -71,6 +77,12 @@ def hexBytes (s : String) : Except String (Array UInt8) := do
     | some a, some b => out := out.push (UInt8.ofNat (16 * a + b))
     | _, _ => throw "not hex"
   return out
+
+/-- Lowercase hex of bytes. -/
+def hexOf (b : Array UInt8) : String :=
+  String.join (b.toList.map fun x ↦
+    let d (n : ℕ) : Char := if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
+    String.ofList [d (x.toNat / 16), d (x.toNat % 16)])
 
 def eHex (x : E) : String :=
   s!"{String.ofList (Nat.toDigits 16 (x.limb 0).lane.toNat)}:{String.ofList (Nat.toDigits 16 (x.limb 1).lane.toNat)}:{String.ofList (Nat.toDigits 16 (x.limb 2).lane.toNat)}"
@@ -144,6 +156,15 @@ structure Vector' where
   /-- An honest proof's committed stacks (`STACK <commitment> <n> <words>`) and the bytecode's tuples. -/
   committed : List (String × Array K)
   bytecode : Option (Array K)
+  /-- The setup (iteration 2, F2): the program's IV, the contract's IV derived from it at the reference roots,
+  the five layout words. -/
+  programIv : Option (Array UInt8)
+  contractIv : Option (Array UInt8)
+  layoutWords : List (Array UInt8)
+  /-- The row counts the stream announces (iteration 2, F1), as the Rust reads them. -/
+  counts : Option (List ℕ)
+  /-- A real proof's `PCS_OPEN` inputs, as the contract calls it (`PCSOPEN <hex>`, prover2's vectors). -/
+  calls : List (Array UInt8)
 
 /-- The tokens of a line. -/
 def tokens (line : String) : List String := (line.splitOn " ").filter (· ≠ "")
@@ -205,8 +226,16 @@ def parseVector (lines : List String) : Except String Vector' := do
   let bytecode ← match byKey "BYTECODE" with
     | some ts => some <$> words ts
     | none => pure none
+  let programIv ← (byKey "PROGRAMIV").mapM fun ts ↦ hexBytes (ts.headD "")
+  let contractIv ← (byKey "CONTRACTIV").mapM fun ts ↦ hexBytes (ts.headD "")
+  let layoutWords ← match byKey "LAYOUTWORDS" with
+    | some (_ :: ws) => ws.mapM hexBytes
+    | _ => pure []
+  let counts := (byKey "COUNTS").map fun ts ↦ (ts.drop 1).filterMap String.toNat?
+  let calls ← ((lines.map tokens).filter (·.head? == some "PCSOPEN")).mapM fun ts ↦ hexBytes ((ts.drop 1).headD "")
   pure ⟨id, shape, flock, claims, kind, iv, publicInput, stream, error, challenges, zeros, nonzeros,
-    accept, relations, stackVars, openings, matrices, shapeLine, committed, bytecode⟩
+    accept, relations, stackVars, openings, matrices, shapeLine, committed, bytecode, programIv, contractIv,
+    layoutWords, counts, calls⟩
 
 /-- The configuration a vector names. -/
 def blake2sNamed : String → Option Blake2s
@@ -240,13 +269,26 @@ def sameOpening (lean : Commitment × Opening) (rust : RustOpening) : Bool :=
 
 /-- The first disagreement between the Lean run and the Rust's outcome, if any. -/
 def compare (v : Vector') : Except String (Option String) := do
-  let some (shape, rows) := (v.shapeLine.map fun (lm, lb, rows) ↦ (shapeWith lm lb rows, rows)) <|>
+  let some (shape, _) := (v.shapeLine.map fun (lm, lb, rows) ↦ (shapeWith lm lb rows, rows)) <|>
     shapeNamed v.shape | throw s!"unknown shape {v.shape}"
-  if !decide shape.Valid then return some s!"the shape is not valid (REVIEW-M1 F5): {repr shape}"
-  if !decide (shape.RowsFit rows) then return some "the rows do not fit the shape"
   let some blake2s := blake2sNamed v.flock | throw s!"unknown flock {v.flock}"
   let some mode := modeNamed v.claims | throw s!"unknown claims {v.claims}"
-  let o := run shape rows v.iv.toList v.publicInput.toList v.stream blake2s mode
+  if !(shape.heights.length == 6 && shape.validate (blake2s != .omitted)) then
+    return some s!"the shape is not valid (F5): {repr shape}"
+  -- The setup (F2): the layout words and the contract's IV, the Lean's against the Rust's.
+  let words := layoutWords shape
+  if words.map List.toArray != v.layoutWords then
+    return some s!"layout words: Lean {words.map fun w ↦ hexOf w.toArray}, Rust {v.layoutWords.map hexOf}"
+  match v.programIv, v.contractIv with
+  | some p, some c =>
+    let iv := contractIv shape p.toList referenceRoots
+    if iv.toArray != c then return some s!"contract IV: Lean {hexOf iv.toArray}, Rust {hexOf c}"
+  | _, _ => return some "no PROGRAMIV or CONTRACTIV line"
+  -- The row counts the stream announces (F1).
+  if let some counts := v.counts then
+    if (rowsOf v.stream).take counts.length != counts then
+      return some s!"counts: Lean {rowsOf v.stream}, Rust {counts}"
+  let o := run shape v.iv.toList v.publicInput.toList v.stream blake2s mode
   let leanError := match o.result with
     | .ok _ => none
     | .error e => some e.name
@@ -274,6 +316,18 @@ def compare (v : Vector') : Except String (Option String) := do
       | some m, some (pt, a, b) => m.point == pt && m.a == a && m.b == b
       | _, _ => false
     if !sameMatrices then return some "matrices differ"
+    -- The stacks' layouts are the shape's alone (layoutsOf, the Rust's layouts(shape)): the run's agree.
+    let sameLayouts := (r.layouts.zip (layoutsOf shape)).all fun ((c, l), (c', l')) ↦
+      c == c' && l.vars == l'.vars && l.blocks == l'.blocks
+    if !(sameLayouts && r.layouts.length == (layoutsOf shape).length) then
+      return some "the run's layouts are not layoutsOf the shape"
+    -- A real proof's PCS_OPEN inputs (the contract's), word for word: the Lean's calls at the reference roots.
+    if !v.calls.isEmpty then
+      let lean := (pcsCalls shape referenceRoots r).map List.toArray
+      if lean.length != v.calls.length then
+        return some s!"PCS_OPEN calls: Lean {lean.length}, the contract {v.calls.length}"
+      for (i, (a, b)) in (List.range lean.length).zip (lean.zip v.calls) do
+        if a != b then return some s!"PCS_OPEN call {i}: Lean {hexOf a}, the contract {hexOf b}"
     return none
 
 /-! ### Honest proofs: the witness read back as Lv42's stack -/
@@ -396,12 +450,16 @@ def honestChecks (v : Vector') (shape : Shape) (rows : List ℕ) (r : Reduced) :
 
 /-- `honestChecks` on a vector that carries its witness, after the Lean run on it. -/
 def honestReport (v : Vector') : Except String (List (String × Bool)) := do
-  let some (shape, rows) := v.shapeLine.map fun (lm, lb, rows) ↦ (shapeWith lm lb rows, rows)
+  let some (shape, tableRows) := v.shapeLine.map fun (lm, lb, rows) ↦ (shapeWith lm lb rows, rows)
     | throw "an honest vector names its shape"
   let some blake2s := blake2sNamed v.flock | throw s!"unknown flock {v.flock}"
   let some mode := modeNamed v.claims | throw s!"unknown claims {v.claims}"
-  match (run shape rows v.iv.toList v.publicInput.toList v.stream blake2s mode).result with
-  | .ok r => pure (honestChecks v shape rows r)
+  -- The row counts are the stream's (F1): the honest prover announces the execution's.
+  let rows := rowsOf v.stream
+  let announced := ("the stream announces the execution's row counts, which fit the shape (RowsFit)",
+    rows == tableRows && decide (shape.RowsFit rows))
+  match (run shape v.iv.toList v.publicInput.toList v.stream blake2s mode).result with
+  | .ok r => pure (announced :: honestChecks v shape rows r)
   | .error e => throw s!"the honest proof's run: {e.name}"
 
 /-- Split the file into vectors. -/
@@ -475,6 +533,66 @@ def lv42Bridge : List (String × Bool) :=
       (s!"Lv42 bridge, table {j.val}: counter columns", countsAgree),
       (s!"Lv42 bridge, table {j.val}: constraints", constraintsAgree)]
 
+/-- **Iteration 2's unit tests on the Lean definitions**: `domain.rs`'s `fixed_cosets_from_the_bits` and
+`prefix_vanishing_from_the_bits`, `ring_tower.rs`'s `the_leaves_are_the_tower_coordinates` and
+`target_coefficients_and_weight_are_the_maps`, and the mapping's row order (`rowPosition` a bijection onto the
+active cosets then the other rows). -/
+def iteration2Tests : List (String × Bool) :=
+  let ws := xorshift 11 400
+  let eOf (k : ℕ) : E := eNew (ws.getD k 0) (ws.getD (k + 1) 0) (ws.getD (k + 2) 0)
+  -- The fixed cosets: the active positions are `rows` of them, `isActive` agrees, and Z_act from the bits
+  -- vanishes exactly on them; it is nonzero at a random point.
+  let cosets := [1, 3, 6].all fun r ↦ (List.range (2 ^ r + 1)).all fun rows ↦
+    let positions := activePositions rows r
+    let bits := (List.range (r + 1)).map (bitE rows)
+    positions.length == rows &&
+      ((List.range (2 ^ r)).all fun i ↦
+        let active := positions.contains i
+        let z := activeVanishingFromBits (digits (pointE i) (r + 1)) bits r
+        isActive i rows r == active && (z == 0) == active) &&
+      activeVanishingFromBits (digits (eOf (r + rows)) (r + 1)) bits r != 0
+  -- From the count's bits, the prefix vanishing polynomial is the one from the count, up to 2^r included.
+  let prefixBits := [2, 5, 12, 18].all fun r ↦
+    [1, 2 ^ (r - 1) + 1, 2 ^ r - 1, 2 ^ r, (ws.getD r 0).toNat % 2 ^ r + 1].all fun rows ↦
+      let t := eOf (3 * r)
+      let bits := (List.range (r + 1)).map (bitE rows)
+      prefixVanishingFromBits t bits == prefixVanishing (digits t (r + 2)) rows
+  -- The row order: a bijection of [0, 2^r), the executed rows onto the active cosets in order.
+  let positionsOk := [(0, 3), (1, 3), (5, 3), (8, 3), (3, 4), (9, 4), (17, 5), (32, 5), (0, 0), (1, 0)].all
+    fun (count, r) ↦
+      let images := (List.range (2 ^ r)).map (rowPosition count r)
+      images.mergeSort (· ≤ ·) == List.range (2 ^ r) &&
+        images.take count == activePositions count r
+  -- The tower: x^i = Σ_w ε_(i,w) Π_j θ_j^(w_j), the leaves its coordinates; 1,938 slice terms (SPEC.md §13).
+  let basis (w : ℕ) : E :=
+    (List.range Flock.towerStages).foldl (fun acc j ↦ if w.testBit j then acc * Flock.towerTheta.getD j 0 else acc) 1
+  let leaves := Flock.towerLeaves
+  let coordinates := (List.range 64).all fun i ↦
+    (List.range 64).foldl (fun acc w ↦ if (leaves.getD w 0).testBit i then acc + basis w else acc) 0 == epow gen i
+  let terms := leaves.foldl (fun acc mask ↦ acc + (List.range 64).countP mask.testBit) 0
+  -- The map's coefficients, its target, its weight at a point (`ring_tower`'s own identities).
+  let map := (List.range 6).map fun j ↦ eOf (10 + 3 * j)
+  let d := Flock.towerCoefficients map
+  let coefficientsOk := (List.range 4).all fun q ↦
+    let a := eOf (40 + 3 * q)
+    (List.range 64).foldl (fun acc k ↦ acc + d.getD k 0 * sqn a k) 0 == Flock.towerRingMap a map
+  let slices := (List.range 64).map fun i ↦ eOf (60 + 3 * i)
+  let targetOk := Flock.towerTarget slices map == polyEval (slices.map fun x ↦ Flock.towerRingMap x map) gen
+  let point := (List.range 5).map fun n ↦ eOf (260 + 3 * n)
+  let r := (List.range 5).map fun n ↦ eOf (280 + 3 * n)
+  let direct := (List.range 64).foldl (fun acc k ↦ acc + d.getD k 0 * eqEval (point.map fun p ↦ sqn p k) r) 0
+  let weightOk := Flock.towerWeightAt point (r.map (1 + ·)) map == direct
+  -- leanVM's order is another map: the tower's target differs from it on the same slices (a control).
+  let control := Flock.towerTarget slices map != polyEval (slices.map fun x ↦ Flock.ringMap x map) gen
+  [("fixed cosets: positions, is_active, Z_act from the bits vanishes exactly there", cosets),
+    ("prefix vanishing from the bits = from the count", prefixBits),
+    ("rowPosition: a bijection, executed rows onto the active cosets", positionsOk),
+    (s!"tower: the leaves are x^i's coordinates ({terms} slice terms)", coordinates && terms == 1938),
+    ("tower: the coefficients are the map's", coefficientsOk),
+    ("tower: the target is sum_i x^i Phi(s_i)", targetOk),
+    ("tower: the weight at a point is the twisted sum", weightOk),
+    ("tower control: leanVM's order gives another target", control)]
+
 /-- The Rust's unit tests of `domain.rs` and `heap.rs`, and the mapping's transform pair, on the Lean
 definitions: each `(name, holds)`. -/
 def selfTests : List (String × Bool) :=
@@ -530,7 +648,7 @@ def selfTests : List (String × Bool) :=
     ("prefix/suffix vanishing: their zeros", activePadding),
     ("prefix * suffix = w_r; vanishing ratio", product), ("heap layout at the reference workload", heapOk),
     ("mapping: basisValue (bCoefficients v) = v", transform),
-    ("mapping: the verifier's reading at omega_x is the value", reading)]
+    ("mapping: the verifier's reading at omega_x is the value", reading)] ++ iteration2Tests
 
 def main : IO Unit := do
   let tests := selfTests ++ lv42Bridge

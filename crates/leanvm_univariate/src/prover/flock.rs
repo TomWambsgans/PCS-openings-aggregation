@@ -70,16 +70,26 @@ impl FlockWitness {
     /// satisfies the R1CS alone, so the witness stays one.
     pub fn place(&mut self, to: &[usize]) {
         assert_eq!(to.len() << 8, self.z.len(), "one instance a row");
-        self.z = super::trace::permute_blocks(&self.z, to);
-        self.a = super::trace::permute_blocks(&self.a, to);
-        self.b = super::trace::permute_blocks(&self.b, to);
+        super::trace::permute_blocks(&mut self.z, to);
+        super::trace::permute_blocks(&mut self.a, to);
+        super::trace::permute_blocks(&mut self.b, to);
         // Stripe `g` byte `j` holds bit `j` of instances `8g..8g + 8`, bit `r` instance `8g + r`
-        // (`lv42_flock::lincheck`'s layout): an 8×8 bit transpose of the eight instances' byte `j / 8`.
+        // (`lv42_flock::lincheck`'s layout): an 8×8 bit transpose of the eight instances' byte `j / 8`. Only the
+        // stripes an instance moved into change.
         let block_words = 1usize << (BLAKE2S_R1CS_LOG_SIZE - 6);
         let stripe = 1usize << BLAKE2S_R1CS_LOG_SIZE;
         assert_eq!(self.z_lincheck.len(), (to.len() / 8) * stripe, "one stripe per eight instances");
+        let mut changed = vec![false; to.len() / 8];
+        for (i, &p) in to.iter().enumerate() {
+            if p != i {
+                changed[p / 8] = true;
+            }
+        }
         let z = &self.z;
         parallel::chunks_mut(&mut self.z_lincheck, stripe, |g, out| {
+            if !changed[g] {
+                return;
+            }
             for byte in 0..stripe / 8 {
                 let word = (0..8).fold(0u64, |w, r| {
                     let instance = &z[(8 * g + r) * block_words..(8 * g + r + 1) * block_words];
@@ -129,6 +139,8 @@ pub struct FlockOut {
     /// The stream's length right after the slices.
     pub slices_end: usize,
     pub matrices: Matrices,
+    /// The zerocheck and the lincheck's seconds (the rest of Flock's phase is the matrices' tables).
+    pub reduction_secs: f64,
 }
 
 pub enum Matrices {
@@ -183,7 +195,35 @@ fn sliced(k: usize, low: &[E], chi_in: &[E], chi_in_prime: &[E], alpha: E) -> Ve
 }
 
 /// `Σ_i Π_t tables[t][i]` by a sumcheck, low bit first, each variable of degree 2: messages `(c0, c2)`.
-fn product_sum(writer: &mut KeccakWriter, mut tables: Vec<Vec<E>>, rounds: usize) -> Vec<E> {
+fn product_sum(writer: &mut KeccakWriter, tables: Vec<Vec<E>>, rounds: usize) -> Vec<E> {
+    product_rounds(tables, rounds, |c0, c2| {
+        writer.send(c0);
+        writer.send(c2);
+        writer.sample()
+    })
+}
+
+impl Pending {
+    /// The matrices' reduction run on its own, as the verifier's weighted mode reads it (`flock_min::verify`), at the
+    /// given round challenges instead of the chain's: its `k + 6` rounds' messages, then `a`, `b`. What
+    /// [`super::replay::Replay`] serves where the point-claim stream has none (its challenges outside the chain), so
+    /// that weighted mode's claims are an honest prover's.
+    pub fn off_chain(&self, challenges: &[E]) -> Result<Vec<E>, String> {
+        assert_eq!(challenges.len(), self.rounds());
+        let mut messages = Vec::with_capacity(2 * self.rounds() + 2);
+        let mut next = challenges.iter();
+        let point = product_rounds(self.tables.to_vec(), self.rounds(), |c0, c2| {
+            messages.extend([c0, c2]);
+            *next.next().expect("a challenge a round")
+        });
+        let (_, a, b) = self.claim(&point)?;
+        messages.extend([a, b]);
+        Ok(messages)
+    }
+}
+
+/// The product sum's rounds, each message `(c0, c2)` handed to `round`, which returns the round's challenge.
+fn product_rounds(mut tables: Vec<Vec<E>>, rounds: usize, mut round: impl FnMut(E, E) -> E) -> Vec<E> {
     let mut point = Vec::with_capacity(rounds);
     for _ in 0..rounds {
         let half = tables[0].len() / 2;
@@ -204,9 +244,7 @@ fn product_sum(writer: &mut KeccakWriter, mut tables: Vec<Vec<E>>, rounds: usize
             }
         }
         assert_eq!(coefficients[3], ZERO, "degree 2 in every variable");
-        writer.send(coefficients[0]);
-        writer.send(coefficients[2]);
-        let r = writer.sample();
+        let r = round(coefficients[0], coefficients[2]);
         point.push(r);
         for table in &mut tables {
             for i in 0..half {
@@ -229,12 +267,10 @@ pub fn prove(
     deferred: bool,
 ) -> Result<FlockOut, String> {
     let k = variant.skip;
-    if !(lv42_flock::zerocheck::skip::MIN_SKIP..=PACKING).contains(&k) || variant.slices == Slices::Claim {
-        return Err(format!(
-            "Flock {variant:?}: a prover for a skip of 3 to 6 with the slices sent (the bit-slice claim of \
-             Slices::Claim has no opening here)"
-        ));
+    if !(lv42_flock::zerocheck::skip::MIN_SKIP..=PACKING).contains(&k) {
+        return Err(format!("Flock {variant:?}: a prover for a skip of 3 to 6"));
     }
+    let sent = variant.slices != Slices::Claim;
     lv42_parallel::init();
     let setup = lv42_flock::hash::Blake2sSetup::new(witness.n_blocks);
     if setup.m() != log_n {
@@ -245,6 +281,7 @@ pub fn prove(
         samples: Vec::new(),
     };
     // leanVM's own prover at a skip of 6; the skip module's zerocheck and the lincheck at its row weights below.
+    let started = std::time::Instant::now();
     let claim = setup.prove_reduction_skip(k, &witness.z, &witness.a, &witness.b, &witness.z_lincheck, &mut chain);
     let samples = chain.samples;
     // The challenges, as the verifier draws them: the zerocheck's sampled eq coordinates, the skip's point, its
@@ -267,9 +304,16 @@ pub fn prove(
         return Err("Flock's slices are not at the point the verifier derives".into());
     }
     let slices: Vec<E> = claim.s_hat_v.iter().map(|x| E::new(x.c0, x.c1, x.c2)).collect();
+    if !sent {
+        // Extension B (`Slices::Claim`): the lincheck's slices, its last 64 scalars, are not sent; nothing was drawn
+        // since, so the chain has not absorbed them.
+        let len = writer.stream.len() - 24 * K_BITS;
+        writer.stream.truncate(len);
+    }
     let slices_end = writer.stream.len();
 
     // The matrices' reduction: Σ_(x, y) L(x) s(y) G'(x, y) over the skip's k row bits and the 6 packing bits.
+    let reduction_secs = started.elapsed().as_secs_f64();
     let g = sliced(k, row_low, chi_in, &chi_in_prime, alpha);
     let skip = lagrange_weights(1 << k, z_skip);
     let size = (1 << k) * K_BITS;
@@ -291,14 +335,17 @@ pub fn prove(
         writer.send(b);
         Matrices::Done { point, a, b }
     };
-    // The ring map's challenges.
-    for _ in 0..RING_MAP_CHALLENGES {
-        writer.sample();
+    // The ring map's challenges, if the slices were sent (without them there is no ring switch here).
+    if sent {
+        for _ in 0..RING_MAP_CHALLENGES {
+            writer.sample();
+        }
     }
     Ok(FlockOut {
         point,
         slices,
         slices_end,
         matrices,
+        reduction_secs,
     })
 }

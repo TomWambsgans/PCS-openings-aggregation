@@ -37,6 +37,21 @@ pub fn matrices() -> [(Vec<F64>, Committed); 2] {
 /// The three setup roots a contract is built with (the contract's type: its IV binds them, SPEC.md §13, F2).
 pub use crate::contract::SetupRoots;
 
+/// `F`'s root for `shape` and the program whose setup polynomials are `setup`.
+pub fn f_root(shape: &Shape, setup: &SetupPolys) -> Hash {
+    let f = f_stack(shape, setup);
+    opening::commit(&f.words, f.layout.vars, f.placed()).root
+}
+
+/// The setup roots of `shape`'s contract without committing `A0`, `B0` again: `F`'s, and the R1CS's (the same for
+/// every shape: `SetupRoots::REFERENCE`'s, which [`roots`] recomputes).
+pub fn shape_roots(shape: &Shape, setup: &SetupPolys) -> SetupRoots {
+    SetupRoots {
+        f: f_root(shape, setup),
+        ..SetupRoots::REFERENCE
+    }
+}
+
 /// The setup roots of `shape`'s contract for the program whose setup polynomials are `setup`.
 pub fn roots(shape: &Shape, setup: &SetupPolys) -> SetupRoots {
     let f = f_stack(shape, setup);
