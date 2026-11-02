@@ -242,7 +242,9 @@ kernel, which did not finish evaluating them in twenty minutes.
 * `KnowledgeSoundness ε`: the circuit (F0: `membership`'s satisfying assignments are its computation of
   Keccak-256 membership, the embedding `statementWords`), the reduction's round-by-round soundness (F1,
   with ideal commitments), WHIR's soundness for this weight on hidden layouts (F2, mumbai's `Whir/Sound` for
-  any multiaffine weight), and the composition in the model with extraction from the transcript (F4, mumbai's
+  any multiaffine weight; `formal/WhirBridge`, merged at `25d06ea`, states this opening check in mumbai's
+  verifier language and proves it sound for leanVM's transcript shape, the opening's seed form the gap), and
+  the composition in the model with extraction from the transcript (F4, mumbai's
   `common` and `lean_vm` extraction, through the hidden layout's read-back).
 * `Completeness δ`: the honest prover's claims hold (F1's completeness) and its WHIR openings are accepted
   (mumbai's completeness of its WHIR prover), with the proofs of work.
