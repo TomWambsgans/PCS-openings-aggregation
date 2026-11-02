@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Implementation.Verifier
+import Implementation.Frobenius
 
 /-!
 # The `Wire` of the deployed contract, and the graph against `Wire.verifyWith`
@@ -151,11 +152,7 @@ theorem verifyWith_iff (π : ChainProof (params hF σ) (bounds hF σ)) :
   rw [hw]
   exact decide_eq_true_iff
 
-/-- **F5: the graph is the model's verifier.** On the calldata of a model proof `π` — its
-statement's bytes, the roots `H(enc₁ g)` and `H(enc₂ R)` that `Wire.verifyWith` absorbs, its five
-values — with tables `cW`, `cQ` whose polynomials are `π`'s messages and a wiring table `cF` of `σ`:
-the contract (the graph, `run`) reaches its calls of `PCS_OPEN` with claims (`run_words`) that hold
-of `cW`, `cF`, `cQ` exactly when no `1 + w_k(t)` vanishes and the model's verifier accepts `π`. -/
+/-- The same, given that the Frobenius node is `x^(2^64)` (`frobOK` proves it). -/
 theorem graph_iff_verifyWith (hfr : FrobOK limbs) (π : ChainProof (params hF σ) (bounds hF σ))
     (cW : (Fin (22 + 1 + 1 + 1) → Bool) → F) (cF : (Fin (22 + 2) → Bool) → F)
     (hcF : ∀ x, (tablePoly cF).eval ((basis hF).point x) = (basis hF).point (σ x))
@@ -185,5 +182,59 @@ theorem graph_iff_verifyWith (hfr : FrobOK limbs) (π : ChainProof (params hF σ
   rw [hs, ← proofVals_a hF σ H idx π]
   exact run_accepts_iff hF σ H idx π.stmt (H (encW hF σ π.g)) (H (encQ hF σ π.R)) (π.v.1 0)
     (π.v.1 1) (π.v.1 2) (π.v.1 3) π.v.2 hfr cW cF hcF cQ
+
+/-- **F5: the graph is the model's verifier.** In any field `F` whose limbs are `F192`'s
+(`IsF192`), on the calldata of a model proof `π` — its statement's bytes, the roots `H(enc₁ g)` and
+`H(enc₂ R)` that `Wire.verifyWith` absorbs, its five values — with tables `cW`, `cQ` whose
+polynomials are `π`'s messages and a wiring table `cF` of `σ`: the contract (the graph, `run`)
+reaches its calls of `PCS_OPEN` with claims (`run_words`) that hold of `cW`, `cF`, `cQ` exactly when
+no `1 + w_k(t)` vanishes and the model's verifier with the deployed `Wire` accepts `π`. -/
+theorem graph_is_verifier (π : ChainProof (params hF σ) (bounds hF σ))
+    (cW : (Fin (22 + 1 + 1 + 1) → Bool) → F) (cF : (Fin (22 + 2) → Bool) → F)
+    (hcF : ∀ x, (tablePoly cF).eval ((basis hF).point x) = (basis hF).point (σ x))
+    (cQ : (Fin (22 + 2 + 1 + 1 + 1 + 1 + 1 + 1) → Bool) → F)
+    (hg : π.g.1 = witnessOfTable cW) (hR : π.R.1 = quotientsOfTable (yConst limbs) cQ) :
+    let I := proofVals hF σ H idx π
+    ((run H idx (calldataOf limbs π.stmt (H (encW hF σ π.g)) (H (encQ hF σ π.R))
+        [π.v.1 0, π.v.1 1, π.v.1 2, π.v.1 3, π.v.2])).isSome ∧
+      (mle cW (Fin.cons I.ρ (Fin.cons (I.ρ ^ 2) (claimPoint 2 (22 + 1) I.t)))
+          = (∑ j, Params.opening I.ρ j * I.a j) / claimScale 2 (22 + 1) I.t ∧
+        mle cF (claimPoint 0 (22 + 2) I.t) = I.next / claimScale 0 (22 + 2) I.t ∧
+        mle cQ (Fin.snoc (Fin.snoc (Fin.snoc (Fin.snoc (claimPoint 0 (22 + 2 + 1 + 1) I.t)
+            ((params hF σ).vCells.eval I.t / (params hF σ).claimDen I.α I.β I.t I.a I.next)) I.ρ)
+              (yConst limbs / (1 + yConst limbs))) (yConst limbs ^ 2 / (1 + yConst limbs ^ 2)))
+          = (params hF σ).claimValue I.α I.β I.γ I.t I.ρ I.a I.next /
+              ((1 + yConst limbs) * (1 + yConst limbs ^ 2)) /
+            claimScale 0 (22 + 2 + 1 + 1) I.t ∧
+        mle cQ (sumPoint (22 + 2) (yConst limbs)) =
+          (params hF σ).target ![I.s 0, I.s 1, I.s 2, I.s 3, 1, 0, 0, 0] I.γ /
+            ((1 + yConst limbs) * (1 + yConst limbs ^ 2)))) ↔
+      ((∀ i : Fin (22 + 2 + 1 + 1), 1 + SQ^[(i : ℕ)] I.t ≠ 0) ∧
+        (wire hF σ idx).verifyWith (m := Id) H π = true) :=
+  graph_iff_verifyWith hF σ H idx (frobOK hF) π cW cF hcF cQ hg hR
+
+/-- **F5, the words**: when the contract reaches its calls, it hands `PCS_OPEN` the model's claims
+(`run_words`, the Frobenius discharged). -/
+theorem graph_words (sb : Vector UInt8 64) (r₁ r₂ : Bytes32) (x0 x1 x2 x3 x4 : F) (ws : List Nat)
+    (h : run H idx (calldataOf limbs sb r₁ r₂ [x0, x1, x2, x3, x4]) = some ws) :
+    let I := modelVals H idx sb r₁ r₂ limbs x0 x1 x2 x3 x4
+    ∃ wW wF wQ s, ws = [rootWord r₁.toList, 256 * 1 + 22, 1] ++ wW ++
+        [rootWord idx.toList, 256 * 2 + 22, 1] ++ wF ++
+        [rootWord r₂.toList, 256 * 3 + 22, 2] ++ wQ ++ sumPointWords ++ [s] ∧
+      wW.map (elem limbs) = modelWitness I.t I.ρ I.a ∧
+      wF.map (elem limbs) = modelWiring I.t I.next ∧
+      wQ.map (elem limbs) = modelQuotient (params hF σ) I.α I.β I.γ I.t I.ρ I.next
+        (yConst limbs) I.a ∧
+      sumPointWords.map (elem limbs) = List.ofFn (sumPoint (22 + 2) (yConst limbs)) ∧
+      elem limbs s = (params hF σ).target ![I.s 0, I.s 1, I.s 2, I.s 3, 1, 0, 0, 0] I.γ /
+        ((1 + yConst limbs) * (1 + yConst limbs ^ 2)) :=
+  run_words hF σ H idx sb r₁ r₂ x0 x1 x2 x3 x4 (frobOK hF) ws h
+
+include hF in
+/-- **F5, reaching the calls**: exactly when the product of the denominators is not zero. -/
+theorem graph_reaches_iff (sb : Vector UInt8 64) (r₁ r₂ : Bytes32) (x0 x1 x2 x3 x4 : F) :
+    (run H idx (calldataOf limbs sb r₁ r₂ [x0, x1, x2, x3, x4])).isSome ↔
+      Formula.check limbs (modelVals H idx sb r₁ r₂ limbs x0 x1 x2 x3 x4) ≠ 0 :=
+  run_isSome_iff hF H idx sb r₁ r₂ x0 x1 x2 x3 x4 (frobOK hF)
 
 end Implementation
