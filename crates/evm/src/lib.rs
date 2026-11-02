@@ -12,6 +12,8 @@
 mod adversarial;
 mod codegen;
 mod contract;
+#[cfg(test)]
+mod lean;
 pub mod machine;
 pub mod quotient;
 mod record;
