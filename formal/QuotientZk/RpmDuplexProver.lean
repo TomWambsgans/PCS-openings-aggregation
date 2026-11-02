@@ -324,4 +324,78 @@ theorem recImpl_implHF (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m) (s 
     simp only [simulateQ_map, StateT.run_map, bind_map_left, map_bind, simulateQ_spec_query]
     apply bind_congr; intro z; exact ih z.1 _ z.2
 
+/-! ## With `H` and `F` lazily sampled, the prover is `implReal` for `G` -/
+
+/-- **`G`'s cache read as `H` and `F`**: the digests of its `inl` entries, the states (on bytes) of
+its `inr` entries. -/
+def hfOf (c : (Inp →ₒ Out).QueryCache) : HF.QueryCache :=
+  QueryCache.ofFn fun t ↦ match t with
+    | .inl m => (c (.inl m)).map (·.1)
+    | .inr xb => (c (.inr (stateEquiv.symm xb))).map fun o ↦ stateEquiv o.2
+
+/-- **`G`'s cache read as the completions' tables.** -/
+def jOf (c : (Inp →ₒ Out).QueryCache) : JTab :=
+  (QueryCache.ofFn fun m ↦ (c (.inl m)).map (·.2), QueryCache.ofFn fun x ↦ (c (.inr x)).map (·.1))
+
+theorem hfOf_inl (c : (Inp →ₒ Out).QueryCache) (m : List UInt8) :
+    hfOf c (.inl m) = (c (.inl m)).map (·.1) := rfl
+
+theorem hfOf_inr (c : (Inp →ₒ Out).QueryCache) (x : KSt) :
+    hfOf c (.inr (stateEquiv x)) = (c (.inr x)).map fun o ↦ stateEquiv o.2 := by
+  change Option.map _ (c (.inr (stateEquiv.symm (stateEquiv x)))) = _
+  rw [Equiv.symm_apply_apply]
+
+theorem hfOf_empty : hfOf (∅ : (Inp →ₒ Out).QueryCache) = ∅ := by
+  refine QueryCache.ext fun t ↦ ?_
+  rcases t with m | xb <;> rfl
+
+theorem jOf_empty : jOf (∅ : (Inp →ₒ Out).QueryCache) = (∅, ∅) := rfl
+
+theorem hfOf_cacheQuery_inl (c : (Inp →ₒ Out).QueryCache) (m : List UInt8) (o : Out) :
+    hfOf (c.cacheQuery (.inl m) o) = (hfOf c).cacheQuery (.inl m) o.1 := by
+  refine QueryCache.ext fun t ↦ ?_
+  rcases t with m' | xb
+  · by_cases h : m' = m
+    · subst h; simp [hfOf, QueryCache.cacheQuery_self]
+    · rw [QueryCache.cacheQuery_of_ne _ _ (by simpa using h)]
+      simp [hfOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inl m' : Inp) ≠ .inl m by simpa using h)]
+  · rw [QueryCache.cacheQuery_of_ne _ _ (by simp)]
+    simp [hfOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inr (stateEquiv.symm xb) : Inp) ≠ .inl m by simp)]
+
+theorem hfOf_cacheQuery_inr (c : (Inp →ₒ Out).QueryCache) (x : KSt) (o : Out) :
+    hfOf (c.cacheQuery (.inr x) o) = (hfOf c).cacheQuery (.inr (stateEquiv x)) (stateEquiv o.2) := by
+  refine QueryCache.ext fun t ↦ ?_
+  rcases t with m | xb
+  · rw [QueryCache.cacheQuery_of_ne _ _ (by simp)]
+    simp [hfOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inl m : Inp) ≠ .inr x by simp)]
+  · by_cases h : xb = stateEquiv x
+    · subst h
+      rw [QueryCache.cacheQuery_self, hfOf_inr, QueryCache.cacheQuery_self]
+      rfl
+    · rw [QueryCache.cacheQuery_of_ne _ _ (by simpa using h)]
+      have h' : (Sum.inr (LeanVM.Rpm.KState.ofRpm xb) : Inp) ≠ .inr x := by
+        intro hx
+        apply h
+        simp only [Sum.inr.injEq] at hx
+        rw [← hx, stateEquiv_apply, LeanVM.Rpm.toRpm_ofRpm]
+      simp [hfOf, QueryCache.cacheQuery_of_ne _ _ h']
+
+theorem jOf_cacheQuery_inl (c : (Inp →ₒ Out).QueryCache) (m : List UInt8) (o : Out) :
+    jOf (c.cacheQuery (.inl m) o) = ((jOf c).1.cacheQuery m o.2, (jOf c).2) := by
+  refine Prod.ext (QueryCache.ext fun m' ↦ ?_) (QueryCache.ext fun x ↦ ?_)
+  · by_cases h : m' = m
+    · subst h; simp [jOf, QueryCache.cacheQuery_self]
+    · rw [QueryCache.cacheQuery_of_ne _ _ h]
+      simp [jOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inl m' : Inp) ≠ .inl m by simpa using h)]
+  · simp [jOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inr x : Inp) ≠ .inl m by simp)]
+
+theorem jOf_cacheQuery_inr (c : (Inp →ₒ Out).QueryCache) (x : KSt) (o : Out) :
+    jOf (c.cacheQuery (.inr x) o) = ((jOf c).1, (jOf c).2.cacheQuery x o.1) := by
+  refine Prod.ext (QueryCache.ext fun m ↦ ?_) (QueryCache.ext fun x' ↦ ?_)
+  · simp [jOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inl m : Inp) ≠ .inr x by simp)]
+  · by_cases h : x' = x
+    · subst h; simp [jOf, QueryCache.cacheQuery_self]
+    · rw [QueryCache.cacheQuery_of_ne _ _ h]
+      simp [jOf, QueryCache.cacheQuery_of_ne _ _ (show (Sum.inr x' : Inp) ≠ .inr x by simpa using h)]
+
 end QuotientZk.DRpm
