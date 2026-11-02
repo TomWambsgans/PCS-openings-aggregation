@@ -10,6 +10,7 @@ import Completeness.Wiring
 import Completeness.Deployed
 import Completeness.Final
 import Completeness.HiddenOpenings
+import Completeness.Chain
 
 /-!
 # End-to-end completeness of the membership proof
@@ -20,6 +21,10 @@ See the completeness section of `formal/README.md`. The end theorems are `comple
 declaration below depends on `propext`, `Classical.choice` and `Quot.sound` only (the kernel's
 decision of the layouts' shape on `propext` and `Quot.sound`).
 -/
+
+/-- info: 'Completeness.completeness_keccak' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.completeness_keccak
 
 /-- info: 'Completeness.completeness_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
