@@ -308,7 +308,10 @@ mod tests {
     #[test]
     #[ignore]
     fn write_lean_vectors() {
-        let path = std::env::var("LEAN_VECTORS").expect("LEAN_VECTORS: where to write the vectors");
+        let Ok(path) = std::env::var("LEAN_VECTORS") else {
+            eprintln!("LEAN_VECTORS unset: nothing written");
+            return;
+        };
         let count = std::env::var("LEAN_VECTOR_COUNT").map_or(1000, |n| n.parse().expect("a count"));
         let seed = std::env::var("LEAN_VECTOR_SEED").map_or(0x5eed, |n| n.parse().expect("a seed"));
         std::fs::write(path, vectors(seed, count)).expect("the vectors written");
