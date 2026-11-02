@@ -14,30 +14,39 @@ model) with the joint model's honest-verifier zero knowledge and factorizations
 (`QuotientZk.Joint.jointHVZK_of_link`, `factors_single`, `factors_pair`), for an explicit `ζ`
 (`zkBound`), and the distinguisher's coins removed (`ZK/Coins.lean`).
 
+**Two theorems.** `zeroKnowledge_of_bridges` for any skeleton (`FSFresh` and the duplex discipline
+named); **`zeroKnowledge_deployed`** for the deployed skeleton (`QuotientZk.Deployed.skel` at the
+deployed shape, `2^22` rows), where both are proved (`fsFresh_deployed` from no query before the proof,
+`epsFSDeployed ≤ 2^-113`; `duplexDiscipline_skel`).
+
 **What is assumed, by name.** For each statement and witness of the relation:
 
 * **the joint model of the deployed prover** (`JointData`, its hypotheses `JointData.Valid`): the
-  prover `P` of `QuotientZk`'s skeleton model, the reduction's parameters, the two secret openings
-  `S₁`, `S₂` (`SecretOpening`), the honest and simulated tables and their claims, and the `Link` between
-  `P` and the joint model — exactly `zk_rpm_deployed_joint`'s hypotheses, which the joint-model
-  instance (`formal/QuotientZk/Instance/`) is to provide;
-* **`FSFresh`** and **`DuplexDiscipline`** of the skeleton (being proved separately) and the prover's
-  permutation budget (`hprover`);
+  prover `Pb` of `QuotientZk`'s skeleton model (its rows byte strings, `ofBytes`), the reduction's
+  parameters, the two secret openings `S₁`, `S₂` (`SecretOpening`), the honest and simulated tables and
+  their claims, the `Link` between the prover and the joint model, and `fsFresh_deployed`'s conditions
+  on the prover — exactly `zk_rpm_deployed_joint_fs'`'s hypotheses, which the joint-model instance
+  (`formal/QuotientZk/Instance/`) is to provide;
+* the prover's **permutation budget** (`hprover`: at most `Qp` calls of `π` in the real game's proof);
 * **the two bridges** between the statement's experiments and `QuotientZk`'s games, for every
   coin-free distinguisher `D₀` of the statement's proofs, `fmt` turning the skeleton's proof into the
-  statement's (mumbai's full Merkle paths from the pruned ones: public, by `π` calls):
+  statement's (mumbai's full Merkle paths from the pruned ones: public, by at most `Qfmt` `π` calls):
   * `RealBridge`: `realExperiment` is within `εR` of `realGameRpmD P skel (fmt · >>= D₀)` (the
-    statement's prover is the skeleton's: the setup's wiring tree, the proof-of-work fuel `2^25`, the
-    replayed chain and the proof's format are the differences, each public or negligible);
-  * `IdealBridge`: `idealExperiment` is within `εI` of `simGameRpmD P simV skel (fmt · >>= D₀)`, `simV`
-    the joint simulator (`JointData.simV`). `ZK/Simulator.lean` gives the statement-shaped simulator for
-    which it holds with `εI = 0`.
+    statement's prover is the skeleton's: the circuit's commitment the statement's prover computes over
+    `π` where the skeleton's chain reads it as a constant, the proof-of-work fuel `2^25` with no proof on
+    failure, the replayed chain and the wiring tree's position, and the proof's format are the
+    differences, each public or negligible);
+  * `IdealBridge`: `simGameRpmD P simV skel (fmt · >>= D₀)` is within `εI` of `idealExperiment`,
+    `simV` the joint simulator (`JointData.simV`). `ZK/Simulator.lean` gives the statement-shaped
+    simulator for which it holds with `εI = 0`.
 
-**The bound** (`zkBound`): `εR Q + εFS + 2^-165 + 2^24 (QP + Qfmt + Q) 2^-2368 + 2^48 2^-2368 +
-(Qp + Qfmt + Q)² / 2^508 + εI Q`, for a distinguisher of `Q` calls of `π` and `π⁻¹`, a skeleton of
-`QP` operations, a prover of `Qp` permutation calls, `fmt` of `Qfmt`; at most
+**The bound** (`zkBound`, a function of the distinguisher's calls `Q` of `π` and `π⁻¹`):
+`εR Q + εFS + 2^-165 + 2^24 (QP + Qfmt + Q) 2^-2368 + 2^48 2^-2368 + (Qp + Qfmt + Q)² / 2^508 + εI Q`,
+for a skeleton of `QP` operations, a prover of `Qp` permutation calls, `fmt` of `Qfmt`; at most
 `εR Q + εFS + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508 + εI Q` when `QP + Qfmt + Q ≤ 2^128`
-(`zkBound_le`).
+(`zkBound_le`). Deployed (`zkBoundDeployed`): `QP = 2^70`, `εFS = epsFSDeployed ≤ 2^-113`, so at most
+`εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508 + εI Q` for `Qfmt + Q ≤ 2^127`
+(`zkBoundDeployed_le`).
 -/
 
 open OracleComp OracleSpec Common Polynomial Module QuotientSecurity QuotientSecurity.Hiding
