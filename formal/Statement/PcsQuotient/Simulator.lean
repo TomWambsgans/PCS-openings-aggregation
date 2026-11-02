@@ -189,18 +189,21 @@ def fakeStack (L : Layout) (claims : List Claim) : ProbComp (Array K) := do
   let r ← (Array.range size).mapM fun _ ↦ uniformK
   let k := 3 * claims.length
   let weights := claims.map L.claimWeights
+  let table := weights.toArray
+  let empty := L.claimWeights ⟨[], 0⟩
   let weightAt (w : ClaimWeights) (p : ℕ) : E := L.weightAt w (p / lane) (p % lane)
   let free : List ℕ := freePositions k size fun p ↦ Array.ofFn (n := k) fun e ↦
-    LeanVM.Prover.limbAt (weightAt (weights.getD (e.val / 3) ⟨[], [], #[], #[]⟩) p) (e.val % 3)
-  -- The fixed part of each claim: the weights on every position but the free ones.
-  let rows : Array (Array K) := Array.ofFn (n := k) fun e ↦
-    let (c, w) := (claims.getD (e.val / 3) ⟨[], 0⟩, weights.getD (e.val / 3) ⟨[], [], #[], #[]⟩)
-    let limb := e.val % 3
-    let fixed := (List.range size).foldl
+    LeanVM.Prover.limbAt (weightAt (table.getD (e.val / 3) empty) p) (e.val % 3)
+  -- Each claim's value less what the words outside the free positions give it.
+  let rest : List E := (claims.zip weights).map fun (c, w) ↦
+    c.value + (List.range size).foldl
       (fun acc p ↦ if free.contains p then acc else acc + weightAt w p * ofK (r.getD p 0)) 0
+  let rows : Array (Array K) := Array.ofFn (n := k) fun e ↦
+    let w := table.getD (e.val / 3) empty
+    let limb := e.val % 3
     Array.ofFn (n := k + 1) fun q ↦
       if q.val < k then LeanVM.Prover.limbAt (weightAt w (free.getD q.val 0)) limb
-      else LeanVM.Prover.limbAt (c.value + fixed) limb
+      else LeanVM.Prover.limbAt (rest.getD (e.val / 3) 0) limb
   let reduced := (List.range k).foldl (eliminate k) rows
   return (List.range k).foldl
     (fun s q ↦ s.setIfInBounds (free.getD q 0) ((reduced.getD q #[]).getD k 0)) r

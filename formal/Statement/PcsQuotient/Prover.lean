@@ -61,18 +61,20 @@ overflow lane's first piece is padding, its pieces `1 … H` the held pieces plu
 (`ρ`), the rest padding (its stream continuing); a random lane is padding. -/
 def Layout.stackOf (L : Layout) (entry : ℕ → K) (pad : Padding) : Array K :=
   let lane := 2 ^ L.logLane
+  let kinds := L.lanes.toArray
   match L.logPiece with
-  | none => Array.ofFn (n := L.lanes.length * lane) fun p ↦
-    match L.laneAt (p.val / lane) with
+  | none => Array.ofFn (n := kinds.size * lane) fun p ↦
+    match kinds.getD (p.val / lane) .random with
     | .block b => entry (b * lane + p.val % lane)
     | _ => 0
   | some s =>
     let piece := 2 ^ s
-    let held := L.pieces.length
+    let pieces := L.pieces.toArray
+    let held := pieces.size
     let share := L.share.getD 0
-    Array.ofFn (n := L.lanes.length * lane) fun p ↦
+    Array.ofFn (n := kinds.size * lane) fun p ↦
       let (l, i) := (p.val / lane, p.val % lane)
-      match L.laneAt l with
+      match kinds.getD l .random with
       | .block b =>
         if i < piece then pad l i
         else if l % 2 = 0 then entry (b * lane + i)
@@ -80,38 +82,45 @@ def Layout.stackOf (L : Layout) (entry : ℕ → K) (pad : Padding) : Array K :=
       | .overflow =>
         if i < piece then pad l i
         else if i < (held + 1) * piece then
-          entry (L.pieces.getD (i / piece - 1) 0 * piece + i % piece) + pad share i
+          entry (pieces.getD (i / piece - 1) 0 * piece + i % piece) + pad share i
         else pad l (i - held * piece)
       | .random => pad l i
 
 /-- A claim's weight on a stack, tabulated once (`Layout::tensors`, `opening.rs`): its lane and piece scales
 (`Layout.scales`), and the `eq` tables of its lane coordinates and of its coordinates below a piece. -/
 structure ClaimWeights where
-  lanes : List E
-  pieces : List E
+  /-- What each lane holds, and the share lane (the layout's, as arrays: one lookup a position). -/
+  kinds : Array Lane
+  share : Option ℕ
+  /-- The layout's piece. -/
+  logPiece : Option ℕ
+  lanes : Array E
+  pieces : Array E
   low : Array E
   pieceLow : Array E
 
 /-- The tables of a claim's weight on `L`. -/
 def Layout.claimWeights (L : Layout) (c : Claim) : ClaimWeights :=
-  ⟨(L.scales c.point).1, (L.scales c.point).2, eqKernelA (c.point.take L.logLane),
-    eqKernelA (c.point.take (L.logPiece.getD 0))⟩
+  ⟨L.lanes.toArray, L.share, L.logPiece, (L.scales c.point).1.toArray, (L.scales c.point).2.toArray,
+    eqKernelA (c.point.take L.logLane), eqKernelA (c.point.take (L.logPiece.getD 0))⟩
 
-/-- **A claim's weight at entry `y` of lane `l`** (`Layout::weight_at`, `opening.rs`): public layout, its lane
-scale times its `eq` at `y`; hidden layout, zero on a first piece; on a block lane, its lane scale times its
-`eq` at `y` with the piece pair swapped on an odd lane; on the overflow and share lanes, the held piece's scale
-times its `eq` below the piece; zero on the other random lanes. -/
-def Layout.weightAt (L : Layout) (w : ClaimWeights) (l y : ℕ) : E :=
-  match L.logPiece with
+/-- **A claim's weight at entry `y` of lane `l`** (`Layout::weight_at`, `opening.rs`), from its tables
+(`Layout.claimWeights L c`): public layout, its lane scale times its `eq` at `y`; hidden layout, zero on a
+first piece; on a block lane, its lane scale times its `eq` at `y` with the piece pair swapped on an odd lane;
+on the overflow and share lanes, the held piece's scale times its `eq` below the piece; zero on the other
+random lanes. -/
+def Layout.weightAt (_L : Layout) (w : ClaimWeights) (l y : ℕ) : E :=
+  match w.logPiece with
   | none => w.lanes.getD l 0 * w.low.getD y 0
   | some s =>
-    if y / 2 ^ s = 0 then 0
+    let piece := y >>> s
+    if piece = 0 then 0
     else
-      let held := w.pieces.getD (y / 2 ^ s - 1) 0 * w.pieceLow.getD (y % 2 ^ s) 0
-      match L.laneAt l with
-      | .block _ => w.lanes.getD l 0 * w.low.getD (y ^^^ (l % 2 * 2 ^ s)) 0
-      | .overflow => held
-      | .random => if L.share = some l then held else 0
+      match w.kinds.getD l .random with
+      | .block _ => w.lanes.getD l 0 * w.low.getD (y ^^^ ((l % 2) <<< s)) 0
+      | .overflow => w.pieces.getD (piece - 1) 0 * w.pieceLow.getD (y % 2 ^ s) 0
+      | .random =>
+        if w.share = some l then w.pieces.getD (piece - 1) 0 * w.pieceLow.getD (y % 2 ^ s) 0 else 0
 
 /-- The witness table's masks: three coefficients of `K` for each of the four row polynomials. -/
 abbrev Masks : Type := Fin 4 → Fin 3 → K
