@@ -82,7 +82,8 @@ impl Dag for Nodes<'_> {
     fn operands(&self, id: u32) -> Vec<u32> {
         match self.graph.nodes[id as usize] {
             Node::Add(a, b) | Node::Mul(a, b) => vec![a, b],
-            Node::Hash(state, _, _) | Node::Low(state) => vec![state],
+            Node::Hash(state, _, _) | Node::Low(state) | Node::Bits(state, _, _) => vec![state],
+            Node::RingWeight(kernel, _) => self.graph.kernels[kernel as usize].clone(),
             _ => vec![],
         }
     }
@@ -141,6 +142,19 @@ impl Dag for Nodes<'_> {
                 code
             }
             Node::Low(_) => front::code([&push(&[0xff; 24])[..], &[AND]].concat()),
+            Node::RingWeight(_, n) => front::code(crate::evm::kernel::ring_weight_code(n as usize)),
+            Node::Bits(_, shift, width) => {
+                let mut code = Vec::new();
+                if shift > 0 {
+                    code.extend(push_usize(shift as usize));
+                    code.push(SHR);
+                }
+                if width < 64 {
+                    code.extend(push_usize((1usize << width) - 1));
+                    code.push(AND);
+                }
+                front::code(code)
+            }
         }
     }
 
@@ -217,6 +231,12 @@ fn program(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, link
         _ => 0,
     });
     let scratch = (32 + absorbed.max().unwrap_or(0)).max(80).next_multiple_of(32);
+    // A ring-weight kernel's words, from 0 (the hashing's scratch is free between nodes).
+    let kernels = graph.nodes.iter().map(|node| match node {
+        Node::RingWeight(_, n) => 32 * crate::evm::kernel::scratch_words(*n as usize),
+        _ => 0,
+    });
+    let scratch = scratch.max(kernels.max().unwrap_or(0));
     let checks = graph.zero.iter().map(|&(id, _)| (id, Check::Zero));
     let source = Source {
         dag: &Nodes { graph, entry },

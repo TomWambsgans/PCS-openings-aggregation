@@ -27,6 +27,7 @@ pub mod layout;
 pub mod matrices;
 mod merkle;
 pub mod multilinear;
+pub mod ring_tower;
 pub mod scalar;
 pub mod shapes;
 mod stack;
@@ -88,6 +89,10 @@ pub enum VerifierError {
     FlockMatrixTerminal,
     /// New here: the stack claims' batching sumcheck does not close (`stack`).
     StackBatchTerminal,
+    /// New here (`crates/leanvm_univariate`): an announced table row count exceeds its height's `2^r`.
+    TableRows,
+    /// New here (`crates/leanvm_univariate`): a shape the verifier cannot be built for (a height below 2).
+    InvalidShape,
     /// Of the Keccak GKR (leanVM 4af2cddd), ported for the estimate (`keccak_gkr`).
     KeccakProduct,
     KeccakLayer,

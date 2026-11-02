@@ -17,7 +17,8 @@ random permutation `π` in the model, Keccak-f[1600] deployed):
 
 * the proof is the **stream**, calldata bytes after the selector and the public input;
 * a **scalar** is 24 bytes, big-endian, limbs `2, 1, 0` (`next_scalar`); a commitment's **root** is two
-  16-byte halves, each big-endian limbs `1, 0` (`next_root`), so a root has one encoding (no top limb);
+  16-byte halves, each big-endian limbs `1, 0` (`next_root`), so a root has one encoding (no top limb); a
+  **packed integer** (iteration 2: the six row counts, 4 bytes each) is big-endian (`next_integer`);
 * a **challenge** is one Keccak-256 of the state and of the stream bytes read since the last challenge,
   exactly as they are in calldata (`sample`); the digest is the new state, its low 192 bits the
   challenge (`challengeOf`, read big-endian, limb `i` the bytes `24 − 8i … 31 − 8i`);
@@ -36,17 +37,21 @@ namespace UniStatement
 
 open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash
 
-/-- The errors the stream can end the run with (`VerifierError`'s `StreamExhausted`,
-`StreamNotConsumed`); every other check of the verifier is collected (`Chan.zeros`). -/
+/-- The errors the run can end with (`VerifierError`'s `StreamExhausted`, `StreamNotConsumed`, and
+`InvalidShape` for a shape the verifier is not built for); every other check of the verifier is collected
+(`Chan.zeros`), the row counts' range (`TableRows`) included. -/
 inductive UniError where
   | streamExhausted
   | streamNotConsumed
+  /-- `InvalidShape` (iteration 2, F5): `Shape::validate` rejects the shape before the stream is read. -/
+  | invalidShape
   deriving DecidableEq, Repr, Inhabited
 
 /-- `UniError` as the Rust prints it (`Debug`). -/
 def UniError.name : UniError → String
   | .streamExhausted => "StreamExhausted"
   | .streamNotConsumed => "StreamNotConsumed"
+  | .invalidShape => "InvalidShape"
 
 /-- **The channel** (`KeccakChannel`): the stream, the cursor, how much of it the state has absorbed, the
 state, and what the verifier stated: every challenge drawn, every value it requires to be zero. -/
@@ -91,6 +96,13 @@ def takeBytes (n : ℕ) : ChanM m (Array UInt8) := do
 def nextScalar : ChanM m E := do
   let b ← takeBytes (m := m) 24
   return eNew (beWordAt b 16) (beWordAt b 8) (beWordAt b 0)
+
+/-- **`next_integer(bytes)`** (iteration 2, F1): the next `bytes` bytes (at most `8`), a big-endian integer, absorbed
+like every byte of the stream. The Rust returns it as a scalar holding it in its low limb; here it is the integer
+(`intBits` reads its bit fields as the Rust's `Scalar::bits`). -/
+def nextInteger (bytes : ℕ) : ChanM m ℕ := do
+  let b ← takeBytes (m := m) bytes
+  return b.foldl (fun acc x ↦ acc * 256 + x.toNat) 0
 
 /-- `next_scalars(count)`. -/
 def nextScalars (count : ℕ) : ChanM m (List E) := do
