@@ -689,6 +689,11 @@ section Cands
 
 variable {M : Type}
 
+theorem length_candLists (C : ℕ → ListCommit M) (H : Hist) (T : Table) :
+    ∀ (i : ℕ) (ms : List (RMsg F)), (candLists C H T i ms).length = ms.length
+  | _, [] => rfl
+  | i, _ :: ms => by simp [candLists, length_candLists C H T (i + 1) ms]
+
 theorem length_optC_le (C : ListCommit M) (H : Hist) (T : Table) {s : RoundSpec} {m : RMsg F}
     (h : m.Fits s) : (optC C H T m).length ≤ if s.root then C.bound else 1 := by
   obtain ⟨r, l⟩ := m
@@ -748,24 +753,293 @@ theorem length_opened : ∀ (cs : List (Option M)) (ms : List (RMsg F)) (chs : L
 `ε`, some tuple of the lists' members has probability at most the product of the lengths times
 `ε`. -/
 theorem prEvent_forall₂_le {α β : Type} (mx : ProbComp α) (E : List β → α → Prop) (ε : ℝ≥0∞) :
-    ∀ Ls : List (List β), (∀ cs, Pr{let a ← mx}[E cs a] ≤ ε) →
+    ∀ Ls : List (List β), (∀ cs, List.Forall₂ (· ∈ ·) cs Ls → Pr{let a ← mx}[E cs a] ≤ ε) →
       Pr{let a ← mx}[∃ cs, List.Forall₂ (· ∈ ·) cs Ls ∧ E cs a] ≤ ((Ls.map List.length).prod : ℕ) * ε
   | [], h => by
     refine (prEvent_mono _ _ (fun a => E [] a) fun a ha => ?_).trans ?_
     · obtain ⟨cs, hcs, he⟩ := ha
       rw [List.forall₂_nil_right_iff] at hcs
       rwa [hcs] at he
-    · simpa using h []
+    · simpa using h [] List.Forall₂.nil
   | l :: Ls, h => by
-    have hl := fun b => prEvent_forall₂_le mx (fun cs a => E (b :: cs) a) ε Ls fun cs => h (b :: cs)
+    have hl := fun b (hb : b ∈ l) => prEvent_forall₂_le mx (fun cs a => E (b :: cs) a) ε Ls
+      fun cs hcs => h (b :: cs) (List.Forall₂.cons hb hcs)
     refine (prEvent_mono _ _ (fun a => ∃ b ∈ l, ∃ cs, List.Forall₂ (· ∈ ·) cs Ls ∧ E (b :: cs) a)
       fun a ha => ?_).trans ?_
     · obtain ⟨cs, hcs, he⟩ := ha
       cases hcs with
       | cons hb hcs' => exact ⟨_, hb, _, hcs', he⟩
-    · refine (prEvent_exists_mem_le mx _ _ l fun b _ => hl b).trans (le_of_eq ?_)
+    · refine (prEvent_exists_mem_le mx _ _ l fun b hb => hl b hb).trans (le_of_eq ?_)
       simp only [List.map_cons, List.prod_cons, Nat.cast_mul, mul_assoc]
 
 end Cands
+
+/-! ## The bad events -/
+
+section Bad
+
+variable {St M : Type} [SampleableType F] (K : ChainSpec F St) (C : ℕ → ListCommit M)
+  (R : Piop K M)
+
+/-- **`x` is round `j`'s first input**: for a statement `s`, the messages `ms` of the rounds before
+and `m` of round `j`, fitting them, the chain before `x` was asked (its inputs in `H`), without
+collision. -/
+def ParseK (H : Hist) (x : List UInt8) (T : Table) (j : ℕ) (s : St) (ms : List (RMsg F))
+    (m : RMsg F) : Prop :=
+  j < K.rounds.length ∧ FitsAll (K.rounds.take j) ms ∧ m.Fits (K.spec j) ∧
+    x = lastIn T (K.label s) (absorbs K.lim (K.rounds.take j) ms ++ [encM K.lim m]) ∧
+    (∀ y ∈ prevIn T (K.label s) (absorbs K.lim (K.rounds.take j) ms ++ [encM K.lim m]), y ∈ H) ∧
+    Set.InjOn T ↑H
+
+/-- Round `j`'s inputs from its first input `x`: `x`, then each state, `ns` of them. -/
+def ChainSpec.sqIns (T : Table) (x : List UInt8) (j : ℕ) : List (List UInt8) :=
+  allIn T x (List.replicate (K.spec j).ns [])
+
+/-- **Round `j` is bad at its first input**: the inputs after it fresh and distinct, and its
+challenges turn the state from lost to won for some candidates of the roots of the rounds up to
+`j`, read off the history. -/
+def RoundBadK (H : Hist) (x : List UInt8) (T : Table) : Prop :=
+  ∃ j s ms m, ParseK K H x T j s ms m ∧
+    (∀ y ∈ (K.sqIns T x j).tail, y ∉ H) ∧ (K.sqIns T x j).Nodup ∧
+    ∃ cs c, List.Forall₂ (· ∈ ·) cs (candLists C H T 0 ms) ∧ c ∈ optC (C j) H T m ∧
+      ¬ R.pre s (opened cs ms (chalsT K.lim T (K.label s) (K.rounds.take j) ms)) (c, m.2) ∧
+      R.post s (opened cs ms (chalsT K.lim T (K.label s) (K.rounds.take j) ms)) (c, m.2)
+        (((K.sqIns T x j).map T).map (chalL K.lim))
+
+/-- **A bad fresh query**: a collision, or a bad round. -/
+def listBadK (H : Hist) (x : List UInt8) (T : Table) : Prop :=
+  Coll H x T ∨ RoundBadK K C R H x T
+
+/-! ### The parse reads the history only, and is unique -/
+
+theorem allIn_congr {T T' : Table} (y : List UInt8) (es : List (List UInt8))
+    (h : ∀ z ∈ allIn T y es, T z = T' z) :
+    allIn T' y es = allIn T y es ∧ (allIn T' y es).map T' = (allIn T y es).map T := by
+  have hp : ∀ z ∈ prevIn T y es, T z = T' z := fun z hz => h z (by
+    rw [allIn_eq]
+    exact List.mem_append_left _ hz)
+  obtain ⟨e1, e2⟩ := chain_congr y es hp
+  have ea : allIn T' y es = allIn T y es := by rw [allIn_eq, allIn_eq, e1, e2]
+  refine ⟨ea, ?_⟩
+  rw [ea]
+  exact List.map_congr_left fun z hz => (h z hz).symm
+
+theorem chalsT_congr {T T' : Table} (lim : F ≃ Limbs) (y : List UInt8) (rs : List RoundSpec)
+    (ms : List (RMsg F)) (h : ∀ z ∈ allIn T y (absorbs lim rs ms), T z = T' z) :
+    chalsT lim T' y rs ms = chalsT lim T y rs ms := by
+  obtain ⟨e1, e2⟩ := allIn_congr y _ h
+  have e3 : (allIn T' y (absorbs lim rs ms)).tail.map T' =
+      (allIn T y (absorbs lim rs ms)).tail.map T := by
+    rw [e1]
+    exact List.map_congr_left fun z hz => (h z (List.mem_of_mem_tail hz)).symm
+  unfold chalsT
+  rw [e3]
+
+variable {K}
+
+theorem parseK_congr {H : Hist} {T T' : Table} (h : ∀ d ∈ H, T d = T' d) (x : List UInt8)
+    (j : ℕ) (s : St) (ms : List (RMsg F)) (m : RMsg F) :
+    ParseK K H x T j s ms m ↔ ParseK K H x T' j s ms m := by
+  unfold ParseK
+  constructor
+  · rintro ⟨h1, h2, h3, hx, hH, hi⟩
+    obtain ⟨e1, e2⟩ := chain_congr (T := T) (T' := T') _ _ fun z hz => h z (hH z hz)
+    refine ⟨h1, h2, h3, hx.trans e2.symm, fun y hy => hH y (by rwa [e1] at hy),
+      (injOn_congr h).mp hi⟩
+  · rintro ⟨h1, h2, h3, hx, hH, hi⟩
+    obtain ⟨e1, e2⟩ := chain_congr (T := T') (T' := T) _ _ fun z hz => (h z (hH z hz)).symm
+    refine ⟨h1, h2, h3, hx.trans e2.symm, fun y hy => hH y (by rwa [e1] at hy),
+      (injOn_congr h).mpr hi⟩
+
+theorem ParseK.length_eq {H : Hist} {x : List UInt8} {T : Table} {j : ℕ} {s : St}
+    {ms : List (RMsg F)} {m : RMsg F} (h : ParseK K H x T j s ms m) : ms.length = j := by
+  rw [h.2.1.length_eq, List.length_take]
+  exact min_eq_left (le_of_lt h.1)
+
+/-- The chain before round `j`'s first input was asked. -/
+theorem ParseK.allIn_sub {H : Hist} {x : List UInt8} {T : Table} {j : ℕ} {s : St}
+    {ms : List (RMsg F)} {m : RMsg F} (h : ParseK K H x T j s ms m) :
+    ∀ z ∈ allIn T (K.label s) (absorbs K.lim (K.rounds.take j) ms), z ∈ H := by
+  intro z hz
+  refine h.2.2.2.2.1 z ?_
+  rw [prevIn_concat]
+  exact hz
+
+/-- **The parse is unique.** -/
+theorem parseK_unique {H : Hist} {x : List UInt8} {T : Table} {j j' : ℕ} {s s' : St}
+    {ms ms' : List (RMsg F)} {m m' : RMsg F} (h : ParseK K H x T j s ms m)
+    (h' : ParseK K H x T j' s' ms' m') : j = j' ∧ s = s' ∧ ms = ms' ∧ m = m' := by
+  obtain ⟨hj, hf, hm, hx, hH, hi⟩ := h
+  obtain ⟨hj', hf', hm', hx', hH', -⟩ := h'
+  have hd : ∀ (k : ℕ) (ms₀ : List (RMsg F)) (m₀ : RMsg F),
+      ∀ e ∈ absorbs K.lim (K.rounds.take k) ms₀ ++ [encM K.lim m₀], 32 ∣ e.length := by
+    intro k ms₀ m₀ e he
+    rcases List.mem_append.mp he with he | he
+    · exact dvd_of_mem_absorbs K.lim _ _ e he
+    · rw [List.mem_singleton.mp he]
+      exact dvd_length_encM K.lim m₀
+  obtain ⟨hlab, hes⟩ := chain_unique T hi _ _ _ _ (hd j ms m) (hd j' ms' m') (K.label_len s)
+    (K.label_len s') hH hH' (hx.symm.trans hx')
+  have hs : s = s' := K.label_injective hlab
+  have hl := congrArg List.length hes
+  simp only [List.length_append, List.length_singleton, length_absorbs] at hl
+  have hjj : j = j' := nSteps_take_inj K.rounds j j' (le_of_lt hj) (le_of_lt hj') (by omega)
+  subst hjj
+  obtain ⟨ha, he⟩ := List.append_inj hes (by simp [length_absorbs])
+  simp only [List.cons.injEq, and_true] at he
+  exact ⟨rfl, hs, absorbs_inj K.lim hf hf' ha, encM_inj K.lim hm hm' he⟩
+
+variable (K)
+
+/-- Round `j`'s inputs read the table at its first input and at 32-byte inputs only. -/
+theorem allIn_replicate_congr {T T' : Table} (hs : ∀ v : Bytes32, T v.toList = T' v.toList) :
+    ∀ (n : ℕ) (x : List UInt8), T x = T' x →
+      allIn T' x (List.replicate n []) = allIn T x (List.replicate n []) ∧
+        (allIn T' x (List.replicate n [])).map T' = (allIn T x (List.replicate n [])).map T
+  | 0, x, hx => by simp [allIn, hx]
+  | n + 1, x, hx => by
+    have ih := allIn_replicate_congr hs n (T x).toList (hs (T x))
+    have e : stepIn (T' x) [] = (T x).toList := by rw [stepIn_nil, hx]
+    simp only [List.replicate_succ, allIn, List.map_cons]
+    rw [e, stepIn_nil]
+    refine ⟨by rw [ih.1], ?_⟩
+    rw [ih.2, hx]
+
+/-- **`listBadK` reads the table on the inputs asked, at the fresh input, and at the 32-byte
+inputs** (the states its rounds' lookahead hashes). -/
+theorem listBadK_congr {H : Hist} {x : List UInt8} {T T' : Table} (hH : ∀ d ∈ H, T d = T' d)
+    (hx : T x = T' x) (hs : ∀ v : Bytes32, T v.toList = T' v.toList) :
+    listBadK K C R H x T ↔ listBadK K C R H x T' := by
+  have hcoll : Coll H x T ↔ Coll H x T' := by
+    unfold Coll
+    rw [hx]
+    constructor
+    · rintro (⟨y, hy, h⟩ | h)
+      · exact Or.inl ⟨y, hy, (hH y hy).symm.trans h⟩
+      · exact Or.inr h
+    · rintro (⟨y, hy, h⟩ | h)
+      · exact Or.inl ⟨y, hy, (hH y hy).trans h⟩
+      · exact Or.inr h
+  have hsq : ∀ j, K.sqIns T' x j = K.sqIns T x j ∧
+      (K.sqIns T' x j).map T' = (K.sqIns T x j).map T :=
+    fun j => allIn_replicate_congr hs _ x hx
+  have hround : ∀ T₁ T₂ : Table, (∀ d ∈ H, T₁ d = T₂ d) →
+      (∀ j, K.sqIns T₂ x j = K.sqIns T₁ x j ∧ (K.sqIns T₂ x j).map T₂ = (K.sqIns T₁ x j).map T₁) →
+      RoundBadK K C R H x T₁ → RoundBadK K C R H x T₂ := by
+    intro T₁ T₂ h12 hsq12 hb
+    obtain ⟨j, s, ms, m, hp, h1, h2, cs, c, hcs, hc, h3, h4⟩ := hb
+    have hch : chalsT K.lim T₂ (K.label s) (K.rounds.take j) ms =
+        chalsT K.lim T₁ (K.label s) (K.rounds.take j) ms :=
+      chalsT_congr K.lim _ _ _ fun z hz => h12 z (hp.allIn_sub z hz)
+    refine ⟨j, s, ms, m, (parseK_congr h12 x j s ms m).mp hp, by rw [(hsq12 j).1]; exact h1,
+      by rw [(hsq12 j).1]; exact h2, cs, c, by rwa [← candLists_congr C h12], by
+        rwa [← optC_congr (C j) h12], by rw [hch]; exact h3, ?_⟩
+    rw [hch, (hsq12 j).2]
+    exact h4
+  unfold listBadK
+  rw [hcoll]
+  exact or_congr_right ⟨hround T T' hH hsq, hround T' T (fun d hd => (hH d hd).symm)
+    fun j => ⟨(hsq j).1.symm, (hsq j).2.symm⟩⟩
+
+/-! ### Each fresh query is bad with small probability -/
+
+/-- **The largest round error times its union bound's factor**: round `j`'s error times the
+product of the list bounds of the roots of the rounds `0..j`. -/
+noncomputable def maxErrK : ℝ≥0∞ :=
+  (Finset.range K.rounds.length).sup fun j => (facL C 0 (K.rounds.take (j + 1)) : ℝ≥0∞) * R.err j
+
+theorem facL_take_succ (j : ℕ) (hj : j < K.rounds.length) :
+    facL C 0 (K.rounds.take (j + 1)) =
+      facL C 0 (K.rounds.take j) * (if (K.spec j).root then (C j).bound else 1) := by
+  rw [List.take_add_one, List.getElem?_eq_getElem hj, Option.toList_some, facL_append,
+    List.length_take, min_eq_left (le_of_lt hj), K.spec_eq j hj]
+  simp [facL]
+
+variable [Fintype F] [DecidableEq F]
+
+variable {S : Finset (List UInt8)}
+
+/-- **A round is bad with probability at most its error times its factor**: the parse is read off
+the history, so at most one round and one parse are possible, the candidates and the challenges
+before are fixed by the history, and the round's challenges are uniform. -/
+theorem prob_roundBadK (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (t : ↥S)
+    (ht : c t = none) :
+    Pr{let g ← $ᵗ (↥S → Bytes32)}[RoundBadK K C R (histOf c) t.1 (tableOf c g)] ≤
+      maxErrK K C R := by
+  classical
+  let g₀ : ↥S → Bytes32 := fun _ => Vector.replicate 32 0
+  have hcg : ∀ g, ∀ d ∈ histOf c, tableOf c g d = tableOf c g₀ d := fun g _ hd =>
+    tableOf_eq_of_mem c hd g g₀
+  by_cases hp : ∃ j s ms m, ParseK K (histOf c) t.1 (tableOf c g₀) j s ms m
+  · obtain ⟨j, s, ms, m, hp⟩ := hp
+    have hj : j < K.rounds.length := hp.1
+    let T₀ := tableOf c g₀
+    let chs := chalsT K.lim T₀ (K.label s) (K.rounds.take j) ms
+    let Ls := candLists C (histOf c) T₀ 0 ms
+    let oc := optC (C j) (histOf c) T₀ m
+    let E : List (Option M) → (↥S → Bytes32) → Prop := fun cs g => ∃ c' ∈ oc,
+      (∀ y ∈ (allIn (tableOf c g) t.1 (List.replicate (K.spec j).ns [])).tail, y ∉ histOf c) ∧
+      (allIn (tableOf c g) t.1 (List.replicate (K.spec j).ns [])).Nodup ∧
+      (¬ R.pre s (opened cs ms chs) (c', m.2) ∧ R.post s (opened cs ms chs) (c', m.2)
+        (((allIn (tableOf c g) t.1 (List.replicate (K.spec j).ns [])).map (tableOf c g)).map
+          (chalL K.lim)))
+    refine (prEvent_mono _ _ (fun g => ∃ cs, List.Forall₂ (· ∈ ·) cs Ls ∧ E cs g)
+      fun g hg => ?_).trans ?_
+    · obtain ⟨j', s', ms', m', hp', h1, h2, cs, c', hcs, hc', h3, h4⟩ := hg
+      rw [parseK_congr (hcg g)] at hp'
+      obtain ⟨rfl, rfl, rfl, rfl⟩ := parseK_unique hp hp'
+      have hch : chalsT K.lim (tableOf c g) (K.label s) (K.rounds.take j) ms = chs :=
+        chalsT_congr K.lim _ _ _ fun z hz => (hcg g z (hp.allIn_sub z hz)).symm
+      rw [candLists_congr C (hcg g)] at hcs
+      rw [optC_congr (C j) (hcg g)] at hc'
+      rw [hch] at h3 h4
+      exact ⟨cs, hcs, c', hc', h1, h2, h3, h4⟩
+    · have hone : ∀ cs, List.Forall₂ (· ∈ ·) cs Ls → ∀ c' ∈ oc,
+          Pr{let g ← $ᵗ (↥S → Bytes32)}[
+            (∀ y ∈ (allIn (tableOf c g) t.1 (List.replicate (K.spec j).ns [])).tail,
+              y ∉ histOf c) ∧
+            (allIn (tableOf c g) t.1 (List.replicate (K.spec j).ns [])).Nodup ∧
+            (¬ R.pre s (opened cs ms chs) (c', m.2) ∧ R.post s (opened cs ms chs) (c', m.2)
+              (((allIn (tableOf c g) t.1 (List.replicate (K.spec j).ns [])).map
+                (tableOf c g)).map (chalL K.lim)))] ≤ R.err j := by
+        intro cs hcs c' _
+        have hlen : (opened cs ms chs).length = j := by
+          rw [length_opened cs ms chs (hcs.length_eq.trans (length_candLists C _ _ 0 ms)) (by
+              simp only [chs, chalsT, length_groupK, List.length_take, hp.length_eq]
+              omega), hp.length_eq]
+        refine (prEvent_round hS₀ c t ht (K.spec j).ns (fun l => ¬ R.pre s (opened cs ms chs)
+          (c', m.2) ∧ R.post s (opened cs ms chs) (c', m.2) (l.map (chalL K.lim)))).trans ?_
+        rw [prEvent_draws_chalL K.lim ((K.spec j).ns + 1) (fun l => ¬ R.pre s (opened cs ms chs)
+          (c', m.2) ∧ R.post s (opened cs ms chs) (c', m.2) l)]
+        exact R.sound j s _ _ hj hlen
+      refine (prEvent_forall₂_le _ E ((oc.length : ℝ≥0∞) * R.err j) Ls fun cs hcs =>
+        prEvent_exists_mem_le _ _ _ oc fun c' hc' => hone cs hcs c' hc').trans ?_
+      have hf1 := prod_candLists_le C (histOf c) T₀ 0 _ ms hp.2.1
+      have hf2 := length_optC_le (C j) (histOf c) T₀ hp.2.2.1
+      have hfac : (Ls.map List.length).prod * oc.length ≤ facL C 0 (K.rounds.take (j + 1)) := by
+        rw [facL_take_succ K C j hj]
+        exact Nat.mul_le_mul hf1 hf2
+      calc ((Ls.map List.length).prod : ℝ≥0∞) * ((oc.length : ℝ≥0∞) * R.err j)
+          = (((Ls.map List.length).prod * oc.length : ℕ) : ℝ≥0∞) * R.err j := by
+            push_cast
+            ring
+        _ ≤ (facL C 0 (K.rounds.take (j + 1)) : ℝ≥0∞) * R.err j := by
+            gcongr
+        _ ≤ maxErrK K C R :=
+            Finset.le_sup (f := fun j => (facL C 0 (K.rounds.take (j + 1)) : ℝ≥0∞) * R.err j)
+              (Finset.mem_range.mpr hj)
+  · rw [prEvent_eq_zero_of_forall_not _ _ fun g hg => ?_]
+    · exact bot_le
+    obtain ⟨j, s, ms, m, hp', -⟩ := hg
+    exact hp ⟨j, s, ms, m, (parseK_congr (hcg g) _ _ _ _ _).mp hp'⟩
+
+/-- **A fresh query is bad with probability at most `(4 |H| + 3) / 2^256 + max_j facL_j · err j`.** -/
+theorem prob_listBadK (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (t : ↥S)
+    (ht : c t = none) :
+    Pr{let g ← $ᵗ (↥S → Bytes32)}[listBadK K C R (histOf c) t.1 (tableOf c g)] ≤
+      ((4 * (histOf c).card + 3 : ℕ) : ℝ≥0∞) / 2 ^ 256 + maxErrK K C R :=
+  (prEvent_or_le _ _ _).trans (add_le_add (prob_coll c t ht) (prob_roundBadK K C R hS₀ c t ht))
+
+end Bad
 
 end Compose
