@@ -42,36 +42,48 @@ committed word on at least level 0's Johnson threshold of columns.
   mumbai's rows (`wordOfMerkle`). With the answers injective on the history,
   `candidates_wordOfMerkle`: its candidates are those of mumbai's `extract` of the root, the
   word of `OpeningDoomed`.
-* **`tableCode L R hw read`**: the `TableCode` of `Final.lean` for the layout `L` at rate
-  `2^-R`: Merkle height `rootHeight`, leaves of `8 · 64` bytes, bound the certified `listHi`,
-  and `dec` the decoded tables read as messages by `read`. `witnessCode`, `quotientCode`,
-  `wiringCode`: at our layouts for `17 ≤ log_rows ≤ 22`, bounds `≤ 2^18` (`bound_ours`), and at
-  `log_rows = 22` exactly `7908`, `3564`, `9952` (`bound_deployed`).
+* **`tableCode L R hw read`**: the `TableCode` of `Final.lean` for **any** F2 layout `L` (public
+  or hidden, `WhirBridge.Layout`; the read-back is `L.table`, whatever `Table::read` the layout
+  transcribes) at an admissible rate `2^-R`: Merkle height `rootHeight`, leaves of `8 · 64` bytes,
+  bound the certified `listHi`, and `dec` the decoded tables read as messages by `read`.
+  `witnessCode`, `quotientCode`, `wiringCode`: at `WhirBridge`'s `witnessLayout`,
+  `quotientLayout`, `wiringLayout` for `17 ≤ log_rows ≤ 22`, bounds `≤ 2^18`
+  (`witnessCode_bound`, …, from `listHi_ours`), and at `log_rows = 22` exactly `7908`, `3564`,
+  `9952` (`witnessCode_bound_deployed`, …, `listHi_deployed`). These read only the layouts'
+  `logN` (decided), so a change of the hidden layouts' transcription that keeps their stack sizes
+  leaves them as they are.
 * **`knowledgeSoundness_decoded_kc`**: `knowledgeSoundness_merkle_kc` with `c₁ = witnessCode`,
-  `c₂ = quotientCode`, its list hypotheses `h₁`, `h₂` discharged; `_certified`: at
-  `log_rows = 22`, the reduction's part `2^-138`. `mem_witnessExtractor`: what the extractor
-  returns, the candidates of mumbai's `extract` of the first root, read.
+  `c₂ = quotientCode`, its list hypotheses `h₁`, `h₂` discharged; `_certified` (through
+  `knowledgeSoundness_merkle_kc_certified`, the `2^-138` form in mumbai's model for any codes of
+  at most `7908` / `3564`): at `log_rows = 22`. `mem_witnessExtractor`: what the extractor
+  returns, the reads of the candidates of mumbai's `extract` of the first root (no collision in
+  the transcript).
 
-**What `read` is.** F1's messages (`B.Msg₁`, `B.Msg₂`) are tuples of `Polynomial`s over an
-abstract field `F` of `2^192` elements; how a table of `K` entries stands for one (`K ↪ F`, the
-row polynomials of the columns, their masks) is the wire's, not the decoder's, so `read` is a
-parameter (any function, computable or not). Everything up to the tables is computable.
+**What `read` is.** F1's messages (`B.Msg₁`, `B.Msg₂`) are tuples of `Polynomial`s over the field
+`F` of `2^192` elements (concretely `formal/Field/F192.lean`'s `F192`, CompPoly's `BF64.Ext3`, which
+is mumbai's `E`: a table's `K` entries embed by `ofK`, `F192.ofF64`); how a table stands for a
+message (the row polynomials of its columns, their masks) is the wire's, not the decoder's, so
+`read` is a parameter (any function, computable or not). Everything up to the tables is
+computable: `DecoderAxioms.lean` audits the definitions (no axiom outside proofs and types; their
+`#print axioms` lists `Classical.choice` through `BF64`'s `Field` instance's proofs only).
 
-**The cost** (section *The running time* below). The decoder makes at most `64` calls of the lane
-decoder, one per lane, each on `n` points with multiplicity `m` and weighted degree `W = m·A − 1`
-(so a `Y`-degree at most `ℓ = ⌊W/(k−1)⌋`, `k = 2^(μ−6)`), the values of which are computed
-(`gsShape_witness`, `gsShape_quotient`): for the witness table at `log_rows = 22` (`μ = 25`),
-`n = 2^20`, `k = 2^19`, `A = 741549`, `m = 1149`, `ℓ = 1625`, so `n·m(m+1)/2 = 692767948800`
-interpolation conditions; for the quotient table (`μ = 28`), `n = 2^23`, `A = 5933305`,
-`m = 522`, `ℓ = 738`, `1145070157824` conditions. Every intermediate list is bounded by the
-certified list size: each lane's list and the prefixes kept after every lane are at most
-`listHi` (`length_laneList_le`, `length_prune_le`, proved through the Johnson bound of the
-interleaved code), so the pruning is at most `64 · listHi² · n` symbol comparisons and
-`64 · listHi` forward transforms of `(μ − 6)·n` butterflies. The interpolation (Lee–O'Sullivan
-with Mulders–Storjohann's reduction, on a basis of `ℓ + 1` bivariate polynomials of `X`-degree at
-most `n·m`) dominates: polynomial in `n`, `m`, `ℓ`, but at these sizes far from practical; an
-honest word (no errors) is decoded by mumbai's `fastStacks` (interpolation alone) instead. The
-running time of CompPoly's interpolation and root finding is read off the algorithms, not proved.
+**The cost** (`DecoderCost.lean`). The decoder makes at most `64` calls of the lane decoder, one
+per lane, each on `n` points with multiplicity `m` and weighted degree `W = m·A − 1` (so a
+`Y`-degree at most `ℓ = ⌊W/(k−1)⌋`, `k = 2^(μ−6)`), whose values are computed by the kernel
+(`gsShape_witness`, `gsShape_quotient`, `gsShape_wiring`): for the witness table at
+`log_rows = 22` (`μ = 25`), `n = 2^20`, `A = 741549`, `m = 1149`, `ℓ = 1625`, so
+`n·m(m+1)/2 = 692767948800` interpolation conditions; for the quotient table (`μ = 28`),
+`n = 2^23`, `A = 5933305`, `m = 522`, `ℓ = 738`, `1145070157824` conditions. Every intermediate
+list is bounded by the certified list size: each lane's list and the prefixes kept after every
+lane are at most `listMax ≤ listHi` (`length_laneListAt_le`, `length_pruneUpTo_le`, proved
+through the Johnson bound of the interleaved code), so the pruning is at most `64 · listHi² · n`
+symbol comparisons and `64 · listHi` forward transforms of `(μ − 6)·n` butterflies. The
+interpolation (Lee–O'Sullivan with Mulders–Storjohann's reduction, on a basis of `ℓ + 1`
+bivariate polynomials of `X`-degree at most `n·m`) dominates: polynomial in `n`, `m`, `ℓ`, but at
+these sizes far from practical; an honest word (no errors) is decoded by mumbai's `fastStacks`
+(interpolation alone) instead. The running time of CompPoly's interpolation and root finding is
+read off the algorithms, not proved. `Test/DecoderToy.lean` runs the same code (`decodeStacksAt`)
+at a toy shape.
 -/
 
 set_option linter.unusedSectionVars false
