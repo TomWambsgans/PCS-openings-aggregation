@@ -144,6 +144,12 @@ theorem layouts_shape : ∀ r, minLogRows ≤ r → r ≤ maxLogRows →
       (witnessLayout r).pieces.length = 33 ∧ (quotientLayout r).pieces.length = 167 := by
   decide +kernel
 
+/-- The wiring layout's blocks are distinct, so its `Blocks.table` (a sum over the lanes holding a
+block) is the committed table, each entry from the one lane holding it. -/
+theorem wiring_nodup : ∀ r, minLogRows ≤ r → r ≤ maxLogRows →
+    (wiringLayout r).toBlocks.blocks.Nodup := by
+  decide +kernel
+
 /-- At `LOG_ROWS = 22`: the witness, wiring and quotient stacks have `25`, `24`, `28`
 variables. -/
 theorem deployed_sizes :
