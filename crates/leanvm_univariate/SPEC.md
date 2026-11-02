@@ -154,17 +154,29 @@ children `2i` and `2i + 1` and the root at `1` (`ω_1 = 1`). The leaves are `[2^
 | each table | its height | `Π_j D'_j / Π_j D_j` over its row's flushes | next |
 | unused | the rest, in aligned blocks | 1 | 1 block of `2^17` |
 
+The last column is the reference workload's. In general `HeapLayout::new` leaves the rest as several aligned unused
+blocks (one per set bit of the gap), each with its own identity.
+
 **Leaf identities**, each with its own quotient `Q_b`. The heap restricted to block `b` is `R_b`, read at the mixed
 point (§2):
 
-- table: `(R_b P_b + P'_b) Z_pad + (R_b + 1) Z_act ≡ 0` mod `w_r`. On active rows the leaf is the ratio; on padding
-  rows it is 1, whatever the row holds, so padding rows need no constraint. The extracted witness replaces them by
-  `padRow`.
+- table: `(R_b P_b + P'_b) Z_pad + (R_b + 1) Z_act = Q_b w_r`. On an active row `Z_act` vanishes and `Z_pad` does
+  not, so the leaf is the ratio. On a padding row `Z_pad` vanishes and `Z_act` does not, so the leaf is 1, whatever
+  the row holds. Padding rows are exempt from the bus: no constraint is placed on them, and none is needed (there is
+  no `padRow` constraint).
 - memory and bytecode: `R_b D_fin + D_init ≡ 0` mod `w_r`.
 - unused: `R_u(o_u + t) = 1`. This is degree `< 2^r`, an identity of polynomials, with no quotient.
 
 **Root.** `T(1) (β + fp(SEP_STATE, 1, 1)) = β + fp(SEP_STATE, g^(2^19 - 1), 1)`: the pushes' product equals the
-pulls', the state boundary included. `T(1)` is a claim at the digits `(1, 0, …, 0)`.
+pulls', the state boundary included. `T(1)` is a claim at the digits `(1, 0, …, 0)`. Read it as
+`T(1) · fp(init) = fp(fin)`, a product, not as a division.
+
+**Zero fingerprints need no exclusion.** Every heap identity only multiplies: a leaf is `R P = P'`, not `R = P'/P`.
+So the bus's soundness argument (Balanced, the Lean heap proof `lean-heap`) needs no event "a pull fingerprint
+vanishes", and the soundness script has no such term.
+
+**The BLAKE2S leaves read the `copy_j` columns.** So the bus's soundness for BLAKE2S needs `Q_W`'s identity
+`copy_j = ℓ_j` (§6): it ties the columns the leaves read to `q_flock`, which Flock checks. Every iteration keeps it.
 
 **One quotient per identity.** With two proof commitments, nothing drawn after `C2` can batch the identities that
 involve `C2`. A batch drawn before `C2` lets the prover trade errors between them: perturb two leaves at one point
@@ -187,8 +199,8 @@ Each constraint lives on its table's domain and is lifted to `V_{r_W}` (`r_W = 2
   values (leanVM's public lines);
 - the limb copies: `copy_j - ℓ_j`, with `ℓ_j` the composition of `q_flock`'s slot `j` (§2).
 
-`Σ_i γ^i M_i W_i = Q_W w_21`, with `deg Q_W ≈ 10.2 · 2^18`, set by BLAKE2S's counters. `padRow` needs no
-constraint (§5.2).
+`Σ_i γ^i M_i W_i = Q_W w_21`, with `deg Q_W ≈ 10.2 · 2^18`, set by BLAKE2S's counters. Padding rows have no
+constraint: the leaf identity exempts them (§5.2).
 
 ## 7. BLAKE2s: Flock (the Flock agent's; details and measurements in `SPEC-FLOCK.md`)
 
@@ -256,8 +268,7 @@ Johnson radius is itself, so `L = 1` there. The lists are the certified level-0 
 
 | round | error | bits alone | after the union |
 |---|---|---:|---:|
-| bus `(α, β)`: if the push and pull multisets differ, `Π(β + fp)` differs, total degree `≤ 5N`, `N = 2^23.02` tuples | `5N/|E|` | 166.7 | 154.5 |
-| bus: no pull fingerprint vanishes (a zero one would free its leaf) | `N/|E|` | 169.0 | 156.9 |
+| bus `(α, β)`: if the push and pull multisets differ, `Π(β + fp)` differs: one Schwartz–Zippel over `E^5`, degree 4 a factor, `N = 8,501,434 ≈ 2^23.02` tuples | `4N/|E|` | 167.0 | 154.9 |
 | `γ`: `C1`-only constraints (29) batched | `28/|E|` | 187.1 | 175.0 |
 | Flock (zerocheck, lincheck, matrices, ring map) | `≈ 2^8/|E|` | 183.8 | 171.7 |
 | `t`: every identity (tree `2^24`, leaves, `Q_W`), `Σ deg ≈ 2^25.3` | `Σ deg/|E|` | 166.7 | **142.4** |
@@ -371,7 +382,7 @@ uses about 12 GB at 1,000 signatures.
 4. **Faithfulness deltas** (the statement is the same; to prove in milestone 4):
    - `CountsNonzero` by inverse columns `z_T` instead of leanVM's count product;
    - BLAKE2S's limbs committed twice, with `copy = ℓ(q_flock)` in `Q_W`;
-   - padding rows unconstrained (their leaves are 1, `padRow` substituted by the extractor);
+   - padding rows unconstrained (the leaf identity forces their leaves to 1; no `padRow` constraint);
    - the bus as a committed heap instead of a GKR;
    - one shape per contract.
 
@@ -392,3 +403,61 @@ uses about 12 GB at 1,000 signatures.
    - Each measuring build jumps over failed checks: one `JUMPDEST` a check and a call, subtracted.
    - The contract equals the Rust verifier word for word, straight and deployed (`contract_is_the_rust_verifier`,
      `deployable_is_the_rust_verifier`).
+
+## 13. Changes since milestone 1 (iteration 2, branch `leanvm-univariate-iter2`)
+
+Each entry says what changed, why, and what the prover must change (none if the proof is unchanged).
+
+1. **Text fixes from the Lean heap proof** (`lean-heap`; no change to the proof or the code):
+   - §5.2 and §6: padding rows are exempt in the leaf identity `(R P + P') Z_pad + (R + 1) Z_act = Q w_r` (the code
+     since 56ea040); there is no `padRow` constraint.
+   - §5: the root is `T(1) · fp(init) = fp(fin)`, a product; zero fingerprints need no exclusion, since every heap
+     identity only multiplies.
+   - §5.2: the leaf table is the reference workload's; `HeapLayout::new` can leave several unused blocks.
+   - §9 and `review/leanvm_univariate_params.py`: the bus error is `4N/|E|` (one Schwartz–Zippel over `E^5`, degree
+     4 a factor), `N = 8,501,434 ≈ 2^23.02` at the reference workload: `2^-166.98` alone, `2^-154.9` over `C1`'s list
+     4,473. The "no pull fingerprint vanishes" term is gone.
+   - §5.2: the BLAKE2S leaves read the `copy_j` columns, so the bus's soundness for BLAKE2S needs `Q_W`'s
+     `copy_j = ℓ_j`. Every iteration keeps that constraint.
+
+   Prover: nothing.
+
+2. **Lever 1a: the ring map in tower order** (`leanvm_flock_gas::ring_tower`, `Slices::Tower`, the main line's
+   `FLOCK_MAIN`). The map's six stages are applied shift 1 first, 32 last (leanVM: 32 first). The outermost stage is
+   then `GF(2^32)`-linear, the next `GF(2^16)`-linear, and so on, so the target `Σ_i x^i Φ(s_i)` is computed through
+   `K`'s subfields: 64 sums of slices (the coordinates of `x^i` in a tower basis, 1,938 slice terms), then six levels
+   with `6 · 64` squarings and `3 · 63` products, against `64 · 63` squarings. On the main line the ring-switch term
+   is one term of `C1`'s relations ([`RING_TWIST`]), whose weight at the batch's point is computed from the inside
+   out (the 64 twisted eq products, then 63 products and the chains `f_j^(2^k)`; no coefficients `d_k`). Each eq
+   factor is `(1 + r_k) + p_k`, with `1 + r_k` shared. The map's error is at most `6/|E|` (SPEC-FLOCK's leanVM order:
+   `2^31/|E|` by Schwartz–Zippel): a node of the tower is `(A + θB) + f_j(A^q + θB^q)`, which vanishes for at most one
+   `f_j` unless both children do.
+   Measured at 1,000 signatures, main line: straight 270,221 → 203,829; deployed 297,094 → 216,116 (4 contracts);
+   tx (EIP-7623, `c = 0`) 417,014 → 336,036. Target 70,521 → 26,832; twisted weight ~101,000 → 81,850. Ext. W × (a′):
+   139,640 → 101,820 straight.
+   Prover: the ring map's stages in the order shift 1, 2, 4, 8, 16, 32 (the same six challenges, drawn as before):
+   `Φ(a)` applies `a ← a + f_j a^(2^(2^j))` for `j = 0..5`, and the weight is `Φ(eq(p, u))` with that `Φ`.
+
+3. **Lever 1b: the tower's leaves as an `XOR` network** (Paar's greedy common subexpressions, `ring_tower::Tower`):
+   1,938 slice terms become 767 `XOR`s (251 shared). Measured, main line straight: 203,829 → 196,524 (target
+   26,832 → 19,542). Prover: nothing.
+
+4. **Lever 1c: the batch's other weights share their work** (`verifier::weight_at`): a column's limbs share its row
+   (`Σ_limb basis · selector` once per column), terms on one row add `coefficient · part` before the row multiplies
+   them, and `q_flock`'s 18 slots share the eq of their 18 instance coordinates (only their 8 slot bits' factors
+   differ). Measured, main line straight: 196,524 → 185,541 (the batch's weights 33,165 → 22,660). Prover: nothing.
+
+5. **Lever 4a: Flock's matrices' reduction runs in the batching sumcheck** (`flock_min::verify_deferred`,
+   `Pending`, `verifier::batch`). On the main line its sum `Σ_(x, y) G(x, y) L̂(x) ŝ(y)` (the skip's `k` row bits and
+   the column's 6 packing bits, degree 2 a variable) joins the batch as the next power of `λ`, zero-extended by
+   `eq(·, 0)` on the batch's other variables, so its `k + 6 = 9` rounds are the batch's first 9 and cost no scalars.
+   After the stacks' three values the prover sends `a`, `b` (the claims on `A0`, `B0` at `(ρ, row_low, chi_in, σ,
+   chi_in')`, `(ρ, σ)` the batch's first 9 coordinates), and the batch's terminal adds `λ^3 (a + α b) L̂(ρ) ŝ(σ)
+   Π_(j≥9)(1 + r_j)`. Its rounds' challenges are drawn after `C2` now: they are union-bounded over `L1 L2`.
+   Measured, main line: calldata 7,516 → 7,084 B (−18 scalars); straight 185,541 → 184,417; deployed 199,342 →
+   197,610; tx (EIP-7623, `c = 0`, deployed) 319,262 → 310,642; EIP-7976 481,024 → 453,376.
+   Prover: the matrices' reduction no longer has its own 9 rounds and its `a`, `b` after the slices. After the slices
+   the transcript draws the ring map at once; at the end, the batching sumcheck's round polynomials are the stacks'
+   batch plus `λ^3` times the matrices' product sum (its tables zero-extended by `δ_0` on variables 9..27), and `a`,
+   `b` follow the three stack values. `flock_min::tests::the_pending_matrices_reduction_merges_into_a_longer_sumcheck`
+   is an honest prover of this merge.

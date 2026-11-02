@@ -110,10 +110,10 @@ def rounds(xmss, l1, l2, flock_rounds=32 + 14 + 10):
     n = lay["n_tuples"]
     out = []
     # Bus: (α, β) after C1. If push and pull multisets differ, Π(β + fp_α(push)) - Π(β + fp_α(pull)) is a nonzero
-    # polynomial of total degree <= 5N (fp_α multilinear in α's 4 coordinates); and no pull fingerprint may vanish
-    # (a zero pull fingerprint frees its leaf): <= N bad β for each α.
-    out.append(("bus fingerprint (α, β), multiset equality", 5 * n / q, l1))
-    out.append(("bus fingerprint, no pull fingerprint vanishes", n / q, l1))
+    # polynomial over E^5 of degree 4 in each factor (the Lean heap proof, branch lean-heap): one Schwartz-Zippel,
+    # 4N/|E|. The heap identities only multiply (R P = P', T(1) fp(init) = fp(fin)), so a zero fingerprint needs no
+    # exclusion.
+    out.append(("bus fingerprint (α, β), multiset equality", 4 * n / q, l1))
     out.append(("γ: C1-only constraints batched", lay["constraints"] / q, l1))
     # Flock: leanVM's sumchecks (degree <= 3 a round), the skip, the lincheck's batching, the matrices' rounds, the
     # ring map: a few hundred over |E| (SPEC-FLOCK.md), drawn after C1.

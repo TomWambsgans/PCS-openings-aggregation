@@ -6,6 +6,7 @@
 
 use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::flock::ring_switch_weight;
+use leanvm_flock_gas::ring_tower;
 use leanvm_flock_gas::flock_min::{self, End, Slices, Variant};
 use leanvm_flock_gas::layout::{
     BLAKE2S_R1CS_LOG_SIZE, BLAKE2S_SLOTS, Form, N_TABLES, OP_BLAKE2S, OP_DEREF, OP_JUMP, OP_MUL, SEP_MEM,
@@ -290,8 +291,13 @@ pub enum Claims {
 /// bit-slice claim type (a precompile extension); leanVM's own skip with (a′)'s weighted claim.
 pub const FLOCK_MAIN: Variant = Variant {
     skip: 3,
-    slices: Slices::Weighted,
+    slices: Slices::Tower,
 };
+
+/// The twist field of the term that stands for the whole ring-switch weight `Φ(eq(p, ·))` on the main line: the
+/// batch's weight evaluates it at its point by [`ring_tower::weight_at`] (64 twisted eq products and the map's stages)
+/// rather than as 64 terms with explicit coefficients (SPEC.md §13).
+pub const RING_TWIST: u8 = u8::MAX;
 pub const FLOCK_BIT_SLICE: Variant = Variant {
     skip: 4,
     slices: Slices::Claim,
@@ -343,8 +349,19 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     // 2. Flock, on C1's q_flock: leanVM's zerocheck, lincheck and matrices' reduction; its ring switch as one
     // weighted claim of 64 twisted terms (SPEC.md §7).
     let flock_log_n = BLAKE2S_R1CS_LOG_SIZE + heights[OP_BLAKE2S];
+    // On the main line with the slices sent, the matrices' reduction runs its rounds in the batching sumcheck's
+    // (SPEC.md §13): it is left pending here.
+    let mut pending = None;
     let flock = match blake2s {
-        Blake2s::Flock(variant) => Some(flock_min::verify(flock_log_n, variant, channel)?),
+        Blake2s::Flock(variant) if mode == Claims::Point && variant.slices != Slices::Claim => {
+            let (point, end, left) = flock_min::verify_deferred(flock_log_n, variant, channel)?;
+            pending = Some(left);
+            Some((point, end, None))
+        }
+        Blake2s::Flock(variant) => {
+            let reduced = flock_min::verify(flock_log_n, variant, channel)?;
+            Some((reduced.point, reduced.end, Some(reduced.matrices)))
+        }
         Blake2s::Omitted => None,
     };
 
@@ -564,12 +581,46 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     // 7. Flock's claim on q_flock: the ring switch's 64 twisted terms (E-linear), or one bit-slice combination.
     let mut matrices = None;
     let mut bit_slice = Relations::default();
-    if let Some(flock) = flock {
-        match flock.end {
+    let mut ring_map: Option<Vec<S>> = None;
+    let tower = matches!(blake2s, Blake2s::Flock(Variant { slices: Slices::Tower, .. }));
+    if let Some((flock_point, flock_end, flock_matrices)) = flock {
+        match flock_end {
+            End::Ring { map, target, .. } if tower && mode == Claims::Point => {
+                // One term for the whole weight, evaluated at the batch's point (SPEC.md §13).
+                relations.push(
+                    vec![Term {
+                        column: Column::Qflock,
+                        point: flock_point.clone(),
+                        twist: RING_TWIST,
+                        coefficient: S::one(),
+                    }],
+                    target,
+                );
+                ring_map = Some(map);
+            }
+            End::Ring { map, target, .. } if tower => {
+                let coefficients = {
+                    let _phase = enter("ring switch: map, coefficients, target");
+                    ring_tower::coefficients(&map)
+                };
+                relations.push(
+                    coefficients
+                        .iter()
+                        .enumerate()
+                        .map(|(k, &coefficient)| Term {
+                            column: Column::Qflock,
+                            point: flock_point.clone(),
+                            twist: k as u8,
+                            coefficient,
+                        })
+                        .collect(),
+                    target,
+                );
+            }
             End::Ring { map, target, .. } => {
                 let weight = {
                     let _phase = enter("ring switch: map, coefficients, target");
-                    ring_switch_weight(flock.point.clone(), &map)
+                    ring_switch_weight(flock_point.clone(), &map)
                 };
                 relations.push(
                     weight
@@ -592,7 +643,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                     .enumerate()
                     .map(|(i, &coefficient)| Term {
                         column: Column::QflockBits,
-                        point: flock.point.clone(),
+                        point: flock_point.clone(),
                         twist: i as u8,
                         coefficient,
                     })
@@ -600,7 +651,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                 value,
             ),
         }
-        matrices = Some(flock.matrices);
+        matrices = flock_matrices;
     }
 
     // 8. One claim per commitment.
@@ -632,7 +683,14 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
             }
             openings
         }
-        Claims::Point => batch(channel, &combined, &layouts, bit_slice)?,
+        Claims::Point => {
+            let (openings, deferred) =
+                batch(channel, &combined, &layouts, bit_slice, ring_map.as_deref(), pending.as_ref())?;
+            if deferred.is_some() {
+                matrices = deferred;
+            }
+            openings
+        }
     };
     Ok(Reduced {
         roots: [root1, root2],
@@ -674,40 +732,96 @@ fn layouts(shape: &Shape, c2_columns: &[(Column, usize, bool)]) -> Vec<(Commitme
     ]
 }
 
-/// A combined claim's weight at the stack point `r`: every term's eq weight on its column's blocks.
-fn weight_at<S: Scalar>(claim: &Combined<S>, layout: &StackLayout, r: &[S], base_id: usize) -> S {
+/// A combined claim's weight at the stack point `r`: every term's eq weight on its column's blocks; the ring-switch
+/// term ([`RING_TWIST`]) by its map.
+///
+/// Shared work: a column's limbs share its row, so a column's part is `Σ_limb basis_limb · selector_limb` once; terms
+/// on one row (point, length, twist) add their `coefficient · part` before the row multiplies them; `q_flock`'s slots
+/// at one point share the instance coordinates' eq, and differ only in their 8 slot bits' factors.
+fn weight_at<S: Scalar>(
+    claim: &Combined<S>,
+    layout: &StackLayout,
+    r: &[S],
+    base_id: usize,
+    ring_map: Option<&[S]>,
+) -> S {
     let mut cache = EqCache::new(r);
     let basis = limb_basis::<S>();
-    let mut total = S::zero();
-    for &(column, p, twist, coefficient) in &claim.terms {
-        let point = &claim.points[p];
-        let (column, row_len, id, row): (Column, usize, usize, Vec<S>) = match column {
-            Column::QflockSlot(j) => {
-                // q_flock's word `slot + 256 · instance`: the slot's bits, then the instance's coordinates.
-                let bits = (0..8).map(|b| S::constant(E::new((j >> b & 1) as u64, 0, 0)));
-                let row: Vec<S> = bits.chain(point.iter().copied()).collect();
-                (Column::Qflock, row.len(), base_id + 1000 + j, row)
-            }
-            _ => (column, 0, base_id + p, point.clone()),
-        };
-        for (limb, vars, offset) in layout.limbs(column) {
-            let len = if row_len > 0 { row_len } else { vars };
-            let eq = cache.row(id, &row, len, twist) * cache.selector(vars, offset);
-            let scale = if limb == 0 { coefficient } else { coefficient * basis[limb] };
-            total += scale * eq;
+    let mut parts: Vec<(Column, usize, S)> = Vec::new();
+    let mut part = |cache: &mut EqCache<S>, column: Column| -> (usize, S) {
+        if let Some(&(_, vars, sum)) = parts.iter().find(|(c, ..)| *c == column) {
+            return (vars, sum);
         }
+        let limbs = layout.limbs(column);
+        let vars = limbs[0].1;
+        let mut sum = S::zero();
+        for (limb, v, offset) in limbs {
+            assert_eq!(v, vars, "a column's limbs are blocks of one size");
+            let selector = cache.selector(vars, offset);
+            sum += if limb == 0 { selector } else { basis[limb] * selector };
+        }
+        parts.push((column, vars, sum));
+        (vars, sum)
+    };
+    // Σ coefficient · part, by row: (point, length, twist).
+    let mut rows: Vec<((usize, usize, u8), S)> = Vec::new();
+    // q_flock's slots, by point: Σ coefficient · eq(slot bits, r_(<8)).
+    let mut slots: Vec<(usize, S)> = Vec::new();
+    for &(column, p, twist, coefficient) in &claim.terms {
+        if let Column::QflockSlot(j) = column {
+            // q_flock's word `slot + 256 · instance`: the slot's bits, then the instance's coordinates.
+            let bits = (0..8).fold(S::one(), |acc, b| {
+                acc * if j >> b & 1 == 1 { r[b] } else { cache.one_plus_r()[b] }
+            });
+            let c = coefficient * bits;
+            match slots.iter_mut().find(|(q, _)| *q == p) {
+                Some((_, sum)) => *sum += c,
+                None => slots.push((p, c)),
+            }
+            continue;
+        }
+        let (vars, sum) = part(&mut cache, column);
+        let c = coefficient * sum;
+        match rows.iter_mut().find(|(key, _)| *key == (p, vars, twist)) {
+            Some((_, total)) => *total += c,
+            None => rows.push(((p, vars, twist), c)),
+        }
+    }
+    let mut total = S::zero();
+    for ((p, len, twist), sum) in rows {
+        let point = &claim.points[p];
+        let row = if twist == RING_TWIST {
+            let map = ring_map.expect("the ring map of a ring-switch term");
+            let _phase = enter("claims: the ring switch's weight at the batch's point");
+            ring_tower::weight_at(&point[..len], &cache.one_plus_r()[..len], map)
+        } else {
+            cache.row(base_id + p, point, len, twist)
+        };
+        total += row * sum;
+    }
+    for (p, sum) in slots {
+        let point = &claim.points[p];
+        let (_, qflock) = part(&mut cache, Column::Qflock);
+        let instance = cache.row_from(base_id + 1000 + p, point, 8);
+        total += sum * instance * qflock;
     }
     total
 }
 
 /// The batching sumcheck (SPEC.md §8): `Σ_k λ^k Σ_u W_k(u) C_k(u)` over the longest stack, the others zero-extended;
 /// at its end point `r`, the prover sends each `C_k(r)` and the verifier checks the sum with `W_k(r)`.
+///
+/// With Flock's matrices' reduction `pending` (SPEC.md §13), its sum `Σ_(x, y) G(x, y) L̂(x) ŝ(y)` over `k + 6`
+/// variables joins as the next power of `λ`, zero-extended by `eq(·, 0)` on the rest, so its rounds are the batch's
+/// first ones: after the stacks' values the prover sends `a = Â0`, `b = B̂0` at the point, and the terminal checks both.
 fn batch<S: Scalar + PartialEq, C: Channel<S>>(
     channel: &mut C,
     combined: &[(Commitment, Combined<S>)],
     layouts: &[(Commitment, StackLayout)],
     bit_slice: Option<Combined<S>>,
-) -> Result<Vec<(Commitment, Opening<S>)>, VerifierError> {
+    ring_map: Option<&[S]>,
+    pending: Option<&flock_min::Pending<S>>,
+) -> Result<(Vec<(Commitment, Opening<S>)>, Option<MatrixClaim<S>>), VerifierError> {
     let _phase = enter("claims: batching sumcheck to point claims");
     let lambda = channel.sample();
     let vars = layouts.iter().map(|(_, l)| l.vars).max().expect("stacks");
@@ -717,8 +831,19 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
         target += scale * claim.value;
         scale *= lambda;
     }
+    if let Some(pending) = pending {
+        assert!(pending.rounds() <= vars);
+        target += scale * pending.claim;
+    }
     let (r, last) = sumcheck(channel, target, 3, &vec![None; vars])?;
     let values = channel.next_scalars(combined.len())?;
+    let matrices = match pending {
+        Some(pending) => {
+            let (a, b) = (channel.next_scalar()?, channel.next_scalar()?);
+            Some((pending.terminal(&r, a, b)?, pending.rounds()))
+        }
+        None => None,
+    };
     let _weights = enter("claims: the batch's weights at its point (eq, selectors, twists)");
     let mut sum = S::zero();
     let mut scale = S::one();
@@ -726,7 +851,7 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
     let mut bit_slice = bit_slice;
     for (k, ((commitment, claim), &value)) in combined.iter().zip(&values).enumerate() {
         let layout = &layouts.iter().find(|(c, _)| c == commitment).expect("a layout").1;
-        let weight = weight_at(claim, layout, &r, 10_000 * k);
+        let weight = weight_at(claim, layout, &r, 10_000 * k, ring_map);
         let extension = (layout.vars..vars).fold(S::one(), |acc, j| acc * (S::one() + r[j]));
         sum += scale * weight * extension * value;
         scale *= lambda;
@@ -739,6 +864,11 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
             },
         ));
     }
+    let matrices = matrices.map(|((value, claim), rounds)| {
+        let extension = (rounds..vars).fold(S::one(), |acc, j| acc * (S::one() + r[j]));
+        sum += scale * value * extension;
+        claim
+    });
     channel.require_zero(sum + last, VerifierError::StackBatchTerminal)?;
-    Ok(openings)
+    Ok((openings, matrices))
 }
