@@ -20,6 +20,11 @@ one, the circuit evaluated on the secret's input bits, and the deployed σ copie
   `y = H(x ‖ 0x11^32)` and of the root of the path (`deployedAssign_public`, from
   `membership_public`: the forward direction of Keccak correctness is soundness's lemma applied to
   this computation), and its cells prove membership (`deployedAssign_provesMembership`).
+* `deployedAssign_eq_outputs`: **it is the Rust's `Circuit::outputs`** on `membership_inputs(s)`
+  (`Circuit.outputs`, differentially tested against the Rust by `CircuitTest/Dump.lean`): its first
+  loop writes the inputs (`inputsArray_spec`), its second sets each row to its gate, the rows in
+  rank order (from `512` on, then the public rows), so every row it reads is final by then
+  (`foldl_outStep`, `ReadsDone`); hence `Circuit.outputs` satisfies every gate (`outputs_satisfies`).
 * `deployedSigma_cellSrc`: **the deployed σ keeps what each cell carries** (the source it reads,
   or its row for a `V` cell), so it copies every cell of a computation onto cells holding the
   same bit. From the construction of `finish`'s σ (`wiring_slot`: σ is the cyclic successor in
@@ -30,6 +35,8 @@ one, the circuit evaluated on the secret's input bits, and the deployed σ copie
 As in `Deployed.lean`, everything is proved for a circuit `c` of `PcsCircuit` and then instantiated
 with `membership`, whose projections are never unfolded.
 -/
+
+set_option maxRecDepth 10000
 
 namespace PcsCircuit
 
@@ -331,6 +338,235 @@ theorem toChi_cellSrc_cellOf (hI : InputRows c) (hO : Ordered c) {n : ℕ} (hn :
 
 end Generic
 
+/-! ## `Circuit.outputs`, the Rust's evaluation -/
+
+section Outputs
+
+variable {c : PcsCircuit.Circuit}
+
+/-- The first loop of `Circuit.outputs`: input `k`'s bit written at row `c.inputs[k]`. -/
+def inputsArray (c : PcsCircuit.Circuit) (bits : Array Bool) : Array Bool :=
+  (List.range c.inputs.size).foldl (fun v k => v.set! (c.inputs.getD k 0) (bits.getD k false))
+    (Array.replicate c.rows.size false)
+
+/-- A step of its second loop: row `r` set to its gate on the array. -/
+def outStep (c : PcsCircuit.Circuit) (v : Array Bool) (r : ℕ) : Array Bool :=
+  v.set! r (PcsCircuit.gateBits (PcsCircuit.readBit v (c.rows.getD r .idle).x)
+    (PcsCircuit.readBit v (c.rows.getD r .idle).y) (PcsCircuit.readBit v (c.rows.getD r .idle).c))
+
+/-- `Circuit.outputs`: the inputs written, then the rows from `512` on in order, then the public
+rows. -/
+theorem outputs_eq (bits : Array Bool) : c.outputs bits =
+    (List.range' publicRows (c.rows.size - publicRows) ++ List.range publicRows).foldl (outStep c)
+      (inputsArray c bits) := rfl
+
+/-- Row `r` of `c` reads row `r'`. -/
+def RowReads (c : PcsCircuit.Circuit) (r r' : ℕ) : Prop :=
+  (c.rows.getD r .idle).x = .row r' ∨ (c.rows.getD r .idle).y = .row r' ∨
+    (c.rows.getD r .idle).c = .row r'
+
+/-- Each row of `L`, when its turn comes, is a row of `c` all of whose reads are done (in `T`, then
+in `T` and the rows before it). -/
+def ReadsDone (c : PcsCircuit.Circuit) : (ℕ → Prop) → List ℕ → Prop
+  | _, [] => True
+  | T, r :: L => (r < c.rows.size ∧ ∀ r', RowReads c r r' → T r') ∧
+      ReadsDone c (fun x => T x ∨ x = r) L
+
+theorem readsDone_mono : ∀ (L : List ℕ) (T T' : ℕ → Prop), (∀ x, T x → T' x) →
+    ReadsDone c T L → ReadsDone c T' L
+  | [], _, _, _, _ => trivial
+  | _ :: L, _, _, h, ⟨⟨hr, hrd⟩, hL⟩ => ⟨⟨hr, fun r' h' => h _ (hrd r' h')⟩,
+      readsDone_mono L _ _ (fun x hx => hx.imp_left (h x)) hL⟩
+
+theorem readsDone_append : ∀ (L1 L2 : List ℕ) (T : ℕ → Prop), ReadsDone c T L1 →
+    ReadsDone c (fun x => T x ∨ x ∈ L1) L2 → ReadsDone c T (L1 ++ L2)
+  | [], L2, _, _, h2 => readsDone_mono L2 _ _ (fun x hx => hx.resolve_right List.not_mem_nil) h2
+  | _ :: L1, L2, _, ⟨h0, h1⟩, h2 => ⟨h0, readsDone_append L1 L2 _ h1
+      (readsDone_mono L2 _ _ (fun x hx => by
+        rcases hx with hx | hx
+        · exact Or.inl (Or.inl hx)
+        · rcases List.mem_cons.mp hx with hx | hx
+          · exact Or.inl (Or.inr hx)
+          · exact Or.inr hx) h2)⟩
+
+theorem readsDone_range' : ∀ (n a : ℕ) (T : ℕ → Prop),
+    (∀ r, a ≤ r → r < a + n →
+      r < c.rows.size ∧ ∀ r', RowReads c r r' → T r' ∨ (a ≤ r' ∧ r' < r)) →
+    ReadsDone c T (List.range' a n)
+  | 0, _, _, _ => trivial
+  | n + 1, a, T, h => by
+    rw [List.range'_succ]
+    obtain ⟨hr, hrd⟩ := h a le_rfl (by omega)
+    refine ⟨⟨hr, fun r' h' => (hrd r' h').resolve_right (by omega)⟩,
+      readsDone_range' n (a + 1) _ fun r h1 h2 => ?_⟩
+    obtain ⟨hr, hrd⟩ := h r (by omega) (by omega)
+    refine ⟨hr, fun r' h' => ?_⟩
+    rcases hrd r' h' with h' | ⟨h1', h2'⟩
+    · exact Or.inl (Or.inl h')
+    · by_cases e : r' = a
+      · exact Or.inl (Or.inr e)
+      · exact Or.inr ⟨by omega, h2'⟩
+
+/-- **The second loop computes `ev`** when `ev` satisfies every gate: a row whose reads hold `ev`
+gets its gate on them, `ev`'s bit. -/
+theorem foldl_outStep (ev : ℕ → Bool)
+    (hev : ∀ r < c.rows.size, ev r = (c.rows.getD r .idle).eval ev) :
+    ∀ (L : List ℕ) (T : ℕ → Prop) (a : Array Bool), a.size = c.rows.size →
+      (∀ r, T r → a.getD r false = ev r) → ReadsDone c T L →
+      (L.foldl (outStep c) a).size = c.rows.size ∧
+        ∀ r, (T r ∨ r ∈ L) → (L.foldl (outStep c) a).getD r false = ev r
+  | [], T, a, ha, hT, _ => ⟨ha, fun r h => h.elim (hT r) (fun h => absurd h List.not_mem_nil)⟩
+  | r :: L, T, a, ha, hT, ⟨⟨hr, hrd⟩, hL⟩ => by
+    have hread : ∀ s : PcsCircuit.Src, (∀ r', s = .row r' → RowReads c r r') →
+        PcsCircuit.readBit a s = PcsCircuit.read ev s := by
+      intro s hs
+      cases s with
+      | zero => rfl
+      | one => rfl
+      | row r' => exact hT r' (hrd r' (hs r' rfl))
+    have hsize : (outStep c a r).size = c.rows.size := by
+      unfold outStep; rw [PcsCircuit.size_set!, ha]
+    have hT' : ∀ x, (T x ∨ x = r) → (outStep c a r).getD x false = ev x := by
+      intro x hx
+      unfold outStep
+      rw [PcsCircuit.getD_set!]
+      by_cases hxr : x = r
+      · rw [hxr, if_pos ⟨rfl, by rw [ha]; exact hr⟩,
+          hread (c.rows.getD r .idle).x (fun r' h => Or.inl h),
+          hread (c.rows.getD r .idle).y (fun r' h => Or.inr (Or.inl h)),
+          hread (c.rows.getD r .idle).c (fun r' h => Or.inr (Or.inr h))]
+        exact (hev r hr).symm
+      · rw [if_neg (fun h => hxr h.1.symm)]
+        exact hT x (hx.resolve_right hxr)
+    rw [List.foldl_cons]
+    obtain ⟨h1, h2⟩ := foldl_outStep ev hev L _ (outStep c a r) hsize hT' hL
+    refine ⟨h1, fun x hx => h2 x ?_⟩
+    rcases hx with hx | hx
+    · exact Or.inl (Or.inl hx)
+    · rcases List.mem_cons.mp hx with hx | hx
+      · exact Or.inl (Or.inr hx)
+      · exact Or.inr hx
+
+theorem inputs_getD_toList (a : Array ℕ) (k : ℕ) (hk : k < a.size) :
+    a.getD k 0 = a.toList[k]'(by simpa using hk) := by
+  rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem hk, Option.getD_some,
+    Array.getElem_toList]
+
+/-- **The first loop writes input `k`'s bit at its row**, the rows being distinct. -/
+theorem inputsArray_spec (hnd : c.inputs.toList.Nodup) (hlt : ∀ r ∈ c.inputs, r < c.rows.size)
+    (bits : Array Bool) : (inputsArray c bits).size = c.rows.size ∧
+      ∀ k < c.inputs.size,
+        (inputsArray c bits).getD (c.inputs.getD k 0) false = bits.getD k false := by
+  have key : ∀ j, j ≤ c.inputs.size →
+      ((List.range j).foldl (fun v k => v.set! (c.inputs.getD k 0) (bits.getD k false))
+        (Array.replicate c.rows.size false)).size = c.rows.size ∧
+      ∀ k < j, ((List.range j).foldl (fun v k => v.set! (c.inputs.getD k 0) (bits.getD k false))
+        (Array.replicate c.rows.size false)).getD (c.inputs.getD k 0) false =
+          bits.getD k false := by
+    intro j
+    induction j with
+    | zero => intro _; exact ⟨by simp, fun k hk => absurd hk (Nat.not_lt_zero _)⟩
+    | succ j ih =>
+      intro hj
+      obtain ⟨h1, h2⟩ := ih (by omega)
+      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+      have hmem : c.inputs.getD j 0 ∈ c.inputs := by
+        rw [inputs_getD_toList _ _ (by omega)]
+        exact Array.mem_def.mpr (List.getElem_mem _)
+      refine ⟨by rw [PcsCircuit.size_set!, h1], fun k hk => ?_⟩
+      rw [PcsCircuit.getD_set!]
+      by_cases hkj : k = j
+      · rw [hkj, if_pos ⟨rfl, by rw [h1]; exact hlt _ hmem⟩]
+      · rw [if_neg (fun h => hkj ?_)]
+        · exact h2 k (by omega)
+        · have e := h.1
+          rw [inputs_getD_toList _ _ (by omega), inputs_getD_toList _ _ (by omega)] at e
+          exact ((List.Nodup.getElem_inj_iff hnd).mp e).symm
+  exact key c.inputs.size le_rfl
+
+theorem rowReads_input (hI : InputRows c) {r r' : ℕ} (hin : r ∈ c.inputs) (h : RowReads c r r') :
+    r' = r := by
+  obtain ⟨-, -, hrow⟩ := hI r hin
+  unfold RowReads at h
+  rw [hrow] at h
+  rcases h with h | h | h <;> exact (PcsCircuit.Src.row.inj h).symm
+
+theorem rowReads_ranked (hO : Ordered c) {r r' : ℕ} (hr : r < 2 ^ logRows) (hin : r ∉ c.inputs)
+    (h : RowReads c r r') : r' < 2 ^ logRows ∧ PcsCircuit.rank r' < PcsCircuit.rank r := by
+  obtain ⟨hx, hy, hc⟩ := hO r hr hin
+  rcases h with h | h | h
+  · rw [h] at hx; exact hx
+  · rw [h] at hy; exact hy
+  · rw [h] at hc; exact hc
+
+/-- **`Circuit.outputs` is the evaluation**: for a circuit of `2^22` rows whose inputs are distinct
+rows reading themselves and whose other rows read lower ranks, the Rust's `outputs` on the input
+bits `bits` is the circuit evaluated on them. So it satisfies every gate. -/
+theorem toChi_eval_eq_outputs (hI : InputRows c) (hO : Ordered c)
+    (hsize : c.rows.size = 2 ^ logRows) (hnd : c.inputs.toList.Nodup) (bits : Array Bool)
+    (r : Fin (2 ^ 22)) :
+    (toChi c hI hO).eval (inputsOf c fun k => bits.getD k false) r =
+      (c.outputs bits).getD r false := by
+  have hN : c.rows.size = 4194304 := by rw [hsize]; rfl
+  have hev := circuitSat_toChi hI hO hsize _
+    (ChiCircuit.eval_satisfies _ (inputsOf c fun k => bits.getD k false))
+  obtain ⟨ha1, ha2⟩ := inputsArray_spec hnd (fun r hr => hsize ▸ (hI r hr).1) bits
+  have hT : ∀ x, x ∈ c.inputs → (inputsArray c bits).getD x false =
+      natVal ((toChi c hI hO).eval (inputsOf c fun k => bits.getD k false)) x := by
+    intro x hx
+    obtain ⟨k, hk, hkx⟩ := Array.mem_iff_getElem.mp hx
+    have e : c.inputs.getD k 0 = x := by
+      rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem hk, Option.getD_some, hkx]
+    rw [← e, ha2 k hk, toChi_eval_input hI hO hnd _ k hk]
+  have hrd : ReadsDone c (· ∈ c.inputs)
+      (List.range' publicRows (c.rows.size - publicRows) ++ List.range publicRows) := by
+    refine readsDone_append _ _ _ (readsDone_range' _ _ _ fun r h1 h2 => ?_) ?_
+    · rw [hN] at h2
+      simp only [publicRows] at h1 h2 ⊢
+      have hr : r < 2 ^ logRows := by simp only [logRows, Nat.reducePow]; omega
+      refine ⟨by rw [hN]; omega, fun r' h' => ?_⟩
+      by_cases hin : r ∈ c.inputs
+      · exact Or.inl (rowReads_input hI hin h' ▸ hin)
+      · obtain ⟨-, hrk⟩ := rowReads_ranked hO hr hin h'
+        refine Or.inr ?_
+        unfold PcsCircuit.rank at hrk
+        rw [if_neg (show ¬ r < publicRows by unfold publicRows; omega)] at hrk
+        by_cases h3 : r' < publicRows
+        · rw [if_pos h3] at hrk
+          simp only [publicRows, logRows, Nat.reducePow] at hrk h3; omega
+        · rw [if_neg h3] at hrk
+          simp only [publicRows] at h3; omega
+    · rw [List.range_eq_range']
+      refine readsDone_range' _ _ _ fun r _ h2 => ?_
+      simp only [publicRows] at h2
+      have hr : r < 2 ^ logRows := by simp only [logRows, Nat.reducePow]; omega
+      have hin : r ∉ c.inputs := fun h => by
+        have := (hI r h).2.1; simp only [publicRows] at this; omega
+      refine ⟨by rw [hN]; omega, fun r' h' => ?_⟩
+      obtain ⟨hr', hrk⟩ := rowReads_ranked hO hr hin h'
+      simp only [logRows, Nat.reducePow] at hr'
+      unfold PcsCircuit.rank at hrk
+      by_cases h5 : 512 ≤ r'
+      · refine Or.inl (Or.inr (List.mem_range'_1.mpr ⟨?_, ?_⟩)) <;>
+          simp only [publicRows, hN] <;> omega
+      · refine Or.inr ⟨Nat.zero_le _, ?_⟩
+        rw [if_pos (show r' < publicRows by unfold publicRows; omega),
+          if_pos (show r < publicRows by unfold publicRows; omega)] at hrk
+        omega
+  obtain ⟨-, hfin⟩ := foldl_outStep _ hev _ _ _ ha1 hT hrd
+  rw [outputs_eq, hfin r ?_]
+  · unfold natVal
+    rw [dif_pos r.isLt]
+  · refine Or.inr (List.mem_append.mpr ?_)
+    have hr := r.isLt
+    simp only [Nat.reducePow] at hr
+    by_cases h5 : publicRows ≤ (r : ℕ)
+    · refine Or.inl (List.mem_range'_1.mpr ⟨h5, ?_⟩)
+      rw [hN]; simp only [publicRows] at h5 ⊢; omega
+    · exact Or.inr (List.mem_range.mpr (by simp only [publicRows] at h5 ⊢; omega))
+
+end Outputs
+
 /-! ## The deployed circuit -/
 
 /-- **The honest assignment**: `deployed` evaluated on `membership_inputs(s)`, input `k` holding
@@ -389,5 +625,19 @@ theorem deployedSigma_cellSrc (z : Fin (22 + 2) → Bool) :
   congr 1
   apply PcsCircuit.slot_injective
   rw [PcsCircuit.slot_carried, PcsCircuit.slot_carried, PcsCircuit.membership_sigma_slot n hn']
+
+/-- **The honest assignment is the Rust's `Circuit::outputs`** on `membership_inputs(s)`
+(`Circuit.outputs`, which `CircuitTest/Dump.lean` compares with the Rust's). -/
+theorem deployedAssign_eq_outputs (s : PcsCircuit.Secret) (r : Fin (2 ^ 22)) :
+    deployedAssign s r = (membership.outputs s.inputs).getD r false :=
+  toChi_eval_eq_outputs _ _ PcsCircuit.membership_rows_size PcsCircuit.membership_inputs_nodup _ r
+
+/-- **`Circuit.outputs` satisfies every gate of the deployed circuit.** -/
+theorem outputs_satisfies (s : PcsCircuit.Secret) :
+    deployed.SatisfiesBits fun r => (membership.outputs s.inputs).getD r false := by
+  have h : (fun r : Fin (2 ^ 22) => (membership.outputs s.inputs).getD r false) =
+      deployedAssign s := funext fun r => (deployedAssign_eq_outputs s r).symm
+  rw [h]
+  exact deployedAssign_satisfies s
 
 end QuotientSecurity

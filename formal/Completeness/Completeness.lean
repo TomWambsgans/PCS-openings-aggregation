@@ -98,6 +98,18 @@ decision of the layouts' shape on `propext` and `Quot.sound`).
 #guard_msgs in
 #print axioms QuotientSecurity.deployedBasis_unique
 
+/-- info: 'QuotientSecurity.deployedAssign_eq_outputs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.deployedAssign_eq_outputs
+
+/-- info: 'QuotientSecurity.outputs_satisfies' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.outputs_satisfies
+
+/-- info: 'QuotientSecurity.toChi_eval_eq_outputs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.toChi_eval_eq_outputs
+
 /-- info: 'Completeness.completeness_keccak' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms Completeness.completeness_keccak
