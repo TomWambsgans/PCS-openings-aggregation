@@ -19,7 +19,7 @@ use leanvm_univariate::prover::opening;
 use leanvm_univariate::prover::poly::to_v;
 use leanvm_univariate::prover::prove::{Config, OpeningProof, Proof, layout_word, prove, verify};
 use leanvm_univariate::prover::trace::Trace;
-use leanvm_univariate::{Blake2s, Claims, FLOCK_LEANVM_SKIP};
+use leanvm_univariate::{Blake2s, Claims, FLOCK_LEANVM_SKIP, FLOCK_MAIN};
 use primitives::field::F192;
 
 fn dir() -> Option<std::path::PathBuf> {
@@ -134,6 +134,11 @@ fn end_to_end(blake2s: Blake2s) {
         println!("  check {}: {name}", if *ok { "ok  " } else { "FAIL" });
     }
     println!("  stream {} bytes; openings {:?} bytes", report.stream_bytes, report.opening_bytes);
+    // The proof's fingerprint: a change of the prover that keeps the proof keeps this line.
+    println!(
+        "  stream keccak {}",
+        leanvm_univariate::prover::setup::hex(&leanvm_flock_gas::transcript::keccak256(&proof.stream))
+    );
     assert!(report.checks.iter().all(|(_, ok)| *ok));
     let shape = trace.shape();
     let public = trace.public_input();
@@ -274,6 +279,13 @@ fn proves_and_verifies() {
 #[ignore]
 fn proves_and_verifies_with_flock() {
     end_to_end(Blake2s::Flock(FLOCK_LEANVM_SKIP));
+}
+
+/// The main line: Flock (a′), its skip of 3 and the ring map in tower order (`FLOCK_MAIN`).
+#[test]
+#[ignore]
+fn proves_and_verifies_main_line() {
+    end_to_end(Blake2s::Flock(FLOCK_MAIN));
 }
 
 /// The setup roots a contract for this trace's program and shape is generated with (review M1's F2): `F` from the
