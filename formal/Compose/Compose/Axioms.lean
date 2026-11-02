@@ -5,6 +5,7 @@ import Compose.Extract
 import Compose.AdversaryLog
 import Compose.Deployed
 import Compose.WiredDecoded
+import Compose.WiringSetup
 
 /-! The axioms of the composition's theorems (printed when the module is built). -/
 
@@ -96,3 +97,31 @@ import Compose.WiredDecoded
 /-- info: 'Compose.knowledgeSoundness_wired_decoded_bits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms Compose.knowledgeSoundness_wired_decoded_bits
+
+/-- info: 'Compose.simulateQ_option_of_log' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.simulateQ_option_of_log
+
+/-- info: 'Compose.climb_of_levels' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.climb_of_levels
+
+/-- info: 'Compose.extract_wiringSetup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.extract_wiringSetup
+
+/-- info: 'Compose.honest_stackWord' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.honest_stackWord
+
+/-- info: 'Compose.isTotalQueryBound_stackSetup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.isTotalQueryBound_stackSetup
+
+/-- info: 'Compose.knowledgeSoundness_wired_setup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.knowledgeSoundness_wired_setup
+
+/-- info: 'Compose.knowledgeSoundness_wired_setup_bits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Compose.knowledgeSoundness_wired_setup_bits
