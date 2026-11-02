@@ -15,3 +15,4 @@ import Compose.Final
 #print axioms Compose.merkleWord_stable
 #print axioms Compose.merkleCommit
 #print axioms Compose.knowledgeSoundness_merkle
+#print axioms Compose.knowledgeSoundness_merkle_certified

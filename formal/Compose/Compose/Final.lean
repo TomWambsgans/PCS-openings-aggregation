@@ -81,4 +81,31 @@ theorem knowledgeSoundness_merkle (hq : Fintype.card F = 2 ^ 192) (hN : P.nCells
   knowledgeSoundness_composed_bits W c₁.commit c₂.commit hq hN hw hd h₁ h₂ A openings Q QV hQ hV
     εW εσ εQ hW hσ hQd
 
+/-- **The same with the certified lists** (`WhirBridge.candidates_ours`: at most `7908` witness and
+`3564` quotient candidates per root) and identities of degree at most `2^29`: the reduction's part
+is `(Q + 6 + QV) (2^-138 + 4 (Q + 6 + QV) / 2^256)`. -/
+theorem knowledgeSoundness_merkle_certified (hq : Fintype.card F = 2 ^ 192)
+    (hN : P.nCells = 2 ^ 24) (hw : P.words = 8) (hd : B.identity ≤ 2 ^ 29)
+    (c₁ : TableCode B.Msg₁) (c₂ : TableCode B.Msg₂) (h₁ : c₁.bound ≤ 7908)
+    (h₂ : c₂.bound ≤ 3564)
+    (A : OracleComp HashSpec (RootProof F × O))
+    (openings : RootProof F × O → Chals F → OracleComp HashSpec Verdicts) (Q QV : ℕ)
+    (hQ : IsTotalQueryBound A Q) (hV : ∀ p ch, IsTotalQueryBound (openings p ch) QV)
+    (εW εσ εQ : ℝ≥0∞)
+    (hW : Pr{let z ← (simulateQ randomOracle (rootExperiment W A openings)).run' ∅}[
+      WitnessDoomed c₁.commit z] ≤ εW)
+    (hσ : Pr{let z ← (simulateQ randomOracle (rootExperiment W A openings)).run' ∅}[
+      WiringDoomed (P := P) z] ≤ εσ)
+    (hQd : Pr{let z ← (simulateQ randomOracle (rootExperiment W A openings)).run' ∅}[
+      QuotientDoomed W c₂.commit z] ≤ εQ) :
+    Pr{let z ← (simulateQ randomOracle (rootExperiment W A openings)).run' ∅}[
+        Accepted (P := P) z ∧
+          ∀ g ∈ witnessExtractor c₁ z, ¬ P.Sat (W.decode z.1.proof.stmt) (P.cells g.1)] ≤
+      εW + εσ + εQ + ((Q + 6 + QV : ℕ) : ℝ≥0∞) * (((1 / 2 ^ 138 : ℝ≥0) : ℝ≥0∞) +
+        4 * ((Q + 6 + QV : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
+  refine (knowledgeSoundness_composed W c₁.commit c₂.commit A openings Q QV hQ hV εW εσ εQ hW hσ
+    hQd).trans ?_
+  gcongr
+  exact listError_le_certified hq hN hw hd h₁ h₂
+
 end Compose

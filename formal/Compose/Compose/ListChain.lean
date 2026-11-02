@@ -32,10 +32,15 @@ reduction's state from lost to won. Each is bad with probability at most
 candidates (read off the final transcript) satisfy the claims, the cells of one failing the
 relation, asks a bad fresh query (`trace_listBad`). Hence
 
-**`knowledgeSoundness_list`**: an adversary of at most `Q` queries outputs a statement, two roots
-and five values; the chain's challenges make some pair of candidates of the two roots, read off
-the transcript, satisfy the verifier's claims while the witness candidate's cells fail the
-relation with probability at most `(Q + 6) (max L₁ (L₁ L₂) · roundError + 4 (Q + 6) / 2^256)`.
+**`knowledgeSoundness_list`**: an adversary of at most `Q` queries outputs a statement, two roots,
+five values and anything else (the openings), and the verifier runs the chain and then any
+computation `post` of at most `QV` queries (the openings' verifier); the chain's challenges make
+some pair of candidates of the two roots, read off the transcript of every query, satisfy the
+verifier's claims while the witness candidate's cells fail the relation with probability at most
+`(Q + 6 + QV) (max L₁ (L₁ L₂) · roundError + 4 (Q + 6 + QV) / 2^256)`.
+
+The transcript is in the experiment's output (`logged`: the hash, logging every query and its
+answer), so the event, and the extractor, read it.
 -/
 
 set_option linter.unusedSectionVars false
