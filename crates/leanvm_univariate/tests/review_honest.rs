@@ -294,6 +294,17 @@ fn row_of(table: &Table, step: u64, cells: &[u64], memory: &[[E; 3]]) -> Vec<E> 
                 set(&mut row, &format!("{cell}_hi"), memory[c as usize][1]);
             }
         }
+        OP_DEREF => {
+            // cells: the pointer's cell, o2's exponent, v3's cell, f_fp. The store goes to ptr · o2.
+            set(&mut row, "o1", gpow(cells[0]));
+            set(&mut row, "o2", gpow(cells[1]));
+            set(&mut row, "o3", gpow(cells[2]));
+            set(&mut row, "f_fp", E::new(cells[3], 0, 0));
+            set(&mut row, "ptr", memory[cells[0] as usize][0]);
+            for k in 0..3 {
+                set(&mut row, &format!("v3_{k}"), memory[cells[2] as usize][k]);
+            }
+        }
         _ => unreachable!(),
     }
     row
@@ -336,14 +347,31 @@ fn execution(rng: &mut Rng) -> Witness {
         *cell = [rng.k(), rng.k(), ZERO];
     }
     let blake = [8, 9, 10, 11, 12, 14, 8];
-    // Five instructions a round, the SET's cell cycling 2, 3, 4; as many as the bytecode's 2^lb - 1 steps.
+    // With 32 cells, DEREF too: cell 16 holds the pointer g^17; with f_fp = 0 the store at g^17 · g = cell 18 is
+    // v3 = cell 19's value, with f_fp = 1 the store at g^17 · g^3 = cell 20 is (fp, 0, 0).
+    let deref = lm() >= 5 && lb() >= 5;
+    if deref {
+        memory[16] = [gpow(17), ZERO, ZERO];
+        memory[19] = [rng.k(), rng.k(), rng.k()];
+        memory[18] = memory[19];
+        memory[20] = [ONE, ZERO, ZERO];
+    }
+    let round = if deref { 6 } else { 5 };
+    // A round of instructions, the SET's cell cycling 2, 3, 4; as many as the bytecode's 2^lb - 1 steps.
     let program: Vec<(usize, Vec<u64>)> = (0..(1usize << lb()) - 1)
-        .map(|step| match step % 5 {
-            0 => (OP_SET, vec![2 + (step / 5 % 3) as u64]),
+        .map(|step| match step % round {
+            0 => (OP_SET, vec![2 + (step / round % 3) as u64]),
             1 => (OP_XOR, vec![2, 3, 4]),
             2 => (OP_MUL, vec![2, 3, 5]),
             3 => (OP_JUMP, vec![6, 7, 7]),
-            _ => (OP_BLAKE2S, blake.to_vec()),
+            4 => (OP_BLAKE2S, blake.to_vec()),
+            _ => {
+                if step / round % 2 == 0 {
+                    (OP_DEREF, vec![16, 1, 19, 0])
+                } else {
+                    (OP_DEREF, vec![16, 3, 19, 1])
+                }
+            }
         })
         .collect();
     assert!(lm() >= 4, "the program reads cells up to 15");
@@ -1073,6 +1101,22 @@ fn honest_proofs_at_other_sizes() {
                 assert_eq!(verify(&witness, &proof, mode), Ok(true), "lm {memory} lb {bytecode} {mode:?}");
             }
         });
+    }
+}
+
+/// Finding (shape validation): `Shape` takes any rows, but the verifier's quotient degrees are u64 expressions that
+/// wrap for small heights (`r (n / 2) - n` for BLAKE2S at height <= 1, `n - 2` for JUMP at height 0, `2 (n - 1) - n` for
+/// a one-cell memory). The chunks then come out empty and `reduce` panics on an empty relation, for the recorder
+/// (no contract can be built) and for the Rust verifier alike. No measured shape is affected (every height >= 14).
+#[test]
+fn small_heights_make_reduce_panic() {
+    for rows in [[3u64, 3, 3, 0, 3, 2], [3, 3, 3, 0, 1, 3]] {
+        let outcome = std::panic::catch_unwind(|| {
+            let shape = shape_of(rows);
+            leanvm_univariate::contract::record_verifier(&shape, Blake2s::Omitted, Claims::Point).stream_len
+        });
+        println!("rows {rows:?}: {}", if outcome.is_err() { "reduce panics" } else { "recorded" });
+        assert!(outcome.is_err(), "rows {rows:?}");
     }
 }
 
