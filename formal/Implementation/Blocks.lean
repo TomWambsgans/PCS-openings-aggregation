@@ -56,27 +56,31 @@ theorem wChain_spec (t : Nat) : ∀ n, Spec (wChain t n) fun ws =>
       rw [hw', hs, hlast, hw n (by omega), Function.iterate_succ_apply']
       rfl
 
-theorem foldO_spec {f : Nat → Nat → Option Nat} (g : F → Nat → F)
-    (hf : ∀ acc k, Spec (f acc k) fun r => V r = g (V acc) k) :
-    ∀ (ks : List Nat) (acc : Nat), Spec (foldO f acc ks) fun r => V r = ks.foldl g (V acc)
-  | [], acc => Spec.some rfl
-  | k :: ks, acc => by
+theorem foldO_spec {f : Nat → Nat → Option Nat} (g : F → Nat → F) (ks : List Nat)
+    (hf : ∀ acc, ∀ k ∈ ks, Spec (f acc k) fun r => V r = g (V acc) k) :
+    ∀ acc : Nat, Spec (foldO f acc ks) fun r => V r = ks.foldl g (V acc) := by
+  induction ks with
+  | nil => exact fun acc => Spec.some rfl
+  | cons k ks ih =>
+    intro acc
     unfold foldO
     apply Spec.bind
-    refine (hf acc k).weaken fun acc' h' => ?_
-    refine (foldO_spec g hf ks acc').weaken fun r hr => ?_
+    refine (hf acc k List.mem_cons_self).weaken fun acc' h' => ?_
+    refine (ih (fun a j hj => hf a j (List.mem_cons_of_mem _ hj)) acc').weaken fun r hr => ?_
     rw [hr, h']
     rfl
 
-theorem mapO_spec {f : Nat → Option Nat} (g : Nat → F) (hf : ∀ k, Spec (f k) fun r => V r = g k) :
-    ∀ ks : List Nat, Spec (mapO f ks) fun rs => rs.map V = ks.map g
-  | [] => Spec.some rfl
-  | k :: ks => by
+theorem mapO_spec {f : Nat → Option Nat} (g : Nat → F) (ks : List Nat)
+    (hf : ∀ k ∈ ks, Spec (f k) fun r => V r = g k) :
+    Spec (mapO f ks) fun rs => rs.map V = ks.map g := by
+  induction ks with
+  | nil => exact Spec.some rfl
+  | cons k ks ih =>
     unfold mapO
     apply Spec.bind
-    refine (hf k).weaken fun r hr => ?_
+    refine (hf k List.mem_cons_self).weaken fun r hr => ?_
     apply Spec.bind
-    refine (mapO_spec g hf ks).weaken fun rs hrs => ?_
+    refine (ih fun j hj => hf j (List.mem_cons_of_mem _ hj)).weaken fun rs hrs => ?_
     apply Spec.pure
     simp [hr, hrs]
 
@@ -128,6 +132,94 @@ theorem invRounds_spec (norm : Nat) (n : Nat) : ∀ (p : Nat × Nat), V p.1 = V 
     refine (ih q hq.2).weaken fun r hr => ⟨?_, hr.2⟩
     rw [hr.1, hq.1, Function.iterate_succ_apply]
 
+theorem prefixes_spec : ∀ (ds : List Nat) (acc : Nat), Spec (prefixes acc ds) fun ps =>
+    ps.length = ds.length + 1 ∧
+      ∀ i ≤ ds.length, V (ps.getD i 0) = V acc * ((ds.take i).map V).prod
+  | [], acc => Spec.some ⟨rfl, fun i hi => by
+      obtain rfl : i = 0 := by simpa using hi
+      simp⟩
+  | d :: ds, acc => by
+    unfold prefixes
+    apply Spec.bind
+    refine (MUL _ _).weaken fun acc' h' => ?_
+    apply Spec.bind
+    refine (prefixes_spec ds acc').weaken fun ps hps => ?_
+    apply Spec.pure
+    obtain ⟨hlen, hp⟩ := hps
+    refine ⟨by simp [hlen], fun i hi => ?_⟩
+    cases i with
+    | zero => simp
+    | succ i =>
+      simp only [List.getD_cons_succ, List.take_succ_cons, List.map_cons, List.prod_cons]
+      rw [hp i (by simpa using hi), h', mul_assoc]
+
+/-- The batch inversion: from the last, `inverses[i] = running · prefix[i]`, `running ·= d_i`. -/
+theorem backInv_spec (pre den : Nat → Nat) (P : Nat → F)
+    (hP : ∀ i, P (i + 1) = P i * V (den i)) (n : Nat) :
+    ∀ (running : Nat), (∀ i < n, V (pre i) = P i) → V running = (P n)⁻¹ → P n ≠ 0 →
+      Spec (backInv running ((List.range n).reverse.map fun i => (pre i, den i))) fun r =>
+        r.length = n ∧ ∀ i < n, V (r.reverse.getD i 0) = (V (den i))⁻¹ := by
+  induction n with
+  | zero => exact fun _ _ _ _ => Spec.some ⟨rfl, fun i hi => absurd hi (Nat.not_lt_zero _)⟩
+  | succ n ih =>
+    intro running hpre hr hn
+    rw [List.range_succ, List.reverse_append, List.reverse_singleton, List.singleton_append,
+      List.map_cons]
+    unfold backInv
+    have hd : V (den n) ≠ 0 := by rw [hP] at hn; exact right_ne_zero_of_mul hn
+    have hpn : P n ≠ 0 := by rw [hP] at hn; exact left_ne_zero_of_mul hn
+    apply Spec.bind
+    refine (MUL _ _).weaken fun inv hinv => ?_
+    apply Spec.bind
+    refine (MUL _ _).weaken fun r' hr' => ?_
+    apply Spec.bind
+    refine (ih r' (fun i hi => hpre i (by omega)) ?_ hpn).weaken fun tail ht => ?_
+    · rw [hr', hr, hP, mul_inv, mul_assoc, inv_mul_cancel₀ hd, mul_one]
+    · apply Spec.pure
+      obtain ⟨hlen, htail⟩ := ht
+      refine ⟨by simp [hlen], fun i hi => ?_⟩
+      rw [List.reverse_cons]
+      by_cases hin : i < n
+      · rw [List.getD_append _ _ _ _ (by simp [hlen, hin])]
+        exact htail i hin
+      · obtain rfl : i = n := by omega
+        rw [List.getD_append_right _ _ _ _ (by simp [hlen]), List.length_reverse, hlen,
+          Nat.sub_self]
+        simp only [List.getD_cons_zero]
+        rw [hinv, hr, hpre i (by omega), hP, mul_inv, mul_comm, ← mul_assoc, mul_inv_cancel₀ hpn,
+          one_mul]
+
+/-- **A cell of the row of `t`**: `a_0 + (t + shift) a_1 + w_1' (a_2 + (t + shift) a_3)`, with
+`w_1' = w_1` or `w_1 + 1`. -/
+theorem cell_spec (L : Leaves) (hone : V L.one = 1) (w1 shift : Nat) (second : Bool) :
+    Spec (cell L w1 shift second) fun r => V r =
+      V (L.a.getD 0 0) + (V L.t + elem limbs shift) * V (L.a.getD 1 0) +
+        (if second then V w1 + 1 else V w1) *
+          (V (L.a.getD 2 0) + (V L.t + elem limbs shift) * V (L.a.getD 3 0)) := by
+  unfold cell
+  apply Spec.bind
+  refine (CNST _).weaken fun sh hsh => ?_
+  apply Spec.bind
+  refine (ADD _ _).weaken fun first hfirst => ?_
+  apply Spec.bind
+  refine Spec.weaken (P := fun snd => V snd = if second then V w1 + 1 else V w1) ?_ fun snd hsnd => ?_
+  · unfold secondOf
+    cases second
+    · exact Spec.some rfl
+    · exact (ADD _ _).weaken fun r hr => by rw [hr, hone]; rfl
+  apply Spec.bind
+  refine (MUL _ _).weaken fun m1 hm1 => ?_
+  apply Spec.bind
+  refine (ADD _ _).weaken fun s1 hs1 => ?_
+  apply Spec.bind
+  refine (MUL _ _).weaken fun m3 hm3 => ?_
+  apply Spec.bind
+  refine (ADD _ _).weaken fun s3 hs3 => ?_
+  apply Spec.bind
+  refine (MUL _ _).weaken fun m2 hm2 => ?_
+  refine (ADD _ _).weaken fun r hr => ?_
+  rw [hr, hs1, hm1, hm2, hsnd, hs3, hm3, hfirst, hsh]
+
 variable [Fintype F]
 
 /-- **The inversion is `x⁻¹`**: `m · N^(2^64 - 2)` with `N = x m`, `m = x^(2^64) x^(2^128)`, in a
@@ -171,92 +263,5 @@ theorem inverse_spec (hfr : FrobOK limbs) (x : Nat) : Spec (inverse x) fun r => 
     have he : a ^ (1 + 2 ^ 64 + 2 ^ 128) = a * (a ^ 2 ^ 64 * a ^ 2 ^ 128) := by
       rw [pow_add, pow_add, pow_one]; ring
     rw [hsq, he, mul_inv, mul_comm a⁻¹, ← mul_assoc, mul_inv_cancel₀ hm0, one_mul]
-
-theorem prefixes_spec : ∀ (ds : List Nat) (acc : Nat), Spec (prefixes acc ds) fun ps =>
-    ps.length = ds.length + 1 ∧
-      ∀ i ≤ ds.length, V (ps.getD i 0) = V acc * ((ds.take i).map V).prod
-  | [], acc => Spec.some ⟨rfl, fun i hi => by
-      obtain rfl : i = 0 := by simpa using hi
-      simp⟩
-  | d :: ds, acc => by
-    unfold prefixes
-    apply Spec.bind
-    refine (MUL _ _).weaken fun acc' h' => ?_
-    apply Spec.bind
-    refine (prefixes_spec ds acc').weaken fun ps hps => ?_
-    apply Spec.pure
-    obtain ⟨hlen, hp⟩ := hps
-    refine ⟨by simp [hlen], fun i hi => ?_⟩
-    cases i with
-    | zero => simp
-    | succ i =>
-      simp only [List.getD_cons_succ, List.take_succ_cons, List.map_cons, List.prod_cons]
-      rw [hp i (by simpa using hi), h', mul_assoc]
-
-/-- The batch inversion: from the last, `inverses[i] = running · prefix[i]`, `running ·= d_i`. -/
-theorem backInv_spec (pre den : Nat → Nat) (P : Nat → F)
-    (hP : ∀ i, P (i + 1) = P i * V (den i)) (hpre : ∀ i, V (pre i) = P i) (n : Nat) :
-    ∀ (running : Nat), V running = (P n)⁻¹ → P n ≠ 0 →
-      Spec (backInv running ((List.range n).reverse.map fun i => (pre i, den i))) fun r =>
-        r.length = n ∧ ∀ i < n, V (r.reverse.getD i 0) = (V (den i))⁻¹ := by
-  induction n with
-  | zero => exact fun _ _ _ => Spec.some ⟨rfl, fun i hi => absurd hi (Nat.not_lt_zero _)⟩
-  | succ n ih =>
-    intro running hr hn
-    rw [List.range_succ, List.reverse_append, List.reverse_singleton, List.singleton_append,
-      List.map_cons]
-    unfold backInv
-    have hd : V (den n) ≠ 0 := by rw [hP] at hn; exact right_ne_zero_of_mul hn
-    have hpn : P n ≠ 0 := by rw [hP] at hn; exact left_ne_zero_of_mul hn
-    apply Spec.bind
-    refine (MUL _ _).weaken fun inv hinv => ?_
-    apply Spec.bind
-    refine (MUL _ _).weaken fun r' hr' => ?_
-    apply Spec.bind
-    refine (ih r' ?_ hpn).weaken fun tail ht => ?_
-    · rw [hr', hr, hP, mul_inv, mul_assoc, inv_mul_cancel₀ hd, mul_one]
-    · apply Spec.pure
-      obtain ⟨hlen, htail⟩ := ht
-      refine ⟨by simp [hlen], fun i hi => ?_⟩
-      rw [List.reverse_cons]
-      by_cases hin : i < n
-      · rw [List.getD_append _ _ _ _ (by simp [hlen, hin])]
-        exact htail i hin
-      · obtain rfl : i = n := by omega
-        rw [List.getD_append_right _ _ _ _ (by simp [hlen]), List.length_reverse, hlen,
-          Nat.sub_self]
-        simp only [List.getD_cons_zero]
-        rw [hinv, hr, hpre, hP, mul_inv, mul_comm, ← mul_assoc, mul_inv_cancel₀ hpn, one_mul]
-
-/-- **A cell of the row of `t`**: `a_0 + (t + shift) a_1 + w_1' (a_2 + (t + shift) a_3)`, with
-`w_1' = w_1` or `w_1 + 1`. -/
-theorem cell_spec (L : Leaves) (hone : V L.one = 1) (w1 shift : Nat) (second : Bool) :
-    Spec (cell L w1 shift second) fun r => V r =
-      V (L.a.getD 0 0) + (V L.t + elem limbs shift) * V (L.a.getD 1 0) +
-        (if second then V w1 + 1 else V w1) *
-          (V (L.a.getD 2 0) + (V L.t + elem limbs shift) * V (L.a.getD 3 0)) := by
-  unfold cell
-  apply Spec.bind
-  refine (CNST _).weaken fun sh hsh => ?_
-  apply Spec.bind
-  refine (ADD _ _).weaken fun first hfirst => ?_
-  apply Spec.bind
-  refine Spec.weaken (P := fun snd => V snd = if second then V w1 + 1 else V w1) ?_ fun snd hsnd => ?_
-  · unfold secondOf
-    cases second
-    · exact Spec.some rfl
-    · exact (ADD _ _).weaken fun r hr => by rw [hr, hone]; rfl
-  apply Spec.bind
-  refine (MUL _ _).weaken fun m1 hm1 => ?_
-  apply Spec.bind
-  refine (ADD _ _).weaken fun s1 hs1 => ?_
-  apply Spec.bind
-  refine (MUL _ _).weaken fun m3 hm3 => ?_
-  apply Spec.bind
-  refine (ADD _ _).weaken fun s3 hs3 => ?_
-  apply Spec.bind
-  refine (MUL _ _).weaken fun m2 hm2 => ?_
-  refine (ADD _ _).weaken fun r hr => ?_
-  rw [hr, hs1, hm1, hm2, hsnd, hs3, hm3, hfirst, hsh]
 
 end Implementation

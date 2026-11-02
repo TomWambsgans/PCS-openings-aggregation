@@ -107,6 +107,14 @@ def chain : Option Leaves := do
   let rho ← look (.low st5)
   pure { one, s, alpha, beta, gamma, t, a, next, rho }
 
+/-- The leaves of the graph. -/
+def leaves₀ : Leaves :=
+  { one := 1, s := [2, 3, 4, 5], alpha := 9, beta := 11, gamma := 13, t := 17,
+    a := [18, 19, 20, 21], next := 22, rho := 24 }
+
+set_option maxRecDepth 20000 in
+theorem chain_eq : chain = some leaves₀ := by decide +kernel
+
 /-! ## The arithmetic of `reduce` -/
 
 /-- `w_0 .. w_n`: `w_{k+1} = w_k^2 + w_k`. -/
@@ -209,19 +217,20 @@ def slopeConst (k : Nat) : Nat :=
 def slopeOf (one : Nat) (gammas : List Nat) (k : Nat) : Option Nat :=
   if k < 8 then cnst (slopeConst k) else add one (gammas.getD (k - 8) 0)
 
-/-- What `reduce` leaves, as indices: the claims' points then values, the sum's value, and the
-product it requires nonzero. -/
-structure Out where
-  witness : List Nat
-  wiring : List Nat
-  quotient : List Nat
-  sum : Nat
-  check : Nat
+/-- What the first stage of `reduce` leaves: the `w` chain, the row's first cell `x`, the gate, the
+target, the rows' polynomial, the copy identity's product of denominators and its value. -/
+structure StageA where
+  w : List Nat
+  x : Nat
+  gate : Nat
+  target : Nat
+  rows : Nat
+  product : Nat
+  copies : Nat
   deriving Repr, DecidableEq
 
-/-- **`reduce`, over the graph.** -/
-def reduceIds : Option Out := do
-  let L ← chain
+/-- `reduce`, up to the copy identity. -/
+def stageA (L : Leaves) : Option StageA := do
   let m := 24
   let one := L.one
   let t := L.t
@@ -281,14 +290,39 @@ def reduceIds : Option Out := do
   let px ← mul pubW x
   let pxp ← mul px product
   let copies ← add dd pxp
-  -- one inversion
-  let ws ← mapO (fun k => add one (w.getD k 0)) (List.range (m + 2))
-  let cw ← add product (w.getD m 0)
-  let dens := ws ++ [cw, rows]
-  let pre ← prefixes one dens
-  let total := pre.getD dens.length 0
-  let running ← inverse total
-  let invsRev ← backInv running ((List.range dens.length).reverse.map fun i => (pre.getD i 0, dens.getD i 0))
+  pure { w, x, gate, target, rows, product, copies }
+
+/-- What the second stage leaves: the denominators, their prefix products, and their product. -/
+structure StageB where
+  dens : List Nat
+  pre : List Nat
+  total : Nat
+  deriving Repr, DecidableEq
+
+/-- `reduce`'s denominators and their prefix products: the value it requires nonzero. -/
+def stageB (L : Leaves) (A : StageA) : Option StageB := do
+  let ws ← mapO (fun k => add L.one (A.w.getD k 0)) (List.range (24 + 2))
+  let cw ← add A.product (A.w.getD 24 0)
+  let dens := ws ++ [cw, A.rows]
+  let pre ← prefixes L.one dens
+  pure { dens, pre, total := pre.getD dens.length 0 }
+
+/-- What `reduce` leaves, as indices: the claims' points then values, and the sum's value. -/
+structure Out where
+  witness : List Nat
+  wiring : List Nat
+  quotient : List Nat
+  sum : Nat
+  deriving Repr, DecidableEq
+
+/-- `reduce`'s one inversion, and the claims. -/
+def stageC (L : Leaves) (A : StageA) (B : StageB) : Option Out := do
+  let m := 24
+  let one := L.one
+  let w := A.w
+  let dens := B.dens
+  let running ← inverse B.total
+  let invsRev ← backInv running ((List.range dens.length).reverse.map fun i => (B.pre.getD i 0, dens.getD i 0))
   let inverses := invsRev.reverse
   let u ← mapO (fun k => mul (w.getD k 0) (inverses.getD k 0)) (List.range (m + 2))
   let copyInverse := inverses.getD (m + 2) 0
@@ -314,10 +348,10 @@ def reduceIds : Option Out := do
   let opened ← add o5 o9
   let sc ← cnst Emitted.scale
   let i1 ← add one rho
-  let i2 ← mul i1 copies
-  let i3 ← mul i2 rows
-  let i4 ← mul rho product
-  let i5 ← mul i4 gate
+  let i2 ← mul i1 A.copies
+  let i3 ← mul i2 A.rows
+  let i4 ← mul rho A.product
+  let i5 ← mul i4 A.gate
   let identities ← add i3 i5
   let wv0 ← mul opened middle
   let witnessValue ← mul wv0 (inverses.getD m 0)
@@ -329,13 +363,26 @@ def reduceIds : Option Out := do
   let qv1 ← mul qv0 copyInverse
   let qv2 ← mul qv1 rowsInverse
   let quotientValue ← mul qv2 identities
-  let sum ← mul sc target
+  let sum ← mul sc A.target
   pure {
     witness := [rho, rho2] ++ (u.drop 2).take (m - 1) ++ [witnessValue]
     wiring := u.take m ++ [wiringValue]
     quotient := u ++ [wmc, rho, cy0, cy1, quotientValue]
-    sum
-    check := total }
+    sum }
+
+/-- **`reduce`, over the graph.** -/
+def reduceIds : Option Out := do
+  let L ← chain
+  let A ← stageA L
+  let B ← stageB L A
+  stageC L A B
+
+/-- The value `reduce` requires nonzero. -/
+def checkId : Option Nat := do
+  let L ← chain
+  let A ← stageA L
+  let B ← stageB L A
+  pure B.total
 
 /-- The fixed point of the sum's claim (`protocol::sum_point`), as words: `[1; 24]`, `[0; 4]`, then
 `y0`, `y1`. -/
@@ -353,7 +400,11 @@ def wordsOf (o : Out) : List Word :=
 /-- **The graph is `reduce`'s**: every node the program asks for is in the graph, the program
 gives the words the contract writes, and the value it requires nonzero is the product of the
 denominators. -/
-theorem reduceIds_eq : (reduceIds.map fun o => (wordsOf o, [o.check])) = some (outputs, nonzero) := by
+theorem reduceIds_eq : reduceIds.map wordsOf = some outputs := by
+  decide +kernel
+
+/-- The value it requires nonzero is the one the contract requires nonzero. -/
+theorem checkId_eq : checkId.map (fun c => [c]) = some nonzero := by
   decide +kernel
 
 end Implementation.Program
