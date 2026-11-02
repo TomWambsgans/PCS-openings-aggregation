@@ -122,12 +122,28 @@ in that PRG).
   `2^-54 + 2^-165 + 2^-2200`, and in the random-permutation model **`zk_rpm_deployed_joint_fs`**,
   **`zk_rpm_deployed_joint_fs'`** (`QuotientZk/FreshJoint.lean`; the latter also without `hrow`, `hduplex`):
   `2^-54 + 2^-165 + 2^-2200 + Q² / 2^508`.
-- **What stays a hypothesis**: `JointHVZK` (the interactive protocol's honest-verifier zero knowledge, F1 with F3
-  and the gadget's (R)); `FSFresh`'s conditions on the prover above (long rows, the first witness row's entropy,
-  claims reading a challenge, structural); `Factors` for the deployed prover (structural: the masks and the two
-  paddings are independent and WHIR's messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed; equal by
-  test, not by proof: see the next item). The lift to leanerVM's random-permutation model is separate
-  (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
+- **The joint model instantiated** (`QuotientZk/Instance/`). The deployed quotient claim's point reads the
+  five values (`vCells(t)/claimDen(α, β, t, a, s)`), so `Joint.lean`'s openings (weights from the challenges
+  alone) cannot carry it: `JointV.lean` is the same chain over `ChV = Chal × Vals` (`modelV`, `jointSimV`,
+  `LinkV`, **`zk_rpm_deployed_jointV_fs'`**, same bound). For the deployed prover: the schedule (`394` steps:
+  `5 + 123 + 114 + 152` draws, `openDraws`) and the challenges of the oracle's answers (`chOf`, an
+  equivalence with what no challenge reads, so **`hch`** `chOf_uniform`; causality `chOf_take_*`,
+  `Challenges.lean`); the two openings at `2^22` rows (`openW`, `openQ`: `witness_layout(22)`,
+  `quotient_layout(22)` with the gadget `1, Y, Y²`, the verifier's claims `modelWitness`, `modelQuotient`,
+  `modelSum`, the novel basis at the opened positions: level 0's queries then fillers, `224`/`225`) and their
+  **`Conditions`** (`Openings.lean`); the prover `Pb` (the claims' bytes at the openings' starts, then any
+  public renderer `R` of the part of the joint view drawn for by then; leaves the 64-word images of the stacks'
+  rows) and **`LinkV`** (`link`: the view from the joint view by causality, injective leaves, the free vectors
+  from the novel basis's degrees, `Prover.lean`); **`FSFresh`'s conditions** (`Fresh.lean`: `hcw` at `2^-191`,
+  `hrow₀` at `2^-2368`, the three `ClaimsAt`, long rows, `hcK`, `hn`); the simulator's tables chosen with the
+  verifier's claimed values (`solve`). **`zk_rpm_deployed_instance`** (`Instance/Main.lean`) and, for the end
+  statement, `deployedJointData`, `deployedJointData_valid` (`EndToEnd/ZK/Joint.lean`): remaining are the
+  field, F1's, and **the honest tables meeting the verifier's claims** (`hTW`, `hTQ`, the claim maps'
+  completeness, proved for the deployed tables in `Completeness/`, not yet linked); every renderer `R` (WHIR's
+  honest prover is one) and every pair of such tables is covered. The simulator's tables are a classical choice.
+- **What stays a hypothesis**: the honest tables' claims (above); F1's on the witness; that `skel` and `Pb` are
+  the Rust prover (transcribed; `skel` equal by test, not by proof: see the next item). The lift to leanerVM's
+  random-permutation model is separate (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
 - **`skel` against the Rust prover, by test** (`QuotientZk/Test/SkelTrace.lean`, executable `skeltrace`;
   `crates/quotient/tests/skel_trace.rs`, feature `skel-trace`, which records every Keccak call of a proof through
   test-only hooks): at `2^17` rows `skel`, run as compiled with mumbai's Keccak-256 and Keccak-f[1600] as the
