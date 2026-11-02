@@ -35,8 +35,15 @@ the verifier's program. Here:
   with the honest strategy `openingProver`, from the opening's sponge.
 * **`openingWithH_proveOpeningWithH`**: the Statement's opening check accepts every proof the
   Statement's opening prover produces, for claims of the table's length that hold of the stack.
+  Through `openingWithH_eq_runProof` (the check is the compiled verifier of `openingProgram`) and
+  mumbai's `runProof_prove`, `runI_openingProgram`; the stack claims' weights are multilinear for
+  such layouts (`isMultilinearFn_stackClaims`, via F2's multiaffinity), so
+  `openingWithH_proveOpeningWithH'` drops that hypothesis. The only fact about the opening's sponge
+  used is that it starts with nothing pending (`openingSpongeWithH_eta`), so the proofs do not
+  depend on how the seed is computed.
 * **`exists_failed_pow_opening`**: the prover fails only at a `17`-bit proof of work at a sponge
   where every nonce below `fuel` fails.
+* **`admissible_layouts`**: the three layouts at `log_rows = 22` are admissible at rate `1/2`.
 -/
 
 open LeanVM LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash
@@ -195,11 +202,11 @@ open OpeningTr
 
 /-! ## The layouts' shape -/
 
-/-- **What the weight table's proof needs of a layout**: lanes of at least `2^0` words in a stack of
-at most `64` variables, at most `64` lanes, the table's variables at least a lane's; in a hidden
-layout, pieces `2^s` shorter than a lane and at least the gadget's `9` entries, fewer pieces than a
-lane holds, at least `33` lanes (the gadget's lanes `0, 1, 30, 31, 32` among them), and exactly one
-overflow lane, `Layout.overflowLane`. -/
+/-- **What the weight table's proof needs of a layout** (decidable): a stack of `6` to `64`
+variables (the six lane variables and lanes of `2^ℓ` words, `ℓ = logN − 6`), at most `64` lanes, at
+least `ℓ` table variables; in a hidden layout of pieces `2^s`: `s < ℓ`, at least the gadget's `9`
+entries in a piece, fewer held pieces than a lane has pieces, at least `33` lanes (the gadget's lanes
+`0, 1, 30, 31, 32` among them), and exactly one overflow lane, `Layout.overflowLane`. -/
 def WeightShape (L : PcsQuotient.Layout) : Prop :=
   6 ≤ L.logN ∧ L.logN ≤ 64 ∧ L.lanes.length ≤ 64 ∧ L.logLane ≤ L.vars ∧
     ∀ s ∈ L.logPiece, s < L.logLane ∧ gadgetSize ≤ 2 ^ s ∧
@@ -662,6 +669,17 @@ theorem stackWordFast_colOf {μ : ℕ} (h6 : 6 ≤ μ) (R : ℕ) (a : Array K) :
         (getD_colOf μ a (hb (LeanVM.Protocol.Whir.bitsToNat_lt x) (List.mem_range.1 hu))).symm
     rw [hfun]
 
+/-- The opening's sponge starts with nothing pending (the only fact about the seed the proofs
+use). -/
+theorem openingSpongeWithH_eta (H : Bytes → Digest) (F : KeccakState → KeccakState)
+    (L : PcsQuotient.Layout) (claims : List PcsQuotient.Claim) :
+    (⟨(openingSpongeWithH (m := Id) H F L claims).state, []⟩ : Sponge) =
+      openingSpongeWithH (m := Id) H F L claims := rfl
+
+theorem id_bind_eq' {α β : Type} (x : Id α) (f : α → Id β) : x >>= f = f x := rfl
+
+theorem id_pure_eq' {α : Type} (a : α) : (pure a : Id α) = a := rfl
+
 /-- **The Statement's opening prover is mumbai's compiled honest prover**, at a pure hash `H` and
 permutation `F`: committing the stack (`commitWithH`) and running `openingScript` against the
 verifier's program from the opening's sponge is `prove` of `openingProgram` (commit the stack's
@@ -701,7 +719,7 @@ theorem proveOpeningWithH_eq_prove (H : Bytes → Digest) (F : KeccakState → K
     exact (runFrom_corr (m := Id) H F fuel _ (corr_openingScript_ret L hL stack claims hlen) sp cs).symm
   rw [← proveM_id, openingProgram_eq hw]
   simp only [proveM, proveFromM, proveOpeningWithH, commitWithH, hword, List.nil_append, hrun,
-    bind_assoc, pure_bind, Option.map_map]
+    bind_assoc, pure_bind, Option.map_map, openingSpongeWithH_eta]
   rfl
 
 /-! ## The opening check accepts -/
@@ -747,17 +765,6 @@ theorem runWithHash_bind {m : Type → Type} [Monad m] [LawfulMonad m] (H : Byte
     · simp only [bind_assoc]
       congr 1; funext o
       split <;> simp [ih]
-
-/-- The opening's sponge starts with nothing pending (the only fact about the seed the proofs
-use). -/
-theorem openingSpongeWithH_eta (H : Bytes → Digest) (F : KeccakState → KeccakState)
-    (L : PcsQuotient.Layout) (claims : List PcsQuotient.Claim) :
-    (⟨(openingSpongeWithH (m := Id) H F L claims).state, []⟩ : Sponge) =
-      openingSpongeWithH (m := Id) H F L claims := rfl
-
-theorem id_bind_eq' {α β : Type} (x : Id α) (f : α → Id β) : x >>= f = f x := rfl
-
-theorem id_pure_eq' {α : Type} (a : α) : (pure a : Id α) = a := rfl
 
 /-- **The Statement's opening check is the compiled verifier of `openingProgram`** from the
 opening's sponge, on a proof whose first two scalars encode the expected root, for claims of the
