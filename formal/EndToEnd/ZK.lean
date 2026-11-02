@@ -27,6 +27,9 @@ import ZK.CoreOpen
 import ZK.CoreRed
 import ZK.CoreRender
 import ZK.CoreMain
+import ZK.ComputableFacts
+import ZK.Computable
+import ZK.ComputableClosed
 import ZK.Axioms
 
 /-!
@@ -115,6 +118,13 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
   chain, values, claims and seeds (`CoreRed*`), the renderer's messages (`CoreRender*`), an opening end to
   end (`CoreOpen`), the skeleton's level-0 trees (`CoreTrees`), the assembly (`CoreMain*`: the prover's,
   the skeleton's and `fmt`'s runs named, the three openings, `coreD`).
+* `ZK/Computable*.lean`: **the simulator compiled**. `ComputableFacts`: the deployed public polynomials
+  by compiled definitions (`rowsAtC`, `pubAtC`, and `σ(t)` by barycentric interpolation with unit weights,
+  `sigmaAtC`); `Computable`: the view simulator `deployedSimVc` (`QuotientZk/Instance/Compiled.lean`'s
+  `jointSimVm`, `outP`), the renderer `whirRendererC`, `zkSimulatorC`, each equal to the named one, the end
+  theorems restated with them (`zeroKnowledge_deployed_computable`), the cost, the audit
+  (`#computational_axioms`); `ComputableClosed`: **`zeroKnowledge_closed_computable`**, `zeroKnowledge_closed`
+  for the compiled `zkSimulatorClosed` (`= zeroKnowledge_closed`'s simulator, `zkSimulatorClosed_eq`).
 * `ZK/Assembly.lean`: the same assembly for the package's own `simulator` given an ideal bridge
   (`zeroKnowledge_of_bridges`, `zeroKnowledge_deployed` on the constant-root skeleton); the joint
   model's data (`JointData`) and the bounds (`zkBound`).

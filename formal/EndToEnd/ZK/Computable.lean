@@ -317,3 +317,47 @@ elab "#computational_axioms " id:ident : command => liftTermElabM do
     {special.toList}, non-core noncomputable {nc.toList}"
 
 end PcsQuotient.EndToEnd.Audit
+
+/-! ## Axioms and the audit -/
+
+/--
+info: 'PcsQuotient.EndToEnd.deployedSimVc_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.deployedSimVc_eq
+
+/--
+info: 'PcsQuotient.EndToEnd.Render.whirRendererC_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.Render.whirRendererC_eq
+
+/--
+info: 'PcsQuotient.EndToEnd.zkSimulatorC_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.zkSimulatorC_eq
+
+/--
+info: 'PcsQuotient.EndToEnd.zeroKnowledge_deployed_final_computable' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.zeroKnowledge_deployed_final_computable
+
+/--
+info: 'PcsQuotient.EndToEnd.zeroKnowledge_deployed_computable' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.zeroKnowledge_deployed_computable
+
+/--
+info: PcsQuotient.EndToEnd.zkSimulatorDeployed: computational axioms [], non-core implemented_by/extern/opaque [], non-core noncomputable []
+-/
+#guard_msgs (whitespace := lax) in
+#computational_axioms PcsQuotient.EndToEnd.zkSimulatorDeployed
+
+/--
+info: PcsQuotient.EndToEnd.Render.whirRendererC: computational axioms [], non-core implemented_by/extern/opaque [], non-core noncomputable []
+-/
+#guard_msgs (whitespace := lax) in
+#computational_axioms PcsQuotient.EndToEnd.Render.whirRendererC

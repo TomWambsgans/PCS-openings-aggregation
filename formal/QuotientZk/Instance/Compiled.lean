@@ -379,3 +379,23 @@ end Sim
 end Compiled
 
 end QuotientZk.Instance
+
+/-! ## Axioms -/
+
+/--
+info: 'QuotientZk.Instance.Compiled.encOf_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Instance.Compiled.encOf_eq
+
+/--
+info: 'QuotientZk.Instance.Compiled.jointSimVm_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Instance.Compiled.jointSimVm_eq
+
+/--
+info: 'QuotientZk.Instance.Compiled.outP_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Instance.Compiled.outP_eq

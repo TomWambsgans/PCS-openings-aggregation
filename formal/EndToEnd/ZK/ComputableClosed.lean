@@ -80,17 +80,17 @@ end PcsQuotient.EndToEnd
 /--
 info: 'PcsQuotient.EndToEnd.zeroKnowledge_closed_computable' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in
+#guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zeroKnowledge_closed_computable
 
 /--
 info: 'PcsQuotient.EndToEnd.zkSimulatorClosed_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
 -/
-#guard_msgs in
+#guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zkSimulatorClosed_eq
 
 /--
 info: PcsQuotient.EndToEnd.zkSimulatorClosed: computational axioms [], non-core implemented_by/extern/opaque [], non-core noncomputable []
 -/
-#guard_msgs in
+#guard_msgs (whitespace := lax) in
 #computational_axioms PcsQuotient.EndToEnd.zkSimulatorClosed
