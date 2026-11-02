@@ -167,6 +167,12 @@ theorem membership_word5 (j : Nat) (hj : j < 128) : pubSrcN membership 5 j = .ze
   obtain ⟨y, root, bf, he, -⟩ := membership_spec
   rw [he, pubSrcN_finish _ _ _ _ (by decide) hj]; unfold publicBit; simp
 
+/-- **Words 5 to 7 read the zero.** -/
+theorem membership_high (J j : Nat) (hJ5 : 5 ≤ J) (hJ : J < 8) (hj : j < 128) : pubSrcN membership J j = .zero := by
+  obtain ⟨y, root, bf, he, -⟩ := membership_spec
+  rw [he, pubSrcN_finish _ _ _ _ hJ hj]; unfold publicBit
+  rw [if_neg (by omega), if_neg (by omega)]
+
 /-- **Bit 0 of word 4 reads the one.** -/
 theorem membership_word4_one : pubSrcN membership 4 0 = .one := by
   obtain ⟨y, root, bf, he, -⟩ := membership_spec
