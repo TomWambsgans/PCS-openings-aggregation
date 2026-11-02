@@ -2,6 +2,8 @@
 import FlockSoundUni.RoundByRound
 import FlockSoundUni.Loops
 import FlockSoundUni.Decode
+import FlockSoundUni.Shape
+import FlockSoundUni.Link
 
 /-- info: 'FlockSound.Uni.card_hit_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
@@ -54,3 +56,15 @@ import FlockSoundUni.Decode
 /-- info: 'FlockSound.Uni.decode_consistent' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms FlockSound.Uni.decode_consistent
+
+/-- info: 'FlockSound.Uni.decodeSC_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.decodeSC_eq
+
+/-- info: 'FlockSound.Uni.readRounds_fit' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.readRounds_fit
+
+/-- info: 'FlockSound.Uni.flock_link' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.flock_link
