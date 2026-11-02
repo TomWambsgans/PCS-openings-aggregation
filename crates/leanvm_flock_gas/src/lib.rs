@@ -20,6 +20,7 @@ mod bytecode;
 pub mod evm;
 mod field;
 mod flock;
+pub mod flock_min;
 mod hash;
 pub mod keccak_gkr;
 mod layout;
