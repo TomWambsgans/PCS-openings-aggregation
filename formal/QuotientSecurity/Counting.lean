@@ -6,8 +6,9 @@ import QuotientSecurity.LogDerivative
 # Counting the first challenge
 
 Three sets of triples `(α, β, γ)`: those at which a denominator vanishes on a cell, those at which
-the sum of logarithmic derivatives meets a target that depends on `γ`, and those at which a
-nonzero polynomial in `γ` vanishes.
+the denominators of each cell vanish together and the sum of logarithmic derivatives meets a
+target that depends on `γ` where none vanishes, and those at which a nonzero polynomial in `γ`
+vanishes.
 -/
 
 set_option linter.unusedSectionVars false
@@ -43,38 +44,41 @@ theorem card_zero_le (id : ι → F) (σ : Equiv.Perm ι) (w : ι → F) :
   simp only [Finset.card_univ, Fintype.card_prod, Fintype.card_bool]
   exact le_of_eq (by ring)
 
-/-- If the values are not constant on the cycles, few triples have no vanishing denominator and a
-sum of logarithmic derivatives equal to a target depending on `γ`. -/
-theorem card_logSum_triple_le (id : ι → F) (hid : Function.Injective id) (σ : Equiv.Perm ι)
+/-- **The copy argument, over the triples.** If the values are not constant on the cycles, at most
+`(4 N - 2) q^2` triples have, at every cell, both denominators zero or neither, and, where no
+denominator vanishes, a sum of logarithmic derivatives equal to a target depending on `γ`
+(`card_copy_le` for each `γ`). -/
+theorem card_copy_triple_le (id : ι → F) (hid : Function.Injective id) (σ : Equiv.Perm ι)
     (w : ι → F) (hcopy : ¬ ∀ x, w (σ x) = w x) (c : F → F) :
     (univ.filter fun p : F × F × F =>
-        (∀ x, p.1 + w x + p.2.1 * id x ≠ 0) ∧ (∀ x, p.1 + w x + p.2.1 * id (σ x) ≠ 0) ∧
-          logSum id σ w p.1 p.2.1 = c p.2.2).card
-      ≤ (2 * Fintype.card ι ^ 2 + 2 * Fintype.card ι) * Fintype.card F ^ 2 := by
+        (∀ x, p.1 + w x + p.2.1 * id x = 0 ↔ p.1 + w x + p.2.1 * id (σ x) = 0) ∧
+          ((∀ x, p.1 + w x + p.2.1 * id x ≠ 0) → logSum id σ w p.1 p.2.1 = c p.2.2)).card
+      ≤ (4 * Fintype.card ι - 2) * Fintype.card F ^ 2 := by
   classical
   set S := univ.filter fun p : F × F × F =>
-    (∀ x, p.1 + w x + p.2.1 * id x ≠ 0) ∧ (∀ x, p.1 + w x + p.2.1 * id (σ x) ≠ 0) ∧
-      logSum id σ w p.1 p.2.1 = c p.2.2 with hS
+    (∀ x, p.1 + w x + p.2.1 * id x = 0 ↔ p.1 + w x + p.2.1 * id (σ x) = 0) ∧
+      ((∀ x, p.1 + w x + p.2.1 * id x ≠ 0) → logSum id σ w p.1 p.2.1 = c p.2.2) with hS
   have hsplit : S.card = ∑ γ : F, (S.filter fun p => p.2.2 = γ).card :=
     Finset.card_eq_sum_card_fiberwise (f := fun p : F × F × F => p.2.2) (t := univ)
       fun _ _ => Finset.mem_univ _
   have hfiber : ∀ γ : F, (S.filter fun p => p.2.2 = γ).card
-      ≤ (2 * Fintype.card ι ^ 2 + 2 * Fintype.card ι) * Fintype.card F := by
+      ≤ (4 * Fintype.card ι - 2) * Fintype.card F := by
     intro γ
-    refine le_trans ?_ (card_logSum_eq_le id hid σ w hcopy fun _ => c γ)
+    refine le_trans ?_ (card_copy_le id hid σ w hcopy fun _ => c γ)
     refine le_trans (Finset.card_le_card (t := (univ.filter fun p : F × F =>
-        (∀ x, p.1 + w x + p.2 * id x ≠ 0) ∧ (∀ x, p.1 + w x + p.2 * id (σ x) ≠ 0) ∧
-          logSum id σ w p.1 p.2 = c γ).image fun r : F × F => (r.1, r.2, γ)) ?_)
+        (∀ x, p.1 + w x + p.2 * id x = 0 ↔ p.1 + w x + p.2 * id (σ x) = 0) ∧
+          ((∀ x, p.1 + w x + p.2 * id x ≠ 0) → logSum id σ w p.1 p.2 = c γ)).image
+        fun r : F × F => (r.1, r.2, γ)) ?_)
       Finset.card_image_le
     rintro ⟨α, β, γ'⟩ hp
     rw [Finset.mem_filter, hS, Finset.mem_filter] at hp
-    obtain ⟨⟨-, h1, h2, h3⟩, rfl⟩ := hp
-    exact Finset.mem_image.mpr ⟨(α, β), Finset.mem_filter.mpr ⟨Finset.mem_univ _, h1, h2, h3⟩, rfl⟩
+    obtain ⟨⟨-, h1, h2⟩, rfl⟩ := hp
+    exact Finset.mem_image.mpr ⟨(α, β), Finset.mem_filter.mpr ⟨Finset.mem_univ _, h1, h2⟩, rfl⟩
   rw [hsplit]
   calc ∑ γ : F, (S.filter fun p => p.2.2 = γ).card
-      ≤ ∑ _γ : F, (2 * Fintype.card ι ^ 2 + 2 * Fintype.card ι) * Fintype.card F :=
+      ≤ ∑ _γ : F, (4 * Fintype.card ι - 2) * Fintype.card F :=
         Finset.sum_le_sum fun γ _ => hfiber γ
-    _ = (2 * Fintype.card ι ^ 2 + 2 * Fintype.card ι) * Fintype.card F ^ 2 := by
+    _ = (4 * Fintype.card ι - 2) * Fintype.card F ^ 2 := by
         rw [Finset.sum_const, Finset.card_univ, smul_eq_mul]; ring
 
 /-- Few `γ` annihilate a combination of powers whose coefficients are not all zero. -/

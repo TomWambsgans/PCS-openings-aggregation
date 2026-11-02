@@ -18,6 +18,7 @@ import QuotientSecurity.ConcreteZK
 import QuotientSecurity.Sequence
 import QuotientSecurity.Joint
 import QuotientSecurity.Statement
+import QuotientSecurity.Hiding
 
 /-- info: 'QuotientSecurity.verifier_rbrKnowledgeSoundness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
@@ -26,6 +27,18 @@ import QuotientSecurity.Statement
 /-- info: 'QuotientSecurity.rbrError_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms QuotientSecurity.rbrError_le
+
+/-- info: 'QuotientSecurity.rbrError_list_margin' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.rbrError_list_margin
+
+/-- info: 'QuotientSecurity.rbrError_list_margin_ofCantor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.rbrError_list_margin_ofCantor
+
+/-- info: 'QuotientSecurity.roundError_mul_sq_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.roundError_mul_sq_le
 
 /-- info: 'QuotientSecurity.knowledgeSoundness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
@@ -90,6 +103,10 @@ import QuotientSecurity.Statement
 /-- info: 'QuotientSecurity.Params.card_consistent_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms QuotientSecurity.Params.card_consistent_le
+
+/-- info: 'QuotientSecurity.card_copy_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.card_copy_le
 
 /-- info: 'QuotientSecurity.mle_ones' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
