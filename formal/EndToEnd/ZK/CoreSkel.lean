@@ -245,6 +245,72 @@ theorem trees_queryPhase (lvl q b : ℕ) (o : OSt) (hb : (o.trees.getD lvl []).l
   rw [queryPhase_eq_skelEv lvl q b o hb]
   exact trees_skelEv P G s _ o [] hist (noCommit_queryEv lvl q b)
 
+theorem runDet_bind_congr {α β : Type} (X : OracleComp DSpec α) (K₁ K₂ : α → OracleComp DSpec β)
+    (hist : List Out)
+    (h : runDet P G s (K₁ (runDet P G s X hist).1) (runDet P G s X hist).2 =
+      runDet P G s (K₂ (runDet P G s X hist).1) (runDet P G s X hist).2) :
+    runDet P G s (X >>= K₁) hist = runDet P G s (X >>= K₂) hist := by
+  rw [runDet_bind, runDet_bind, h]
+
+theorem skelEv_commit (d : ℕ) (rest : List Render.Ev) (o : OSt) (pl : List QuotientRpm.Limbs) :
+    skelEv (.commit d :: rest) o pl = commitNext o d >>= fun o ↦ skelEv rest o pl := rfl
+
+theorem getD_append_lt {α : Type} (l l' : List α) (d : α) {i : ℕ} (hi : i < l.length) :
+    (l ++ l').getD i d = l.getD i d := by
+  simp only [List.getD_eq_getElem?_getD, List.getElem?_append_left hi]
+
+/-- **The later levels on their events**, against the oracle: commitment `lvl` (of depth `b`) the
+last committed, the continuation `K` the events `R` once the trees are the levels'. -/
+theorem middle_run {β : Type} (R : List Render.Ev) (K Fin : OSt → OracleComp DSpec β) :
+    ∀ (L : List (ℕ × ℕ × ℕ)) (Q : List ℕ) (lvl b : ℕ) (o : OSt) (hist : List Out),
+      L.length ≤ Q.length → o.trees.length = lvl + 1 → (o.trees.getD lvl []).length = b + 1 →
+      (∀ (o' : OSt) (h' : List Out), o'.trees.length = lvl + 1 + L.length →
+        (o'.trees.getD (lvl + L.length) []).length = QuotientZk.Instance.lastDepth b L + 1 →
+        runDet P G s (K o') h' = runDet P G s (skelEv R o' [] >>= Fin) h') →
+      runDet P G s (middle o lvl L Q >>= K) hist =
+        runDet P G s (skelEv (middleEv lvl b L Q ++ R) o [] >>= Fin) hist
+  | [], Q, lvl, b, o, hist, _, h1, h2, hK => by
+    simp only [middle, pure_bind, middleEv, List.nil_append]
+    exact hK o hist (by simpa using h1) (by simpa [QuotientZk.Instance.lastDepth] using h2)
+  | (f, d, oo) :: L, [], lvl, b, o, hist, hl, _, _, _ => by simp at hl
+  | (f, d, oo) :: L, q :: Q, lvl, b, o, hist, hl, h1, h2, hK => by
+    simp only [middle, middleEv, bind_assoc, List.append_assoc]
+    rw [← rounds_skelEv, bind_assoc]
+    refine runDet_bind_congr P G s _ _ _ hist ?_
+    have t1 := trees_rounds P G s f o hist
+    generalize runDet P G s (rounds o f) hist = r1 at t1 ⊢
+    obtain ⟨o1, h1'⟩ := r1
+    simp only at t1 ⊢
+    rw [List.singleton_append, skelEv_commit, bind_assoc]
+    refine runDet_bind_congr P G s _ _ _ h1' ?_
+    obtain ⟨lv, t2, hlv⟩ := trees_commitNext P G s o1 d h1'
+    generalize runDet P G s (commitNext o1 d) h1' = r2 at t2 ⊢
+    obtain ⟨o2, h2'⟩ := r2
+    simp only at t2 ⊢
+    rw [← ood_skelEv, bind_assoc]
+    refine runDet_bind_congr P G s _ _ _ h2' ?_
+    have t3 := trees_ood P G s o2 oo h2'
+    generalize runDet P G s (ood o2 oo) h2' = r3 at t3 ⊢
+    obtain ⟨o3, h3'⟩ := r3
+    simp only at t3 ⊢
+    have hb3 : (o3.trees.getD lvl []).length = b + 1 := by
+      rw [t3, t2, t1, getD_append_lt _ _ _ (by omega), h2]
+    rw [← queryPhase_skelEv _ lvl q b o3 hb3, bind_assoc]
+    refine runDet_bind_congr P G s _ _ _ h3' ?_
+    have t4 := trees_queryPhase P G s lvl q b o3 hb3 h3'
+    generalize runDet P G s (queryPhase o3 lvl q) h3' = r4 at t4 ⊢
+    obtain ⟨o4, h4'⟩ := r4
+    simp only at t4 ⊢
+    refine middle_run R K Fin L Q (lvl + 1) d o4 h4' (by simpa using hl)
+      (by rw [t4, t3, t2, t1, List.length_append, h1]; rfl)
+      (by rw [t4, t3, t2, t1, ← h1, List.getD_eq_getElem?_getD, List.getElem?_append_right
+        (le_refl _), Nat.sub_self]; simpa using hlv) ?_
+    intro o' h' ho1 ho2
+    refine hK o' h' (by rw [ho1, List.length_cons]; ring) ?_
+    have e : lvl + (L.length + 1) = lvl + 1 + L.length := by ring
+    rw [List.length_cons, e]
+    exact ho2
+
 end Run
 
 end PcsQuotient.EndToEnd.Core
