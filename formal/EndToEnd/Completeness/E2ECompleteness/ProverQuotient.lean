@@ -238,6 +238,21 @@ theorem q_mul_of (P : Params E) (hE : P.Exact) (g : Fin 4 → E[X]) (α β γ : 
   rw [this]
   exact CharTwo.add_self_eq_zero _
 
+/-- The copy identity's numerator at a point, for any parameters. -/
+theorem numer_eval (P : Params E) (g : Fin 4 → E[X]) (α β γ : E) (h : E[X]) (t : E) :
+    (Params.dPoly P g α β * Params.dNextPoly P g α β * h + Params.copyPoly P g α β γ).eval t =
+      (α + (Instance.witnessPoly g).eval t + β * t) *
+          (α + (Instance.witnessPoly g).eval t + β * P.sigmaPoly.eval t) * h.eval t +
+        ((α + (Instance.witnessPoly g).eval t + β * t) +
+          (α + (Instance.witnessPoly g).eval t + β * P.sigmaPoly.eval t) +
+          (P.pub γ).eval t * (Instance.witnessPoly g).eval t *
+            ((α + (Instance.witnessPoly g).eval t + β * t) *
+              (α + (Instance.witnessPoly g).eval t + β * P.sigmaPoly.eval t))) := by
+  have hc : (Params.cellPoly P g 0).eval t = (Instance.witnessPoly g).eval t := by
+    rw [cellPoly_eval, show shift P.θ 0 = 0 from rfl, add_zero]
+  simp only [Params.copyPoly, Params.dPoly, Params.dNextPoly, Polynomial.eval_add,
+    Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_X, hc]
+
 /-- **The gate quotient is exact** when the gate vanishes at the rows. -/
 theorem qGate_mul_of (P : Params E) (hE : P.Exact) (g : Fin 4 → E[X]) (α β γ : E)
     (hgate : ∀ x : P.T, (Params.gatePoly P g).eval (x : E) = 0) :
@@ -402,6 +417,141 @@ theorem qGateValues_coset (hgate : ∀ y : Fin 22 → Bool, gate (ofK (f (cellBi
     wValues_coset hK f cells hcs hcells masks hp, ofK_rowPolyOf hK, Params.gatePoly, gate_eval,
     cellPoly_eval, cellPoly_eval, cellPoly_eval, cellPoly_eval, hs0, hs1, hs2, hs3, add_zero]
   rfl
+
+include hK hcs hcells hss hsigma in
+/-- **The copy identity's quotient on the coset is the honest `q`**, at non-degenerate `α, β`. -/
+theorem qValues_coset (α β γ : E)
+    (hab : ¬ Completeness.Reduction.BadAB Completeness.deployedInstanceE (gOf f masks) α β)
+    {p : ℕ} (hp : p < 2 ^ 26) :
+    (qValuesOf 22 (wValuesOf 22 (coefficients 24 0 cells) (PcsQuotient.maskEntries masks))
+        (sigmaValuesOf 22 (coefficients 24 0 (sigma.map point)))
+        (q0Of 22 (coefficients 24 0 (hValues 22 cells sigma α β γ))) (blocksOf 22 γ) α β).getD p 0 =
+      (Params.honest Completeness.deployedInstanceE.params (gOf f masks) α β γ).q.eval
+        (ofK (betaAt 26 + point p)) := by
+  have hd : ∀ i, α + Completeness.deployedInstanceE.params.cells (gOf f masks) i +
+      β * Completeness.deployedInstanceE.params.pt i ≠ 0 := fun i h => hab ⟨i, Or.inl h⟩
+  have hd' : ∀ i, α + Completeness.deployedInstanceE.params.cells (gOf f masks) i +
+      β * Completeness.deployedInstanceE.params.pt (Completeness.deployedInstanceE.params.σ i) ≠ 0 :=
+    fun i h => hab ⟨i, Or.inr h⟩
+  have hvc := vCells_coset_ne_zero hK hp
+  have hmul := congrArg (fun q => q.eval (ofK (betaAt 26 + point p)))
+    (q_mul_of Completeness.deployedInstanceE.params Completeness.deployedInstanceE.exact
+      (gOf f masks) α β γ hd hd')
+  simp only [Polynomial.eval_mul] at hmul
+  have hq : (Params.honest Completeness.deployedInstanceE.params (gOf f masks) α β γ).q.eval
+      (ofK (betaAt 26 + point p)) =
+      (Params.dPoly Completeness.deployedInstanceE.params (gOf f masks) α β *
+        Params.dNextPoly Completeness.deployedInstanceE.params (gOf f masks) α β *
+        (Params.honest Completeness.deployedInstanceE.params (gOf f masks) α β γ).h₀ +
+        Params.copyPoly Completeness.deployedInstanceE.params (gOf f masks) α β γ).eval
+          (ofK (betaAt 26 + point p)) *
+        (Completeness.deployedInstanceE.params.vCells.eval (ofK (betaAt 26 + point p)))⁻¹ := by
+    rw [← hmul]
+    field_simp
+  rw [hq, qValuesOf_getD _ _ _ _ α β (show p < 4 * 2 ^ PcsQuotient.cellVars 22 by
+      unfold PcsQuotient.cellVars; omega) _ _ _
+      (blocksOf_getD γ (hi := p / 2 ^ PcsQuotient.region) (by unfold PcsQuotient.region; omega)),
+    pub_coset hK γ hp, q0_coset hK f cells hcells sigma hsigma masks α β γ hp,
+    show PcsQuotient.cellVars 22 + 2 = 26 from rfl, ofK_inv, ← vCells_coset hK hp,
+    wValues_coset hK f cells hcs hcells masks hp, sigmaValues_coset hK sigma hss hsigma hp,
+    numer_eval]
+  ring
+
+/-! ## The coefficient tables -/
+
+include hK hcs hcells hss hsigma in
+/-- **The table `coefficients 26 (betaAt 26) qValues` holds the honest `q`.** -/
+theorem qHat_table26 (α β γ : E)
+    (hab : ¬ Completeness.Reduction.BadAB Completeness.deployedInstanceE (gOf f masks) α β) :
+    tablePoly (fun b : Fin 26 → Bool => (coefficients 26 (betaAt 26)
+        (qValuesOf 22 (wValuesOf 22 (coefficients 24 0 cells) (PcsQuotient.maskEntries masks))
+          (sigmaValuesOf 22 (coefficients 24 0 (sigma.map point)))
+          (q0Of 22 (coefficients 24 0 (hValues 22 cells sigma α β γ))) (blocksOf 22 γ) α β)).getD
+          (Completeness.idx b) 0) =
+      (Params.honest Completeness.deployedInstanceE.params (gOf f masks) α β γ).q := by
+  have hdeg := (Completeness.honest_degrees Completeness.deployedInstanceE (gOf f masks)
+    (Completeness.natDegree_witnessOfTable_le (algebraMap K E) deployedBasis f masks) α β γ).2.1
+  refine coset_ext_E hK (natDegree_tablePoly_lt _) (lt_of_le_of_lt hdeg (by norm_num))
+    fun p hp => ?_
+  rw [tablePoly_coefficients_E (m := 26) (cantorUpTo26 hK) (by unfold basisSize; norm_num) _ _
+    (by unfold qValuesOf; exact size_ofFn26 _) hp]
+  exact qValues_coset hK f cells hcs hcells sigma hss hsigma masks α β γ hab hp
+
+include hK hcs hcells in
+/-- **The table `coefficients 26 (betaAt 26) qGateValues` holds the honest gate quotient**, over
+`K`. -/
+theorem qGateHat_table26 (hgate : ∀ y : Fin 22 → Bool, gate (ofK (f (cellBits (y, 0))))
+      (ofK (f (cellBits (y, 1)))) (ofK (f (cellBits (y, 2)))) (ofK (f (cellBits (y, 3)))) = 0)
+    (α β γ : E) :
+    tablePoly (fun b : Fin 26 → Bool => (coefficients 26 (betaAt 26)
+        (qGateValuesOf 22 (wValuesOf 22 (coefficients 24 0 cells) (PcsQuotient.maskEntries masks))
+          (blocksOf 22 γ))).getD (Completeness.idx b) 0) =
+      Completeness.qGateKOf (Params.honest Completeness.deployedInstanceE.params (gOf f masks)
+        α β γ) := by
+  have hdeg := (Completeness.honest_degrees Completeness.deployedInstanceE (gOf f masks)
+    (Completeness.natDegree_witnessOfTable_le (algebraMap K E) deployedBasis f masks) α β γ).2.2
+  rw [← qGateK_map f masks α β γ, natDegree_map_eq_of_injective (algebraMap K E).injective] at hdeg
+  refine coset_ext_K hK (natDegree_tablePoly_lt _) (lt_of_le_of_lt hdeg (by norm_num))
+    fun p hp => ?_
+  rw [Bridge.Ntt.tablePoly_coefficients (m := 26) (cantorUpTo26 hK) (by unfold basisSize; norm_num)
+    _ _ (by unfold qGateValuesOf; exact size_ofFn26 _) hp]
+  exact qGateValues_coset hK f cells hcs hcells masks hgate α β γ hp
+
+/-! ## The slots -/
+
+include hK hcells hsigma in
+theorem slot_h (α β γ : E) (e : Fin 3) :
+    Completeness.tableSupp (22 + 2 + 1 + 1)
+        (Completeness.limbE.limbPoly
+          (Params.honest Completeness.deployedInstanceE.params (gOf f masks) α β γ).h₀ e) (2 ^ 24) =
+      fun b => ((coefficients 24 0 (hValues 22 cells sigma α β γ)).getD (Completeness.idx b) 0).limb e := by
+  have hdeg := (Completeness.honest_degrees Completeness.deployedInstanceE (gOf f masks)
+    (Completeness.natDegree_witnessOfTable_le (algebraMap K E) deployedBasis f masks) α β γ).1
+  refine tableSupp_eq _ _ ((limb_tablePoly (M := 22 + 2 + 1 + 1) (fun b =>
+      (coefficients 24 0 (hValues 22 cells sigma α β γ)).getD (Completeness.idx b) 0) e).symm.trans
+    (congrArg (fun q => Completeness.limbE.limbPoly q e)
+      (hHat_table26 hK f cells hcells sigma hsigma masks α β γ))) (by norm_num)
+    (lt_of_le_of_lt (Completeness.limbE.natDegree_limbPoly_le _ _) hdeg)
+
+include hK hcs hcells hss hsigma in
+theorem slot_q (α β γ : E)
+    (hab : ¬ Completeness.Reduction.BadAB Completeness.deployedInstanceE (gOf f masks) α β)
+    (e : Fin 3) :
+    Completeness.tableSupp (22 + 2 + 1 + 1)
+        (Completeness.limbE.limbPoly
+          (Params.honest Completeness.deployedInstanceE.params (gOf f masks) α β γ).q e)
+        (3 * 2 ^ 24 + 9280) =
+      fun b => ((coefficients 26 (betaAt 26)
+        (qValuesOf 22 (wValuesOf 22 (coefficients 24 0 cells) (PcsQuotient.maskEntries masks))
+          (sigmaValuesOf 22 (coefficients 24 0 (sigma.map point)))
+          (q0Of 22 (coefficients 24 0 (hValues 22 cells sigma α β γ))) (blocksOf 22 γ) α β)).getD
+          (Completeness.idx b) 0).limb e := by
+  have hdeg := (Completeness.honest_degrees Completeness.deployedInstanceE (gOf f masks)
+    (Completeness.natDegree_witnessOfTable_le (algebraMap K E) deployedBasis f masks) α β γ).2.1
+  refine tableSupp_eq _ _ ((limb_tablePoly (M := 22 + 2 + 1 + 1) (fun b => (coefficients 26 (betaAt 26)
+        (qValuesOf 22 (wValuesOf 22 (coefficients 24 0 cells) (PcsQuotient.maskEntries masks))
+          (sigmaValuesOf 22 (coefficients 24 0 (sigma.map point)))
+          (q0Of 22 (coefficients 24 0 (hValues 22 cells sigma α β γ))) (blocksOf 22 γ) α β)).getD
+          (Completeness.idx b) 0) e).symm.trans
+    (congrArg (fun q => Completeness.limbE.limbPoly q e)
+      (qHat_table26 hK f cells hcs hcells sigma hss hsigma masks α β γ hab))) (by norm_num)
+    (lt_of_le_of_lt (Completeness.limbE.natDegree_limbPoly_le _ _) (by omega))
+
+include hK hcs hcells in
+theorem slot_g (hgate : ∀ y : Fin 22 → Bool, gate (ofK (f (cellBits (y, 0))))
+      (ofK (f (cellBits (y, 1)))) (ofK (f (cellBits (y, 2)))) (ofK (f (cellBits (y, 3)))) = 0)
+    (α β γ : E) :
+    Completeness.tableSupp (22 + 2 + 1 + 1)
+        (Completeness.qGateKOf (Params.honest Completeness.deployedInstanceE.params (gOf f masks)
+          α β γ)) (7 * 2 ^ 22 + 64) =
+      fun b => (coefficients 26 (betaAt 26)
+        (qGateValuesOf 22 (wValuesOf 22 (coefficients 24 0 cells) (PcsQuotient.maskEntries masks))
+          (blocksOf 22 γ))).getD (Completeness.idx b) 0 := by
+  have hdeg := (Completeness.honest_degrees Completeness.deployedInstanceE (gOf f masks)
+    (Completeness.natDegree_witnessOfTable_le (algebraMap K E) deployedBasis f masks) α β γ).2.2
+  rw [← qGateK_map f masks α β γ, natDegree_map_eq_of_injective (algebraMap K E).injective] at hdeg
+  exact tableSupp_eq _ _ (qGateHat_table26 hK f cells hcs hcells masks hgate α β γ) (by norm_num)
+    (by omega)
 
 end Honest
 
