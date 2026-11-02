@@ -372,4 +372,207 @@ theorem lastClaim_move (Φ : Fin 6 → E) (w t : Col E 6) (hip : colIp w t = 0)
 
 end Moves
 
+section Reach
+
+variable {K : Type} [Field K] [Algebra K E]
+
+theorem lastClaim_snoc : ∀ (n : ℕ) (φ : Fin (n + 1) → E) (m : Fin (n + 1) → E × E) (s : E),
+    lastClaim (n + 1) φ m s
+      = nextClaim (φ (Fin.last n)) (m (Fin.last n)) (lastClaim n (Fin.init φ) (Fin.init m) s)
+  | 0, _, _, _ => rfl
+  | n + 1, φ, m, s => by
+    rw [lastClaim, lastClaim_snoc n (Fin.tail φ) (Fin.tail m), lastClaim, Fin.tail_init_eq_init_tail,
+      Fin.tail_init_eq_init_tail]
+    rfl
+
+theorem lastClaim_zero (k : ℕ) (φ : Fin k → E) : lastClaim k φ 0 0 = 0 := by
+  have h := lastClaim_smul k φ 0 0 0
+  simpa using h
+
+/-- **Forgetting the last quadratic coefficient is injective on `ker lastMap`** (`Φ₅ ∉ {0, 1}`). -/
+theorem piv_inj (Φ : Fin 6 → E) (h5 : Φ 5 ≠ 0 ∧ Φ 5 ≠ 1) (x : Fin 6 → E × E)
+    (hx : lastClaim 6 Φ x 0 = 0) (hp : piv x = 0) : x = 0 := by
+  have hi : Fin.init x = 0 := congrArg Prod.fst hp
+  have h1 : (x (Fin.last 5)).1 = 0 := congrArg Prod.snd hp
+  rw [lastClaim_snoc, hi, lastClaim_zero] at hx
+  simp only [nextClaim, h1] at hx
+  have hc : (x (Fin.last 5)).2 * (Φ 5 * (Φ 5 - 1)) = 0 := by
+    have hl : Φ (Fin.last 5) = Φ 5 := rfl
+    rw [hl] at hx
+    linear_combination hx
+  have h2 : (x (Fin.last 5)).2 = 0 := by
+    rcases mul_eq_zero.mp hc with h | h
+    · exact h
+    · exfalso
+      rcases mul_eq_zero.mp h with h | h
+      · exact h5.1 h
+      · exact h5.2 (sub_eq_zero.mp h)
+  funext i
+  refine Fin.lastCases ?_ (fun j => ?_) i
+  · exact Prod.ext h1 h2
+  · exact congrFun hi j
+
+/-- The patterns, `K`-valued. -/
+def patK : Fin 3 → (Fin 6 → Bool) → K
+  | 0 => pattern0
+  | 1 => pattern1
+  | 2 => pattern2
+
+theorem patE_ofK (p : Fin 3) : patE (E := E) p = ofK (patK (K := K) p) := by
+  funext b
+  fin_cases p <;>
+  simp only [patE, patK, ofK, pattern0, pattern1, pattern2, pairCol, unitCol, Pi.add_apply,
+    Pi.smul_apply, smul_eq_mul] <;>
+  split_ifs <;> simp
+
+theorem colIp_ofK {k : ℕ} (w c : (Fin k → Bool) → K) :
+    colIp (ofK (E := E) w) (ofK c) = algebraMap K E (colIp w c) := by
+  simp [colIp, ofK]
+
+/-- **The `E`-multiples of a `K`-move**, through the gadget's three entries (`β`) and a twisted
+completion by the solvers (which moves only the last quadratic coefficient). -/
+theorem reach_multiple (Φ : Fin 6 → E) (μ : E) (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E)
+    (p : Fin 3)
+    (hsolve : ∀ e : E, ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK (E := E) s) ∧
+      (∑ b, eqW Φ b * algebraMap K E (s b)) = e)
+    (c : (Fin 6 → Bool) → K) (hc : OnHalf p (ofK (E := E) c)) (hip : colIp (patE (E := E) p) (ofK c) = 0)
+    (e : E) :
+    ∃ u ∈ Submodule.span K (gadgetMoves Φ μ β),
+      piv u = e • piv (colRounds 6 Φ (patE p) (ofK c)) := by
+  obtain ⟨sol, hs, hsf⟩ := hsolve (-(∑ b, eqW Φ b * algebraMap K E (c b)))
+  set X := colRounds 6 Φ (patE (E := E) p) (ofK (c + sol))
+  have hmove : ∀ i, (μ * β i) • X ∈ gadgetMoves Φ μ β := by
+    intro i
+    refine ⟨p, i, c, sol, hc, hs, hip, ?_, rfl⟩
+    simp only [map_add, mul_add, sum_add_distrib, hsf, add_neg_cancel]
+  set a := β.repr (e / μ)
+  refine ⟨∑ i, a i • ((μ * β i) • X), Submodule.sum_mem _ fun i _ =>
+    Submodule.smul_mem _ _ (Submodule.subset_span (hmove i)), ?_⟩
+  have hX : piv X = piv (colRounds 6 Φ (patE p) (ofK c)) := by
+    simp only [X, ofK_add, colRounds_add, piv_add]
+    have hsep := (rounds_lower_upper 5 Φ (w := patE p) (t := ofK sol)) (sep_of p hs)
+    have h0 : piv (colRounds 6 Φ (patE (E := E) p) (ofK sol)) = 0 := by
+      refine Prod.ext ?_ hsep.2
+      funext j
+      exact hsep.1 j
+    rw [h0, add_zero]
+  have hsum : ∑ i, a i • ((μ * β i) • X) = (∑ i, algebraMap K E (a i) * (μ * β i)) • X := by
+    rw [sum_smul]
+    refine sum_congr rfl fun i _ => ?_
+    rw [← smul_assoc, show a i • (μ * β i) = algebraMap K E (a i) * (μ * β i) from Algebra.smul_def _ _]
+  have hcoef : ∑ i, algebraMap K E (a i) * (μ * β i) = e := by
+    have := β.sum_repr (e / μ)
+    calc ∑ i, algebraMap K E (a i) * (μ * β i) = μ * ∑ i, a i • β i := by
+          rw [mul_sum]
+          refine sum_congr rfl fun i _ => ?_
+          rw [Algebra.smul_def]
+          ring
+      _ = e := by rw [this]; field_simp
+  rw [hsum, hcoef, piv_smul, hX]
+
+theorem onHalf_mono (p : Fin 3) {τ t : Col E 6} (h : ∀ b, τ b = 0 → t b = 0) (hτ : OnHalf p τ) :
+    OnHalf p t := by
+  unfold OnHalf at hτ ⊢
+  split_ifs at hτ ⊢
+  · exact fun b hb => h b (hτ b hb)
+  · exact fun b hb => h b (hτ b hb)
+
+/-- **An `E`-valued table of a pattern's half** (weighing zero against it), as `K`-moves: its rounds,
+but the last quadratic coefficient, are those of a `K`-combination of the gadget's moves. -/
+theorem reach_table (Φ : Fin 6 → E) (μ : E) (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E) (p : Fin 3)
+    (hsolve : ∀ e : E, ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK (E := E) s) ∧
+      (∑ b, eqW Φ b * algebraMap K E (s b)) = e)
+    (τ : Col E 6) (hτ : OnHalf p τ) (hip : colIp (patE p) τ = 0) :
+    ∃ u ∈ Submodule.span K (gadgetMoves Φ μ β), piv u = piv (colRounds 6 Φ (patE p) τ) := by
+  set c : Fin 3 → (Fin 6 → Bool) → K := fun j b => β.repr (τ b) j
+  have hdec : τ = β 0 • ofK (c 0) + β 1 • ofK (c 1) + β 2 • ofK (c 2) := by
+    funext b
+    have h := β.sum_repr (τ b)
+    rw [Fin.sum_univ_three] at h
+    simp only [Pi.add_apply, Pi.smul_apply, smul_eq_mul, ofK, c]
+    conv_lhs => rw [← h]
+    simp only [Algebra.smul_def]
+    ring
+  have hhalf : ∀ j, OnHalf p (ofK (E := E) (c j)) := fun j =>
+    onHalf_mono p (fun b hb => by simp [ofK, c, hb]) hτ
+  have hk : ∀ j, colIp (patE (E := E) p) (ofK (c j)) = algebraMap K E (colIp (patK p) (c j)) := fun j => by
+    rw [patE_ofK (K := K), colIp_ofK]
+  have hzero : ∀ j, colIp (patE (E := E) p) (ofK (c j)) = 0 := by
+    have hsum : ∑ j, colIp (patK p) (c j) • β j = 0 := by
+      have h := hip
+      rw [hdec, colIp_add, colIp_add, colIp_smul, colIp_smul, colIp_smul, hk, hk, hk] at h
+      rw [Fin.sum_univ_three]
+      simp only [Algebra.smul_def]
+      linear_combination h
+    have hli := Fintype.linearIndependent_iff.mp β.linearIndependent _ hsum
+    intro j
+    rw [hk, hli j, map_zero]
+  choose u hu hpu using fun j => reach_multiple Φ μ hμ β p hsolve (c j) (hhalf j) (hzero j) (β j)
+  refine ⟨u 0 + u 1 + u 2, Submodule.add_mem _ (Submodule.add_mem _ (hu 0) (hu 1)) (hu 2), ?_⟩
+  rw [piv_add, piv_add, hpu, hpu, hpu, hdec, colRounds_add, colRounds_add, colRounds_smul,
+    colRounds_smul, colRounds_smul, piv_add, piv_add, piv_smul, piv_smul, piv_smul]
+
+/-- `move2` is a `K`-table. -/
+theorem move2_ofK : move2 (E := E) = ofK (unitCol (E := K) (lane 33)) := by
+  funext b
+  simp only [move2, unitCol, ofK]
+  split_ifs <;> simp
+
+/-- **Condition (R) for one entry of each of the gadget's patterns**: every value of the six rounds
+that keeps the last running claim (`ker lastMap`) is a `K`-combination of the gadget's moves, for
+every `Φ` with no coordinate in `{0, 1}` and `2 Φ₀ ≠ 1`, every nonzero scale `μ` and every basis
+`β` of `E` over `K`, given the solvers (`K`-values on the other half whose fold reaches every
+element of `E`). -/
+theorem column_reach (Φ : Fin 6 → E) (hΦ : ∀ i, Φ i ≠ 0 ∧ Φ i ≠ 1) (h2 : 2 * Φ 0 ≠ 1) (μ : E)
+    (hμ : μ ≠ 0) (β : Module.Basis (Fin 3) K E)
+    (hsolve : ∀ (p : Fin 3) (e : E), ∃ s : (Fin 6 → Bool) → K, OnOther p (ofK (E := E) s) ∧
+      (∑ b, eqW Φ b * algebraMap K E (s b)) = e) :
+    LinearMap.ker (lastMap (K := K) Φ) ≤ Submodule.span K (gadgetMoves Φ μ β) := by
+  intro v hv
+  have hv' : lastClaim 6 Φ v 0 = 0 := hv
+  obtain ⟨τa, τb, α, hτa, hτb, ha, hb, hcs, hlast⟩ := deployed_reach_all Φ hΦ h2 v
+  obtain ⟨ua, hua, hpa⟩ := reach_table Φ μ hμ β 0 (hsolve 0) τa hτa ha
+  obtain ⟨ub, hub, hpb⟩ := reach_table Φ μ hμ β 1 (hsolve 1) τb hτb hb
+  have hc2 : OnHalf 2 (ofK (E := E) (unitCol (E := K) (lane 33))) := by
+    rw [← move2_ofK]; exact upper_move2
+  have hip2 : colIp (patE (E := E) 2) (ofK (unitCol (E := K) (lane 33))) = 0 := by
+    rw [← move2_ofK]
+    show colIp pattern2 move2 = 0
+    rw [pattern2, move2, colIp_unit]
+    simp [show lane 32 ≠ lane 33 by decide]
+  obtain ⟨uc, huc, hpc⟩ := reach_multiple Φ μ hμ β 2 (hsolve 2) _ hc2 hip2 α
+  set u := ua + ub + uc
+  have hu : u ∈ Submodule.span K (gadgetMoves Φ μ β) :=
+    Submodule.add_mem _ (Submodule.add_mem _ hua hub) huc
+  have hpiv : piv u = piv v := by
+    simp only [u, piv_add, hpa, hpb, hpc, ← move2_ofK]
+    have : piv (colRounds 6 Φ pattern0 τa + colRounds 6 Φ pattern1 τb
+        + α • colRounds 6 Φ pattern2 move2) = piv v := by
+      refine Prod.ext ?_ hlast
+      funext i
+      exact hcs i
+    rw [← this, piv_add, piv_add, piv_smul]
+    rfl
+  have hspan : Submodule.span K (gadgetMoves Φ μ β) ≤ LinearMap.ker (lastMap (K := K) Φ) := by
+    refine Submodule.span_le.mpr ?_
+    rintro x ⟨p, i, c, sol, hc, hs, hip, hf, rfl⟩
+    show lastClaim 6 Φ ((μ * β i) • colRounds 6 Φ (patE p) (ofK (c + sol))) 0 = 0
+    have h := lastClaim_smul 6 Φ (μ * β i) (colRounds 6 Φ (patE p) (ofK (c + sol))) 0
+    rw [smul_zero] at h
+    rw [h, lastClaim_move]
+    · simp
+    · rw [ofK_add, colIp_add, hip, colIp_sep (sep_of p hs), add_zero]
+    · simpa [ofK] using hf
+  have hdiff : u - v = 0 := by
+    refine piv_inj Φ (hΦ 5) (u - v) ?_ ?_
+    · have h1 : lastMap (K := K) Φ (u - v) = 0 := by
+        rw [map_sub, LinearMap.mem_ker.mp (hspan hu), LinearMap.mem_ker.mp hv, sub_zero]
+      exact h1
+    · show piv u - piv v = 0
+      rw [hpiv, sub_self]
+  rw [← sub_eq_zero.mp hdiff]
+  exact hu
+
+end Reach
+
 end QuotientSecurity.Hiding
