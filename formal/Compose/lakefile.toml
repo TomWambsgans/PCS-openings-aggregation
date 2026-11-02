@@ -1,0 +1,40 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+#
+# The composition (layer F4 of `formal/README.md`): the reduction (`QuotientSecurity`, with the
+# deployed Keccak-256 chain of `QuotientRpm`) with real commitments, the WHIR roots, whose openings
+# `WhirBridge` proves list-sound. It builds as `WhirBridge` does, against a built checkout of
+# leanerVM (https://github.com/Verified-zkEVM/leanerVM, commit
+# 6175f1a07f0dc33bd3d640de0063d1006143ee91) at `../leanervm`, sharing that checkout's `lean_vm`
+# packages (Mathlib, VCVio, CompPoly, ArkLib, mumbai's `statement` and `common`), so nothing of
+# them is fetched; the three libraries of this repository are compiled from their sources in
+# `formal/` (`srcDir`). See README.md.
+name = "pcs-quotient-compose"
+version = "0.1.0"
+defaultTargets = ["Compose"]
+packagesDir = "../leanervm/lean_vm/.lake/packages"
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[require]]
+name = "lean-vm"
+path = "../leanervm/lean_vm"
+
+# The reduction (F1), from `formal/QuotientSecurity`.
+[[lean_lib]]
+name = "QuotientSecurity"
+srcDir = ".."
+
+# The reduction's Keccak-256 chain (F4a), from `formal/QuotientRpm`.
+[[lean_lib]]
+name = "QuotientRpm"
+srcDir = ".."
+
+# The WHIR openings (F2), from `formal/WhirBridge`.
+[[lean_lib]]
+name = "WhirBridge"
+srcDir = "../WhirBridge"
+
+[[lean_lib]]
+name = "Compose"

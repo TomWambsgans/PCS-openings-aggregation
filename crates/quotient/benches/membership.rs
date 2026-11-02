@@ -7,11 +7,10 @@
 use std::time::Instant;
 
 use fiat_shamir::transcript::Proof as WhirProof;
-use primitives::field::F64;
 use primitives::test_rng::Rng;
 use quotient::circuit::{membership, membership_inputs};
 use quotient::opening::commit;
-use quotient::protocol::{Index, digest, open, prove, verify, verify_openings};
+use quotient::protocol::{Index, Randomness, digest, open, prove_with_randomness, verify, verify_openings};
 use quotient::statement::{DEPTH, Secret};
 
 #[global_allocator]
@@ -59,24 +58,16 @@ fn main() {
         directions: rng.next_u64() as u32,
     };
     let statement = secret.statement();
-    // The masks and the padding's seed, from the test generator so that the proof digest repeats: a deployment
-    // draws them from `quotient::protocol::fresh_randomness`.
-    let masks = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
+    // The proof's seed, from the test generator so that the proof digest repeats: `prove` draws a fresh one from
+    // the operating system. The randomness is derived from it as `prove` derives it, in the timed stage.
     let seed: [u8; 32] = std::array::from_fn(|_| rng.next_u64() as u8);
 
     let start = Instant::now();
     let cells = circuit.cells(&membership_inputs(&secret));
     let witness_secs = time("witness (cells)", start);
     let start = Instant::now();
-    let proved = prove(
-        &circuit,
-        &index,
-        &index_committed.root,
-        &statement,
-        &cells,
-        &masks,
-        &seed,
-    );
+    let randomness = Randomness::derive(&seed, &index_committed.root, &statement, &cells);
+    let proved = prove_with_randomness(&circuit, &index, &index_committed.root, &statement, &cells, &randomness);
     let reduction_secs = time("reduction (commit both tables)", start);
     let peak_reduction = peak();
     assert!(proved.fits);
@@ -111,6 +102,8 @@ fn main() {
     ] {
         println!("{name:<34}: {:.1} KiB", opening_bytes(proof) as f64 / 1024.0);
     }
+    // Pinned by hand: `b93236c8020642bd28b954d57532c61dd1f1bd444410b1823025a75cdf1500f1` since the randomness is
+    // derived from one seed and the openings' transcripts have leanVM's shape (`2d6342b8…fcb` before).
     let hex: String = digest(&proved.proof, &openings)
         .iter()
         .map(|b| format!("{b:02x}"))
