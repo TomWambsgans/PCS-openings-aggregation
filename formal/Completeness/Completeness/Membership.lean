@@ -5,6 +5,7 @@
 import Completeness.Chain
 import QuotientSecurity.DeployedHonest
 import QuotientSecurity.DeployedConcrete
+import QuotientSecurity.DeployedBasis
 
 /-!
 # The deployed circuit: completeness with no circuit or field hypothesis
@@ -26,14 +27,16 @@ end theorems are instantiated with it, with the deployed σ, `coordinate_weight`
 * **the wiring** (`deployedSigma_keeps`): the deployed σ (`membership.sigma`, the Rust's, the one
   soundness's `soundness_membership_deployed_concrete` takes) keeps what each cell carries
   (`deployedSigma_cellSrc`), so the honest cells satisfy the relation on it;
-* **the instance** (`deployedInstanceE BK`): soundness's `deployedInstance` with the basis `BK` of
-  `K` embedded in `E` (`hB` by definition; the deployed `beta()` is a Cantor basis of `F64 = K`),
-  the deployed σ, `coordWeight F192.G F192.Y` (`coordinate_weight`, `rustCoordinateWeight_eq`).
+* **the instance** (`deployedInstanceE`): soundness's `deployedInstance` with `beta()`'s Cantor
+  basis (`QuotientSecurity.deployedBasis`, `F64 = K`'s, embedded in `E`: `hB` by definition; its
+  `24` words checked by the kernel and determined by `beta()`'s rule, `deployedBasis_unique`), the
+  deployed σ, `coordWeight F192.G F192.Y` (`coordinate_weight`, `rustCoordinateWeight_eq`);
+  `instanceOfBasis BK` for any Cantor basis `BK` of `K`.
 
 **`completeness_deployed_concrete`**: for every secret and masks, one set `Bad` of triples
-`(α, β, t)`, at most a `(17 · 2^24 + 8) / 2^192 < 2^-163` fraction, such that for every transcript,
-hash function, permutation and padding, the honest proof (when the openings' proofs of work
-succeed) is accepted by the deployed verifier on the deployed instance unless the run's
+`(α, β, t)`, at most a `(17 · 2^24 + 8) / 2^192 < 2^-163` fraction, such that for every
+transcript, hash function, permutation and padding, the honest proof (when the openings' proofs
+of work succeed) is accepted by the deployed verifier on the deployed instance unless the run's
 `(α, β, t)` is in `Bad`. **`completeness_deployed_keccak`**: the same on `transcript.rs`'s chain.
 No hypothesis on the circuit, the wiring, the weights or the basis remains.
 -/
@@ -166,76 +169,114 @@ noncomputable def deployedMembership : MembershipCircuit where
 theorem deployedSigma_keeps : WiringKeeps deployedSigma deployedMembership.C :=
   deployedSigma_cellSrc
 
-/-- **The deployed instance over `E`**: soundness's `deployedInstance` (the deployed σ,
-`coordWeight F192.G F192.Y`) with a Cantor basis of `K` embedded in `E` (`beta()` is `F64`'s). -/
-noncomputable def deployedInstanceE (BK : CantorBasis K (22 + 2)) : Instance E :=
+/-- **The instance of a Cantor basis `BK` of `K`**: soundness's `deployedInstance` (the deployed σ,
+`coordWeight F192.G F192.Y`, `coordinate_weight`'s weights) with `BK` embedded in `E`. -/
+noncomputable def instanceOfBasis (BK : CantorBasis K (22 + 2)) : Instance E :=
   deployedInstance (BK.map (algebraMap K E))
+
+/-- **The deployed instance over `E`**: `beta()`'s basis (`deployedBasis`, in `K = F64`), the
+deployed σ, `coordinate_weight`'s weights; soundness's `deployedInstance` of the same basis. -/
+noncomputable def deployedInstanceE : Instance E := instanceOfBasis deployedBasis
+
+/-- Its basis is `beta()`'s, in `K` (`hB`). -/
+theorem deployedInstanceE_basis (k : ℕ) :
+    deployedInstanceE.basis.β k = algebraMap K E (deployedBasis.β k) := rfl
+
+/-- Its wiring is the deployed σ (`hw`), its weights `coordinate_weight`'s (`hc`). -/
+theorem deployedInstanceE_wiring : deployedInstanceE.wiring = deployedSigma := rfl
+
+theorem deployedInstanceE_c : deployedInstanceE.c = coordWeight F192.G F192.Y := rfl
 
 /-- **The honest cells satisfy the relation on the deployed instance**, for the statement's
 words, which are `statement::halves` then `1, 0, 0, 0` (`statementWords_G_Y`). -/
-theorem honest_relation_deployed (BK : CantorBasis K (22 + 2)) (s : Secret) :
-    (deployedInstanceE BK).Relation (statementWords F192.G F192.Y s.statement.y s.statement.root)
+theorem honest_relation_deployed (s : Secret) :
+    deployedInstanceE.Relation (statementWords F192.G F192.Y s.statement.y s.statement.root)
       (deployed.cellsOfBits (deployedAssign s.toPcs)) :=
-  honest_relation deployedMembership (deployedInstanceE BK) rfl deployedSigma_keeps s
+  honest_relation deployedMembership deployedInstanceE rfl deployedSigma_keeps s
 
 open Classical in
-/-- **End-to-end completeness of the deployed membership proof, no circuit or field hypothesis.**
-On the deployed instance (the deployed circuit and σ, `coordinate_weight`'s weights over `F192`,
-a Cantor basis `BK` of `K`), with F0b's honest assignment: for each witness (secret and masks)
-one set `Bad` of triples `(α, β, t)`, at most a `(17 · 2^24 + 8) / 2^192 < 2^-163` fraction, such
-that for every transcript, hash function, permutation and padding, the honest proof, when the
-openings' proofs of work succeed, is accepted by the deployed verifier unless the run's
-`(α, β, t)` is in `Bad`. -/
-theorem completeness_deployed_concrete (BK : CantorBasis K (22 + 2)) (s : Secret)
+/-- **End-to-end completeness for any Cantor basis of `K`**: `completeness_end_bad_set` on
+`instanceOfBasis BK` with `deployedMembership`, every hypothesis discharged. -/
+theorem completeness_deployed_basis (BK : CantorBasis K (22 + 2)) (s : Secret)
     (m : Fin 4 → Fin 3 → K) :
     ∃ Bad : Finset (E × E × E),
       (Bad.card : ℝ≥0∞) / (Fintype.card (E × E × E) : ℝ≥0∞) ≤ (17 * 2 ^ 24 + 8 : ℝ≥0∞) / 2 ^ 192 ∧
       ∀ (tr : Transcript) (H : Bytes → Digest) (F : KeccakState → KeccakState) (fuel : ℕ)
         (padW padQ : ℕ → ℕ → K) (π : DeployedProof),
-        honestProve (deployedInstanceE BK) F192.G F192.Y BK deployedMembership tr
+        honestProve (instanceOfBasis BK) F192.G F192.Y BK deployedMembership tr
           witnessOpening.toSystem quotientOpening.toSystem H F fuel s m padW padQ = some π →
-        ((honestRun (deployedInstanceE BK) BK deployedMembership tr witnessOpening.toSystem
+        ((honestRun (instanceOfBasis BK) BK deployedMembership tr witnessOpening.toSystem
             quotientOpening.toSystem H s m padW padQ).α,
-          (honestRun (deployedInstanceE BK) BK deployedMembership tr witnessOpening.toSystem
+          (honestRun (instanceOfBasis BK) BK deployedMembership tr witnessOpening.toSystem
             quotientOpening.toSystem H s m padW padQ).β,
-          (honestRun (deployedInstanceE BK) BK deployedMembership tr witnessOpening.toSystem
+          (honestRun (instanceOfBasis BK) BK deployedMembership tr witnessOpening.toSystem
             quotientOpening.toSystem H s m padW padQ).t) ∉ Bad →
-        deployedVerify (deployedInstanceE BK) F192.G F192.Y tr wiringOpening witnessOpening.toSystem
-          quotientOpening.toSystem H F (wiringOpening.root H (wiringStack (deployedInstanceE BK) BK))
-          s.statement π :=
-  completeness_end_bad_set (deployedInstanceE BK) BK (fun _ => rfl) deployedMembership rfl
+        deployedVerify (instanceOfBasis BK) F192.G F192.Y tr wiringOpening
+          witnessOpening.toSystem quotientOpening.toSystem H F
+          (wiringOpening.root H (wiringStack (instanceOfBasis BK) BK)) s.statement π :=
+  completeness_end_bad_set (instanceOfBasis BK) BK (fun _ => rfl) deployedMembership rfl
     deployedSigma_keeps s m
 
 open Classical in
+/-- **End-to-end completeness of the deployed membership proof, no circuit or field hypothesis.**
+On the deployed instance (the deployed circuit and σ, `coordinate_weight`'s weights over `F192`,
+`beta()`'s Cantor basis), with F0b's honest assignment (`deployed` evaluated on
+`membership_inputs` of the secret): for each witness (secret and masks) one set `Bad` of triples
+`(α, β, t)`, at most a `(17 · 2^24 + 8) / 2^192 < 2^-163` fraction, such that for every
+transcript, hash function, permutation and padding, the honest proof, when the openings' proofs
+of work succeed, is accepted by the deployed verifier unless the run's `(α, β, t)` is in `Bad`. -/
+theorem completeness_deployed_concrete (s : Secret) (m : Fin 4 → Fin 3 → K) :
+    ∃ Bad : Finset (E × E × E),
+      (Bad.card : ℝ≥0∞) / (Fintype.card (E × E × E) : ℝ≥0∞) ≤ (17 * 2 ^ 24 + 8 : ℝ≥0∞) / 2 ^ 192 ∧
+      ∀ (tr : Transcript) (H : Bytes → Digest) (F : KeccakState → KeccakState) (fuel : ℕ)
+        (padW padQ : ℕ → ℕ → K) (π : DeployedProof),
+        honestProve deployedInstanceE F192.G F192.Y deployedBasis deployedMembership tr
+          witnessOpening.toSystem quotientOpening.toSystem H F fuel s m padW padQ = some π →
+        ((honestRun deployedInstanceE deployedBasis deployedMembership tr witnessOpening.toSystem
+            quotientOpening.toSystem H s m padW padQ).α,
+          (honestRun deployedInstanceE deployedBasis deployedMembership tr witnessOpening.toSystem
+            quotientOpening.toSystem H s m padW padQ).β,
+          (honestRun deployedInstanceE deployedBasis deployedMembership tr witnessOpening.toSystem
+            quotientOpening.toSystem H s m padW padQ).t) ∉ Bad →
+        deployedVerify deployedInstanceE F192.G F192.Y tr wiringOpening witnessOpening.toSystem
+          quotientOpening.toSystem H F
+          (wiringOpening.root H (wiringStack deployedInstanceE deployedBasis)) s.statement π :=
+  completeness_deployed_basis deployedBasis s m
+
+/-- **`transcript.rs`'s chain on the deployed instance**: `keccakTranscript` over `H`, the
+circuit's commitment the honest wiring root. -/
+noncomputable def deployedChain (H : Bytes → Digest) (limbs : E ≃ QuotientRpm.Limbs) :
+    Transcript :=
+  keccakTranscript H limbs (wiringOpening.root H (wiringStack deployedInstanceE deployedBasis))
+
+open Classical in
 /-- **The same on the deployed chain** (`transcript.rs`, `keccakTranscript`): the circuit's
-commitment the honest wiring root, the challenges Keccak-256 (here any `H`) of the transcript. -/
-theorem completeness_deployed_keccak (BK : CantorBasis K (22 + 2)) (s : Secret)
-    (m : Fin 4 → Fin 3 → K) :
+commitment the honest wiring root, the challenges `H` (Keccak-256 as deployed) of the transcript,
+for every reading `limbs` of a challenge's 192 bits as `E`. -/
+theorem completeness_deployed_keccak (s : Secret) (m : Fin 4 → Fin 3 → K) :
     ∃ Bad : Finset (E × E × E),
       (Bad.card : ℝ≥0∞) / (Fintype.card (E × E × E) : ℝ≥0∞) ≤ (17 * 2 ^ 24 + 8 : ℝ≥0∞) / 2 ^ 192 ∧
       ∀ (limbs : E ≃ QuotientRpm.Limbs) (H : Bytes → Digest) (F : KeccakState → KeccakState)
         (fuel : ℕ) (padW padQ : ℕ → ℕ → K) (π : DeployedProof),
-        honestProve (deployedInstanceE BK) F192.G F192.Y BK deployedMembership
-          (keccakTranscript H limbs (wiringOpening.root H (wiringStack (deployedInstanceE BK) BK)))
-          witnessOpening.toSystem quotientOpening.toSystem H F fuel s m padW padQ = some π →
-        ((honestRun (deployedInstanceE BK) BK deployedMembership
-            (keccakTranscript H limbs (wiringOpening.root H (wiringStack (deployedInstanceE BK) BK)))
+        honestProve deployedInstanceE F192.G F192.Y deployedBasis deployedMembership
+          (deployedChain H limbs) witnessOpening.toSystem quotientOpening.toSystem H F fuel s m
+          padW padQ = some π →
+        ((honestRun deployedInstanceE deployedBasis deployedMembership (deployedChain H limbs)
             witnessOpening.toSystem quotientOpening.toSystem H s m padW padQ).α,
-          (honestRun (deployedInstanceE BK) BK deployedMembership
-            (keccakTranscript H limbs (wiringOpening.root H (wiringStack (deployedInstanceE BK) BK)))
+          (honestRun deployedInstanceE deployedBasis deployedMembership (deployedChain H limbs)
             witnessOpening.toSystem quotientOpening.toSystem H s m padW padQ).β,
-          (honestRun (deployedInstanceE BK) BK deployedMembership
-            (keccakTranscript H limbs (wiringOpening.root H (wiringStack (deployedInstanceE BK) BK)))
+          (honestRun deployedInstanceE deployedBasis deployedMembership (deployedChain H limbs)
             witnessOpening.toSystem quotientOpening.toSystem H s m padW padQ).t) ∉ Bad →
-        deployedVerify (deployedInstanceE BK) F192.G F192.Y
-          (keccakTranscript H limbs (wiringOpening.root H (wiringStack (deployedInstanceE BK) BK)))
-          wiringOpening witnessOpening.toSystem quotientOpening.toSystem H F
-          (wiringOpening.root H (wiringStack (deployedInstanceE BK) BK)) s.statement π := by
-  obtain ⟨Bad, hcard, hall⟩ := completeness_deployed_concrete BK s m
-  exact ⟨Bad, hcard, fun limbs H F fuel padW padQ π hπ hnot => hall _ H F fuel padW padQ π hπ hnot⟩
+        deployedVerify deployedInstanceE F192.G F192.Y (deployedChain H limbs) wiringOpening
+          witnessOpening.toSystem quotientOpening.toSystem H F
+          (wiringOpening.root H (wiringStack deployedInstanceE deployedBasis)) s.statement π := by
+  obtain ⟨Bad, hcard, hall⟩ := completeness_deployed_concrete s m
+  exact ⟨Bad, hcard, fun limbs H F fuel padW padQ π hπ hnot =>
+    hall _ H F fuel padW padQ π hπ hnot⟩
 
-/-- **For any instance with the deployed σ**, the deployed weights and a basis in `K`: the
-general form, `completeness_end_bad_set` with `deployedMembership` and `hw` discharged. -/
+open Classical in
+/-- **For any instance with the deployed σ**, `coordinate_weight`'s weights and a basis in `K`:
+`completeness_end_bad_set` with `deployedMembership`, `hw` discharged. -/
 theorem completeness_deployed_sigma (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) {x Y : E} (hc : I.c = coordWeight x Y)
     (hw : I.wiring = deployedSigma) (s : Secret) (m : Fin 4 → Fin 3 → K) :
@@ -243,16 +284,17 @@ theorem completeness_deployed_sigma (I : Instance E) (BK : CantorBasis K (22 + 2
       (Bad.card : ℝ≥0∞) / (Fintype.card (E × E × E) : ℝ≥0∞) ≤ (17 * 2 ^ 24 + 8 : ℝ≥0∞) / 2 ^ 192 ∧
       ∀ (tr : Transcript) (H : Bytes → Digest) (F : KeccakState → KeccakState) (fuel : ℕ)
         (padW padQ : ℕ → ℕ → K) (π : DeployedProof),
-        honestProve I x Y BK deployedMembership tr witnessOpening.toSystem quotientOpening.toSystem
-          H F fuel s m padW padQ = some π →
-        ((honestRun I BK deployedMembership tr witnessOpening.toSystem quotientOpening.toSystem H s m
-            padW padQ).α,
-          (honestRun I BK deployedMembership tr witnessOpening.toSystem quotientOpening.toSystem H s m
-            padW padQ).β,
-          (honestRun I BK deployedMembership tr witnessOpening.toSystem quotientOpening.toSystem H s m
-            padW padQ).t) ∉ Bad →
-        deployedVerify I x Y tr wiringOpening witnessOpening.toSystem quotientOpening.toSystem H F
-          (wiringOpening.root H (wiringStack I BK)) s.statement π :=
+        honestProve I x Y BK deployedMembership tr
+          witnessOpening.toSystem quotientOpening.toSystem H F fuel s m padW padQ = some π →
+        ((honestRun I BK deployedMembership tr witnessOpening.toSystem
+            quotientOpening.toSystem H s m padW padQ).α,
+          (honestRun I BK deployedMembership tr witnessOpening.toSystem
+            quotientOpening.toSystem H s m padW padQ).β,
+          (honestRun I BK deployedMembership tr witnessOpening.toSystem
+            quotientOpening.toSystem H s m padW padQ).t) ∉ Bad →
+        deployedVerify I x Y tr wiringOpening witnessOpening.toSystem
+          quotientOpening.toSystem H F (wiringOpening.root H (wiringStack I BK))
+          s.statement π :=
   completeness_end_bad_set I BK hB deployedMembership hc (hw ▸ deployedSigma_keeps) s m
 
 end Completeness

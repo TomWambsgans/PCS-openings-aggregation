@@ -11,16 +11,92 @@ import Completeness.Deployed
 import Completeness.Final
 import Completeness.HiddenOpenings
 import Completeness.Chain
+import Completeness.Membership
 
 /-!
 # End-to-end completeness of the membership proof
 
-See the completeness section of `formal/README.md`. The end theorems are `completeness_end` and
-`completeness_end_bad_set` (`HiddenOpenings.lean`, every opening proven), from the general
-`completeness_deployed` (`Deployed.lean`, any openings that are complete); every
+See the completeness section of `formal/README.md`. The end theorems are
+`completeness_deployed_concrete` and `completeness_deployed_keccak` (`Membership.lean`: the deployed
+circuit, σ, weights and basis, no hypothesis left), from `completeness_end` and
+`completeness_end_bad_set` (`HiddenOpenings.lean`, every opening proven, for any circuit meeting
+`MembershipCircuit`) and the general `completeness_deployed` (`Deployed.lean`, any openings that
+are complete); every
 declaration below depends on `propext`, `Classical.choice` and `Quot.sound` only (the kernel's
 decision of the layouts' shape on `propext` and `Quot.sound`).
 -/
+
+/-- info: 'Completeness.completeness_deployed_concrete' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.completeness_deployed_concrete
+
+/-- info: 'Completeness.completeness_deployed_keccak' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.completeness_deployed_keccak
+
+/-- info: 'Completeness.completeness_deployed_basis' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.completeness_deployed_basis
+
+/-- info: 'Completeness.completeness_deployed_sigma' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.completeness_deployed_sigma
+
+/-- info: 'Completeness.deployedMembership' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.deployedMembership
+
+/-- info: 'Completeness.deployedSigma_keeps' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.deployedSigma_keeps
+
+/-- info: 'Completeness.honest_relation_deployed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.honest_relation_deployed
+
+/-- info: 'Completeness.deployedAssign_publicBits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.deployedAssign_publicBits
+
+/-- info: 'Completeness.Secret.toPcs_root' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.Secret.toPcs_root
+
+/-- info: 'Completeness.Secret.toPcs_y' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in
+#print axioms Completeness.Secret.toPcs_y
+
+/-- info: 'QuotientSecurity.deployedAssign_satisfies' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.deployedAssign_satisfies
+
+/-- info: 'QuotientSecurity.deployedAssign_public' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.deployedAssign_public
+
+/-- info: 'QuotientSecurity.deployedAssign_provesMembership' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.deployedAssign_provesMembership
+
+/-- info: 'QuotientSecurity.deployedSigma_cellSrc' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.deployedSigma_cellSrc
+
+/-- info: 'QuotientSecurity.ChiCircuit.eval_satisfies' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.ChiCircuit.eval_satisfies
+
+/-- info: 'QuotientSecurity.ChiCircuit.eq_eval' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.ChiCircuit.eq_eval
+
+/-- info: 'QuotientSecurity.deployedBasis' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.deployedBasis
+
+/-- info: 'QuotientSecurity.deployedBasis_unique' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms QuotientSecurity.deployedBasis_unique
 
 /-- info: 'Completeness.completeness_keccak' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
