@@ -20,11 +20,9 @@ wiring value `sigmaAtD = P₀D.sigmaPoly.eval`). Here:
 * **`Render.whirRendererC`**: WHIR's honest renderer, compiled (`whirRendererC_eq`);
 * **`zkSimulatorC`**: the end theorem's simulator with both, **equal to the named one**
   (`zkSimulatorC_eq`);
-* **the end theorems restated with it**: `zeroKnowledge_deployed_final_computable` (any renderer
-  `R`; the simulator is compiled when `R` is) and **`zeroKnowledge_deployed_computable`**
-  (`zeroKnowledge_deployed_whir` at the deployed instance, its facts discharged as
-  `zeroKnowledge_deployed_final` discharges them; `CoreWhir`, `hnone`, the prover's budget named;
-  the simulator `zkSimulatorC`);
+* **the end theorem restated with it**: `zeroKnowledge_deployed_final_computable` (any renderer
+  `R`; the simulator is compiled when `R` is); the closed theorem, with no hypothesis, is
+  `zeroKnowledge_closed_computable` (`ZK/ComputableClosed.lean`, on `zkSimulatorC`);
 * **the audit** (`#computational_axioms`): every constant `zkSimulatorDeployed` (`zkSimulatorC` at
   the global instances) reaches outside proofs and types is followed through its definition; no axiom
   is reached (`Classical.choice` appears only in proofs), and no constant outside Lean's core whose
@@ -213,37 +211,6 @@ theorem zeroKnowledge_deployed_final_computable (R : Renderer K E)
       fun stmt ↦ deployedSimV deployedRep P₀D (stmtWD stmt) F192.Y R inKD sigmaAtD from
     funext fun stmt ↦ deployedSimVc_eq R stmt]
 
-/-- **Zero knowledge of the membership proof, WHIR's honest prover as the renderer, the deployed
-instance plugged in, the simulator compiled**: `zeroKnowledge_deployed_whir` at the deployed
-fields, instance, tables and coins (every hypothesis of the field, of F1, of the simulator's public
-functions and of the honest tables' claims discharged as in `zeroKnowledge_deployed_final`), its
-simulator `zkSimulatorC` (`zkSimulatorC_eq`). **Named**: the prover's permutation budget `Qp`
-(`hprover`), `CoreWhir` (`hcore`) and the probability `δ` that the statement's prover makes no
-proof (`hnone`). `ζ Q = δ + 2^-113 + epsHV + … ≤ δ + 2^-113 + 2^-165 + 2^-2200 + (Qp + 2^23 + Q)² /
-2^508` for `Q ≤ 2^126`. -/
-theorem zeroKnowledge_deployed_computable
-    (stmtBytes : Statement → Vector UInt8 64) (idW idσ idQ : QuotientRpm.Bytes32)
-    (rowsW : List (List UInt8)) (hrows : rowsW.length = 2 ^ 19)
-    (Qp : ℕ) (δ : ℝ≥0∞) (s₀ : RpmSimState)
-    (hprover : ∀ stmt w, Relation stmt w → ∀ s,
-      QueryCostAtMost (QuotientZk.DRpm.proverJ
-          (deployedJD (Render.whirRenderer deployedRep stmt) stmt w).P
-        keccak256OverPermutation queryPermutation (QuotientZk.DRpm.coinR KSt)
-        (QuotientZk.DRpm.coinR DigestBytes) s
-        (skelSetup (stmtBytes stmt) idW idσ idQ rowsW)) permutationCallCost Qp)
-    (hcore : ∀ stmt w, Relation stmt w →
-      CoreWhir deployedRep P₀D (stmtWD stmt) F192.Y (gKD w) vanD (TWD w) (TQD w) stmt w
-        (skelSetup (stmtBytes stmt) idW idσ idQ rowsW) (decodeCoins ∘ eD))
-    (hnone : ∀ stmt w, Relation stmt w → ∀ s, noneProb stmt w ((decodeCoins ∘ eD) s) ≤ δ) :
-    ZeroKnowledgeWith s₀ (zkSimulatorC stmtBytes idW idσ idQ rowsW) rpmSimOracle
-      (zkBoundEnd Qp fmtBudget fun _ ↦ δ) := by
-  rw [zkSimulatorC_eq]
-  exact zeroKnowledge_deployed_whir deployedRep P₀D F192.Y inKD sigmaAtD stmtWD (fun _ w ↦ gKD w)
-    (fun _ _ ↦ vanD) (fun _ w ↦ TWD w) (fun _ w ↦ TQD w) finrank_KE card_E card_K linIndep_Y hED hND
-    (fun _ _ _ ↦ hvanD) (fun stmt w hw ↦ hsatD stmt w hw) (fun _ _ _ ↦ hvan0D) (fun _ _ _ ↦ hdegD)
-    inKD_iff (fun _ ↦ rfl) (fun _ w _ ↦ hTWD w) (fun stmt w hw ↦ hTQD stmt w hw) stmtBytes idW idσ
-    idQ rowsW hrows eD eD_bijective Qp δ s₀ hprover hcore hnone
-
 /-- **The compiled simulator at the deployed (global) instances**, the definition the audit below
 reads. -/
 def zkSimulatorDeployed (stmtBytes : Statement → Vector UInt8 64)
@@ -346,12 +313,6 @@ info: 'PcsQuotient.EndToEnd.zeroKnowledge_deployed_final_computable' depends on 
 -/
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zeroKnowledge_deployed_final_computable
-
-/--
-info: 'PcsQuotient.EndToEnd.zeroKnowledge_deployed_computable' depends on axioms: [propext, Classical.choice, Quot.sound]
--/
-#guard_msgs (whitespace := lax) in
-#print axioms PcsQuotient.EndToEnd.zeroKnowledge_deployed_computable
 
 /--
 info: PcsQuotient.EndToEnd.zkSimulatorDeployed: computational axioms [], non-core implemented_by/extern/opaque [], non-core noncomputable []

@@ -122,7 +122,7 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
   by compiled definitions (`rowsAtC`, `pubAtC`, and `σ(t)` by barycentric interpolation with unit weights,
   `sigmaAtC`); `Computable`: the view simulator `deployedSimVc` (`QuotientZk/Instance/Compiled.lean`'s
   `jointSimVm`, `outP`), the renderer `whirRendererC`, `zkSimulatorC`, each equal to the named one, the end
-  theorems restated with them (`zeroKnowledge_deployed_computable`), the cost, the audit
+  theorem restated with them (`zeroKnowledge_deployed_final_computable`), the cost, the audit
   (`#computational_axioms`); `ComputableClosed`: **`zeroKnowledge_closed_computable`**, `zeroKnowledge_closed`
   for the compiled `zkSimulatorClosed` (`= zeroKnowledge_closed`'s simulator, `zkSimulatorClosed_eq`).
 * `ZK/Assembly.lean`: the same assembly for the package's own `simulator` given an ideal bridge
