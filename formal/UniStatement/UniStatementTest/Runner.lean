@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
-import UniStatement
+import UniStatement.Run
+import UniStatement.Mapping
 
 /-!
 # The differential runner
@@ -257,7 +258,78 @@ def vectorsOf (text : String) : List (List String) :=
     else if l == "END" then (acc.1 ++ [acc.2], []) else (acc.1, acc.2 ++ [l])) ([], [])
   if current.isEmpty then done else done ++ [current]
 
+/-! ### Self-tests: the defining properties of the constants, and the mapping's transform -/
+
+/-- A xorshift word stream (`domain.rs`'s test generator). -/
+def xorshift (seed : UInt64) (count : ℕ) : List UInt64 :=
+  ((List.range count).foldl (fun (acc : UInt64 × Array UInt64) _ ↦
+    let s := acc.1 ^^^ (acc.1 <<< 13)
+    let s := s ^^^ (s >>> 7)
+    let s := s ^^^ (s <<< 17)
+    (s, acc.2.push s)) (seed ||| 1, #[])).2.toList
+
+/-- The Rust's unit tests of `domain.rs` and `heap.rs`, and the mapping's transform pair, on the Lean
+definitions: each `(name, holds)`. -/
+def selfTests : List (String × Bool) :=
+  let ws := xorshift 3 400
+  -- `s(β_{k+1}) = β_k`, `w_l(ω_i) = ω_{i >> l}`, `w_r` vanishes on `V_r` and is `1` at `β_r`.
+  let cantor := (List.range (basisSize - 1)).all fun k ↦ sK (beta.getD (k + 1) 0) == beta.getD k 0
+  let digitsRead := (ws.take 50).all fun x ↦
+    let i := x.toNat % 2 ^ 24
+    let w := digits (pointE i) 25
+    (List.range 25).all fun l ↦ w.getD l 0 == pointE (i >>> l)
+  let vanishes := (ws.take 50).all fun x ↦
+    let i := x.toNat % 2 ^ 24
+    let r := x.toNat / 2 ^ 24 % 24 + 1
+    (digits (pointE (i % 2 ^ r)) (r + 1)).getD r 1 == 0
+  let one := (digits (pointE (2 ^ 10)) 11).getD 10 0 == 1
+  -- `y_l(ω_i) = i_l` on `V_18`.
+  let a := coordinateFunctionals 18
+  let functionals := (ws.drop 50 |>.take 20).all fun x ↦
+    let i := x.toNat % 2 ^ 18
+    (coordinatesAt (pointE i) a |>.zip (List.range 18)).all fun (y, l) ↦ y == bitE i l
+  -- The prefix and suffix vanishing polynomials vanish exactly where they should; their product is `w_r`.
+  let rows := 2731
+  let r := 12
+  let activePadding := [0, 1, 2730, 2731, 2732, 4095, 1000].all fun i ↦
+    let w := digits (pointE i) (r + 1)
+    (prefixVanishing w rows == 0) == decide (i < rows) && (suffixVanishing w rows r == 0) == decide (i ≥ rows)
+  let t := eNew 0x123456789abc 0x42 0x77
+  let wt := digits t 22
+  let product := prefixVanishing wt rows * suffixVanishing wt rows r == wt.getD r 0 &&
+    vanishingRatio wt 17 21 * wt.getD 17 0 == wt.getD 21 0
+  -- The heap at the reference workload: `2^22` leaves, the memory first, one unused block of `2^17`.
+  let heap := HeapLayout.new 21 19 [18, 18, 18, 18, 17, 18]
+  let heapOk := heap.h == 23 &&
+    (heap.blocks.head?.map fun b ↦ b.leaves == .memory && b.position == 2 ^ 22) == some true &&
+    (heap.blocks.getD 1 default).position == 2 ^ 22 + 2 ^ 21 &&
+    (heap.blocks.filter (·.leaves == .unused)).map (·.r) == [17] &&
+    heap.blocks.all fun b ↦ b.position % 2 ^ b.r == 0
+  -- The mapping's transform: the basis-`B` coefficients of a column of values give back its values.
+  let transform := [1, 3, 6, 9].all fun r ↦
+    let vals : Array K := ((xorshift (UInt64.ofNat (17 * r)) (2 ^ r)).map K.ofLane).toArray
+    let c := bCoefficients r vals
+    (List.range (2 ^ r)).all fun x ↦ basisValue c r x == vals.getD x 0
+  -- …and agree with the verifier's reading of a column at a point (`f(t)` = the coefficients' extension at
+  -- the digits of `t`), at `t = ω_x`.
+  let reading := [5, 8].all fun r ↦
+    let vals : Array K := ((xorshift (UInt64.ofNat (29 * r)) (2 ^ r)).map K.ofLane).toArray
+    let c := bCoefficients r vals
+    (List.range (2 ^ r)).all fun x ↦
+      multilinearEval (c.toList.map ofK) (digits (pointE x) r) == ofK (vals.getD x 0)
+  [("cantor basis: s(beta[k+1]) = beta[k]", cantor), ("digits: w_l(omega_i) = omega_{i >> l}", digitsRead),
+    ("w_r vanishes on V_r", vanishes), ("w_10(beta_10) = 1", one),
+    ("coordinate functionals: y_l(omega_i) = i_l on V_18", functionals),
+    ("prefix/suffix vanishing: their zeros", activePadding),
+    ("prefix * suffix = w_r; vanishing ratio", product), ("heap layout at the reference workload", heapOk),
+    ("mapping: basisValue (bCoefficients v) = v", transform),
+    ("mapping: the verifier's reading at omega_x is the value", reading)]
+
 def main : IO Unit := do
+  let tests := selfTests
+  for (n, ok) in tests do
+    IO.println s!"{if ok then "SELF-TEST OK" else "SELF-TEST FAILED"} {n}"
+  if !tests.all (·.2) then throw (IO.userError "a self-test failed")
   let path := (← IO.getEnv "UNI_VECTORS").getD "uni_vectors.txt"
   let text ← IO.FS.readFile path
   let vectors := vectorsOf text
