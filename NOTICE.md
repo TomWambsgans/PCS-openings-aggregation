@@ -50,6 +50,11 @@ option. Every file says where it comes from in its first lines.
   verifier generic over the scalar and compiled to EVM code through `crates/leanvm_flock_gas`'s port of leanVM
   `42422001`'s tables, flushes, constraints and Flock verifier (each file says what it takes). Its Cantor basis is
   computed as `crates/quotient/src/domain.rs`'s (adapted from leanVM `651453c6`).
+  - Its prover (`src/prover/`, `PROVER.md`) is new here. It reads the execution traces of leanVM `42422001` itself:
+    its execution and witness generation, unchanged, written out by `src/prover/dump/trace_dump.rs`, which
+    `src/prover/dump/apply.sh` copies into a leanVM checkout. It transforms them with `crates/quotient/src/domain.rs`'s
+    additive NTT, and commits and opens them with the vendored WHIR (`crates/pcs`, `crates/verifier`, leanVM
+    `c445e3d5`), its openings in the transcript shape of `crates/quotient/src/opening.rs`.
 - **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
   Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
   proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's
