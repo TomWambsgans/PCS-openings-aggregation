@@ -1,8 +1,9 @@
 // Adapted from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/verifier/src/flock.rs: the
 // same zerocheck, lincheck, BLAKE2s row walk and ring switch on a generic `Scalar` and `Channel` (constants computed
 // natively, as leanVM's are), the terminal check stated to the channel, the table-driven `Scaled` products written as
-// plain ones, and the gas report's phase names. New here: the lincheck may leave its terminal identity to
-// `crate::matrices` instead of walking the circuit. MIT OR Apache-2.0; see NOTICE.md.
+// plain ones, the terminal walk folding both matrices' sides at once, and the gas report's phase names. New here: the
+// lincheck may leave its terminal identity to `crate::matrices` instead of walking the circuit. MIT OR Apache-2.0;
+// see NOTICE.md.
 //! Flock reduction, then ring switching.
 
 use crate::field::{E, GEN, ONE};
@@ -184,16 +185,25 @@ fn verify_flock_lincheck<S: Scalar>(
             }
             let (left_values, right_values) = blake2s_row_values(&w_col);
             // e_row = eq(chi_in) ⊗ skip_weights, never built: each block of 64 rows meets the skip weights, a column at a
-            // time, then chi_in folds the blocks.
-            let (mut left_blocks, mut right_blocks) = (vec![S::zero(); high.len()], vec![S::zero(); high.len()]);
-            for (l, &weight) in skip_weights.iter().enumerate() {
-                for (h, (left, right)) in left_blocks.iter_mut().zip(&mut right_blocks).enumerate() {
-                    *left += weight * left_values[h * K_BITS + l];
-                    *right += weight * right_values[h * K_BITS + l];
+            // time, then chi_in weighs the blocks. leanVM sums the A0 side and the B0 side apart, adds them under alpha,
+            // and folds the blocks by chi_in. Here, the same sum in the order the contract can afford: a block takes
+            // both sides at once (against the skip weights and alpha times them), and the blocks are weighed by
+            // eq(chi_in)'s table, in the order the walk fills them, the output rows (blocks 4 to 7, which need the whole
+            // walk) last. So each value of the walk is used soon after it is made, and the contract does not hold
+            // them in memory. Products: 64 + 256 more than leanVM's.
+            let alpha_skip: Vec<S> = skip_weights.iter().map(|&weight| alpha * weight).collect();
+            let block_weights = eq_kernel(chi_in);
+            let walk_order = (0..4).chain(8..high.len()).chain(4..8);
+            let mut matrices_part = S::zero();
+            for h in walk_order {
+                let mut block = S::zero();
+                for l in 0..K_BITS {
+                    block +=
+                        skip_weights[l] * left_values[h * K_BITS + l] + alpha_skip[l] * right_values[h * K_BITS + l];
                 }
+                matrices_part += block_weights[h] * block;
             }
-            let terminal = multilinear_eval(&left_blocks, chi_in)?
-                + alpha * multilinear_eval(&right_blocks, chi_in)?
+            let terminal = matrices_part
                 + alpha.pow(2) * eq_eval(chi_in, &chi_in_prime) * dot(&skip_weights, &s)
                 + alpha.pow(3) * w_col[BLAKE2S_CONSTANT_COLUMN];
             transcript.require_zero(terminal + r_lc, VerifierError::FlockLincheckTerminal)?;

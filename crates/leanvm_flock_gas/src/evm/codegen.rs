@@ -161,12 +161,16 @@ impl Compiler<'_> {
     /// Leave the node's value on the stack.
     fn eval(&mut self, id: u32) {
         let at = id as usize;
-        let outer = std::mem::replace(&mut self.phase, self.graph.phases[at]);
+        // Reading a value kept in memory, or pushing a constant, is its consumer's.
         if self.shared[at] && self.done[at] {
             self.item(Item::Load(id));
-            self.phase = outer;
             return;
         }
+        let phase = match self.graph.nodes[at] {
+            Node::Const(_) => self.phase,
+            _ => self.graph.phases[at],
+        };
+        let outer = std::mem::replace(&mut self.phase, phase);
         match self.graph.nodes[at] {
             Node::Const(limbs) => self.code(&push(&word(limbs))),
             Node::Statement(k) => {

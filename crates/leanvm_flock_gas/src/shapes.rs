@@ -39,7 +39,16 @@ const fn shape(log_memory: u64, table_rows: [u64; N_TABLES]) -> Shape {
 }
 
 /// Table rows in leanVM's order: XOR, MUL, SET, DEREF, JUMP, BLAKE2S.
-pub const WORKLOADS: [Workload; 3] = [
+pub const WORKLOADS: [Workload; 5] = [
+    Workload {
+        name: "xmss32",
+        xmss: 32,
+        shape: shape(16, [6060, 6490, 11768, 4703, 2699, 6489]),
+        stream_elements: 918,
+        piop_elements: 831,
+        cycles: 38_209,
+        log2_committed: 21.778,
+    },
     Workload {
         name: "xmss128",
         xmss: 128,
@@ -66,6 +75,15 @@ pub const WORKLOADS: [Workload; 3] = [
         piop_elements: 1048,
         cycles: 1_318_125,
         log2_committed: 26.676,
+    },
+    Workload {
+        name: "xmss2000",
+        xmss: 2000,
+        shape: shape(22, [366327, 390501, 442955, 274831, 161790, 404025]),
+        stream_elements: 1207,
+        piop_elements: 1104,
+        cycles: 2_040_429,
+        log2_committed: 27.524,
     },
 ];
 

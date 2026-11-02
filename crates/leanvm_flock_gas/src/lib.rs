@@ -179,6 +179,7 @@ pub fn walk<'a, S: Scalar + 'a, C: Channel<S>>(
     let layout = shape.layout()?;
     let announced = transcript.next_scalars(2 + N_TABLES)?;
     for (value, expected) in announced.into_iter().zip(shape.announced()) {
+        let _phase = enter("announced sizes checked");
         transcript.require_zero(value + S::constant(expected), VerifierError::AnnouncedShape)?;
     }
 

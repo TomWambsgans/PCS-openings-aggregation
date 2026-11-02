@@ -23,9 +23,18 @@ fn accepts_real_leanvm_proofs() {
         .collect();
     dirs.sort();
     assert!(!dirs.is_empty(), "no proof in {root}");
+    // One program, the aggregation guest, whatever the signatures: a proof's directory may leave its bytecode out.
+    let shared = dirs
+        .iter()
+        .find(|dir| dir.join("bytecode.bin").exists())
+        .expect("a bytecode.bin")
+        .clone();
     let mut bytecode: Option<(Vec<u8>, Bytecode)> = None;
     for dir in dirs {
-        let words_bytes = read(&dir, "bytecode.bin");
+        let words_bytes = match dir.join("bytecode.bin").exists() {
+            true => read(&dir, "bytecode.bin"),
+            false => read(&shared, "bytecode.bin"),
+        };
         if bytecode.as_ref().is_none_or(|(bytes, _)| *bytes != words_bytes) {
             let words: Vec<u64> = words_bytes
                 .as_chunks::<8>()
