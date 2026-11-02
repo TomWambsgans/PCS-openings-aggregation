@@ -16,11 +16,13 @@
 //! that word, times `r_l` or `1 + r_l` per later round (its offset's bit `l`). The stack is read as its `K`-words:
 //! round `j` reads the folded stack `C_j(m) = Σ_y eq(r_(<j), y) C(2^j m + y)` from them, so nothing of the stack's
 //! size but the stack is held. A factored piece's round is two inner products of `K`-words with `E`-tables per
-//! `2^(a + j)` words ([`dot_base`]), the twisted piece's one map lookup per pair of words.
+//! `2^(a + j)` words ([`dot_base`]); a dense or twisted piece's is its pair's two weights (the twisted ones two maps
+//! of one eq value, eight pairs at once by GFNI) times the pair's words, one mixed product a word, summed by the
+//! word's offset in its `2^j`-word group and weighted by `eq(r_(<j), offset)` at the end.
 
 use gf2_linear::Linear;
 use leanvm_flock_gas::field::E;
-use primitives::field::{F64, F192, F192Unreduced, Weights8, dot_base, mul4};
+use primitives::field::{F64, F192, F192Unreduced, Weights8, dot_base, mul_unreduced4, mul4};
 use primitives::multilinear::eq_table;
 
 use super::poly::from_v;
@@ -99,7 +101,8 @@ impl Table {
 enum Shape {
     /// `low[i mod 2^a] · h[i >> a]`, `h = eq(high, ·)`.
     Factored { low: Vec<F192>, h: Vec<F192> },
-    Dense(Vec<F192>),
+    /// A table, and the buffer it folds into.
+    Dense { table: Vec<F192>, spare: Vec<F192> },
     /// `Σ_k c_k eq(point_(≥bound), ·)^(2^k)`.
     Twisted { c: Vec<F192>, point: Vec<F192>, bound: usize },
 }
@@ -109,7 +112,7 @@ impl Shape {
     fn len(&self) -> usize {
         match self {
             Shape::Factored { low, h } => low.len() * h.len(),
-            Shape::Dense(t) => t.len(),
+            Shape::Dense { table, .. } => table.len(),
             Shape::Twisted { point, bound, .. } => 1 << (point.len() - bound),
         }
     }
@@ -119,7 +122,7 @@ impl Shape {
         assert_eq!(self.len(), 1);
         match self {
             Shape::Factored { low, h } => low[0] * h[0],
-            Shape::Dense(t) => t[0],
+            Shape::Dense { table, .. } => table[0],
             Shape::Twisted { c, .. } => c.iter().fold(F192::ZERO, |acc, &x| acc + x),
         }
     }
@@ -149,6 +152,23 @@ fn split_eq(point: &[F192]) -> (Vec<F192>, Vec<F192>, usize) {
     (eq_table(&point[..bits]), eq_table(&point[bits..]), bits)
 }
 
+/// A twisted shape's weight on its words left, `L(eq(point_(≥bound), ·))`: its map and eq table's two halves.
+struct TwistedMap {
+    map: Linear<1>,
+    lo: Vec<F192>,
+    hi: Vec<F192>,
+    bits: usize,
+}
+
+impl TwistedMap {
+    /// The weight at the eight words from `first` (past `end`, zero's image).
+    #[inline]
+    fn at8(&self, first: usize, end: usize) -> [F192; 8] {
+        let [w] = self.map.at8(&eq8(&self.lo, &self.hi, self.bits, first, end));
+        w
+    }
+}
+
 /// `lo[i mod 2^bits] hi[i >> bits]` for the eight indices from `first` (past `end`, zero).
 #[inline]
 fn eq8(lo: &[F192], hi: &[F192], bits: usize, first: usize, end: usize) -> [F192; 8] {
@@ -173,6 +193,15 @@ fn by_offset(at: &[F192Unreduced], e: &[F192]) -> (F192, F192) {
             .reduce()
     };
     (sum(low), sum(high))
+}
+
+/// `len` zeros, a large table written (and its pages mapped) in parallel.
+pub fn zeros(len: usize) -> Vec<F192> {
+    if len < 1 << 16 {
+        vec![F192::ZERO; len]
+    } else {
+        parallel::map_collect(len, |_| F192::ZERO)
+    }
 }
 
 /// Fold a table's pairs at `r`: `t[2i] + r (t[2i] + t[2i + 1])`.
@@ -294,7 +323,10 @@ impl Weight {
                     add(&mut weight, shape, coefficient);
                 }
                 ref several => {
-                    weight.shapes.push(Shape::Dense(several_points(several, &points, vars)));
+                    weight.shapes.push(Shape::Dense {
+                        table: several_points(several, &points, vars),
+                        spare: Vec::new(),
+                    });
                     let shape = weight.shapes.len() - 1;
                     add(&mut weight, shape, F192::ONE);
                 }
@@ -328,18 +360,15 @@ impl Weight {
     /// `Σ_u W(u) C(u)` over the stack's words, before any round.
     pub fn sum(&self, words: &[F64]) -> F192 {
         assert_eq!(self.round, 0);
-        let preps: Vec<Option<(Table, Option<Linear<1>>, Vec<F192>, Vec<F192>, usize)>> = self
+        let lows: Vec<Option<Table>> = self
             .shapes
             .iter()
             .map(|shape| match shape {
-                Shape::Factored { low, .. } => Some((Table::new(low.clone()), None, Vec::new(), Vec::new(), 0)),
-                Shape::Dense(_) => None,
-                Shape::Twisted { c, point, .. } => {
-                    let (lo, hi, bits) = split_eq(point);
-                    Some((Table::Plain(Vec::new()), Some(Linear::new([c])), lo, hi, bits))
-                }
+                Shape::Factored { low, .. } => Some(Table::new(low.clone())),
+                _ => None,
             })
             .collect();
+        let maps = self.twisted_maps();
         let tasks = self.tasks(|piece| match &self.shapes[piece.shape] {
             Shape::Factored { low, h } => (h.len(), (TASK_WORDS / low.len()).max(1)),
             _ => (1 << piece.vars, TASK_WORDS),
@@ -351,21 +380,21 @@ impl Weight {
                 let (index, start, end) = tasks[t];
                 let piece = &self.pieces[index];
                 let mut acc = F192Unreduced::ZERO;
-                match (&self.shapes[piece.shape], &preps[piece.shape]) {
-                    (Shape::Factored { low, h }, Some((g, ..))) => {
+                match (&self.shapes[piece.shape], &lows[piece.shape], &maps[piece.shape]) {
+                    (Shape::Factored { low, h }, Some(g), _) => {
                         for u in start..end {
                             let at = piece.offset + u * low.len();
                             acc ^= h[u].mul_unreduced(g.dot(&words[at..]).reduce());
                         }
                     }
-                    (Shape::Dense(table), _) => {
+                    (Shape::Dense { table, .. }, ..) => {
                         for i in start..end {
                             acc ^= table[i].mul_base_unreduced(words[piece.offset + i]);
                         }
                     }
-                    (Shape::Twisted { .. }, Some((_, Some(map), lo, hi, bits))) => {
+                    (Shape::Twisted { .. }, _, Some(map)) => {
                         for first in (start..end).step_by(8) {
-                            let [w] = map.at8(&eq8(lo, hi, *bits, first, end));
+                            let w = map.at8(first, end);
                             for (k, w) in w.iter().enumerate().take(end - first) {
                                 acc ^= w.mul_base_unreduced(words[piece.offset + first + k]);
                             }
@@ -377,6 +406,25 @@ impl Weight {
             },
             |a, b| a + b,
         )
+    }
+
+    /// The twisted shapes' weights on their words left, by shape.
+    fn twisted_maps(&self) -> Vec<Option<TwistedMap>> {
+        self.shapes
+            .iter()
+            .map(|shape| match shape {
+                Shape::Twisted { c, point, bound } if shape.len() > 1 => {
+                    let (lo, hi, bits) = split_eq(&point[*bound..]);
+                    Some(TwistedMap {
+                        map: Linear::new([&c[..]]),
+                        lo,
+                        hi,
+                        bits,
+                    })
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     /// Every piece's units split into tasks: `units(piece)` is (its units, units per task).
@@ -410,13 +458,12 @@ impl Weight {
                         for l in 0..low.len() / 2 {
                             let (w0, dw) = (low[2 * l], low[2 * l] + low[2 * l + 1]);
                             for (y, &ey) in e.iter().enumerate() {
-                                ga[y + (2 * l << j)] = w0 * ey;
-                                gb[y + (2 * l << j)] = dw * ey;
+                                ga[y + ((2 * l) << j)] = w0 * ey;
+                                gb[y + ((2 * l) << j)] = dw * ey;
                                 gb[y + ((2 * l + 1) << j)] = dw * ey;
                             }
                         }
                         let gb = Table::trimmed(gb, &[&ga]);
-                        let mut ga = ga;
                         ga.truncate(gb.len());
                         Prep::Factored {
                             ga: Table::new(ga),
@@ -424,7 +471,7 @@ impl Weight {
                             span,
                         }
                     }
-                    Shape::Dense(_) => Prep::Dense,
+                    Shape::Dense { .. } => Prep::Dense,
                     Shape::Twisted { c, point, bound } => {
                         let p = point[*bound];
                         // W(2i) = L((1 + p) e'_i), W(2i) + W(2i + 1) = L(e'_i), e' = eq(point_(>j), ·).
@@ -448,8 +495,14 @@ impl Weight {
                 }
             })
             .collect();
+        // A dense shape's pieces (a column's limbs) share its table: one task reads it for all of them.
+        let mut of_shape: Vec<Vec<&Piece>> = vec![Vec::new(); self.shapes.len()];
+        for piece in &self.pieces {
+            of_shape[piece.shape].push(piece);
+        }
         let tasks = self.tasks(|piece| match &preps[piece.shape] {
             Prep::Factored { span, .. } => (self.shape_units(piece.shape, *span), (TASK_WORDS / span).max(1)),
+            Prep::Dense if !std::ptr::eq(of_shape[piece.shape][0], piece) => (0, 1),
             Prep::Dense | Prep::Twisted { .. } => (1 << (piece.vars - j - 1), (TASK_WORDS >> (j + 1)).max(1)),
             Prep::Scalar(_) => (1, 1),
         });
@@ -457,7 +510,7 @@ impl Weight {
         // `2^j` words: `Σ_i W_0(i) C_j(2i) = Σ_y e(y) Σ_i W_0(i) C(2^(j+1) i + y)`, one mixed product a word.
         let span = 1usize << j;
         let pairs = |at: &mut [F192Unreduced], piece: &Piece, i: usize, w0: F192, dw: F192| {
-            let base = piece.offset + (2 * i << j);
+            let base = piece.offset + ((2 * i) << j);
             let (low, high) = words[base..base + 2 * span].split_at(span);
             for (y, (&c0, &c1)) in low.iter().zip(high).enumerate() {
                 at[y] ^= w0.mul_base_unreduced(c0);
@@ -480,12 +533,22 @@ impl Weight {
                         }
                         (a.reduce(), b.reduce())
                     }
-                    (Prep::Dense, Shape::Dense(table)) => {
-                        let mut at = vec![F192Unreduced::ZERO; 2 * span];
+                    (Prep::Dense, Shape::Dense { table, .. }) => {
+                        let limbs = &of_shape[piece.shape];
+                        let mut at = vec![F192Unreduced::ZERO; 2 * span * limbs.len()];
                         for i in start..end {
-                            pairs(&mut at, piece, i, table[2 * i], table[2 * i] + table[2 * i + 1]);
+                            let (w0, dw) = (table[2 * i], table[2 * i] + table[2 * i + 1]);
+                            for (at, limb) in at.chunks_mut(2 * span).zip(limbs) {
+                                pairs(at, limb, i, w0, dw);
+                            }
                         }
-                        by_offset(&at, e)
+                        let (mut a, mut b) = (F192::ZERO, F192::ZERO);
+                        for (at, limb) in at.chunks(2 * span).zip(limbs) {
+                            let (x, y) = by_offset(at, e);
+                            a += limb.scale * x;
+                            b += limb.scale * y;
+                        }
+                        return (a, b);
                     }
                     (Prep::Twisted { lo, hi, bits, map }, _) => {
                         let mut at = vec![F192Unreduced::ZERO; 2 * span];
@@ -539,7 +602,22 @@ impl Weight {
             }
             match shape {
                 Shape::Factored { low, .. } => *low = fold(low, r),
-                Shape::Dense(table) => *table = fold(table, r),
+                Shape::Dense { table, spare } => {
+                    // Into the spare buffer, which the table's old words become.
+                    let half = table.len() / 2;
+                    if spare.len() < half {
+                        *spare = zeros(half);
+                    }
+                    spare.truncate(half);
+                    let t = &table[..];
+                    parallel::chunks_mut(spare, 1 << 12, |k, out| {
+                        for (i, o) in out.iter_mut().enumerate() {
+                            let g = 2 * ((k << 12) + i);
+                            *o = t[g] + r * (t[g] + t[g + 1]);
+                        }
+                    });
+                    std::mem::swap(table, spare);
+                }
                 Shape::Twisted { c, point, bound } => {
                     let mut power = point[*bound];
                     for ck in c.iter_mut() {
@@ -555,48 +633,67 @@ impl Weight {
 
     /// The weight folded so far, written out over the folded stack's `len` words.
     pub fn dense(&self, len: usize) -> Vec<F192> {
+        const CHUNK: usize = 1 << 12;
         let j = self.round;
-        let mut out = vec![F192::ZERO; len];
+        let mut out = zeros(len);
+        // The blocks not yet folded to one word, in order, each with its pieces: written chunk by chunk, one pass.
+        let mut blocks: Vec<(usize, usize, Vec<&Piece>)> = Vec::new();
         for piece in &self.pieces {
-            let shape = &self.shapes[piece.shape];
-            let at = piece.offset >> j;
-            if shape.len() == 1 {
-                out[at] += piece.scale * shape.scalar();
-                continue;
-            }
-            let block = &mut out[at..at + shape.len()];
-            let s = piece.scale;
-            match shape {
-                Shape::Factored { low, h } => {
-                    let a = low.len();
-                    parallel::chunks_mut(block, a.max(1 << 12), |c, chunk| {
-                        let first = c * a.max(1 << 12);
-                        for (m, o) in chunk.iter_mut().enumerate() {
-                            let m = first + m;
-                            *o += s * low[m % a] * h[m / a];
-                        }
-                    });
+            let size = self.shapes[piece.shape].len();
+            if size > 1 {
+                let start = piece.offset >> j;
+                match blocks.iter_mut().find(|(s, ..)| *s == start) {
+                    Some((_, _, pieces)) => pieces.push(piece),
+                    None => blocks.push((start, size, vec![piece])),
                 }
-                Shape::Dense(table) => {
-                    parallel::chunks_mut_zip(block, table, 1 << 12, |_, chunk, table| {
-                        for (o, &t) in chunk.iter_mut().zip(table) {
+            }
+        }
+        blocks.sort_by_key(|&(start, ..)| start);
+        let maps = self.twisted_maps();
+        let mut tasks: Vec<(&mut [F192], usize, usize)> = Vec::new();
+        let (mut rest, mut cursor) = (&mut out[..], 0);
+        for (b, &(start, size, _)) in blocks.iter().enumerate() {
+            assert!(start >= cursor, "the blocks are disjoint");
+            let (block, tail) = std::mem::take(&mut rest)[start - cursor..].split_at_mut(size);
+            (rest, cursor) = (tail, start + size);
+            tasks.extend(block.chunks_mut(CHUNK).enumerate().map(|(k, chunk)| (chunk, b, k * CHUNK)));
+        }
+        parallel::for_each_mut(&mut tasks, |_, (chunk, b, first)| {
+            let first = *first;
+            for piece in &blocks[*b].2 {
+                let s = piece.scale;
+                match &self.shapes[piece.shape] {
+                    Shape::Factored { low, h } => {
+                        let (mask, bits) = (low.len() - 1, low.len().trailing_zeros());
+                        let scaled: Vec<F192> = low.iter().map(|&x| s * x).collect();
+                        for (i, o) in chunk.iter_mut().enumerate() {
+                            let m = first + i;
+                            *o += scaled[m & mask] * h[m >> bits];
+                        }
+                    }
+                    Shape::Dense { table, .. } => {
+                        for (o, &t) in chunk.iter_mut().zip(&table[first..]) {
                             *o += s * t;
                         }
-                    });
-                }
-                Shape::Twisted { c, point, bound } => {
-                    let map = Linear::new([&c[..]]);
-                    let (lo, hi, bits) = split_eq(&point[*bound..]);
-                    parallel::chunks_mut(block, 1 << 12, |c, chunk| {
-                        let (first, end) = (c << 12, (c << 12) + chunk.len());
+                    }
+                    Shape::Twisted { .. } => {
+                        let map = maps[piece.shape].as_ref().expect("a twisted piece's map");
+                        let end = first + chunk.len();
                         for (o, m) in chunk.chunks_mut(8).zip((first..end).step_by(8)) {
-                            let [w] = map.at8(&eq8(&lo, &hi, bits, m, end));
+                            let w = map.at8(m, end);
                             for (o, &w) in o.iter_mut().zip(&w) {
                                 *o += s * w;
                             }
                         }
-                    });
+                    }
                 }
+            }
+        });
+        // A block folded to one word is a scalar there.
+        for piece in &self.pieces {
+            let shape = &self.shapes[piece.shape];
+            if shape.len() == 1 {
+                out[piece.offset >> j] += piece.scale * shape.scalar();
             }
         }
         out
@@ -614,13 +711,23 @@ fn several_points(terms: &[(usize, F192)], points: &[Vec<F192>], vars: usize) ->
             (eq_table(&point[..bits]), hi)
         })
         .collect();
-    let mut out = vec![F192::ZERO; 1 << vars];
+    let mut out = zeros(1 << vars);
     parallel::chunks_mut(&mut out, 1 << bits, |row, chunk| {
+        let mut acc = vec![F192Unreduced::ZERO; chunk.len()];
         for (lo, hi) in &tables {
-            let h = hi[row];
-            for (o, &l) in chunk.iter_mut().zip(lo) {
-                *o += h * l;
+            let h = [hi[row]; 4];
+            let (four, rest) = lo.as_chunks::<4>();
+            for (a, l) in acc.chunks_mut(4).zip(four) {
+                for (a, p) in a.iter_mut().zip(mul_unreduced4(h, *l)) {
+                    *a ^= p;
+                }
             }
+            for (a, &l) in acc[4 * four.len()..].iter_mut().zip(rest) {
+                *a ^= h[0].mul_unreduced(l);
+            }
+        }
+        for (o, a) in chunk.iter_mut().zip(&acc) {
+            *o = a.reduce();
         }
     });
     out

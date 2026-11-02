@@ -14,54 +14,102 @@ use leanvm_flock_gas::transcript::KeccakWriter;
 use primitives::field::{F64, F192, F192Unreduced};
 
 use super::poly::{from_v, to_v};
-use super::weight::{Weight, fold, fold_stack};
+use super::weight::{Weight, fold, fold_stack, zeros};
 
 /// The rounds that read the stacks' words, as [`Weight`] pieces; then every stack and its weight are written out
 /// folded (`2^(vars - BASE_ROUNDS)` words each) and the rounds go on over the tables.
-pub const BASE_ROUNDS: usize = 5;
+pub const BASE_ROUNDS: usize = 6;
 
-/// A stack and its weight, written out once folded past the rounds that read the words.
+/// Outputs per task of a fold.
+const FOLD_CHUNK: usize = 1 << 12;
+
+/// `(Σ w_0 c_0, Σ (w_0 + w_1)(c_0 + c_1))` over the pairs, unreduced.
+fn pair_sums(w: &[F192], c: &[F192]) -> (F192Unreduced, F192Unreduced) {
+    let (mut a, mut b) = (F192Unreduced::ZERO, F192Unreduced::ZERO);
+    for (w, c) in w.as_chunks::<2>().0.iter().zip(c.as_chunks::<2>().0) {
+        a ^= w[0].mul_unreduced(c[0]);
+        b ^= (w[0] + w[1]).mul_unreduced(c[0] + c[1]);
+    }
+    (a, b)
+}
+
+/// A stack and its weight, written out once folded past the rounds that read the words: the tables (the first
+/// `len` words of `w` and `c`), the buffers they fold into, and the next round's sums.
 struct Folded {
     w: Vec<F192>,
     c: Vec<F192>,
+    len: usize,
+    spare: (Vec<F192>, Vec<F192>),
+    /// `(Σ w_0 c_0, Σ (w_0 + w_1)(c_0 + c_1))` over the pairs; one word is its own pair with zero.
+    sums: (F192, F192),
 }
 
 impl Folded {
-    /// `(Σ w_0 c_0, Σ (w_0 + w_1)(c_0 + c_1))` over the pairs; one word is its own pair with zero.
-    fn sums(&self) -> (F192, F192) {
-        let (w, c) = (&self.w, &self.c);
-        if w.len() == 1 {
-            let x = w[0] * c[0];
-            return (x, x);
+    fn new(w: Vec<F192>, c: Vec<F192>) -> Self {
+        let len = w.len();
+        let sums = if len == 1 {
+            (w[0] * c[0], w[0] * c[0])
+        } else {
+            let (a, b) = parallel::map_reduce(
+                len.div_ceil(2 * FOLD_CHUNK),
+                || (F192Unreduced::ZERO, F192Unreduced::ZERO),
+                |t| {
+                    let range = 2 * FOLD_CHUNK * t..(2 * FOLD_CHUNK * (t + 1)).min(len);
+                    pair_sums(&w[range.clone()], &c[range])
+                },
+                |x, y| (x.0 ^ y.0, x.1 ^ y.1),
+            );
+            (a.reduce(), b.reduce())
+        };
+        Self {
+            w,
+            c,
+            len,
+            spare: (Vec::new(), Vec::new()),
+            sums,
         }
-        let half = w.len() / 2;
-        let chunk = 1usize << 12;
-        let (a, b) = parallel::map_reduce(
-            half.div_ceil(chunk),
-            || (F192Unreduced::ZERO, F192Unreduced::ZERO),
-            |t| {
-                let (mut a, mut b) = (F192Unreduced::ZERO, F192Unreduced::ZERO);
-                for i in t * chunk..((t + 1) * chunk).min(half) {
-                    let (w0, w1, c0, c1) = (w[2 * i], w[2 * i + 1], c[2 * i], c[2 * i + 1]);
-                    a ^= w0.mul_unreduced(c0);
-                    b ^= (w0 + w1).mul_unreduced(c0 + c1);
-                }
-                (a, b)
-            },
-            |x, y| (x.0 ^ y.0, x.1 ^ y.1),
-        );
-        (a.reduce(), b.reduce())
     }
 
-    /// Bind the low variable to `r`; one word is folded with its zero partner.
+    /// Bind the low variable to `r` (one word is folded with its zero partner), and take the next round's sums in
+    /// the same pass.
     fn fold(&mut self, r: F192) {
-        if self.w.len() == 1 {
+        if self.len == 1 {
             self.w[0] *= F192::ONE + r;
             self.c[0] *= F192::ONE + r;
-        } else {
-            self.w = fold(&self.w, r);
-            self.c = fold(&self.c, r);
+            let x = self.w[0] * self.c[0];
+            self.sums = (x, x);
+            return;
         }
+        let half = self.len / 2;
+        let (mut w_out, mut c_out) = std::mem::take(&mut self.spare);
+        for out in [&mut w_out, &mut c_out] {
+            if out.len() < half {
+                *out = zeros(half);
+            }
+        }
+        let (w, c) = (&self.w[..self.len], &self.c[..self.len]);
+        let mut parts: Vec<_> = w_out[..half]
+            .chunks_mut(FOLD_CHUNK)
+            .zip(c_out[..half].chunks_mut(FOLD_CHUNK))
+            .map(|(w, c)| (w, c, (F192Unreduced::ZERO, F192Unreduced::ZERO)))
+            .collect();
+        parallel::for_each_mut(&mut parts, |k, (w_out, c_out, sums)| {
+            let first = k * FOLD_CHUNK;
+            for (i, (wo, co)) in w_out.iter_mut().zip(c_out.iter_mut()).enumerate() {
+                let g = 2 * (first + i);
+                *wo = w[g] + r * (w[g] + w[g + 1]);
+                *co = c[g] + r * (c[g] + c[g + 1]);
+            }
+            *sums = pair_sums(w_out, c_out);
+        });
+        self.sums = if half == 1 {
+            (w_out[0] * c_out[0], w_out[0] * c_out[0])
+        } else {
+            let (a, b) = parts.iter().fold((F192Unreduced::ZERO, F192Unreduced::ZERO), |acc, p| (acc.0 ^ p.2.0, acc.1 ^ p.2.1));
+            (a.reduce(), b.reduce())
+        };
+        self.spare = (std::mem::replace(&mut self.w, w_out), std::mem::replace(&mut self.c, c_out));
+        self.len = half;
     }
 }
 
@@ -124,10 +172,7 @@ pub fn prove(
                 .zip(&weights)
                 .map(|(&(words, v), weight)| {
                     let len = 1 << (v - base_rounds);
-                    Folded {
-                        w: weight.dense(len),
-                        c: fold_stack(words, &e, len),
-                    }
+                    Folded::new(weight.dense(len), fold_stack(words, &e, len))
                 })
                 .collect();
             weights = Vec::new();
@@ -137,7 +182,7 @@ pub fn prove(
             let (a, b) = if round < base_rounds {
                 weights[k].round(stacks[k].0, &e)
             } else {
-                folded[k].sums()
+                folded[k].sums
             };
             q0 += scales[k] * a;
             q2 += scales[k] * b;
