@@ -4,6 +4,7 @@
 -- `Common.QueryCostAtMost.bind` from its `common`).
 import ZK.Coins
 import QuotientZk.FreshJoint
+import QuotientZk.Instance.JointV
 
 /-!
 # `PcsQuotient.ZeroKnowledge` from `formal/QuotientZk`
@@ -11,7 +12,8 @@ import QuotientZk.FreshJoint
 The end statement `PcsQuotient.ZeroKnowledge ζ` (`formal/Statement`, `Security.lean`) from
 `QuotientZk.DRpm.zk_rpm_skel` (zero knowledge of a skeleton prover in mumbai's random-permutation
 model) with the joint model's honest-verifier zero knowledge and factorizations
-(`QuotientZk.Joint.jointHVZK_of_link`, `factors_single`, `factors_pair`), for an explicit `ζ`
+(`QuotientZk.Instance.jointHVZK_of_linkV`, `factors_singleV`, `factors_pairV`: the joint model whose
+openings read the five values, as the deployed quotient claim's point does), for an explicit `ζ`
 (`zkBound`), and the distinguisher's coins removed (`ZK/Coins.lean`).
 
 **Two theorems.** `zeroKnowledge_of_bridges` for any skeleton (`FSFresh` and the duplex discipline
@@ -23,10 +25,11 @@ deployed shape, `2^22` rows), where both are proved (`fsFresh_deployed` from no 
 
 * **the joint model of the deployed prover** (`JointData`, its hypotheses `JointData.Valid`): the
   prover `Pb` of `QuotientZk`'s skeleton model (its rows byte strings, `ofBytes`), the reduction's
-  parameters, the two secret openings `S₁`, `S₂` (`SecretOpening`), the honest and simulated tables and
-  their claims, the `Link` between the prover and the joint model, and `fsFresh_deployed`'s conditions
-  on the prover — exactly `zk_rpm_deployed_joint_fs'`'s hypotheses, which the joint-model instance
-  (`formal/QuotientZk/Instance/`) is to provide;
+  parameters, the two secret openings `S₁`, `S₂` (`SecretOpening` over `ChV`: the challenges and the
+  five values), the honest and simulated tables and their claims, the `LinkV` between the prover and
+  the joint model, and `fsFresh_deployed`'s conditions on the prover — exactly
+  `QuotientZk.Instance.zk_rpm_deployed_jointV_fs'`'s hypotheses, which the joint-model instance
+  provides for the deployed prover (`ZK/Joint.lean`: `deployedJointData`, `deployedJointData_valid`);
 * the prover's **permutation budget** (`hprover`: at most `Qp` calls of `π` in the real game's proof);
 * **the two bridges** between the statement's experiments and `QuotientZk`'s games, for every
   coin-free distinguisher `D₀` of the statement's proofs, `fmt` turning the skeleton's proof into the
@@ -51,6 +54,7 @@ for a skeleton of `QP` operations, a prover of `Qp` permutation calls, `fmt` of 
 
 open OracleComp OracleSpec Common Polynomial Module QuotientSecurity QuotientSecurity.Hiding
 open QuotientZk.Joint QuotientZk.Deployed.Fresh
+open QuotientZk.Instance (ChV LinkV jointSimV jointHVZK_of_linkV factors_singleV factors_pairV)
 open QuotientZk.Deployed (Inp Out Msg Tbl Pos KSt DSpec)
 open scoped ENNReal
 
@@ -64,9 +68,10 @@ set_option linter.unusedSectionVars false
 
 /-- **The joint model of the deployed prover, its data**: the skeleton model's prover `P` (its
 randomness the masks and the two paddings), the reduction's parameters and the witness's polynomials,
-the simulator's public functions (`inK`, `sigmaAt`), the wiring opening, the two secret openings, the
-honest tables `T₁`, `T₂`, the verifier's claims `cl₁`, `cl₂`, the simulator's tables `simT₁`, `simT₂`,
-and the `Link` (`zk_rpm_deployed_joint`'s arguments). -/
+the simulator's public functions (`inK`, `sigmaAt`), the wiring opening, the two secret openings (over
+`ChV`: their claims' weights may read the five values), the honest tables `T₁`, `T₂`, the verifier's
+claims `cl₁`, `cl₂`, the simulator's tables `simT₁`, `simT₂`, and the `LinkV`
+(`QuotientZk.Instance.zk_rpm_deployed_jointV_fs'`'s arguments). -/
 structure JointData (K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂ : Type) [Field K] [Field E]
     [Algebra K E] [DecidableEq E] [CharP E 2] [Fintype E]
     [Fintype ι₁] [DecidableEq ι₁] [Fintype Y₁] [DecidableEq Y₁] [Fintype Q₁] [DecidableEq Q₁]
@@ -83,15 +88,15 @@ structure JointData (K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ 
   inK : E → Bool
   sigmaAt : E → E
   wir : Chal E Γ₁ Γ₂ Γw → W
-  S₁ : SecretOpening K E (Chal E Γ₁ Γ₂ Γw) ι₁ Y₁ Q₁ O₁
-  S₂ : SecretOpening K E (Chal E Γ₁ Γ₂ Γw) ι₂ Y₂ Q₂ O₂
+  S₁ : SecretOpening K E (ChV E Γ₁ Γ₂ Γw) ι₁ Y₁ Q₁ O₁
+  S₂ : SecretOpening K E (ChV E Γ₁ Γ₂ Γw) ι₂ Y₂ Q₂ O₂
   T₁ : Chal E Γ₁ Γ₂ Γw → (Fin 4 → Fin 3 → K) → ι₁ → Y₁ → K
   T₂ : Chal E Γ₁ Γ₂ Γw → (Fin 4 → Fin 3 → K) → ι₂ → Y₂ → K
   cl₁ : Chal E Γ₁ Γ₂ Γw → (Fin 4 → E) × E → Fin S₁.m → E
   cl₂ : Chal E Γ₁ Γ₂ Γw → (Fin 4 → E) × E → Fin S₂.m → E
   simT₁ : Chal E Γ₁ Γ₂ Γw → (Fin 4 → E) × E → ι₁ → Y₁ → K
   simT₂ : Chal E Γ₁ Γ₂ Γw → (Fin 4 → E) × E → ι₂ → Y₂ → K
-  lk : Link (QuotientZk.DRpm.ofBytes Pb) P₀ gK van wir T₁ T₂ S₁ S₂
+  lk : LinkV (QuotientZk.DRpm.ofBytes Pb) P₀ gK van wir T₁ T₂ S₁ S₂
 
 section Joint
 
@@ -108,13 +113,13 @@ abbrev JointData.P (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι�
     Proto (Rand K ι₁ Y₁ ι₂ Y₂) Inp Out Msg Tbl Pos :=
   QuotientZk.DRpm.ofBytes J.Pb
 
-/-- **The joint simulator's view** at the oracle's answers `σ`: `jointSim` at the challenges they give,
-read as the skeleton's view (`Link.out`). -/
+/-- **The joint simulator's view** at the oracle's answers `σ`: `jointSimV` at the challenges they
+give, read as the skeleton's view (`LinkV.out`). -/
 def JointData.simV (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂) :
     List Out → ProbComp (View Msg Inp Tbl Pos) :=
-  fun σ ↦ J.lk.out σ <$> jointSim J.inK J.sigmaAt J.wir J.S₁ J.S₂ J.simT₁ J.simT₂ (J.lk.chOf σ)
+  fun σ ↦ J.lk.out σ <$> jointSimV J.inK J.sigmaAt J.wir J.S₁ J.S₂ J.simT₁ J.simT₂ (J.lk.chOf σ)
 
-/-- **The joint model's hypotheses** (`zk_rpm_deployed_joint`'s, by the same names): F1's (`h3`, `hE`,
+/-- **The joint model's hypotheses** (`zk_rpm_deployed_jointV_fs'`'s, by the same names): F1's (`h3`, `hE`,
 `hvan`, `hsat`: the witness satisfies the relation, `hvan0`), the sizes (`hq`, `hK`, `hN`, `hdeg`, `h40₁`,
 `h40₂`), the simulator's public functions (`hinK`, `hsig`), each secret opening's conditions (`hS₁`,
 `hS₂`: (Q), `WeightsFit`, the layout's lanes), the claims of the honest and simulated tables (`hT₁`,
@@ -139,11 +144,13 @@ structure JointData.Valid (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O
   hS₁ : J.S₁.Conditions
   hS₂ : J.S₂.Conditions
   hT₁ : ∀ c, good J.P₀ J.gK J.van c → ∀ m,
-    J.S₁.claims c (J.T₁ c m) = J.cl₁ c (redMsgs J.P₀ J.gK J.van c.1.1.2 m)
+    J.S₁.claims (c, redMsgs J.P₀ J.gK J.van c.1.1.2 m) (J.T₁ c m) =
+      J.cl₁ c (redMsgs J.P₀ J.gK J.van c.1.1.2 m)
   hT₂ : ∀ c, good J.P₀ J.gK J.van c → ∀ m,
-    J.S₂.claims c (J.T₂ c m) = J.cl₂ c (redMsgs J.P₀ J.gK J.van c.1.1.2 m)
-  hsimT₁ : ∀ c, good J.P₀ J.gK J.van c → ∀ v, J.S₁.claims c (J.simT₁ c v) = J.cl₁ c v
-  hsimT₂ : ∀ c, good J.P₀ J.gK J.van c → ∀ v, J.S₂.claims c (J.simT₂ c v) = J.cl₂ c v
+    J.S₂.claims (c, redMsgs J.P₀ J.gK J.van c.1.1.2 m) (J.T₂ c m) =
+      J.cl₂ c (redMsgs J.P₀ J.gK J.van c.1.1.2 m)
+  hsimT₁ : ∀ c, good J.P₀ J.gK J.van c → ∀ v, J.S₁.claims (c, v) (J.simT₁ c v) = J.cl₁ c v
+  hsimT₂ : ∀ c, good J.P₀ J.gK J.van c → ∀ v, J.S₂.claims (c, v) (J.simT₂ c v) = J.cl₂ c v
   hch : J.lk.chOf <$> uniformList Out J.P.n =ᵈ ($ᵗ (Chal E Γ₁ Γ₂ Γw))
   hcw : ∀ j y, Pr{let u ← $ᵗ Out}[J.cw j u.1 = y] ≤ ((2 : ℝ≥0∞) ^ 191)⁻¹
   hrow₀ : ∀ y, Pr{let s ← $ᵗ (Rand K ι₁ Y₁ ι₂ Y₂)}[J.P.rowFn s [] 0 0 = y] ≤ ((2 : ℝ≥0∞) ^ 2368)⁻¹
@@ -272,11 +279,11 @@ theorem zeroKnowledge_of_bridges
   have hQ : ∀ s, QueryCostAtMost (QuotientZk.DRpm.zkGameRpmD Jw.P (skel stmt) D s)
       permutationCallCost (Qp + (Qfmt + Q)) := fun s ↦
     Common.QueryCostAtMost.bind (hprover stmt w hw s) fun pf ↦ queryCost_liftPerm _ _ (hD pf)
-  have hHV := jointHVZK_of_link Jw.P hv.h3 Jw.P₀ hv.hE Jw.stmtE Jw.gK Jw.van hv.hvan hv.hsat
+  have hHV := jointHVZK_of_linkV Jw.P hv.h3 Jw.P₀ hv.hE Jw.stmtE Jw.gK Jw.van hv.hvan hv.hsat
     hv.hvan0 hv.hq hv.hK hv.hN hv.hdeg Jw.inK hv.hinK Jw.sigmaAt hv.hsig Jw.wir Jw.S₁ Jw.S₂ hv.hS₁
     hv.hS₂ Jw.T₁ Jw.T₂ Jw.cl₁ Jw.cl₂ hv.hT₁ hv.hT₂ Jw.simT₁ Jw.simT₂ hv.hsimT₁ hv.hsimT₂ Jw.lk hv.hch
-  have hfac := factors_single hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ Jw.lk
-  have hfac₂ := factors_pair hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ Jw.lk
+  have hfac := factors_singleV hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ Jw.lk
+  have hfac₂ := factors_pairV hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ Jw.lk
   have hmain := QuotientZk.DRpm.zk_rpm_skel Jw.P (skel stmt) Jw.simV _ εFS (1 / 2 ^ 165)
     ((2 : ℝ≥0∞) ^ 2368)⁻¹ ((2 : ℝ≥0∞) ^ 2368)⁻¹ QP (Qfmt + Q) (Qp + (Qfmt + Q)) (hskel stmt)
     (hFS stmt w hw) hHV.1 hHV.2 (fun σ k x hx v y ↦ (hfac σ k x hx y).some.bound v)
