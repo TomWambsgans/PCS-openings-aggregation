@@ -156,7 +156,7 @@ theorem length_scalarBytes (x : E) : (PcsQuotient.Transcript.scalarBytes x).leng
 
 /-- The chain's input after a root: the state, then the root's two scalars (`transcript.rs`). -/
 def chainIn (s : Digest) (r : E × E) : Bytes :=
-  digestBytes s ++ PcsQuotient.Transcript.scalarBytes r.1 ++ PcsQuotient.Transcript.scalarBytes r.2
+  digestBytes s ++ [r.1, r.2].flatMap PcsQuotient.Transcript.scalarBytes
 
 theorem length_chainIn (s : Digest) (r : E × E) : (chainIn s r).length = 96 := by
   simp [chainIn, length_digestBytes, length_scalarBytes]
@@ -165,7 +165,7 @@ theorem chainIn_left {s s' : Digest} {r r' : E × E} (h : chainIn s r = chainIn 
     s = s' := by
   apply digestBytes_injective
   have h1 := congrArg (List.take 32) h
-  simp only [chainIn, List.append_assoc] at h1
+  simp only [chainIn] at h1
   rwa [List.take_left' (length_digestBytes s), List.take_left' (length_digestBytes s')] at h1
 
 theorem not_good_chainIn (s : Digest) (r : E × E) : ¬ Good (chainIn s r) :=
