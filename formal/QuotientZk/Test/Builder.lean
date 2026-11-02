@@ -11,14 +11,14 @@ coordinates over `K` its limbs, `coordsF`), on the deployed layouts:
 * `witness_layout(22)` (`40` lanes of `2^19` entries), the witness claim at the verifier's point
   `pointWc c` with its value `valWc c v`, for a sample challenge `c` and five values `v` — exactly
   `simTW`'s computation with `rep.coords` the limbs;
-* `quotient_layout(22)` (`63` lanes of `2^22` entries), its two claims at a sample point of the
-  quotient claim's shape and at the sum claim's fixed point `pointSc Y`, for sample values —
-  `simTQ`'s computation, at a point and values not tied to a `Params`.
+* (`BuilderQ.lean`) `quotient_layout(22)` (`63` lanes of `2^22` entries), its two claims at a sample
+  point of the quotient claim's shape and at the sum claim's fixed point `pointSc Y`, for sample
+  values — `simTQ`'s computation, at a point and values not tied to a `Params`.
 
 Each run prints the entries and values of the table it builds (zero elsewhere) and whether its claims,
 computed from the weights at those entries, are the claimed values. `#eval` interprets the code: a
-claim's weight at one entry is about `10^3`–`10^4` products in `F192`, which take seconds here; the
-quotient run takes minutes.
+claim's weight at one entry is about `10^3`–`10^4` products in `F192`, which take seconds here (the
+witness run about two minutes, the quotient run, `BuilderQ.lean`, about half an hour).
 -/
 
 open QuotientZk.Instance QuotientZk.Instance.Builder Primitives
@@ -58,22 +58,6 @@ def runW : IO Unit := do
   IO.println s!"witness table: {sol.map fun p => ((p.1.1 : ℕ), (p.1.2 : ℕ), p.2.toU64)}"
   IO.println s!"claim met: {decide (claimsOf w sol = [val])}"
 
-/-- A sample point of the quotient claim's shape (`30` coordinates, the extension's two last). -/
-def pointQs : List F192 :=
-  (List.range 28).map (fun i => el (UInt64.ofNat (2 * i + 3)) (UInt64.ofNat (i * i + 1)) 7) ++
-    [F192.Y / (1 + F192.Y), F192.Y ^ 2 / (1 + F192.Y ^ 2)]
-
-/-- **The quotient run**: `simTQ`'s elimination, two claims. -/
-def runQ : IO Unit := do
-  let w : Fin 2 → ιQ → YQ → F192 := Lq.claimW ![pointQs, pointSc F192.Y]
-  let val : Fin 2 → F192 := ![el 0xdeadbeef 1 2, el 5 0xcafe 6]
-  let sol := solveElim (colOf coordsF w) (entryAt candsQ (enumL Lq okQ))
-    (candsQ.length + 63 * 2 ^ 22) (tgtOf coordsF val)
-  IO.println s!"quotient table: {sol.map fun p => ((p.1.1 : ℕ), (p.1.2 : ℕ), p.2.toU64)}"
-  IO.println s!"claims met: {decide (claimsOf w sol = [val 0, val 1])}"
-
 #eval runW
-
-#eval runQ
 
 end QuotientZk.Test.Builder

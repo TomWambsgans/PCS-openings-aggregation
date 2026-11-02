@@ -112,9 +112,30 @@ def limbsE : E ≃ QuotientRpm.Limbs where
   left_inv x := F192.new_c0_c1_c2 x
   right_inv _ := rfl
 
-/-- **The deployed representations**: `K`'s words, the word of an element, `E`'s limbs. -/
+/-- **`E`'s coordinates over `K`**: its limbs, a `K`-linear bijection (`x = c₀ + c₁ Y + c₂ Y²`,
+`F192.ofLimbs_eq`); the simulator's tables are solved in them (`Instance/Builder.lean`). -/
+def coordsE : E ≃ₗ[K] (Fin 3 → K) where
+  toFun x := ![F192.limb x 0, F192.limb x 1, F192.limb x 2]
+  invFun v := F192.ofLimbs (v 0) (v 1) (v 2)
+  map_add' x z := by
+    funext i
+    fin_cases i <;> simp
+  map_smul' a x := by
+    have hx : a • x = F192.ofLimbs a 0 0 * F192.ofLimbs (F192.limb x 0) (F192.limb x 1)
+        (F192.limb x 2) := by
+      rw [Algebra.smul_def, ← F192.ofF64_eq_algebraMap, F192.ofF64_eq, F192.ofLimbs_limb]
+    funext i
+    rw [hx, F192.ofLimbs_mul_ofLimbs]
+    fin_cases i <;> simp
+  left_inv x := F192.ofLimbs_limb x
+  right_inv v := by
+    funext i
+    fin_cases i <;> simp
+
+/-- **The deployed representations**: `K`'s words, the word of an element, `E`'s limbs, `E`'s
+coordinates over `K`. -/
 def deployedRep : QuotientZk.Instance.Rep K E :=
-  ⟨wordsK, F64.toU64, F64.toU64_injective, limbsE⟩
+  ⟨wordsK, F64.toU64, F64.toU64_injective, limbsE, coordsE⟩
 
 /-! ## The base field in `E` -/
 
