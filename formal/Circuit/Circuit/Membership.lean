@@ -21,6 +21,10 @@ namespace PcsCircuit
 
 open LeanVM.Parameters Builder
 
+-- Facts about the sources a gadget returns must not be unfolded: reducing `IsRow a` or `Valid b a` by
+-- its match would evaluate the gadget's run.
+attribute [local irreducible] IsRow Below Valid
+
 theorem array_append_getD {α : Type} (a b : Array α) (d : α) (p : Nat) :
     (a ++ b).getD p d = if p < a.size then a.getD p d else b.getD (p - a.size) d := by
   simp only [Array.getD_eq_getD_getElem?, Array.getElem?_append]
@@ -119,5 +123,71 @@ theorem spec_levelTail {node sibling : Array Src} {direction : Src} {b : Builder
   refine (spec_keccak256Block true hg2.wf (fun p hp => (hmsg p hp).2.1) (fun _ p hp => (hmsg p (by omega)).1 trivial)).mono
     (Nat.le_refl _) fun out b3 hg3 hout k hk => ⟨fun _ => (hout k hk).1 rfl, (hout k hk).2.congr fun v hv => ?_⟩
   exact hash_congr (fun p hp => ((hmsg p hp).2.2 v (hv.of_ext hg3.ext))) k hk
+
+/-! ## A level -/
+
+/-- The rows of a level: `257` inputs, then the rest. -/
+def levelRows : Nat := 257 + tailRows
+
+/-- **A level**: `257` new input rows from the current size `s` (the sibling's bits, then the
+direction), and the hash of the ordered pair of the node and the sibling. -/
+theorem spec_level {node : Array Src} {b : Builder} (hb : WF b)
+    (hn : ∀ i < 256, Valid b (node.getD i .zero) ∧ IsRow (node.getD i .zero)) :
+    RowsExt b (runB (level node) b).2 ∧ WF (runB (level node) b).2 ∧
+    (runB (level node) b).2.rows.size ≤ b.rows.size + levelRows ∧
+    (runB (level node) b).2.inputs = b.inputs ++ ((List.range 257).map (b.rows.size + ·)).toArray ∧
+    ∀ k < 256, Valid (runB (level node) b).2 ((runB (level node) b).1.getD k .zero) ∧
+      IsRow ((runB (level node) b).1.getD k .zero) ∧
+      ∀ v, Sat v (runB (level node) b).2 → read v ((runB (level node) b).1.getD k .zero) =
+        KeccakBits.hash (pairBits (fun p => read v (node.getD p .zero)) (fun p => v (b.rows.size + p))
+          (v (b.rows.size + 256))) k := by
+  have hfb : runB (freeBits 256) b = ((runB ((List.range 256).mapM fun _ => input) b).1.toArray,
+      (runB ((List.range 256).mapM fun _ => input) b).2) := by
+    unfold freeBits; rw [runB_bind, runB_pure]
+  rw [level_eq, runB_bind, hfb, runB_bind, runB_input]
+  obtain ⟨h1ext, h1size, h1wf, h1inp, h1res, h1sat⟩ := spec_freeBits_list (List.range 256) b hb
+  generalize runB ((List.range 256).mapM fun _ => input) b = r1 at h1ext h1size h1wf h1inp h1res h1sat ⊢
+  obtain ⟨l, b1⟩ := r1
+  simp only at h1ext h1size h1wf h1inp h1res h1sat ⊢
+  simp only [List.length_range] at h1size h1inp h1res
+  subst h1res
+  have hs := hb.size
+  have hb2 := addInput_wf h1wf
+  have h2ext : RowsExt b b1.addInput := h1ext.trans (addInput_rowsExt b1)
+  have h2size := addInput_size b1
+  have hsib : ∀ i < 256, Valid b1.addInput
+      ((((List.range 256).map fun k => Src.row (b.rows.size + k)).toArray).getD i .zero) ∧
+      IsRow ((((List.range 256).map fun k => Src.row (b.rows.size + k)).toArray).getD i .zero) := by
+    intro i hi
+    rw [map_range_getD _ _ _ _ hi]
+    exact ⟨valid_row (by unfold publicRows at hs ⊢; omega) (by omega), isRow_row _⟩
+  have hdir : Valid b1.addInput (.row b1.rows.size) ∧ IsRow (.row b1.rows.size) :=
+    ⟨valid_row (by unfold publicRows at hs ⊢; omega) (by omega), isRow_row _⟩
+  obtain ⟨hg, hout⟩ := spec_levelTail hb2 (fun i hi => ⟨((hn i hi).1.of_rowsExt h2ext), (hn i hi).2⟩) hsib hdir
+  refine ⟨?_, ?_, ?_, ?_, fun k hk => ?_⟩
+  · exact h2ext.trans hg.ext.toRowsExt
+  · exact hg.wf
+  · have := hg.le; unfold levelRows; omega
+  · rw [hg.ext.inputs_eq]
+    simp only [Builder.addInput, h1inp, h1size]
+    rw [show List.range 257 = List.range 256 ++ [256] from List.range_succ, List.map_append]
+    apply Array.ext'
+    simp only [Array.toList_push, Array.toList_append, List.map_cons, List.map_nil, List.append_assoc]
+  · obtain ⟨hk1, hk2, hk3⟩ := hout k hk
+    refine ⟨hk2, hk1 trivial, fun v hv => ?_⟩
+    rw [hk3 v hv]
+    refine hash_congr (fun p hp => ?_) k hk
+    simp only [pairBits]
+    have hread : ∀ q < 256, read v ((((List.range 256).map fun k => Src.row (b.rows.size + k)).toArray).getD q
+        .zero) = v (b.rows.size + q) := fun q hq => by rw [map_range_getD _ _ _ _ hq]; rfl
+    have hd : read v (Src.row b1.rows.size) = v (b.rows.size + 256) := by simp [h1size]
+    rw [hd]
+    split
+    · split
+      · exact hread p (by omega)
+      · rfl
+    · split
+      · rfl
+      · exact hread (p - 256) (by omega)
 
 end PcsCircuit

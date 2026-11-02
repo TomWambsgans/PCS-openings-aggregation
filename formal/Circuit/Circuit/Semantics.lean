@@ -75,6 +75,11 @@ def IsRow : Src → Prop
   | .row _ => True
   | _ => False
 
+theorem isRow_row (r : Nat) : IsRow (.row r) := trivial
+
+theorem valid_row {b : Builder} {r : Nat} (h1 : publicRows ≤ r) (h2 : r < b.rows.size) : Valid b (.row r) :=
+  ⟨h1, h2⟩
+
 /-- `b'` has the rows of `b` first. -/
 structure RowsExt (b b' : Builder) : Prop where
   size_le : b.rows.size ≤ b'.rows.size
