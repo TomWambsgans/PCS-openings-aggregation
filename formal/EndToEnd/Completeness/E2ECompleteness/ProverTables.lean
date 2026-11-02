@@ -294,3 +294,15 @@ theorem wiring_table (hK : Constants) (sigma : Array ℕ) (hss : sigma.size = 2 
 end ProverTables
 
 end E2ECompleteness
+
+/-- info: 'E2ECompleteness.ProverTables.witness_table' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.ProverTables.witness_table
+
+/-- info: 'E2ECompleteness.ProverTables.wiring_table' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.ProverTables.wiring_table
+
+/-- info: 'E2ECompleteness.ProverTables.tablePoly_injective' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.ProverTables.tablePoly_injective

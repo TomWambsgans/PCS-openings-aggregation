@@ -186,3 +186,11 @@ end Sum
 end ProverQuotient
 
 end E2ECompleteness
+
+/-- info: 'E2ECompleteness.ProverQuotient.hHat_table' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.ProverQuotient.hHat_table
+
+/-- info: 'E2ECompleteness.ProverQuotient.pub_cell_nat' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.ProverQuotient.pub_cell_nat

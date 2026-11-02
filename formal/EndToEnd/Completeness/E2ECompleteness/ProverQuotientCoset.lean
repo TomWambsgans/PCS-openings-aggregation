@@ -599,3 +599,15 @@ theorem vCells_coset_ne_zero (hK : Constants) {p : ℕ} (hp : p < 2 ^ 26) :
 end ProverQuotient
 
 end E2ECompleteness
+
+/-- info: 'E2ECompleteness.ProverQuotient.pub_coset' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.ProverQuotient.pub_coset
+
+/-- info: 'E2ECompleteness.ProverQuotient.rowInv_coset' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.ProverQuotient.rowInv_coset
+
+/-- info: 'E2ECompleteness.ProverQuotient.vRows_coset_ne_zero' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.ProverQuotient.vRows_coset_ne_zero
