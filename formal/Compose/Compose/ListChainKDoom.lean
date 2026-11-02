@@ -1013,4 +1013,135 @@ theorem knowledgeSoundness_listChainK_closed {σ : Type} (ops : List (WhirOp Pf 
       _ = 5 * ((QS + Q + K.nQ + (ops.map fun o => o.S.QO).sum : ℕ) : ℝ≥0∞) := by
           push_cast; ring
 
+
+/-! ## The decoders and the setups the openings come with -/
+
+section Helpers
+
+/-- **A round's opening with the computable decoder** (`Decoder.lean`'s `tableCode`: the level-0
+Johnson list of the shape's certified code, read back as tables, at most
+`(certOf log_n R 0).listHi` of them): `WhirOp.OK` holds once a table satisfying the opening's
+claims is `good`. -/
+theorem whirOp_ok_tableCode {σ : Type} (S : WhirShape) (cl : Pf → List (List F) → Stmt S.L.stacking)
+    (prf : Pf → Proof) (i : ℕ) (rd : Tab S.L → M) (tc : ℕ → TableCode M)
+    (htc : tc i = tableCode S.L S.R S.adm rd)
+    (good : ℕ → Pf → List (List F) → Option M → Prop)
+    (hg : ∀ π ch (t : Tab S.L), (∀ cl' ∈ (cl π ch).claims, tabEval S.L t cl'.point = cl'.value) →
+      good i π ch (some (rd t)))
+    (setup : OracleComp KeccakCalls σ) (fix : σ → Pf → Pf) :
+    WhirOp.OK tc good setup fix
+      (⟨S, cl, prf, .round i (fun q => rd (tabOf S.L q))⟩ : WhirOp Pf F M) := by
+  unfold WhirOp.OK
+  dsimp only
+  rw [htc]
+  exact ⟨rfl, rfl, fun w q hq => read_mem_tableCode_dec S.adm rd w q hq,
+    fun π ch q h => hg π ch (tabOf S.L q) fun cl' hcl' => (tabEval_tabOf _ _ _).trans (h cl' hcl')⟩
+
+/-- At a large shape, the decoder's list is `L₀ = largeList log_n` (`listHi_large`). -/
+theorem tableCode_bound_large (vars logChunk logN : ℕ) (chunks : List (ℕ × ℕ))
+    (hS : NewOK vars logChunk logN chunks) (h1 : largeMin ≤ logN) (h2 : logN ≤ largeMax)
+    (rd : Tab (WhirShape.large vars logChunk logN chunks hS h1 h2).L → M) :
+    (tableCode (WhirShape.large vars logChunk logN chunks hS h1 h2).L
+      (WhirShape.large vars logChunk logN chunks hS h1 h2).R
+      (WhirShape.large vars logChunk logN chunks hS h1 h2).adm rd).bound = largeList logN :=
+  listHi_large logN h1 h2
+
+/-- **The setup of a stack at a shape**: the Merkle tree of its encoding (`WiringSetup.lean`'s
+`wiringSetup` of `stackWord`), its root as 32 bytes. -/
+def stackSetupS (S : WhirShape) (q₀ : Column S.L.logN) : OracleComp KeccakCalls Bytes32 :=
+  wiringSetup (rootHeight S.L.logN S.R) (LeanVM.Protocol.Whir.Complete.stackWord S.L.logN q₀)
+
+/-- The stack's setup makes `2^(ht + 1)` queries. -/
+theorem isTotalQueryBound_stackSetupS (S : WhirShape) (q₀ : Column S.L.logN) :
+    IsTotalQueryBound (stackSetupS S q₀) (2 ^ (rootHeight S.L.logN S.R + 1)) :=
+  (isQueryBound_map_iff _ _ _ _ _).mpr (isTotalQueryBound_buildTreeM _ _)
+
+/-- **A setup opening of the stack's setup**: `WhirOp.OK` holds when the proof carries the setup's
+root (`hfix`): the setup's queries make the word under it the stack's encoding
+(`extract_wiringSetup`, `honest_stackWord`). -/
+theorem whirOp_ok_stack (S : WhirShape) (cl : Pf → List (List F) → Stmt S.L.stacking)
+    (prf : Pf → Proof) (root : Pf → Bytes32) (q₀ : Column S.L.logN) (tc : ℕ → TableCode M)
+    (good : ℕ → Pf → List (List F) → Option M → Prop) (fix : Bytes32 → Pf → Pf)
+    (hfix : ∀ s p, root (fix s p) = s) :
+    WhirOp.OK tc good (stackSetupS S q₀) fix (⟨S, cl, prf, .setup root q₀⟩ : WhirOp Pf F M) := by
+  refine ⟨LeanVM.Protocol.Whir.Complete.stackWord S.L.logN q₀, honest_stackWord _ _ q₀,
+    fun T H p hsub hinj v hv => ?_⟩
+  show Rom.extract (ansOf H (viewT T))
+    (ofB (root (fix (evalWithAnswerFn (QueryImpl.ofFn T) (stackSetupS S q₀)) p)))
+    (rootHeight S.L.logN S.R) (2 ^ laneFold) v = _
+  rw [hfix]
+  exact extract_wiringSetup _ _ _ (LeanVM.Protocol.Whir.Complete.wellShaped_stackWord _ q₀) T H
+    hsub hinj v hv
+
+end Helpers
+
+/-! ## In the random-permutation model -/
+
+/-- `BreaksOK` reads the transcript through its answers only. -/
+theorem breaksOK_congr {β : Type} (check : Pf → List (List F) → Prop) (acc : β → Prop)
+    (z : Pf × (List (List F) × β)) (tr tr' : Transcript) (h : ∀ x, lookTr tr x = lookTr tr' x)
+    (hz : BreaksOK K C R view check acc (z, tr)) : BreaksOK K C R view check acc (z, tr') := by
+  obtain ⟨hH, hT⟩ := histOfTr_tableOfTr_congr h
+  refine ⟨hz.1, hz.2.1, fun c hc => hz.2.2 c ?_⟩
+  unfold extractorK at hc ⊢
+  simp only at hc ⊢
+  rwa [hH, hT]
+
+/-- **The openings follow the duplex discipline.** -/
+theorem duplexVm_opsRun : ∀ (ops : List (WhirOp Pf F M)) (π : Pf) (ch : List (List F)),
+    LeanVM.Rpm.DuplexVm (opsRun view ops π ch) []
+  | [], _, _ => trivial
+  | o :: os, π, ch => by
+    refine LeanVM.Rpm.DuplexVm.bind (duplexVm_ourVerifier _ _ _) fun b => ?_
+    rw [map_eq_bind_pure_comp]
+    exact LeanVM.Rpm.DuplexVm.bind (duplexVm_opsRun os π ch) fun _ => trivial
+
+/-- **Knowledge soundness of the `k`-round chain with WHIR openings in the random-permutation
+model** (leanerVM's model: one uniformly random permutation of Keccak-f[1600]'s state, queried
+forward and inverse; Keccak-256 the sponge over it), every opening's doom discharged. The setup
+computes its 32-byte commitment with Keccak-256 over `π` (at most `QS` Keccak-256 calls, `QSπ`
+calls of `π`); the adversary, with coins, `π` and `π⁻¹`, makes at most `Q` calls given it; the
+verifier (the chain and the openings, `QVπ` calls of `π`) accepts while no candidate of round
+`0`'s root, read off the setup's log and the Keccak-256 evaluations of the adversary's permutation
+transcript, satisfies the first round's state with probability at most the two-oracle bound for an
+adversary of `QS + Q` queries (the derandomized adversary recomputes the public setup), plus
+`(QSπ + Q + QVπ)² / 2^508`. -/
+theorem knowledgeSoundness_listChainK_closed_rpm (ops : List (WhirOp Pf F M))
+    (tc : ℕ → TableCode M) (check : Pf → List (List F) → Prop)
+    (good : ℕ → Pf → List (List F) → Option M → Prop) (goodS : Pf → List (List F) → Prop)
+    (setup : OracleComp KeccakCalls Bytes32) (hSH : LeanVM.Rpm.HOnly setup) (QS QSπ : ℕ)
+    (hSq : IsTotalQueryBound setup QS)
+    (hSπ : Common.QueryCostAtMost setup LeanVM.Rpm.hashBlocks QSπ) (fix : Bytes32 → Pf → Pf)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles Pf) (Q : ℕ)
+    (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q) (QVπ : ℕ)
+    (hVπ : ∀ π, Common.QueryCostAtMost (verK K view (opsRun view ops) π) LeanVM.Rpm.hashBlocks QVπ)
+    (hok : ∀ o ∈ ops, WhirOp.OK tc good setup fix o)
+    (hcov : ∀ i < K.rounds.length, (K.spec i).root → ∃ o ∈ ops, ∃ rd, o.tgt = .round i rd)
+    (hS : ∀ π ch, (∀ o ∈ ops, WhirOp.SetupHolds o π ch) → goodS π ch)
+    (hfit : ∀ π ch, check π ch → FitsAll K.rounds (view π).2)
+    (hlink : ∀ π ch (cs : List (Option M)), check π ch → cs.length = K.rounds.length →
+      (∀ i (h : i < cs.length), (K.spec i).root → good i π ch cs[i]) → goodS π ch →
+      ∃ p m c, opened cs (view π).2 ch = p ++ [(m, c)] ∧ R.post (view π).1 p m c) :
+    Pr{let z ← Common.runWithRandomPermutation
+        (rpmGameG setup fix A (verK K view (opsRun view ops)))}[
+        BreaksOK K (fun i => (tc i).commit) R view check
+          (fun bs => ∀ k < ops.length, bs.getD k false = true)
+          (z.1, z.2.1 ++ evalTr (permutationQueries z.2.2))] ≤
+      doomSum ops (QS + (QS + Q) + K.nQ) +
+        ((QS + (QS + Q) + K.nQ + (ops.map fun o => o.S.QO).sum : ℕ) : ℝ≥0∞) *
+          (maxErrK K (fun i => (tc i).commit) R +
+            5 * ((QS + (QS + Q) + K.nQ + (ops.map fun o => o.S.QO).sum : ℕ) : ℝ≥0∞) / 2 ^ 256) +
+        ((QSπ + Q + QVπ : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 := by
+  obtain ⟨A', hA', hle⟩ := rpm_le_kcG setup hSH QS QSπ hSq hSπ fix A Q hA
+    (verK K view (opsRun view ops)) (duplexVm_verK K view _ fun π ch => duplexVm_opsRun view ops π ch)
+    QVπ hVπ
+    (fun z tr => BreaksOK K (fun i => (tc i).commit) R view check
+      (fun bs => ∀ k < ops.length, bs.getD k false = true) (z, tr))
+    (fun z tr tr' h hz => breaksOK_congr K (fun i => (tc i).commit) R view check
+      (fun bs : List Bool => ∀ k < ops.length, bs.getD k false = true) z tr tr' h hz)
+  refine hle.trans (add_le_add ?_ le_rfl)
+  rw [kcGameG_eq]
+  exact knowledgeSoundness_listChainK_closed K R view ops tc check good goodS setup fix A' QS
+    (QS + Q) hSq hA' hok hcov hS hfit hlink
+
 end Compose
