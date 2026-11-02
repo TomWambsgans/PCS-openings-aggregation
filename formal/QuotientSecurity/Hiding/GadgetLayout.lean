@@ -385,4 +385,70 @@ theorem foldSpans_moves (hA : ∀ p, ¬ L.isRand (L.pairA p)) (pos : ι → (Fin
 
 end GadgetLayout
 
+namespace GadgetLayout
+
+open OracleComp
+
+variable (L : GadgetLayout ι Y)
+
+theorem patE_support (p : Fin 3) (b : Fin 6 → Bool) (h : patE (E := E) p b ≠ 0) :
+    b = lane 0 ∨ b = lane 31 ∨ b = lane 1 ∨ b = lane 30 ∨ b = lane 32 := by
+  fin_cases p <;>
+  simp only [patE, pattern0, pattern1, pattern2, pairCol, unitCol, flipC_lane0, flipC_lane1,
+    Pi.add_apply, Pi.smul_apply, smul_eq_mul] at h <;>
+  split_ifs at h with h1 h2 <;> simp_all
+
+theorem pos_eq_iff {pos : ι → (Fin 6 → Bool)} (hpos : Function.Injective pos) {l a : ι}
+    {b : Fin 6 → Bool} (ha : pos a = b) : pos l = b ↔ l = a :=
+  ⟨fun h => hpos (h.trans ha.symm), fun h => h ▸ ha⟩
+
+/-- **The combined weight at the gadget's entries is the gadget's** (the claims weigh nothing there). -/
+theorem combinedW_gent {m : ℕ} (pos : ι → (Fin 6 → Bool)) (hpos : Function.Injective pos)
+    (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc) (β : Fin 3 → E) (lam : Fin m → E) (μ : E)
+    (hA0 : pos (L.pairA 0) = lane 0) (hB0 : pos (L.pairB 0) = lane 31)
+    (hA1 : pos (L.pairA 1) = lane 1) (hB1 : pos (L.pairB 1) = lane 30) (hov : pos L.ov = lane 32)
+    (p i : Fin 3) (b : Fin 6 → Bool) :
+    HiddenLayout.combinedW pos (withGadget Wc (L.gadgetW pos β)) (Fin.snoc lam μ : Fin (m + 1) → E) b
+      (L.gent p i) = μ * β i * patE p b := by
+  have hG : ∀ l, L.gadgetW pos β l (L.gent p i) = β i * patE p (pos l) := by
+    intro l
+    simp only [gadgetW]
+    rw [sum_eq_single p, sum_eq_single i]
+    · simp
+    · intro i' _ hi'
+      exact if_neg fun h => hi' (L.gent_inj p i' p i h).2
+    · simp
+    · intro p' _ hp'
+      exact sum_eq_zero fun i' _ => if_neg fun h => hp' (L.gent_inj p' i' p i h).1
+    · simp
+  have hl : ∀ l, ∑ c : Fin (m + 1), (Fin.snoc lam μ : Fin (m + 1) → E) c *
+      withGadget Wc (L.gadgetW pos β) c l (L.gent p i)
+      = μ * (β i * patE p (pos l)) := by
+    intro l
+    rw [Fin.sum_univ_castSucc]
+    simp only [withGadget, Fin.snoc_castSucc, Fin.snoc_last, hG,
+      hW.gadget _ l _ (L.atGadget_gent p i), mul_zero, sum_const_zero, zero_add]
+  simp only [HiddenLayout.combinedW, hl]
+  by_cases hb : ∃ l, pos l = b
+  · obtain ⟨l₀, rfl⟩ := hb
+    rw [sum_eq_single l₀]
+    · simp; ring
+    · intro l _ hl'
+      simp [hpos.ne hl']
+    · simp
+  · have hz : patE (E := E) p b = 0 := by
+      by_contra hne
+      rcases patE_support p b hne with h | h | h | h | h <;> subst h
+      · exact hb ⟨_, hA0⟩
+      · exact hb ⟨_, hB0⟩
+      · exact hb ⟨_, hA1⟩
+      · exact hb ⟨_, hB1⟩
+      · exact hb ⟨_, hov⟩
+    rw [hz, mul_zero]
+    refine sum_eq_zero fun l _ => ?_
+    have : pos l ≠ b := fun h => hb ⟨l, h⟩
+    simp [this]
+
+end GadgetLayout
+
 end QuotientSecurity.Hiding
