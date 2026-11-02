@@ -53,8 +53,8 @@ def claimsOf {ι Y : Type} [DecidableEq ι] [DecidableEq Y] {m : ℕ} (W : Fin m
 def runW : IO Unit := do
   let w := wW chal
   let val := valWc chal vals
-  let sol := solveElim (colOf coordsF w) (entryAt candsW (enumL Lw okW))
-    (candsW.length + 40 * 2 ^ 19) (tgtOf coordsF fun _ => val)
+  let sol := solveElim (r := 1 * 3) (colOf coordsF w) (entryAt candsW (enumL Lw okW))
+    (candsW.length + 40 * 2 ^ 19) (tgtOf coordsF fun _ : Fin 1 => val)
   IO.println s!"witness table: {sol.map fun p => ((p.1.1 : ℕ), (p.1.2 : ℕ), p.2.toU64)}"
   IO.println s!"claim met: {decide (claimsOf w sol = [val])}"
 

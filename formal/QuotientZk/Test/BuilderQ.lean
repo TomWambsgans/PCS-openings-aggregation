@@ -23,7 +23,7 @@ def pointQs : List F192 :=
 def runQ : IO Unit := do
   let w : Fin 2 → ιQ → YQ → F192 := Lq.claimW ![pointQs, pointSc F192.Y]
   let val : Fin 2 → F192 := ![el 0xdeadbeef 1 2, el 5 0xcafe 6]
-  let sol := solveElim (colOf coordsF w) (entryAt candsQ (enumL Lq okQ))
+  let sol := solveElim (r := 2 * 3) (colOf coordsF w) (entryAt candsQ (enumL Lq okQ))
     (candsQ.length + 63 * 2 ^ 22) (tgtOf coordsF val)
   IO.println s!"quotient table: {sol.map fun p => ((p.1.1 : ℕ), (p.1.2 : ℕ), p.2.toU64)}"
   IO.println s!"claims met: {decide (claimsOf w sol = [val 0, val 1])}"
