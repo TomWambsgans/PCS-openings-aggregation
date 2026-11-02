@@ -101,6 +101,60 @@ fn round1_at_six_is_leanvms() {
     }
 }
 
+/// `BitFold` at every row width, 1 to 128 bytes (GFNI where the build has it), full and short blocks, against the
+/// definition: the sum of the weights of the set bits.
+#[test]
+fn bit_fold_at_every_row_width() {
+    use lv42_flock::zerocheck::bit_fold::{BLOCK, BitFold};
+    fn check<const CHUNKS: usize>(rng: &mut Rng) {
+        let weights: Vec<F192> = (0..8 * CHUNKS).map(|_| rng.ext()).collect();
+        let fold = BitFold::new(&weights);
+        for len in [BLOCK, 5] {
+            let rows: Vec<[u8; CHUNKS]> = (0..len).map(|_| std::array::from_fn(|_| rng.next() as u8)).collect();
+            let mut out = [F192::ZERO; BLOCK];
+            fold.fold_block(&rows, &mut out);
+            for (p, row) in rows.iter().enumerate() {
+                let direct = (0..8 * CHUNKS)
+                    .filter(|&s| row[s / 8] >> (s % 8) & 1 == 1)
+                    .fold(F192::ZERO, |acc, s| acc + weights[s]);
+                assert_eq!(out[p], direct, "rows of {CHUNKS} bytes, {len} rows, row {p}");
+            }
+        }
+    }
+    let mut rng = Rng(0x5eed_0006);
+    check::<1>(&mut rng);
+    check::<2>(&mut rng);
+    check::<4>(&mut rng);
+    check::<8>(&mut rng);
+    check::<16>(&mut rng);
+    check::<32>(&mut rng);
+    check::<64>(&mut rng);
+    check::<128>(&mut rng);
+}
+
+/// The byte rows' pair pass (products from a table) is the generic pass on one-byte rows, padding included.
+#[test]
+fn byte_pair_pass_is_the_generic_pass() {
+    use lv42_flock::zerocheck::bit_fold::BitFold;
+    use lv42_flock::zerocheck::multilinear::{PackedWitness, bit_round_pair, bit_round_pair_bytes};
+    let mut rng = Rng(0x5eed_0007);
+    for m in [11usize, 14, 17] {
+        let padding = PaddingSpec {
+            k_log: 14,
+            useful_bits_per_block: 16_000,
+        };
+        let [a, b, c] = witness(m, &padding, &mut rng);
+        // Any C bits (the message is linear in them), zero in the blocks' padding as the spec says.
+        let [noise, ..] = witness(m, &padding, &mut rng);
+        let c: Vec<u8> = c.iter().zip(&noise).map(|(&x, &y)| x ^ y).collect();
+        let weights: [F192; 8] = std::array::from_fn(|_| rng.ext());
+        let r_eq: Vec<F192> = (0..m - 4).map(|_| rng.ext()).collect();
+        let bits = PackedWitness { a: &a, b: &b, c: &c };
+        let generic = bit_round_pair(bits, &BitFold::new(&weights), &r_eq, &padding);
+        assert_eq!(bit_round_pair_bytes(bits, &weights, &r_eq, &padding), generic, "m = {m}");
+    }
+}
+
 /// At a skip of 3, the byte kernel's round 1 (GFNI) is the generic one's.
 #[test]
 fn round1_bytes_is_the_generic_round1() {

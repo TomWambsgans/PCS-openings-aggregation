@@ -31,7 +31,7 @@ use primitives::multilinear::lagrange_weights_naive;
 
 use super::bit_fold::BitFold;
 use super::multilinear::{
-    PackedWitness, bit_round_materialize, bit_round_pair, fold_and_compute_round_pair_into,
+    PackedWitness, bit_round_materialize, bit_round_pair, bit_round_pair_bytes, fold_and_compute_round_pair_into,
     fold_and_compute_round_single_into, fold_in_place_pair, fold_in_place_single, interpolate_at_z_combined,
     round_pair_naive, round_single_naive,
 };
@@ -115,8 +115,14 @@ pub fn prove_skip(
     // 6 (rows of 2^10 bits): passes at levels 0, 2, .., the last stored at level 2 * passes.
     let passes = (10 - k) / 2;
     for t in (0..(n_mlv - 1) & !1).step_by(2).take(passes) {
-        let fold = BitFold::at_level(&lagrange, &mlv_chis);
-        let pair = bit_round_pair(bits, &fold, &r_rest[t + 1..], padding);
+        let pair = if t == 0 && k == MIN_SKIP {
+            // Positions of one byte: the products from a table of all of them.
+            let weights: [F192; 8] = lagrange[..].try_into().expect("8 weights");
+            bit_round_pair_bytes(bits, &weights, &r_rest[1..], padding)
+        } else {
+            let fold = BitFold::at_level(&lagrange, &mlv_chis);
+            bit_round_pair(bits, &fold, &r_rest[t + 1..], padding)
+        };
         let (g1, g_inf) = pair.first;
         c_running = send_round(ps, c_running, r_rest[t], None, g1, g_inf, &mut mlv_chis);
         let (g1, g_inf) = pair.second(mlv_chis[t]);
