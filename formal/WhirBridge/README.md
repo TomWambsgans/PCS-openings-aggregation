@@ -319,7 +319,10 @@ out of order with gaps: `62` lanes), verifies it in Rust, rejects a wrong value,
 `lake env lean --run Test/CheckLarge.lean ../../target/whir_large_vector.txt` rebuilds each layout with the
 Lean `Layout.new`, evaluates `NewOK` on it, recomputes its prefix, accepts the honest proof with the Lean
 verifier and rejects a wrong value, a wrong root, a changed stream scalar, a changed leaf word, no claim and a
-wrong prefix.
+wrong prefix. Measured on h1 (shared, load about 33; `MemoryMax=10G`, 8 threads): commit and open in 17.8, 36.8,
+76.6, 96.9, 183.7 s at `2^24 ..= 2^28` (the Rust verifier 4 to 8 ms; the `2^28` prover within 10 GB, about
+4.7 GB resident), and `CheckLarge.lean` on the five openings in 1 min 5 s: `5 public openings; all checks: true`.
+These are tests of the transcription at these sizes; the theorems are the proofs.
 
 What this does not cover, beyond the gaps below: the PIOP's own layouts are not fixed yet (any one is covered
 once its `NewOK` is decided); `Layout::new` = `Layout.new` is checked by execution (`Check.lean`,

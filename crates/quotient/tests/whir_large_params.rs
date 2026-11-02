@@ -22,13 +22,26 @@ use primitives::field::{F64, F192};
 use primitives::test_rng::Rng;
 use quotient::opening::{self, Claim, Layout, Table};
 
-/// `largeLadder` (`LargeParams.lean`): per level `(fold, log_inv_rate, queries)`.
-const LEAN_LADDERS: [(usize, &[(usize, usize, usize)]); 5] = [
+/// A ladder: per level `(fold, log_inv_rate, queries)`.
+type Ladder = &'static [(usize, usize, usize)];
+
+/// `largeLadder` (`LargeParams.lean`).
+const LEAN_LADDERS: [(usize, Ladder); 5] = [
     (24, &[(6, 1, 224), (4, 4, 56), (4, 7, 32), (4, 10, 23), (4, 13, 17)]),
     (25, &[(6, 1, 224), (4, 4, 56), (4, 7, 32), (4, 10, 23), (4, 13, 17)]),
     (26, &[(6, 1, 224), (4, 4, 56), (4, 7, 32), (4, 10, 23), (4, 13, 18)]),
     (27, &[(6, 1, 225), (4, 4, 56), (4, 7, 32), (4, 10, 23), (4, 13, 18)]),
-    (28, &[(6, 1, 225), (4, 4, 56), (4, 7, 32), (4, 10, 23), (4, 13, 18), (4, 16, 14)]),
+    (
+        28,
+        &[
+            (6, 1, 225),
+            (4, 4, 56),
+            (4, 7, 32),
+            (4, 10, 23),
+            (4, 13, 18),
+            (4, 16, 14),
+        ],
+    ),
 ];
 
 /// `residual_large`: the variables left after the folds.
@@ -52,7 +65,12 @@ fn verifier_queries(log_inv_rate: usize, log_n: usize) -> Vec<usize> {
         .split("&[")
         .skip(1)
         .map(|e| {
-            e.split(']').next().expect("an entry").split(',').map(|x| x.trim().parse().expect("a count")).collect()
+            e.split(']')
+                .next()
+                .expect("an entry")
+                .split(',')
+                .map(|x| x.trim().parse().expect("a count"))
+                .collect()
         })
         .collect();
     assert_eq!(entries.len(), 14, "14 stack sizes, 15 to 28");
@@ -89,15 +107,26 @@ fn whir_large_params_match_lean() {
         assert_eq!(shapes.ks, folds, "folds at log_n = {log_n}");
         assert_eq!(cfg.log_inv_rates, rates, "rates at log_n = {log_n}");
         assert_eq!(cfg.queries, queries, "queries at log_n = {log_n}");
-        assert_eq!(cfg.grinding_bits, vec![LEAN_GRINDING; ladder.len()], "grinding at log_n = {log_n}");
+        assert_eq!(
+            cfg.grinding_bits,
+            vec![LEAN_GRINDING; ladder.len()],
+            "grinding at log_n = {log_n}"
+        );
         let mut ood = vec![1; ladder.len()];
         ood[0] = 0;
-        assert_eq!(cfg.ood_samples, ood, "out-of-domain samples at log_n = {log_n} (none at level 0)");
+        assert_eq!(
+            cfg.ood_samples, ood,
+            "out-of-domain samples at log_n = {log_n} (none at level 0)"
+        );
         assert_eq!(shapes.yr_log_n, LEAN_RESIDUAL[i], "residual at log_n = {log_n}");
 
         // The verifier's table and ladder.
         assert_eq!(verifier_queries(1, log_n), queries, "WHIR_QUERIES at log_n = {log_n}");
-        assert_eq!(verifier_ladder(log_n, 1), (folds.clone(), rates.clone()), "ladder at log_n = {log_n}");
+        assert_eq!(
+            verifier_ladder(log_n, 1),
+            (folds.clone(), rates.clone()),
+            "ladder at log_n = {log_n}"
+        );
 
         // The code's own slack search, against the certified list.
         let sec = WhirSecurityConfig::derive_config_with_log_inv_rate(log_n + pcs::LOG_PACKING, 1)
@@ -123,7 +152,10 @@ fn whir_large_params_match_lean() {
                 level.log_msg_cols, level.log_inv_rate, level.k, level.queries, level.ood_samples, level.eta, list
             );
         }
-        assert!(code_list < LEAN_LIST[i] as f64, "the code's list is below the certified one");
+        assert!(
+            code_list < LEAN_LIST[i] as f64,
+            "the code's list is below the certified one"
+        );
     }
 }
 
@@ -159,10 +191,22 @@ fn limbs(x: &F192) -> [u64; 3] {
 /// The vector `formal/WhirBridge/Test/CheckLarge.lean` reads (as `whir_bridge_vector.rs` writes them, this
 /// repository): the layout's constructor, the prefix, the root, the claims, the stream and one full path per query
 /// (the replay of `opening::verify`'s transcript, nothing checked).
-fn vector(name: &str, head: String, layout: &Layout, root: &[u8; 32], claims: &[Claim], proof: &fiat_shamir::transcript::Proof) -> String {
+fn vector(
+    name: &str,
+    head: String,
+    layout: &Layout,
+    root: &[u8; 32],
+    claims: &[Claim],
+    proof: &fiat_shamir::transcript::Proof,
+) -> String {
     let wire = &opening::wire_proof(proof);
     use verifier::{Digest, E, Transcript};
-    let mut transcript = Transcript::new(wire, Digest(opening::iv(layout, claims)), Digest(opening::PUBLIC_DIGEST), false);
+    let mut transcript = Transcript::new(
+        wire,
+        Digest(opening::iv(layout, claims)),
+        Digest(opening::PUBLIC_DIGEST),
+        false,
+    );
     let halves = transcript.next_scalars(2).expect("the root's two scalars");
     assert_eq!(Digest::from_halves(halves[0], halves[1]), Ok(Digest(*root)));
     let _lambda = transcript.sample();
@@ -204,7 +248,10 @@ fn vector(name: &str, head: String, layout: &Layout, root: &[u8; 32], claims: &[
 #[test]
 #[ignore = "heavy: commits and opens stacks of 2^24 words and more"]
 fn large_public_openings() {
-    let max: usize = std::env::var("WHIR_LARGE_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(26);
+    let max: usize = std::env::var("WHIR_LARGE_MAX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(26);
     let path = std::env::var("WHIR_LARGE_VECTOR")
         .unwrap_or_else(|_| concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/whir_large_vector.txt").to_string());
     let mut out = String::new();
@@ -216,7 +263,9 @@ fn large_public_openings() {
         let log_lane = layout.log_lane();
         let table = Table::new(layout.clone(), |_, b, out: &mut [F64]| {
             for (k, x) in out.iter_mut().enumerate() {
-                *x = F64((((b << log_lane) + k) as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17));
+                *x = F64((((b << log_lane) + k) as u64 + 1)
+                    .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                    .rotate_left(17));
             }
         });
         let committed = opening::commit(&table);
@@ -233,11 +282,18 @@ fn large_public_openings() {
         let root = committed.root;
         drop(table);
         let start = std::time::Instant::now();
-        assert_eq!(opening::verify(&layout, &root, &claims, &wire), Ok(()), "log_n = {log_n}");
+        assert_eq!(
+            opening::verify(&layout, &root, &claims, &wire),
+            Ok(()),
+            "log_n = {log_n}"
+        );
         let verified = start.elapsed();
         let mut bad = claims.clone();
         bad[1].value += F192::ONE;
-        assert!(opening::verify(&layout, &root, &bad, &wire).is_err(), "log_n = {log_n}: a wrong value");
+        assert!(
+            opening::verify(&layout, &root, &bad, &wire).is_err(),
+            "log_n = {log_n}: a wrong value"
+        );
         let head = line(
             "new",
             [vars, log_chunk, log_n]
