@@ -12,6 +12,12 @@ import QuotientZk.Deployed.Skeleton
 import QuotientZk.Deployed.Bound
 import QuotientZk.Deployed.Main
 import QuotientZk.Check
+import QuotientZk.JointCore
+import QuotientZk.JointReduction
+import QuotientZk.JointGadget
+import QuotientZk.Joint
+import QuotientZk.JointDeployed
+import QuotientZk.JointAxioms
 import QuotientZk.RpmTape
 import QuotientZk.RpmProver
 import QuotientZk.RpmMain

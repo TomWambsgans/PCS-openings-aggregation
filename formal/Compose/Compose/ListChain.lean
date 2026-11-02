@@ -126,6 +126,22 @@ structure RootProof (F : Type) where
   r₁ : Bytes32
   r₂ : Bytes32
   v : (Fin 4 → F) × F
+  /-- The circuit's commitment the chain's label holds: the setup's, not the prover's (the
+  experiments that compute it set it, `Deployed.lean`'s `withSetup`). -/
+  ir : Bytes32
+
+/-- **The chain's label** (`quotient::protocol::label`): the tag, the circuit's commitment, the
+statement's 64 bytes. -/
+def labelOf (ir : Bytes32) (sb : Vector UInt8 64) : List UInt8 := tag ++ ir.toList ++ sb.toList
+
+theorem length_labelOf (ir : Bytes32) (sb : Vector UInt8 64) : (labelOf ir sb).length = 112 := by
+  simp [labelOf, length_tag]
+
+theorem labelOf_injective {ir ir' : Bytes32} {sb sb' : Vector UInt8 64}
+    (h : labelOf ir sb = labelOf ir' sb') : (ir, sb) = (ir', sb') := by
+  simp only [labelOf, List.append_assoc, List.append_cancel_left_eq] at h
+  obtain ⟨h1, h2⟩ := List.append_inj h (by simp)
+  rw [Vector.toList_inj.mp h1, Vector.toList_inj.mp h2]
 
 /-- The chain's five challenges. -/
 structure Chals (F : Type) where
@@ -141,7 +157,7 @@ variable {P : Params F} {B : P.Bounds} (W : Wire P B)
 first root after the seed, two more states, the second root, the values. -/
 def chainWith {m : Type → Type} [Monad m] (H : List UInt8 → m Bytes32) (π : RootProof F) :
     m (Chals F) := do
-  let st₀ ← H (W.label π.stmt)
+  let st₀ ← H (labelOf π.ir π.stmt)
   let st₁ ← H (Wire.afterRoot st₀ π.r₁)
   let st₂ ← H st₁.toList
   let st₃ ← H st₂.toList
@@ -217,54 +233,54 @@ def Coll (H : Hist) (x : List UInt8) (T : Table) : Prop :=
   (∃ y ∈ H, T y = T x) ∨ ∃ y ∈ insert x H, Refers y (T x)
 
 /-- `x` is the input after the first root `r₁`, for the statement `sb`. -/
-def ParseFirst (H : Hist) (x : List UInt8) (T : Table) (sb : Vector UInt8 64) (r₁ : Bytes32) :
+def ParseFirst (H : Hist) (x : List UInt8) (T : Table) (sb : Bytes32 × Vector UInt8 64) (r₁ : Bytes32) :
     Prop :=
-  ∃ st₀, Has H T (W.label sb) st₀ ∧ x = Wire.afterRoot st₀ r₁ ∧ Set.InjOn T ↑H
+  ∃ st₀, Has H T (labelOf sb.1 sb.2) st₀ ∧ x = Wire.afterRoot st₀ r₁ ∧ Set.InjOn T ↑H
 
 open Classical in
 /-- The triple the input after the first root leads to, its states not asked before, makes the
 first round's state go from lost to won for some candidate of the first root. -/
-def FreshFirst (H : Hist) (x : List UInt8) (T : Table) (sb : Vector UInt8 64) (r₁ : Bytes32) :
+def FreshFirst (H : Hist) (x : List UInt8) (T : Table) (sb : Bytes32 × Vector UInt8 64) (r₁ : Bytes32) :
     Prop :=
   (T x).toList ∉ H ∧ (T (T x).toList).toList ∉ H ∧ (T (T x).toList).toList ≠ (T x).toList ∧
-    ∃ g ∈ C₁.cands H T r₁, ¬ State₁ (W.decode sb) g ∧
-      State₂ (W.decode sb) g (W.chal (T x), W.chal (T (T x).toList),
+    ∃ g ∈ C₁.cands H T r₁, ¬ State₁ (W.decode sb.2) g ∧
+      State₂ (W.decode sb.2) g (W.chal (T x), W.chal (T (T x).toList),
         W.chal (T (T (T x).toList).toList))
 
 /-- `x` is the input after the second root: the chain before it was asked, without collision,
 and gave the first challenges `c`. -/
-def ParseSecond (H : Hist) (x : List UInt8) (T : Table) (sb : Vector UInt8 64) (r₁ r₂ : Bytes32)
+def ParseSecond (H : Hist) (x : List UInt8) (T : Table) (sb : Bytes32 × Vector UInt8 64) (r₁ r₂ : Bytes32)
     (c : F × F × F) : Prop :=
-  ∃ st₀ st₁ st₂ st₃, Has H T (W.label sb) st₀ ∧ Has H T (Wire.afterRoot st₀ r₁) st₁ ∧
+  ∃ st₀ st₁ st₂ st₃, Has H T (labelOf sb.1 sb.2) st₀ ∧ Has H T (Wire.afterRoot st₀ r₁) st₁ ∧
     Has H T st₁.toList st₂ ∧ Has H T st₂.toList st₃ ∧ x = Wire.afterRoot st₃ r₂ ∧
     c = (W.chal st₁, W.chal st₂, W.chal st₃) ∧ Set.InjOn T ↑H
 
 /-- `x` is the input after the five values: the chain before it was asked, without collision,
 and gave the challenges `c` and `t`. -/
-def ParseThird (H : Hist) (x : List UInt8) (T : Table) (sb : Vector UInt8 64) (r₁ r₂ : Bytes32)
+def ParseThird (H : Hist) (x : List UInt8) (T : Table) (sb : Bytes32 × Vector UInt8 64) (r₁ r₂ : Bytes32)
     (c : F × F × F) (t : F) (v : (Fin 4 → F) × F) : Prop :=
-  ∃ st₀ st₁ st₂ st₃ st₄, Has H T (W.label sb) st₀ ∧ Has H T (Wire.afterRoot st₀ r₁) st₁ ∧
+  ∃ st₀ st₁ st₂ st₃ st₄, Has H T (labelOf sb.1 sb.2) st₀ ∧ Has H T (Wire.afterRoot st₀ r₁) st₁ ∧
     Has H T st₁.toList st₂ ∧ Has H T st₂.toList st₃ ∧ Has H T (Wire.afterRoot st₃ r₂) st₄ ∧
     x = W.afterValues st₄ v ∧ c = (W.chal st₁, W.chal st₂, W.chal st₃) ∧ t = W.chal st₄ ∧
     Set.InjOn T ↑H
 
 /-- The first round, for some candidate. -/
 def FirstBad (H : Hist) (x : List UInt8) (T : Table) : Prop :=
-  ∃ sb r₁, ParseFirst W H x T sb r₁ ∧ FreshFirst W C₁ H x T sb r₁
+  ∃ sb r₁, ParseFirst H x T sb r₁ ∧ FreshFirst W C₁ H x T sb r₁
 
 open Classical in
 /-- The second round, for some pair of candidates. -/
 def SecondBad (H : Hist) (x : List UInt8) (T : Table) : Prop :=
   ∃ sb r₁ r₂ c, ParseSecond W H x T sb r₁ r₂ c ∧
     ∃ g ∈ C₁.cands H T r₁, ∃ R ∈ C₂.cands H T r₂,
-      ¬ State₃ (W.decode sb) g c R ∧ State₄ (W.decode sb) g c R (W.chal (T x))
+      ¬ State₃ (W.decode sb.2) g c R ∧ State₄ (W.decode sb.2) g c R (W.chal (T x))
 
 open Classical in
 /-- The third round, for some pair of candidates. -/
 def ThirdBad (H : Hist) (x : List UInt8) (T : Table) : Prop :=
   ∃ sb r₁ r₂ c t v, ParseThird W H x T sb r₁ r₂ c t v ∧
     ∃ g ∈ C₁.cands H T r₁, ∃ R ∈ C₂.cands H T r₂,
-      ¬ State₄ (W.decode sb) g c R t ∧ State₆ (W.decode sb) g c R t v (W.chal (T x))
+      ¬ State₄ (W.decode sb.2) g c R t ∧ State₆ (W.decode sb.2) g c R t v (W.chal (T x))
 
 /-- **A bad fresh query.** -/
 def listBad (H : Hist) (x : List UInt8) (T : Table) : Prop :=
@@ -277,7 +293,7 @@ section Parse
 variable {W}
 
 theorem parseFirst_congr {H : Hist} {T T' : Table} (h : ∀ d ∈ H, T d = T' d) (x sb r₁) :
-    ParseFirst W H x T sb r₁ ↔ ParseFirst W H x T' sb r₁ := by
+    ParseFirst H x T sb r₁ ↔ ParseFirst H x T' sb r₁ := by
   simp only [ParseFirst, has_congr h, injOn_congr h]
 
 theorem parseSecond_congr {H : Hist} {T T' : Table} (h : ∀ d ∈ H, T d = T' d) (x sb r₁ r₂ c) :
@@ -290,11 +306,11 @@ theorem parseThird_congr {H : Hist} {T T' : Table} (h : ∀ d ∈ H, T d = T' d)
   simp only [ParseThird, has_congr h, injOn_congr h]
 
 theorem parseFirst_unique {H : Hist} {x : List UInt8} {T : Table} {sb sb' r₁ r₁'}
-    (h : ParseFirst W H x T sb r₁) (h' : ParseFirst W H x T sb' r₁') : sb = sb' ∧ r₁ = r₁' := by
+    (h : ParseFirst H x T sb r₁) (h' : ParseFirst H x T sb' r₁') : sb = sb' ∧ r₁ = r₁' := by
   obtain ⟨st₀, h0, hx, hi⟩ := h
   obtain ⟨st₀', h0', hx', -⟩ := h'
   obtain ⟨rfl, rfl⟩ := Wire.afterRoot_injective (hx.symm.trans hx')
-  exact ⟨W.label_injective (has_inj hi h0 h0'), rfl⟩
+  exact ⟨labelOf_injective (has_inj hi h0 h0'), rfl⟩
 
 theorem parseSecond_unique {H : Hist} {x : List UInt8} {T : Table} {sb sb' r₁ r₁' r₂ r₂' c c'}
     (h : ParseSecond W H x T sb r₁ r₂ c) (h' : ParseSecond W H x T sb' r₁' r₂' c') :
@@ -307,7 +323,7 @@ theorem parseSecond_unique {H : Hist} {x : List UInt8} {T : Table} {sb sb' r₁ 
   have e1 : st₁ = st₁' := Vector.toList_inj.mp (has_inj hi h2 h2')
   subst e1
   obtain ⟨rfl, rfl⟩ := Wire.afterRoot_injective (has_inj hi h1 h1')
-  exact ⟨W.label_injective (has_inj hi h0 h0'), rfl, rfl, hc.trans hc'.symm⟩
+  exact ⟨labelOf_injective (has_inj hi h0 h0'), rfl, rfl, hc.trans hc'.symm⟩
 
 theorem parseThird_unique {H : Hist} {x : List UInt8} {T : Table}
     {sb sb' r₁ r₁' r₂ r₂' c c' t t' v v'}
@@ -322,20 +338,20 @@ theorem parseThird_unique {H : Hist} {x : List UInt8} {T : Table}
   have e1 : st₁ = st₁' := Vector.toList_inj.mp (has_inj hi h2 h2')
   subst e1
   obtain ⟨rfl, rfl⟩ := Wire.afterRoot_injective (has_inj hi h1 h1')
-  exact ⟨W.label_injective (has_inj hi h0 h0'), rfl, rfl, hc.trans hc'.symm, ht.trans ht'.symm,
+  exact ⟨labelOf_injective (has_inj hi h0 h0'), rfl, rfl, hc.trans hc'.symm, ht.trans ht'.symm,
     rfl⟩
 
 /-- An input after a root is not both the first and the second. -/
 theorem parseFirst_parseSecond {H : Hist} {x : List UInt8} {T : Table} {sb sb' r₁ r₁' r₂ c}
-    (h : ParseFirst W H x T sb r₁) (h' : ParseSecond W H x T sb' r₁' r₂ c) : False := by
+    (h : ParseFirst H x T sb r₁) (h' : ParseSecond W H x T sb' r₁' r₂ c) : False := by
   obtain ⟨st₀, h0, hx, hi⟩ := h
   obtain ⟨-, -, st₂, st₃, -, -, -, h3, hx', -, -⟩ := h'
   obtain ⟨rfl, -⟩ := Wire.afterRoot_injective (hx.symm.trans hx')
   have := congrArg List.length (has_inj hi h0 h3)
-  simp [length_label] at this
+  simp [length_labelOf] at this
 
 theorem parseFirst_parseThird {H : Hist} {x : List UInt8} {T : Table} {sb sb' r₁ r₁' r₂ c t v}
-    (h : ParseFirst W H x T sb r₁) (h' : ParseThird W H x T sb' r₁' r₂ c t v) : False := by
+    (h : ParseFirst H x T sb r₁) (h' : ParseThird W H x T sb' r₁' r₂ c t v) : False := by
   obtain ⟨_, _, hx, _⟩ := h
   obtain ⟨_, _, _, _, _, _, _, _, _, _, hx', _⟩ := h'
   have := congrArg List.length (hx.symm.trans hx')
@@ -475,7 +491,7 @@ theorem prob_round (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (t :
   let g₀ : ↥S → Bytes32 := fun _ => Vector.replicate 32 0
   have hcg : ∀ g, ∀ d ∈ histOf c, tableOf c g d = tableOf c g₀ d := fun g _ hd =>
     tableOf_eq_of_mem c hd g g₀
-  by_cases h1 : ∃ sb r₁, ParseFirst W (histOf c) t.1 (tableOf c g₀) sb r₁
+  by_cases h1 : ∃ sb r₁, ParseFirst (histOf c) t.1 (tableOf c g₀) sb r₁
   · obtain ⟨sb, r₁, hp⟩ := h1
     have hlen : t.1.length = 96 := by
       obtain ⟨st₀, -, hx, -⟩ := hp
@@ -485,8 +501,8 @@ theorem prob_round (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (t :
     refine (prEvent_mono _ _ (fun g => ∃ gm ∈ l₁, (tableOf c g t.1).toList ∉ histOf c ∧
       (tableOf c g (tableOf c g t.1).toList).toList ∉ histOf c ∧
       (tableOf c g (tableOf c g t.1).toList).toList ≠ (tableOf c g t.1).toList ∧
-      ¬ State₁ (W.decode sb) gm ∧
-      State₂ (W.decode sb) gm (W.chal (tableOf c g t.1),
+      ¬ State₁ (W.decode sb.2) gm ∧
+      State₂ (W.decode sb.2) gm (W.chal (tableOf c g t.1),
         W.chal (tableOf c g (tableOf c g t.1).toList),
         W.chal (tableOf c g (tableOf c g (tableOf c g t.1).toList).toList)))
       fun g h => ?_).trans ?_
@@ -502,14 +518,14 @@ theorem prob_round (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (t :
       · rw [parseThird_congr (hcg g)] at hp'
         exact (parseFirst_parseThird hp hp').elim
     · refine (prEvent_exists_mem_le _ _ (roundError P B : ℝ≥0∞) l₁ fun gm _ =>
-        prob_freshFirst_one W hS₀ c t ht hlen sb gm).trans ?_
+        prob_freshFirst_one W hS₀ c t ht hlen sb.2 gm).trans ?_
       gcongr
       exact_mod_cast (C₁.length_le _ _ _).trans (le_listFactor_left _ _)
   by_cases h2 : ∃ sb r₁ r₂ c', ParseSecond W (histOf c) t.1 (tableOf c g₀) sb r₁ r₂ c'
   · obtain ⟨sb, r₁, r₂, c', hp⟩ := h2
     refine (prEvent_mono _ _ (fun g => ∃ gm ∈ C₁.cands (histOf c) (tableOf c g) r₁,
-      ∃ R ∈ C₂.cands (histOf c) (tableOf c g) r₂, ¬ State₃ (W.decode sb) gm c' R ∧
-        State₄ (W.decode sb) gm c' R (W.chal (g t))) fun g h => ?_).trans ?_
+      ∃ R ∈ C₂.cands (histOf c) (tableOf c g) r₂, ¬ State₃ (W.decode sb.2) gm c' R ∧
+        State₄ (W.decode sb.2) gm c' R (W.chal (g t))) fun g h => ?_).trans ?_
     · rcases h with ⟨sb', r₁', hp', -⟩ | ⟨sb', r₁', r₂', c'', hp', hf⟩ |
         ⟨sb', r₁', r₂', c'', tt, v, hp', -⟩
       · rw [parseFirst_congr (hcg g)] at hp'
@@ -520,13 +536,13 @@ theorem prob_round (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (t :
       · rw [parseThird_congr (hcg g)] at hp'
         exact (parseSecond_parseThird hp hp').elim
     · exact prob_pairs C₁ C₂ c _ fun gm R =>
-        (prEvent_cell t (fun u => ¬ State₃ (W.decode sb) gm c' R ∧
-          State₄ (W.decode sb) gm c' R (W.chal u))).trans (prob_second_chain W _ gm c' R)
+        (prEvent_cell t (fun u => ¬ State₃ (W.decode sb.2) gm c' R ∧
+          State₄ (W.decode sb.2) gm c' R (W.chal u))).trans (prob_second_chain W _ gm c' R)
   by_cases h3 : ∃ sb r₁ r₂ c' tt v, ParseThird W (histOf c) t.1 (tableOf c g₀) sb r₁ r₂ c' tt v
   · obtain ⟨sb, r₁, r₂, c', tt, v, hp⟩ := h3
     refine (prEvent_mono _ _ (fun g => ∃ gm ∈ C₁.cands (histOf c) (tableOf c g) r₁,
-      ∃ R ∈ C₂.cands (histOf c) (tableOf c g) r₂, ¬ State₄ (W.decode sb) gm c' R tt ∧
-        State₆ (W.decode sb) gm c' R tt v (W.chal (g t))) fun g h => ?_).trans ?_
+      ∃ R ∈ C₂.cands (histOf c) (tableOf c g) r₂, ¬ State₄ (W.decode sb.2) gm c' R tt ∧
+        State₆ (W.decode sb.2) gm c' R tt v (W.chal (g t))) fun g h => ?_).trans ?_
     · rcases h with ⟨sb', r₁', hp', -⟩ | ⟨sb', r₁', r₂', c'', hp', -⟩ |
         ⟨sb', r₁', r₂', c'', tt', v', hp', hf⟩
       · rw [parseFirst_congr (hcg g)] at hp'
@@ -537,8 +553,8 @@ theorem prob_round (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (t :
         obtain ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩ := parseThird_unique hp' hp
         rwa [tableOf_fresh c ht g] at hf
     · exact prob_pairs C₁ C₂ c _ fun gm R =>
-        (prEvent_cell t (fun u => ¬ State₄ (W.decode sb) gm c' R tt ∧
-          State₆ (W.decode sb) gm c' R tt v (W.chal u))).trans
+        (prEvent_cell t (fun u => ¬ State₄ (W.decode sb.2) gm c' R tt ∧
+          State₆ (W.decode sb.2) gm c' R tt v (W.chal u))).trans
           (prob_third_chain W _ gm c' R tt v)
   · rw [prEvent_eq_zero_of_forall_not _ _ fun g h => ?_]
     · simp
@@ -679,7 +695,7 @@ and the chain's six inputs between the adversary's queries and the openings'. -/
 theorem rootRun_run (A : OracleComp HashSpec (RootProof F × O))
     (post : RootProof F × O → Chals F → OracleComp HashSpec β) (T : Table) :
     let p := evalWithAnswerFn (QueryImpl.ofFn T) A
-    let x₀ := W.label p.1.stmt
+    let x₀ := labelOf p.1.ir p.1.stmt
     let x₁ := Wire.afterRoot (T x₀) p.1.r₁
     let x₂ := (T x₁).toList
     let x₃ := (T x₂).toList
@@ -719,7 +735,7 @@ two roots, read off the log, satisfies the verifier's claims at the chain's chal
 witness candidate's cells fail the relation, then some fresh input of the log is bad. -/
 theorem trace_core (L : List (List UInt8)) (T : Table) (π : RootProof F) (g : B.Msg₁)
     (R : B.Msg₂) :
-    let x₀ := W.label π.stmt
+    let x₀ := labelOf π.ir π.stmt
     let x₁ := Wire.afterRoot (T x₀) π.r₁
     let x₂ := (T x₁).toList
     let x₃ := (T x₂).toList
@@ -808,17 +824,17 @@ theorem trace_core (L : List (List UInt8)) (T : Table) (π : RootProof F) (g : B
     | .third .. => W.chal (T x₅)
   rcases bad_of_accepts π' tbl hacc hsat with hb | hb | hb
   · obtain ⟨h1, h2⟩ := hb
-    refine nb x₁ m1 (Or.inr (Or.inl ⟨π.stmt, π.r₁, ⟨T x₀, ⟨b01, rfl⟩, rfl, injB x₁⟩,
+    refine nb x₁ m1 (Or.inr (Or.inl ⟨(π.ir, π.stmt), π.r₁, ⟨T x₀, ⟨b01, rfl⟩, rfl, injB x₁⟩,
       ⟨fun h => not_mem_before_of_mem_before b12 h, fun h => ?_, fun h => ?_, g, g1, h1, h2⟩⟩))
     · exact not_mem_before_of_mem_before (s23 b12) h
     · have e : x₃ = x₂ := h
       rw [e] at b23
       exact not_mem_before_self L x₂ b23
   · obtain ⟨h1, h2⟩ := hb
-    exact nb x₄ m4 (Or.inr (Or.inr (Or.inl ⟨π.stmt, π.r₁, π.r₂, _, ⟨T x₀, T x₁, T x₂, T x₃,
+    exact nb x₄ m4 (Or.inr (Or.inr (Or.inl ⟨(π.ir, π.stmt), π.r₁, π.r₂, _, ⟨T x₀, T x₁, T x₂, T x₃,
       ⟨c04, rfl⟩, ⟨c14, rfl⟩, ⟨c24, rfl⟩, ⟨b34, rfl⟩, rfl, rfl, injB x₄⟩, g, g4, R, R4, h1, h2⟩)))
   · obtain ⟨h1, h2⟩ := hb
-    exact nb x₅ m5 (Or.inr (Or.inr (Or.inr ⟨π.stmt, π.r₁, π.r₂, _, _, π.v,
+    exact nb x₅ m5 (Or.inr (Or.inr (Or.inr ⟨(π.ir, π.stmt), π.r₁, π.r₂, _, _, π.v,
       ⟨T x₀, T x₁, T x₂, T x₃, T x₄, ⟨s45 c04, rfl⟩, ⟨s45 c14, rfl⟩, ⟨s45 c24, rfl⟩,
         ⟨s45 b34, rfl⟩, ⟨b45, rfl⟩, rfl, rfl, rfl, injB x₅⟩, g, g5, R, R5, h1, h2⟩)))
 
@@ -833,7 +849,7 @@ theorem trace_listBad (A : OracleComp HashSpec (RootProof F × O))
   obtain ⟨hL, heval⟩ := rootRun_run W A post T
   set p := evalWithAnswerFn (QueryImpl.ofFn T) A
   set π := p.1
-  set x₀ := W.label π.stmt
+  set x₀ := labelOf π.ir π.stmt
   set x₁ := Wire.afterRoot (T x₀) π.r₁
   set x₂ := (T x₁).toList
   set x₃ := (T x₂).toList
