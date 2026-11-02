@@ -2,7 +2,10 @@
 
 # A univariate PIOP for leanVM 42422001, for the EVM
 
-**Status: milestone 1 done** (spec, soundness script, verifier-only gas prototype; no prover yet). Option A:
+**Status: iteration 2 of the gas optimisation done** (§13 lists every change since milestone 1, with what the prover
+must change; the sections below are milestone 1's design, corrected where §13 says). At 1,000 signatures, the main
+line (ABI point claims × Flock (a′)) deployed: **305,808** transaction gas (EIP-7623, `c = 0`, without the base),
+against milestone 1's 417,014; calldata 7,108 B, execution 192,392 (3 contracts). Milestone 1: Option A:
 BLAKE2s by Flock's sumchecks, everything else univariate. §7 (Flock) is the Flock agent's, with details in
 `SPEC-FLOCK.md`; option B (BLAKE2s without sumcheck) is in `SPEC-B.md` and does not fit WHIR. *Measured*: revm
 runs of the contract compiled from the recorded Rust verifier (`tests/gas.rs`); *modelled*: computed here.
@@ -66,8 +69,10 @@ for it is `2^26.53` words. The other shapes (32 to 2,000 signatures) are leanVM'
   (`B_k = Σ_{S ⊇ k} X_S`). Then **`f(t) = ĉ(w_0(t), …, w_{r-1}(t))`**: the multilinear claim's point is the digits
   themselves, with no inversion (the novel basis needs `w/(1+w)`).
 - **Restriction to a coset.** For `F` of `2^m` coefficients and an aligned coset `o + V_r`, let
-  `R(z) = Σ_k c_k B_{k mod 2^r}(z) B_{k - k mod 2^r}(o)`. It has degree `< 2^r` and agrees with `F` on the coset.
-  `R(o + t)` is one claim on `F` at the *mixed point* `(w_{<r}(t) + w_{<r}(o), w_{≥r}(o))`. This is how one heap
+  `R(z) = Σ_k c_k Π_(l<r) b_(k_l)(w_l(z)) Π_(l≥r) b_(k_l)(w_l(o))`, `b_1(x) = x`, `b_0(x) = 1 + x`: the low factors
+  of `B_k` at `z`, the high ones at `o` (review M1, F6: `B_(k - k mod 2^r)(o)` would add the constant
+  `Π_(l<r)(1 + w_l(o))`). It has degree `< 2^r` and agrees with `F` on the coset, and `R(o + t)` is one claim on
+  `F` at the *mixed point* `(w_{<r}(t) + w_{<r}(o), w_{≥r}(o))` (each `w_l` is GF(2)-linear). This is how one heap
   serves every block's identity.
 - **Composition with values.** `q_flock`'s limbs are committed as values. Let `y_l` be the linearised polynomials
   `Σ_{m<r} a_{l,m} x^{2^m}` with `y_l(ω_i) = i_l` (the inverse Moore system, `domain::coordinate_functionals`). Then
@@ -81,7 +86,7 @@ for it is `2^26.53` words. The other shapes (32 to 2,000 signatures) are leanVM'
 
 | commitment | when | content | words at 1,000 signatures |
 |---|---|---|---:|
-| setup `F` | once | the bytecode's 16 tuple slots on `V_19` (slot 0 `SEP_BYTECODE`, slot 1 the pc `g^i`, slot 2 zero, then the instruction); the memory's addresses `g^i` on `V_21` | `2^23.2` |
+| setup `F` | once | the bytecode's 16 tuple slots on `V_19` (slot 0 `SEP_BYTECODE`, slot 1 the pc `g^i`, slot 2 zero, then the instruction); the memory's addresses `g^i` on `V_21` | `2^23.32` (`2^23 + 2^21`) |
 | setup `A0`, `B0` | once | Flock's BLAKE2s R1CS (as the baseline) | `2^28` each |
 | `C1` | first | `q_flock` (values, `2^26`); every table column (basis `B`), BLAKE2S's 18 limbs again as columns (`copy_j`), and one counter-inverse column `z_T` per table; memory (4 columns, `V_21`); bytecode final count (`V_19`) | `2^26.62`, stack `2^27` |
 | `C2` | after `α, β, γ` and Flock | the heap `T` (`2^23` E), `Q_tree`, one leaf quotient `Q_b` per heap block, the constraint quotient `Q_W`, each E-valued as three K-limb columns | `2^26.69`, stack `2^27` |
@@ -107,6 +112,13 @@ row (a constraint of `Q_W`). Second, `z_T · Π_j c_j = 1` on active rows (a con
 heap, which doubles the heap (`2^24`) for no fewer values.
 
 ## 4. Transcript and challenges
+
+**The public input in calldata** (review M1, F7) is four big-endian 64-bit words `(cell0.c0, cell0.c1, cell1.c0,
+cell1.c1)`, the K-limbs of memory cells 0 and 1. leanVM's statement reads its 32-byte digest as little-endian words
+(`Digest::words`), so a caller passes each of the digest's four 8-byte words byte-reversed. Accepting the digest
+unchanged would cost the contract a byte swap of the four words, about 110 gas (three mask-shift-or steps on the
+256-bit word, then the four extractions; modelled), which is more than a few gas, while the convention costs nothing.
+So the convention is kept, and documented here and in `contract.rs`.
 
 The transcript is a Keccak-256 chain (`leanvm_flock_gas::transcript::KeccakChannel`). A challenge is one Keccak-256
 of the state and the calldata bytes read since the last one. A scalar is 24 bytes, a root half 16. The seed is the
@@ -154,17 +166,29 @@ children `2i` and `2i + 1` and the root at `1` (`ω_1 = 1`). The leaves are `[2^
 | each table | its height | `Π_j D'_j / Π_j D_j` over its row's flushes | next |
 | unused | the rest, in aligned blocks | 1 | 1 block of `2^17` |
 
+The last column is the reference workload's. In general `HeapLayout::new` leaves the rest as several aligned unused
+blocks (one per set bit of the gap), each with its own identity.
+
 **Leaf identities**, each with its own quotient `Q_b`. The heap restricted to block `b` is `R_b`, read at the mixed
 point (§2):
 
-- table: `(R_b P_b + P'_b) Z_pad + (R_b + 1) Z_act ≡ 0` mod `w_r`. On active rows the leaf is the ratio; on padding
-  rows it is 1, whatever the row holds, so padding rows need no constraint. The extracted witness replaces them by
-  `padRow`.
+- table: `(R_b P_b + P'_b) Z_pad + (R_b + 1) Z_act = Q_b w_r`. On an active row `Z_act` vanishes and `Z_pad` does
+  not, so the leaf is the ratio. On a padding row `Z_pad` vanishes and `Z_act` does not, so the leaf is 1, whatever
+  the row holds. Padding rows are exempt from the bus: no constraint is placed on them, and none is needed (there is
+  no `padRow` constraint).
 - memory and bytecode: `R_b D_fin + D_init ≡ 0` mod `w_r`.
 - unused: `R_u(o_u + t) = 1`. This is degree `< 2^r`, an identity of polynomials, with no quotient.
 
 **Root.** `T(1) (β + fp(SEP_STATE, 1, 1)) = β + fp(SEP_STATE, g^(2^19 - 1), 1)`: the pushes' product equals the
-pulls', the state boundary included. `T(1)` is a claim at the digits `(1, 0, …, 0)`.
+pulls', the state boundary included. `T(1)` is a claim at the digits `(1, 0, …, 0)`. Read it as
+`T(1) · fp(init) = fp(fin)`, a product, not as a division.
+
+**Zero fingerprints need no exclusion.** Every heap identity only multiplies: a leaf is `R P = P'`, not `R = P'/P`.
+So the bus's soundness argument (Balanced, the Lean heap proof `lean-heap`) needs no event "a pull fingerprint
+vanishes", and the soundness script has no such term.
+
+**The BLAKE2S leaves read the `copy_j` columns.** So the bus's soundness for BLAKE2S needs `Q_W`'s identity
+`copy_j = ℓ_j` (§6): it ties the columns the leaves read to `q_flock`, which Flock checks. Every iteration keeps it.
 
 **One quotient per identity.** With two proof commitments, nothing drawn after `C2` can batch the identities that
 involve `C2`. A batch drawn before `C2` lets the prover trade errors between them: perturb two leaves at one point
@@ -174,7 +198,10 @@ and solve for the product.
 
 Each fingerprint is linear in the columns, except addresses `fp·o` and the products in MUL's result, DEREF's store
 and JUMP's next state, which are degree 2. So `deg Q_b ≈ (Σ_j deg D_j) n + (n - rows)`. That gives XOR, MUL, DEREF
-and JUMP `≈ 8.3 n`, SET `≈ 4.6 n`, BLAKE2S `≈ 20.2 n`, memory and bytecode `n`.
+and JUMP `≈ 8.3 n`, SET `≈ 4.15 n`, BLAKE2S `≈ 20.2 n`, memory and bytecode `n`. Measured on the real 1,000-signature
+trace (the prover, PROVER.md): XOR 8.30 n, MUL 8.25 n, SET 4.15 n, DEREF 8.48 n, JUMP 8.38 n, BLAKE2S 20.23 n. Since
+iteration 2 the capacities are sized for the fewest rows of each height (§13): XOR, MUL, DEREF, JUMP 8.5 n, SET 4.5 n,
+BLAKE2S 20.5 n.
 
 ## 6. The constraint quotient `Q_W` (`C1` only, batched by `γ`)
 
@@ -187,8 +214,8 @@ Each constraint lives on its table's domain and is lifted to `V_{r_W}` (`r_W = 2
   values (leanVM's public lines);
 - the limb copies: `copy_j - ℓ_j`, with `ℓ_j` the composition of `q_flock`'s slot `j` (§2).
 
-`Σ_i γ^i M_i W_i = Q_W w_21`, with `deg Q_W ≈ 10.2 · 2^18`, set by BLAKE2S's counters. `padRow` needs no
-constraint (§5.2).
+`Σ_i γ^i M_i W_i = Q_W w_21`, with `deg Q_W ≈ 10.2 · 2^18`, set by BLAKE2S's counters. Padding rows have no
+constraint: the leaf identity exempts them (§5.2).
 
 ## 7. BLAKE2s: Flock (the Flock agent's; details and measurements in `SPEC-FLOCK.md`)
 
@@ -242,6 +269,13 @@ With Flock (a), `C1`'s call also carries the bit-slice claim, so 6 claims in 5 c
 The alternative, route (i), sends every evaluation as its own point claim. That is about 177 values plus (a′)'s 64
 twisted points: about 5.7 KB of values and some 240 claims against (ii)'s 1.4 KB and 5 claims. It is not built.
 
+**What the contract itself checks.** The verifier is linearised: every relation it states is a claim handed to
+`PCS_OPEN`, and each identity it does check (the batching sumcheck's terminal, Flock's) is affine in the last scalar
+read before it. In the weighted mode with Flock (a), or with no BLAKE2s argument, the contract checks nothing but the
+row counts' range (§13): every identity is a claim. So with the openings mocked, a contract accepts random streams;
+that is expected, not a bug. Its verdict means something only together with the openings (the Lean transcription's
+finding 5).
+
 **Extension W: weighted claims.** A call is `root, layout, k`, then per claim its points (each a column's low
 coordinates), its terms (`column | point << 32 | twist << 48`, then the coefficient) and its value. The precompile
 evaluates the weight, as leanVM's own WHIR verifier does. No batching sumcheck. Price `c` a claim; the precompile's
@@ -252,23 +286,34 @@ work grows with the terms (197 + 42 + 2).
 Each challenge's error is a Schwartz–Zippel bound times the number of committed tables it is drawn against. That is
 `L_1` before `C2` and `L_1 L_2` after it. The setup is honestly computed, and an honest codeword's list within the
 Johnson radius is itself, so `L = 1` there. The lists are the certified level-0 lists of `lean-whir-large` (0aceeb1):
-4,473 at a `2^27` stack, so `L_1 L_2 = 2^24.3`. At 1,000 signatures:
+4,473 at a `2^27` stack, so `L_1 L_2 = 2^24.3`. Iteration 2 (§13), at 1,000 signatures, as the code states it (review
+M1's F8: committed capacities, the unused blocks, degree 4 a tuple, `ρ` and `λ` apart):
 
 | round | error | bits alone | after the union |
 |---|---|---:|---:|
-| bus `(α, β)`: if the push and pull multisets differ, `Π(β + fp)` differs, total degree `≤ 5N`, `N = 2^23.02` tuples | `5N/|E|` | 166.7 | 154.5 |
-| bus: no pull fingerprint vanishes (a zero one would free its leaf) | `N/|E|` | 169.0 | 156.9 |
-| `γ`: `C1`-only constraints (29) batched | `28/|E|` | 187.1 | 175.0 |
-| Flock (zerocheck, lincheck, matrices, ring map) | `≈ 2^8/|E|` | 183.8 | 171.7 |
-| `t`: every identity (tree `2^24`, leaves, `Q_W`), `Σ deg ≈ 2^25.3` | `Σ deg/|E|` | 166.7 | **142.4** |
-| `ρ` (relations into one claim) and `λ` and the batching sumcheck's 27 rounds | `≈ 2^7/|E|` | 185 | 160 |
-| **all rounds** | | | **142.4** |
+| bus `(α, β)`: if the push and pull multisets differ, `Π(β + fp)` differs: one Schwartz–Zippel over `E^5`, degree 4 a factor, every table full (the counts are the prover's): `N = 2^23.38` tuples (`2^23.02` at the measured counts) | `4N/|E|` | 166.6 | 154.5 |
+| `γ`: `C1`-only constraints (29) batched | `28/|E|` | 187.2 | 175.1 |
+| Flock before `C2`: skip 3, zerocheck, lincheck, the ring map in tower order (`6/|E|`) | `≈ 2^7/|E|` | 185.0 | 172.9 |
+| `t`: every identity at its committed capacity (tree `2^24`, leaves times `Z_act`, unused blocks, `Q_W`), `Σ deg = 2^25.42` | `Σ deg/|E|` | 166.6 | **142.3** |
+| `ρ`: `C1`'s relations combined | `81/|E|` | 185.7 | 161.4 |
+| `λ` (4 claims) and the batching sumcheck's 27 rounds, Flock's matrices' 9 among them | `57/|E|` | 186.2 | 161.9 |
+| **the PIOP, all rounds** | | | **142.3** |
 
-With the code's eta-search lists (216, which omit a row-union factor) the result is 151 bits. Under leanerVM's
-generic cap `L ≤ 2^18` it is 130.7. A third proof commitment would leave 130.3 with the certified lists.
+With the code's eta-search lists (216, which omit a row-union factor) the result is 151.1 bits; under leanerVM's
+generic cap `L ≤ 2^18`, 130.6. At 1,290 signatures: 141.9. Shapes whose proof stacks are below `2^24` words (32
+signatures: `C1` is `2^22`) have no certified level-0 list, so the gas reports over the shapes leave them out (review
+M1, F3).
 
-The table does not count WHIR's own soundness at each opening (leanVM's parameters), Fiat–Shamir (Keccak-256 as a
-random oracle), or Flock's fixed zerocheck coordinates (leanVM's).
+**The PCS (review M1, F3).** WHIR is leanVM's, unchanged, at about 128.97 certified bits an opening, and the main
+line makes 5 openings (`C1`, `C2`, the setup, `A0`, `B0`). A plain union gives 126.6 bits. In the query-bounded
+random-permutation model of the end theorems, the openings' Fiat–Shamir transcripts are domain-separated (each
+seeded by its own layout word and claims) and share the adversary's `Q` queries, so their total is about
+`(Q + 5)·ε` rather than `5·Q·ε`: about 128.97 bits for `Q ≫ 5`. End to end, the system is the minimum of the PIOP's
+142.3 and the PCS's figure: 126.6 bits by a plain union, about 129 in that model. Cutting openings is not free: `A0`
+and `B0` are `2^28` words each (WHIR's maximum), and the setup's `F` cannot join a proof commitment without losing its
+`L = 1`.
+
+Not counted: Fiat–Shamir (Keccak-256 as a random oracle) and Flock's fixed zerocheck coordinates (leanVM's).
 
 ## 10. Gas (measured on revm; transaction gas computed from the calldata)
 
@@ -340,7 +385,8 @@ At 1,000 signatures, against leanVM's 2.12 s for the whole proof on h1 (measured
 - **`C2`.** WHIR's commit of `2^27` words, as `C1`.
 - **The openings.** One per commitment. The batching sumcheck's prover is linear in the stacks (`2^27`).
 
-**Estimate.** About 2–3× leanVM's time (5–7 s at 1,000 signatures, 16 cores), and about 2× its memory: two
+**Measured** (the prover, branch `leanvm-univariate-prover`, PROVER.md): about 8× leanVM's time at 1,000 signatures
+(18 s against 2.1 s), unoptimized. **The milestone-1 estimate was** about 2–3× leanVM's time, and about 2× its memory: two
 committed stacks of `2^27` words at rate 1/2, plus the quotients' cosets, which can be built in chunks. leanVM itself
 uses about 12 GB at 1,000 signatures.
 
@@ -371,7 +417,8 @@ uses about 12 GB at 1,000 signatures.
 4. **Faithfulness deltas** (the statement is the same; to prove in milestone 4):
    - `CountsNonzero` by inverse columns `z_T` instead of leanVM's count product;
    - BLAKE2S's limbs committed twice, with `copy = ℓ(q_flock)` in `Q_W`;
-   - padding rows unconstrained (their leaves are 1, `padRow` substituted by the extractor);
+   - padding rows unconstrained (the leaf identity forces their leaves to 1; no `padRow` constraint): the extracted
+     witness is `C1` as committed, with BLAKE2S's limbs read from `q_flock` (review M1, F6);
    - the bus as a committed heap instead of a GKR;
    - one shape per contract.
 
@@ -392,3 +439,200 @@ uses about 12 GB at 1,000 signatures.
    - Each measuring build jumps over failed checks: one `JUMPDEST` a check and a call, subtracted.
    - The contract equals the Rust verifier word for word, straight and deployed (`contract_is_the_rust_verifier`,
      `deployable_is_the_rust_verifier`).
+
+## 13. Changes since milestone 1 (iteration 2, branch `leanvm-univariate-iter2`)
+
+Each entry says what changed, why, and what the prover must change (none if the proof is unchanged).
+
+1. **Text fixes from the Lean heap proof** (`lean-heap`; no change to the proof or the code):
+   - §5.2 and §6: padding rows are exempt in the leaf identity `(R P + P') Z_pad + (R + 1) Z_act = Q w_r` (the code
+     since 56ea040); there is no `padRow` constraint.
+   - §5: the root is `T(1) · fp(init) = fp(fin)`, a product; zero fingerprints need no exclusion, since every heap
+     identity only multiplies.
+   - §5.2: the leaf table is the reference workload's; `HeapLayout::new` can leave several unused blocks.
+   - §9 and `review/leanvm_univariate_params.py`: the bus error is `4N/|E|` (one Schwartz–Zippel over `E^5`, degree
+     4 a factor), `N = 8,501,434 ≈ 2^23.02` at the reference workload: `2^-166.98` alone, `2^-154.9` over `C1`'s list
+     4,473. The "no pull fingerprint vanishes" term is gone.
+   - §5.2: the BLAKE2S leaves read the `copy_j` columns, so the bus's soundness for BLAKE2S needs `Q_W`'s
+     `copy_j = ℓ_j`. Every iteration keeps that constraint.
+
+   Prover: nothing.
+
+2. **Lever 1a: the ring map in tower order** (`leanvm_flock_gas::ring_tower`, `Slices::Tower`, the main line's
+   `FLOCK_MAIN`). The map's six stages are applied shift 1 first, 32 last (leanVM: 32 first). The outermost stage is
+   then `GF(2^32)`-linear, the next `GF(2^16)`-linear, and so on, so the target `Σ_i x^i Φ(s_i)` is computed through
+   `K`'s subfields: 64 sums of slices (the coordinates of `x^i` in a tower basis, 1,938 slice terms), then six levels
+   with `6 · 64` squarings and `3 · 63` products, against `64 · 63` squarings. On the main line the ring-switch term
+   is one term of `C1`'s relations ([`RING_TWIST`]), whose weight at the batch's point is computed from the inside
+   out (the 64 twisted eq products, then 63 products and the chains `f_j^(2^k)`; no coefficients `d_k`). Each eq
+   factor is `(1 + r_k) + p_k`, with `1 + r_k` shared. The map's error is at most `6/|E|` (SPEC-FLOCK's leanVM order:
+   `2^31/|E|` by Schwartz–Zippel): a node of the tower is `(A + θB) + f_j(A^q + θB^q)`, which vanishes for at most one
+   `f_j` unless both children do.
+   Measured at 1,000 signatures, main line: straight 270,221 → 203,829; deployed 297,094 → 216,116 (4 contracts);
+   tx (EIP-7623, `c = 0`) 417,014 → 336,036. Target 70,521 → 26,832; twisted weight ~101,000 → 81,850. Ext. W × (a′):
+   139,640 → 101,820 straight.
+   Prover: the ring map's stages in the order shift 1, 2, 4, 8, 16, 32 (the same six challenges, drawn as before):
+   `Φ(a)` applies `a ← a + f_j a^(2^(2^j))` for `j = 0..5`, and the weight is `Φ(eq(p, u))` with that `Φ`.
+
+3. **Lever 1b: the tower's leaves as an `XOR` network** (Paar's greedy common subexpressions, `ring_tower::Tower`):
+   1,938 slice terms become 767 `XOR`s (251 shared). Measured, main line straight: 203,829 → 196,524 (target
+   26,832 → 19,542). Prover: nothing.
+
+4. **Lever 1c: the batch's other weights share their work** (`verifier::weight_at`): a column's limbs share its row
+   (`Σ_limb basis · selector` once per column), terms on one row add `coefficient · part` before the row multiplies
+   them, and `q_flock`'s 18 slots share the eq of their 18 instance coordinates (only their 8 slot bits' factors
+   differ). Measured, main line straight: 196,524 → 185,541 (the batch's weights 33,165 → 22,660). Prover: nothing.
+
+5. **Lever 4a: Flock's matrices' reduction runs in the batching sumcheck** (`flock_min::verify_deferred`,
+   `Pending`, `verifier::batch`). On the main line its sum `Σ_(x, y) G(x, y) L̂(x) ŝ(y)` (the skip's `k` row bits and
+   the column's 6 packing bits, degree 2 a variable) joins the batch as the next power of `λ`, zero-extended by
+   `eq(·, 0)` on the batch's other variables, so its `k + 6 = 9` rounds are the batch's first 9 and cost no scalars.
+   After the stacks' three values the prover sends `a`, `b` (the claims on `A0`, `B0` at `(ρ, row_low, chi_in, σ,
+   chi_in')`, `(ρ, σ)` the batch's first 9 coordinates), and the batch's terminal adds `λ^3 (a + α b) L̂(ρ) ŝ(σ)
+   Π_(j≥9)(1 + r_j)`. Its rounds' challenges are drawn after `C2` now: they are union-bounded over `L1 L2`.
+   Measured, main line: calldata 7,516 → 7,084 B (−18 scalars); straight 185,541 → 184,417; deployed 199,342 →
+   197,610; tx (EIP-7623, `c = 0`, deployed) 319,262 → 310,642; EIP-7976 481,024 → 453,376.
+   Prover: the matrices' reduction no longer has its own 9 rounds and its `a`, `b` after the slices. After the slices
+   the transcript draws the ring map at once; at the end, the batching sumcheck's round polynomials are the stacks'
+   batch plus `λ^3` times the matrices' product sum (its tables zero-extended by `δ_0` on variables 9..27), and `a`,
+   `b` follow the three stack values. `flock_min::tests::the_pending_matrices_reduction_merges_into_a_longer_sumcheck`
+   is an honest prover of this merge.
+
+6. **F1 (review M1): the row counts are announced.** The contract is built for the heights (one contract per shape
+   class: heights, `log_memory`, `log_bytecode`), not for the row counts. The stream starts with the six tables'
+   row counts, 32-bit big-endian integers (24 bytes, `Channel::next_integer`), before `C1`'s root; the first
+   challenge's hash absorbs them with the root. The contract requires each count `c ≤ 2^r` (`c >> (r+1) = 0`, and
+   `c`'s low `r` bits zero if bit `r` is set) and computes `Z_act(t) = Π_(b ≤ r) (1 + c_b d_b)`, `d` the digits of
+   `t + ω_c` (`domain::prefix_vanishing_from_bits`). `Z_pad` is no longer computed:
+   - the leaf identity is checked times `Z_act(t)`: `R (P w_r + Z_act²) + Q w_r Z_act = P' w_r + Z_act²` (since
+     `Z_pad Z_act = w_r`), a polynomial identity of degree `deg + 2^r`;
+   - the counters' constraint `z_T Π_j c_j = 1` holds on **every** row, padding rows included (they are free, so the
+     prover sets their counters nonzero).
+   Each leaf quotient is sized for its height's fewest rows, `2^(r-1) + 1`; with fewer rows an honest quotient does
+   not fit (a smaller shape class), and soundness does not depend on it. Measured, main line: calldata 7,084 →
+   7,108 B; straight 184,417 → 195,246 (`Z_act` from the bits 9,371, the bits and the range 3,396); deployed
+   197,610 → 209,072; tx (EIP-7623, `c = 0`, deployed) 310,642 → 322,488.
+   Prover: write the six counts (`KeccakWriter::send_integer(rows, 4)`, table order XOR, MUL, SET, DEREF, JUMP,
+   BLAKE2S) before `C1`'s root; set padding rows' counter columns nonzero (e.g. 1) and `z_T = (Π_j c_j)^(-1)` on
+   every row; drop `Z_pad` from the counters' constraint in `Q_W`; size each table's leaf quotient for
+   `n - (2^(r-1) + 1)` padding rows (`Shape::least_rows`). The committed leaf quotients are unchanged.
+7. **F5 (review M1): small shapes.** Every quotient degree is `verifier::degree(plus, minus)`, saturating, so no
+   height wraps (the review's panicking shapes are recorded now, `review_honest::small_heights_are_recorded`).
+   `Shape::validate` rejects only a memory of one cell, a height of 32 or more, and with Flock a BLAKE2S height
+   below 7 (`VerifierError::InvalidShape`). Prover: nothing.
+8. **F2 (review M1) and the prover's requests: the IV, the layout words, the setup roots.**
+   - `contract::SetupRoots`: the setup roots are code constants, `REFERENCE` being the reference shape's real ones
+     (`F` 9b5a0f9b…, `A0` 93cd9a03…, `B0` c0755650…, from `prover::setup::roots`, PROVER.md). The gas reports use them
+     for every shape (the gas does not depend on them); a deployment for another shape takes its own `F`.
+   - `PCS_OPEN`'s layout word (`contract::layout_word`) is a 32-byte constant: the shape's 8 bytes (`log_memory`,
+     `log_bytecode`, the six heights), the opening's code (`0x5501` `C1`, `0x5502` `C2`, `0x5503` the setup,
+     `0x5504` `A0`, `0x5505` `B0`, bytes 22..24), the stack's `vars` (byte 24) and `placed` (bytes 25..32, the
+     words the blocks fill; `2^28` for `A0`, `B0`). Each shape's stacks have their own words, and WHIR's verifier
+     reads `vars` and `placed` from it.
+   - `verifier::layouts(shape)` is public (and `Reduced::layouts`): the stacks depend on the shape alone.
+   - The contract's IV is `keccak("leanVM-univar-iv" ‖ program IV ‖ F ‖ A0 ‖ B0 ‖ shape bytes ‖ the five layout
+     words)` (`contract::contract_iv`); the seed is `keccak(name ‖ IV ‖ public input)` as before. Every function of
+     `contract` that takes an IV takes the program's and derives this one.
+   Measured: no gas (constants), code +60 bytes.
+   Prover: seed the transcript with `contract_iv(shape, PROGRAM_IV, roots)`; call `PCS_OPEN` with the layout words.
+9. **F3, F6, F7, F8 (review M1), and the real traces' corrections** (documentation, no change to the proof):
+   - §9: iteration 2's soundness from the code's capacities (`review/leanvm_univariate_params.py`, rewritten on
+     review M1's method): the PIOP 142.3 bits at 1,000 signatures; the PCS (5 WHIR openings at 128.97 bits) 126.6
+     by a plain union, about 129 in the query-bounded random-permutation model; shapes below `2^24` left out.
+   - §2: the restriction formula's high factors only (F6); §12: the extracted witness is `C1` as committed (F6).
+   - §4 and `contract.rs`: the public input's word order documented (F7).
+   - §3: the setup is `2^23.32` words; §5.3: the measured degrees (SET 4.15 n); §11: the prover measured at 8×.
+   Prover: nothing.
+10. **Lever F1b: the active rows at fixed cosets** (`domain::active_positions`, `is_active`,
+    `active_vanishing_from_bits`). A count's bit `b < r` owns the rows `[2^r - 2^(b+1), 2^r - 2^b)` (an aligned
+    coset with a constant offset `ω_(2^(r-b) - 2)`), bit `r` (a full table) all of `V_r`; the active rows are the
+    cosets of the count's set bits, the highest first. So `Z_act(t) = Π_(b<r) (1 + c_b (w_b + K_b + 1)) ·
+    (1 + c_r (w_r + 1))`: one product and one selection a bit, the factors shared by the tables of one height, and no
+    `ω_c` or digit chain of `t + ω_c` (entry 6). A count above `2^(r-1)` still starts with the prefix
+    `[0, 2^(r-1))`; the last row `2^r - 1` is active only in a full table. The rows' order is not part of leanVM's
+    statement (the bus is a multiset; padding rows are free). Measured, main line: straight 195,246 → 188,918
+    (`Z_act` 9,371 → 4,063, the bits 3,396 → 2,433); deployed 209,072 → 202,394; tx (EIP-7623, `c = 0`, deployed)
+    322,488 → 315,810.
+    Prover: place table `T`'s `c` active rows, in order, at `active_positions(c, r)` (and BLAKE2S's `q_flock`
+    instances with them, position by position); padding rows everywhere else. The heap's leaves follow the positions
+    (`is_active`).
+11. **Lever 3a: the ring weight as hand-scheduled code** (`leanvm_flock_gas::evm::kernel`, `Scalar::ring_weight`,
+    `Node::RingWeight`; opt-in for the leanVM crates, `crates/evm` untouched). The generic compilation spends about
+    47 gas a twisted factor: the chain value `p_n^(2^k)` and `a_n` go to memory and back. The kernel keeps a block
+    of 13 twists' products on the stack, the coordinates inner, so a coordinate's chain value and `a_n` stay on top
+    for the block's squarings and factors, each factor multiplied into its product in place (`DUP`, `FIELD_MUL`,
+    `SWAP`, `POP`): about 40 gas a factor, and half the code bytes. It uses the memory below the slots (the hashing's
+    scratch, free between nodes). The parity tests check it word for word against the Rust (`ring_tower::weight_at`).
+    Measured, main line: the ring weight 81,757 → 74,286; straight 188,918 → 182,104; code 77,678 → 67,209 bytes,
+    so 3 contracts instead of 4; deployed 202,394 → 192,392; tx (EIP-7623, `c = 0`, deployed) 315,810 → 305,808.
+    (The report's `FIELD_MUL` count is the graph's, without the kernel's 3,500.) Prover: nothing.
+12. **Lever 5a (extension B on the ABI): Flock (a)'s matrices' reduction in the batching sumcheck too.** Without the
+    slices, the merged sumcheck's initial claim has an unknown part (theirs); each round multiplies it by its
+    challenge, so at the end it is `Λ` times it, `Λ` the product of the batch's 27 challenges. The batch's terminal
+    is then not checked by the contract: it becomes the bit-slice claim `Σ_i μ_i ẑ(i, p) = Σ (stack terms) + last`,
+    `μ = λ^3 (ext (a + α b) L̂(ρ) eq(σ, ·) + Λ (c_weight e + pin_weight [· = pin]))` (`Pending::combination`), which
+    joins `C1`'s call as before. If `PCS_OPEN` accepts it, the batch's terminal holds with the true slices: the same
+    check, made by the opening. Measured (ABI × (a), 1,000 signatures): calldata 6,196 → 5,716 B (−20 scalars, skip
+    4); straight 92,309 → 90,996; tx (EIP-7623, `c = 0`) 247,120 → 228,010; EIP-7976 396,544 → 365,824.
+    Prover (extension B): as entry 5, with the bit-slice claim's weights and value from the batch's end.
+13. **The Lean transcription's findings** (UniStatement, 101/101 differential vectors at b948bfc; documentation and
+    one fix):
+    - `weight_at` keys `q_flock`'s slot rows by their point (entry 4), not by the slot;
+    - `Relations::combine` merges the 0-variable `TreeQuotient(1)` term into the first longest `C2` point: harmless
+      (documented in `claims.rs`);
+    - `End::Ring`'s weight is computed only for `Slices::InContract`, a measuring variant (`flock_levers`); the
+      univariate verifier never uses it;
+    - `flock_min`'s `log_n ≥ 21` is `Shape::validate`'s BLAKE2S height of at least 7 with Flock (entry 7);
+    - §8: what the contract checks itself, and why random streams pass with mocked openings.
+    The Lean side (a998edd) is merged; `tests/lean_vectors.rs` compiles, and `review_honest::lean_honest_vectors`
+    seeds with the contract's IV. The vectors and the transcription follow milestone 1's protocol until updated to
+    this list. The merge brings the prover too (a6e2190, inside a998edd), unchanged: its `tests/prove_tiny.rs` writes
+    milestone 1's stream and fails here (`StreamExhausted`) until prover2 adapts it to this list. Prover: nothing.
+
+### Results of iteration 2 (measured on revm, 1,000 signatures, 1,023,109 cycles; tx without the 21,000 base)
+
+| configuration | calldata | execution straight / deployed (contracts) | tx EIP-7623 deployed, `c` = 0 / 2K / 5K / 20K | tx EIP-7976 deployed, `c` = 0 / 20K |
+|---|---:|---|---|---|
+| **main line, ABI × (a′)**, milestone 1 | 7,516 | 270,221 / 297,094 (4) | 417,014 / 427,014 / 442,014 / 517,014 | 481,024 / 517,014 |
+| **main line, ABI × (a′)**, iteration 2 | 7,108 | 182,104 / 192,392 (3) | **305,808** / 315,808 / 330,808 / 405,808 | 454,912 / 454,912 |
+| ABI × (a) [ext. B], milestone 1 | 6,172 | 99,948 / 105,436 (2) | 246,160 / 246,160 / 246,160 / 323,900 | 395,008 / 395,008 |
+| ABI × (a) [ext. B], iteration 2 | 5,716 | 90,996 / 95,955 (2) | 228,010 / 228,010 / 228,010 / 307,159 | 365,824 / 365,824 |
+| ext. W × (a′), milestone 1 | 6,148 | 139,640 / 154,663 (3) | 252,755 / 262,755 / 277,755 / 352,755 | 393,472 / 393,472 |
+| ext. W × (a′), iteration 2 | 6,172 | 99,874 / 114,735 (3) | 246,160 / 246,160 / 246,160 / 313,199 | 395,008 / 395,008 |
+| ext. W × (a) [ext. B], milestone 1 | 4,804 | 71,381 / 82,659 (2) | 191,620 / 191,620 / 191,620 / 259,307 | 307,456 / 307,456 |
+| ext. W × (a) [ext. B], iteration 2 | 4,828 | 75,927 / 87,211 (2) | 192,580 / 192,580 / 192,580 / 264,243 | 308,992 / 308,992 |
+| without BLAKE2s, ABI, iteration 2 | 3,508 | 66,206 / 70,019 (2) | 139,990 / 139,990 / 141,015 / 186,015 | 224,512 / 224,512 |
+| baseline (leanVM's GKR + Flock) | 27,068 | 334,216 / — | 1,074,620 | 1,732,352 |
+
+Straight-line (one contract, not deployable), iteration 2, EIP-7623 `c` = 0 / 2K / 5K / 20K: main line 295,520 /
+305,520 / 320,520 / 395,520; ext. B 228,010 / 228,010 / 228,010 / 302,200; ext. W × (a′) 246,160 / 246,160 / 246,160 /
+298,338; ext. W × (a) 192,580 / 192,580 / 192,580 / 252,959.
+
+**Where the main line's execution goes now** (straight, 182,104): the ring switch's weight at the batch's point 74,286
+(the kernel; 64 twisted eq products of 26 coordinates, the floor of this formulation is about 3,300 products and
+squarings); the batch's other weights 23,041; the ring switch's target 19,854; transcript 11,175; `Q_W` 9,079; the
+combination 7,930; calldata reads 6,442; Flock's matrices 6,032; bus 5,475; the row counts 6,500 (F1); `PCS_OPEN`
+3,444; heap 3,085; the rest about 5,800.
+
+**The floor.** The main line is execution-bound: `16 · B + execution` = 305,808 against the floor `40 · B` = 283,540.
+The ring switch's weight is now the binding cost: it needs the 64 conjugates of each of the 26 coordinates of Flock's
+point (1,638 squarings) and 64 products of 26 factors (1,664 products), whatever the map's coefficients, because a
+`K`-packed word's bits need all 64 Frobenius conjugates and the batch's point is random in `E`. The target fell from
+`64 · 63` squarings to `6 · 64` by the tower order (entry 2).
+
+**Measured vs modelled.** Every gas and calldata figure above is measured on revm (the measuring build's checks
+subtracted). Modelled: the public input's byte swap (about 110 gas, not built), the prover's costs, and the PCS's
+128.97 bits an opening (the coordinator's figure).
+
+**Dropped levers.**
+- Lever (e) (the lincheck as a univariate sumcheck): with the matrices' rounds already free in the batch (entry 5),
+  it would save only the lincheck's 8 rounds (16 scalars, about 6K at 16 a byte), against `Q`, `R` in `C2`, claims at
+  composed points and a new Flock prover. Not built.
+- The lincheck merged into the batch: circular (its point is the ring switch's, an input of the batch).
+- Fewer coefficients a round: the batch's weight is a sum over many points, with no common eq factor to split off.
+- A smaller skip (`k` 3 → 0–2): 2 scalars at most, against the prover's skip-3 kernels being written.
+- Another tower basis for the target's `XOR` network: 400 random bases, the best 755 `XOR`s against 767.
+- The public input in leanVM's byte order: about 110 gas; documented instead (F7).
+- A looped kernel (to reach 2 contracts): the code would still exceed 49 KB, and a loop costs about 30 gas an
+  iteration.
+- 32-bit packing of `q_flock` (32 twists instead of 64): not leanVM's witness, and `C1` would double.

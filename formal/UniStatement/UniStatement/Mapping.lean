@@ -33,14 +33,21 @@ is the map between them, as definitions:
 |---|---|---|
 | `memory k`, `k < 3` (limbs), `memory 3` (final counts) | `memCol k` (`MEM_LO, MEM_HI, MEM_TOP, MFCNT`) | basis `B`, `2^logMem` |
 | `bytecodeFinal` | `bfcntCol` (`BFCNT`) | basis `B`, `2^logBytecode` |
-| `qflock` | `flockCol` (`QFLOCK`, the Flock region) | values, `2^(8 + τ_B)` |
-| `table t i`, `i` not a `BLAKE2S` limb | `⟨opIdx t, i⟩` | basis `B`, `2^τ_t` |
+| `qflock` | `flockCol` (`QFLOCK`, the Flock region) | values; Lv42's instance `x` is `C1`'s `rowPosition x` |
+| `table t i`, `i` not a `BLAKE2S` limb | `⟨opIdx t, i⟩` | basis `B`, `2^h_t`; Lv42's row `x` is `C1`'s `rowPosition x` |
 | `table 5 i`, `9 ≤ i < 27` (the limbs' copies) | none: Lv42 reads limb `i − 9` off `QFLOCK`'s slot | the copies equal the slots on every row (`Q_W`) |
 | `inverse t` (`z_T`) | none | proves `CountsNonzero` (`Q_W`) |
 | `qflockSlot j` (a view of `qflock`) | `QFLOCK`'s strided slot | — |
 
 The column index `i` of a table is the same on both sides: both are leanVM's `layout.rs` order (Lv42's
 `Verifier.tables` names them, and its `padRow` reads them by position).
+
+**The rows' order** (iteration 2, F1b): Lv42's executed rows are a table's first `rows`; the univariate PIOP
+places them at the fixed cosets of the count's set bits (`activePositions`), and `q_flock`'s instances with
+them. `rowPosition` is the bijection (executed rows to the cosets in order, padding rows to the other rows in
+order); the rows' order is not part of leanVM's statement (the bus is a multiset, the constraints hold on every
+row, padding rows are free). The contract's height `h_t` is the shape's; Lv42's `τ_t = ⌈log₂ rows⌉ ≤ h_t`
+reads the first `2^τ_t` of `rowPosition`'s images.
 -/
 
 @[expose] public section
@@ -81,8 +88,27 @@ def c1Block (layout : StackLayout) (stack : ℕ → K) (column : UniStatement.Co
   | (_, vars, offset) :: _ => Array.ofFn (n := 2 ^ vars) fun i ↦ stack (offset + i.val)
   | [] => #[]
 
+/-- **Where Lv42's row `x` of a table sits in `C1`** (iteration 2, F1b): Lv42's executed rows are its first
+`count` (`x < count`), the univariate PIOP's are at the fixed cosets of the count's set bits
+(`activePositions`, in order); Lv42's padding rows `x ≥ count` are `C1`'s other rows, in increasing order (the
+cosets of the unset bits below `r`, highest first, then the last row `2^r − 1`). A bijection of `[0, 2^r)` for
+`count ≤ 2^r`; the identity for a full table. -/
+def rowPosition (count r x : ℕ) : ℕ := Id.run do
+  if count = 2 ^ r then return x
+  let active := decide (x < count)
+  let mut y := if active then x else x - count
+  for i in [0:r] do
+    let b := r - 1 - i
+    if count.testBit b == active then
+      if y < 2 ^ b then return 2 ^ r - 2 ^ (b + 1) + y
+      y := y - 2 ^ b
+  return 2 ^ r - 1
+
 /-- **Lv42's column `c`, read off a `C1` stack** (the correspondence above), as Lv42's stacking reads it
-(`Vector K (2 ^ kappa prog s c)`). -/
+(`Vector K (2 ^ kappa prog s c)`): a table's row `x` at `C1`'s row `rowPosition` (iteration 2, F1b: its
+`s.rows` executed rows at their fixed cosets, the contract's height `h` from the shape), read in basis `B` at
+`h` variables; `QFLOCK`'s word `slot + 256 x` at `q_flock`'s word `slot + 256 · rowPosition x` (its instances
+sit with BLAKE2S's rows). -/
 def lv42Column (prog : Program) (s : Sizes) (shape : UniStatement.Shape) (stack : ℕ → K) :
     (c : Col) → Vector K (2 ^ kappa prog s c)
   | ⟨⟨0, _⟩, i⟩ =>
@@ -93,10 +119,12 @@ def lv42Column (prog : Program) (s : Sizes) (shape : UniStatement.Shape) (stack 
     Vector.ofFn fun x ↦ basisValue coeffs prog.logSize x.val
   | ⟨⟨2, _⟩, _⟩ =>
     let values := c1Block (c1Layout shape) stack .qflock
-    Vector.ofFn fun x ↦ values.getD x.val 0
+    let hB := shape.heights.getD 5 0
+    Vector.ofFn fun x ↦ values.getD (x.val % 256 + 256 * rowPosition (s.rows 5) hB (x.val / 256)) 0
   | ⟨⟨j + 3, h⟩, i⟩ =>
     let coeffs := c1Block (c1Layout shape) stack (.table j i.val)
-    Vector.ofFn fun x ↦ basisValue coeffs (s.τ ⟨j, by omega⟩) x.val
+    let height := shape.heights.getD j 0
+    Vector.ofFn fun x ↦ basisValue coeffs height (rowPosition (s.rows ⟨j, by omega⟩) height x.val)
 
 /-- **The Lv42 stack a `C1` stack carries**: Lv42's committed columns (`stackOrder`: every column but the
 `BLAKE2S` limbs, largest first), each read off `C1` (`lv42Column`), stacked as Lv42 stacks a witness

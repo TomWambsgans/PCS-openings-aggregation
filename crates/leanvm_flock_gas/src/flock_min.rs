@@ -44,6 +44,9 @@ pub enum Slices {
     Weighted,
     /// Not sent: one claim `Σ μ_i ẑ(i, p) = κ` of a bit-slice type, ring-switched inside `PCS_OPEN`.
     Claim,
+    /// As [`Slices::Weighted`], with the ring map's stages in tower order ([`crate::ring_tower`]): the target through
+    /// `K`'s subfields, the weight at a point from the inside out.
+    Tower,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,7 +84,9 @@ pub struct Reduced<S> {
 #[derive(Clone, Debug)]
 pub enum End<S> {
     /// The ring switch's claim `Σ_u W(u) q_flock(u) = target`, `W = Φ(eq(point, ·))`, `Φ` drawn by `map`; with
-    /// [`Slices::InContract`], also `W` at a point and its coefficients.
+    /// [`Slices::InContract`], also `W` at a point and its coefficients. `weight` is for measuring that variant
+    /// (`tests/flock_levers.rs` outputs it, so that its cost is counted); `crates/leanvm_univariate` never uses
+    /// `InContract`.
     Ring { map: Vec<S>, target: S, weight: Option<S> },
     /// `Σ_i weights_i ẑ(i, point) = value`.
     Combination { weights: Vec<S>, value: S },
@@ -134,6 +139,182 @@ pub fn verify<S: Scalar>(
     variant: Variant,
     transcript: &mut impl Channel<S>,
 ) -> Result<Reduced<S>, VerifierError> {
+    let front = front(log_n, variant, transcript)?;
+    let (matrices, combination) = reduce_terminal(
+        transcript,
+        front.z_skip,
+        &front.row_low,
+        &front.chi_in,
+        &front.chi_in_prime,
+        front.alpha,
+        front.r_lc,
+        front.slices.as_deref(),
+    )?;
+    let end = match (&front.slices, combination) {
+        (Some(s), _) => ring_end(variant, &front, s, transcript),
+        (None, Some((weights, value))) => End::Combination { weights, value },
+        (None, None) => unreachable!("without the slices, the terminal is a combination"),
+    };
+    Ok(Reduced {
+        point: front.point,
+        matrices,
+        end,
+    })
+}
+
+/// Flock with its matrices' reduction left to a later sumcheck that runs its `k + 6` rounds beside its own (the
+/// batching sumcheck of `crates/leanvm_univariate`, SPEC.md §13): the zerocheck, the lincheck, and with the slices
+/// sent, the slices and the ring switch's map and target; then what that sumcheck needs of the matrices' reduction.
+/// Without the slices ([`Slices::Claim`]) there is no end yet: the later sumcheck's terminal leaves the combination
+/// ([`Pending::combination`]).
+pub fn verify_deferred<S: Scalar>(
+    log_n: usize,
+    variant: Variant,
+    transcript: &mut impl Channel<S>,
+) -> Result<(Vec<S>, Option<End<S>>, Pending<S>), VerifierError> {
+    let front = front(log_n, variant, transcript)?;
+    let pending = Pending::new(
+        front.z_skip,
+        &front.row_low,
+        &front.chi_in,
+        &front.chi_in_prime,
+        front.alpha,
+        front.r_lc,
+        front.slices.as_deref(),
+    );
+    let end = front.slices.as_ref().map(|slices| ring_end(variant, &front, slices, transcript));
+    Ok((front.point, end, pending))
+}
+
+/// The matrices' reduction, its rounds run by a later sumcheck: `Σ_(x, y) G(x, y) L̂(x) ŝ(y) = claim` over the skip's
+/// `k` row bits `x` and the column's 6 packing bits `y`, `G = Â0 + α B̂0` at the row and column points.
+#[derive(Clone, Debug)]
+pub struct Pending<S> {
+    pub claim: S,
+    k: usize,
+    skip_weights: Vec<S>,
+    low_weights: Vec<S>,
+    c_weight: S,
+    pin_weight: S,
+    row_low: Vec<S>,
+    chi_in: Vec<S>,
+    chi_in_prime: Vec<S>,
+    alpha: S,
+    /// The slices if sent; else the terminal leaves their combination.
+    slices: Option<Vec<S>>,
+}
+
+impl<S: Scalar> Pending<S> {
+    /// The matrices' reduction of the lincheck's terminal `r_lc`, as `reduce_terminal` starts it: with the slices,
+    /// its claim has their known part; without, it is `r_lc` and their part stays unknown.
+    fn new(
+        z_skip: Option<S>,
+        row_low: &[S],
+        chi_in: &[S],
+        chi_in_prime: &[S],
+        alpha: S,
+        r_lc: S,
+        slices: Option<&[S]>,
+    ) -> Self {
+        let _phase = enter("flock matrices: reduction to A0, B0 claims");
+        let (skip_weights, low_weights) = row_low_weights(z_skip, row_low);
+        let (c_weight, pin_weight) = known_weights(alpha, chi_in, chi_in_prime);
+        let known = slices.map(|slices| {
+            c_weight * dot(&low_weights, slices) + pin_weight * slices[BLAKE2S_CONSTANT_COLUMN % K_BITS]
+        });
+        Self {
+            claim: r_lc + known.unwrap_or(S::zero()),
+            k: PACKING - row_low.len(),
+            skip_weights,
+            low_weights,
+            c_weight,
+            pin_weight,
+            row_low: row_low.to_vec(),
+            chi_in: chi_in.to_vec(),
+            chi_in_prime: chi_in_prime.to_vec(),
+            alpha,
+            slices: slices.map(|s| s.to_vec()),
+        }
+    }
+
+    /// Whether the slices were sent (else [`Self::combination`] is the terminal).
+    pub fn has_slices(&self) -> bool {
+        self.slices.is_some()
+    }
+
+    /// Without the slices: the terminal of the sumcheck that ran the matrices' rounds as its first, at its point
+    /// (every round's challenge), with `a = Â0`, `b = B̂0` there, the matrices' zero-extension `extension` and its power
+    /// `scale` in that sumcheck. Each round maps its claim `c` to `c0 + (c + c2) r + c2 r^2`, so the slices' unknown
+    /// part of the initial claim reaches the last claim times `Λ`, the product of every challenge: the terminal is
+    /// `Σ_i μ_i s_i = rest`, `rest` the terminal's known terms and the last claim, and
+    /// `μ = scale (extension (a + α b) L̂(ρ) eq(σ, ·) + Λ (c_weight e + pin_weight [· = pin]))`. Returns `μ` and the
+    /// claims on `A0`, `B0`.
+    pub fn combination(&self, point: &[S], a: S, b: S, extension: S, scale: S) -> Result<(Vec<S>, MatrixClaim<S>), VerifierError> {
+        assert!(self.slices.is_none(), "the combination is for unsent slices");
+        let _phase = enter("flock matrices: the slices' combination");
+        let (rho, sigma) = point[..self.rounds()].split_at(self.k);
+        let skip_at_rho = if self.k > 0 {
+            multilinear_eval(&self.skip_weights, rho)?
+        } else {
+            S::one()
+        };
+        let lambda = point.iter().fold(S::one(), |acc, &r| acc * r);
+        let factor = scale * extension * (a + self.alpha * b) * skip_at_rho;
+        let (lambda_c, lambda_pin) = (scale * lambda * self.c_weight, scale * lambda * self.pin_weight);
+        let mut weights: Vec<S> = eq_kernel(sigma).into_iter().map(|e| factor * e).collect();
+        for (weight, &low) in weights.iter_mut().zip(&self.low_weights) {
+            *weight += lambda_c * low;
+        }
+        weights[BLAKE2S_CONSTANT_COLUMN % K_BITS] += lambda_pin;
+        let claim = MatrixClaim {
+            point: [rho, &self.row_low, &self.chi_in, sigma, &self.chi_in_prime].concat(),
+            a,
+            b,
+        };
+        Ok((weights, claim))
+    }
+
+    /// The variables of the sum, the sumcheck's first ones.
+    pub fn rounds(&self) -> usize {
+        self.k + PACKING
+    }
+
+    /// At the sumcheck's point (its first [`Self::rounds`] coordinates), with `a = Â0`, `b = B̂0` there: the
+    /// summand's value `(a + α b) L̂(ρ) ŝ(σ)`, and the claims on `A0`, `B0`.
+    pub fn terminal(&self, point: &[S], a: S, b: S) -> Result<(S, MatrixClaim<S>), VerifierError> {
+        let _phase = enter("flock matrices: reduction to A0, B0 claims");
+        let (rho, sigma) = point[..self.rounds()].split_at(self.k);
+        let skip_at_rho = if self.k > 0 {
+            multilinear_eval(&self.skip_weights, rho)?
+        } else {
+            S::one()
+        };
+        let slices = self.slices.as_ref().expect("the terminal of sent slices");
+        let value = (a + self.alpha * b) * skip_at_rho * multilinear_eval(slices, sigma)?;
+        let claim = MatrixClaim {
+            point: [rho, &self.row_low, &self.chi_in, sigma, &self.chi_in_prime].concat(),
+            a,
+            b,
+        };
+        Ok((value, claim))
+    }
+}
+
+/// What the zerocheck and the lincheck leave, and the slices if sent.
+struct Front<S> {
+    z_skip: Option<S>,
+    chi: Vec<S>,
+    row_low: Vec<S>,
+    chi_in: Vec<S>,
+    chi_in_prime: Vec<S>,
+    alpha: S,
+    r_lc: S,
+    slices: Option<Vec<S>>,
+    /// `q_flock`'s word coordinates of the slices: the lincheck's column bits, then the instance bits.
+    point: Vec<S>,
+}
+
+fn front<S: Scalar>(log_n: usize, variant: Variant, transcript: &mut impl Channel<S>) -> Result<Front<S>, VerifierError> {
     let k = variant.skip;
     assert!(k <= PACKING && log_n >= BLAKE2S_R1CS_LOG_SIZE + N_FIXED_CHALLENGES);
     let (z_skip, chi, [v_a, v_b, v_c]) = zerocheck(log_n, k, transcript)?;
@@ -146,39 +327,50 @@ pub fn verify<S: Scalar>(
     let claim = v_a + alpha * v_b + alpha.pow(2) * v_c + alpha.pow(3);
     let (round_challenges, r_lc) = sumcheck(transcript, claim, 3, &[None; FLOCK_NUM_LINCHECK_ROUNDS])?;
     let chi_in_prime: Vec<S> = round_challenges.iter().rev().copied().collect();
-    let s = match variant.slices {
+    let slices = match variant.slices {
         Slices::Claim => None,
         _ => Some(transcript.next_scalars(K_BITS)?),
     };
-
-    let (matrices, combination) = reduce_terminal(
-        transcript,
+    let point: Vec<S> = [&chi_in_prime[..], chi_rest].concat();
+    Ok(Front {
         z_skip,
-        row_low,
-        chi_in,
-        &chi_in_prime,
+        row_low: row_low.to_vec(),
+        chi_in: chi_in.to_vec(),
+        chi_in_prime,
+        chi,
         alpha,
         r_lc,
-        s.as_deref(),
-    )?;
-    let point: Vec<S> = [&chi_in_prime[..], chi_rest].concat();
-    let end = match (s, combination) {
-        (Some(s), _) => {
-            let _phase = enter("ring switch: map, coefficients, target");
-            let map = transcript.samples(crate::flock::RING_MAP_SHIFTS.len());
-            let images: Vec<S> = s.iter().map(|&value| ring_map(value, &map)).collect();
-            let target = poly_eval(&images, S::constant(GEN));
-            let weight = (variant.slices == Slices::InContract).then(|| {
-                let weight = crate::flock::ring_switch_weight(point.clone(), &map);
-                // At a point of the stack's batch: any 26 coordinates cost the same; the zerocheck's are at hand.
-                weight.at(&chi[..point.len()])
-            });
-            End::Ring { map, target, weight }
-        }
-        (None, Some((weights, value))) => End::Combination { weights, value },
-        (None, None) => unreachable!("without the slices, the terminal is a combination"),
+        slices,
+        point,
+    })
+}
+
+/// The ring switch on the sent slices: its map drawn, its target; the weight at a point if the contract computes it.
+fn ring_end<S: Scalar>(variant: Variant, front: &Front<S>, s: &[S], transcript: &mut impl Channel<S>) -> End<S> {
+    let _phase = enter("ring switch: map, coefficients, target");
+    let map = transcript.samples(crate::flock::RING_MAP_SHIFTS.len());
+    let target = if variant.slices == Slices::Tower {
+        crate::ring_tower::target(s, &map)
+    } else {
+        let images: Vec<S> = s.iter().map(|&value| ring_map(value, &map)).collect();
+        poly_eval(&images, S::constant(GEN))
     };
-    Ok(Reduced { point, matrices, end })
+    let weight = (variant.slices == Slices::InContract).then(|| {
+        let weight = crate::flock::ring_switch_weight(front.point.clone(), &map);
+        // At a point of the stack's batch: any 26 coordinates cost the same; the zerocheck's are at hand.
+        weight.at(&front.chi[..front.point.len()])
+    });
+    End::Ring { map, target, weight }
+}
+
+/// The weights of the terminal's two known terms: the `C = I` claim's and the constant position's pin.
+fn known_weights<S: Scalar>(alpha: S, chi_in: &[S], chi_in_prime: &[S]) -> (S, S) {
+    let constant_bits: Vec<S> = (0..FLOCK_NUM_LINCHECK_ROUNDS)
+        .map(|bit| S::constant(E::new((BLAKE2S_CONSTANT_COLUMN / K_BITS) as u64 >> bit & 1, 0, 0)))
+        .collect();
+    let pin_weight = alpha.pow(3) * eq_eval(&constant_bits, chi_in_prime);
+    let c_weight = alpha.pow(2) * eq_eval(chi_in, chi_in_prime);
+    (c_weight, pin_weight)
 }
 
 /// The lincheck's terminal `r_lc`, by the matrices' reduction over the skip's `k` row bits and the 6 packing bits
@@ -198,11 +390,7 @@ pub fn reduce_terminal<S: Scalar>(
     let _phase = enter("flock matrices: reduction to A0, B0 claims");
     let k = PACKING - row_low.len();
     let (skip_weights, low_weights) = row_low_weights(z_skip, row_low);
-    let constant_bits: Vec<S> = (0..FLOCK_NUM_LINCHECK_ROUNDS)
-        .map(|bit| S::constant(E::new((BLAKE2S_CONSTANT_COLUMN / K_BITS) as u64 >> bit & 1, 0, 0)))
-        .collect();
-    let pin_weight = alpha.pow(3) * eq_eval(&constant_bits, chi_in_prime);
-    let c_weight = alpha.pow(2) * eq_eval(chi_in, chi_in_prime);
+    let (c_weight, pin_weight) = known_weights(alpha, chi_in, chi_in_prime);
     let pin = BLAKE2S_CONSTANT_COLUMN % K_BITS;
     // The terminal's two known terms, when the slices are; else the claim's part the slices hold.
     let known = s.map(|s| c_weight * dot(&low_weights, s) + pin_weight * s[pin]);
@@ -372,11 +560,148 @@ mod tests {
         }
     }
 
+    /// Prove `Σ_i Σ_p c_p Π_t parts[p][t][i]` over `rounds` variables, low bit first, with degree-2 messages `(c0, c2)`:
+    /// the batch of several product sums in one sumcheck.
+    fn prove_sums(writer: &mut KeccakWriter, mut parts: Vec<(E, Vec<Vec<E>>)>, rounds: usize) -> Vec<E> {
+        let mut point = Vec::new();
+        for _ in 0..rounds {
+            let half = parts[0].1[0].len() / 2;
+            let mut coefficients = [ZERO; 4];
+            for (scale, tables) in &parts {
+                for i in 0..half {
+                    let mut product = vec![*scale];
+                    for table in tables {
+                        let (lo, hi) = (table[2 * i], table[2 * i + 1]);
+                        let mut next = vec![ZERO; product.len() + 1];
+                        for (d, &p) in product.iter().enumerate() {
+                            next[d] += p * lo;
+                            next[d + 1] += p * (lo + hi);
+                        }
+                        product = next;
+                    }
+                    for (c, p) in coefficients.iter_mut().zip(&product) {
+                        *c += *p;
+                    }
+                }
+            }
+            assert_eq!(coefficients[3], ZERO, "degree 2 in every variable");
+            writer.send(coefficients[0]);
+            writer.send(coefficients[2]);
+            let r = writer.sample();
+            point.push(r);
+            for (_, tables) in parts.iter_mut() {
+                for table in tables.iter_mut() {
+                    for i in 0..half {
+                        table[i] = table[2 * i] + r * (table[2 * i] + table[2 * i + 1]);
+                    }
+                    table.truncate(half);
+                }
+            }
+        }
+        point
+    }
+
+    /// The matrices' reduction left pending runs its `k + 6` rounds as the first rounds of a longer sumcheck, batched
+    /// with another product sum by a power of `λ`, zero-extended by `eq(·, 0)`: the honest proof verifies, its claims
+    /// on `A0`, `B0` are the matrices' values at the point, and other slices fail it.
+    #[test]
+    fn the_pending_matrices_reduction_merges_into_a_longer_sumcheck() {
+        for k in [3, 0] {
+            let vars = 12;
+            let mut seed = 0x0de7_e44e ^ k as u64;
+            let z_skip = element(&mut seed);
+            let low: Vec<E> = (0..PACKING - k).map(|_| element(&mut seed)).collect();
+            let chi_in: Vec<E> = (0..8).map(|_| element(&mut seed)).collect();
+            let chi_in_prime: Vec<E> = (0..8).map(|_| element(&mut seed)).collect();
+            let s: Vec<E> = (0..K_BITS).map(|_| element(&mut seed)).collect();
+            let alpha = element(&mut seed);
+            let r_lc = walked(k, z_skip, &low, &chi_in, &chi_in_prime, &s, alpha);
+            let z = (k > 0).then_some(z_skip);
+            let pending = Pending::new(z, &low, &chi_in, &chi_in_prime, alpha, r_lc, Some(&s));
+            assert_eq!(pending.rounds(), k + PACKING);
+
+            // The matrices' tables over `vars` variables: G' zero-extended (δ_0 on the rest), L and s repeated.
+            let g = sliced(k, &low, &chi_in, &chi_in_prime, alpha);
+            let skip = if k > 0 {
+                lagrange_weights(1 << k, z_skip)
+            } else {
+                vec![ONE]
+            };
+            let size = (1 << k) * K_BITS;
+            let full = 1 << vars;
+            let g_ext: Vec<E> = (0..full).map(|i| if i < size { g[i] } else { ZERO }).collect();
+            let l_ext: Vec<E> = (0..full).map(|i| skip[i % (1 << k)]).collect();
+            let s_ext: Vec<E> = (0..full).map(|i| s[(i % size) >> k]).collect();
+            // Another product sum, the batch's own.
+            let w: Vec<E> = (0..full).map(|_| element(&mut seed)).collect();
+            let c: Vec<E> = (0..full).map(|_| element(&mut seed)).collect();
+            let other: E = w.iter().zip(&c).fold(ZERO, |acc, (&x, &y)| acc + x * y);
+
+            let bytes = keccak_seed(b"flock merged 16B", &[k as u8; 32], &[3; 32]);
+            let mut writer = KeccakWriter::new(bytes);
+            let lambda = writer.sample();
+            let point = prove_sums(
+                &mut writer,
+                vec![(ONE, vec![w.clone(), c.clone()]), (lambda, vec![g_ext, l_ext, s_ext])],
+                vars,
+            );
+            let (rho, rest) = point.split_at(k);
+            let sigma = &rest[..PACKING];
+            let matrix_point = [rho, &low, &chi_in, sigma, &chi_in_prime].concat();
+            let (a, b) = matrix_values(&matrix_point).unwrap();
+            let (w_r, c_r) = (multilinear_eval(&w, &point).unwrap(), multilinear_eval(&c, &point).unwrap());
+            writer.send(c_r);
+            writer.send(a);
+            writer.send(b);
+
+            // The verifier's side, as `crates/leanvm_univariate`'s batch runs it.
+            let run = |pending: &Pending<E>| -> Result<MatrixClaim<E>, VerifierError> {
+                let mut channel = KeccakChannel::new(bytes, &writer.stream, Checks::Enforce);
+                let lambda = channel.sample();
+                let target = other + lambda * pending.claim;
+                let (r, last) = sumcheck(&mut channel, target, 3, &vec![None; vars])?;
+                let c_r = channel.next_scalar()?;
+                let (a, b) = (channel.next_scalar()?, channel.next_scalar()?);
+                let (value, claim) = pending.terminal(&r, a, b)?;
+                let extension = (pending.rounds()..vars).fold(ONE, |acc, j| acc * (ONE + r[j]));
+                let sum = multilinear_eval(&w, &r)? * c_r + lambda * value * extension;
+                channel.require_zero(sum + last, VerifierError::StackBatchTerminal)?;
+                Ok(claim)
+            };
+            let claim = run(&pending).expect("the merged proof verifies");
+            assert_eq!(claim.point, matrix_point, "k = {k}");
+            assert_eq!((claim.a, claim.b), (a, b));
+            assert_eq!(w_r * c_r, multilinear_eval(&w, &point).unwrap() * c_r);
+            // Without the slices: the terminal leaves Σ μ_i s_i = rest, which the true slices hold.
+            {
+                let unsent = Pending::new(z, &low, &chi_in, &chi_in_prime, alpha, r_lc, None);
+                let mut channel = KeccakChannel::new(bytes, &writer.stream, Checks::Enforce);
+                let lambda = channel.sample();
+                let target = other + lambda * unsent.claim;
+                let (r, last) = sumcheck(&mut channel, target, 3, &vec![None; vars]).unwrap();
+                let c_r = channel.next_scalar().unwrap();
+                let (a, b) = (channel.next_scalar().unwrap(), channel.next_scalar().unwrap());
+                let extension = (unsent.rounds()..vars).fold(ONE, |acc, j| acc * (ONE + r[j]));
+                let (weights, claim) = unsent.combination(&r, a, b, extension, lambda).unwrap();
+                let rest = multilinear_eval(&w, &r).unwrap() * c_r + last;
+                assert_eq!(dot(&weights, &s), rest, "k = {k}: the combination holds of the true slices");
+                assert_eq!(claim.point, matrix_point);
+                let mut wrong = s.clone();
+                wrong[9] += ONE;
+                assert_ne!(dot(&weights, &wrong), rest);
+            }
+            let mut other_slices = s.clone();
+            other_slices[5] += ONE;
+            let forged = Pending::new(z, &low, &chi_in, &chi_in_prime, alpha, r_lc, Some(&other_slices));
+            assert!(run(&forged).is_err(), "k = {k}: other slices fail");
+        }
+    }
+
     /// The stream lengths `Variant::scalars` states are what `verify` reads.
     #[test]
     fn scalars_are_what_verify_reads() {
         for skip in [0, 1, 3, 4, 5, 6] {
-            for slices in [Slices::InContract, Slices::Weighted, Slices::Claim] {
+            for slices in [Slices::InContract, Slices::Weighted, Slices::Claim, Slices::Tower] {
                 let variant = Variant { skip, slices };
                 let log_n = 14 + 18;
                 let stream = vec![0x5au8; 24 * variant.scalars(log_n)];

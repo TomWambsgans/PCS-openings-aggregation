@@ -137,7 +137,7 @@ fn flock_levers() {
                 assert_eq!(fragment.stream_bytes, 24 * variant.scalars(log_n));
                 let claim = match variant.slices {
                     Slices::InContract => "ring switch reduced in the contract, A0, B0",
-                    Slices::Weighted => "1 weighted (Φ(eq)), A0, B0",
+                    Slices::Weighted | Slices::Tower => "1 weighted (Φ(eq)), A0, B0",
                     Slices::Claim => "1 bit-slice combination, A0, B0",
                 };
                 let bytes = fragment.stream_bytes as u64;
