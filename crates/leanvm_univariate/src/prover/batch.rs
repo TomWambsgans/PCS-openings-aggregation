@@ -3,189 +3,66 @@
 //! `Σ_k λ^k Σ_u W_k(u) C_k(u) = Σ_k λ^k v_k` over the longest stack, the others zero-extended, two scalars a round
 //! (`q(0)` and `q`'s `X^2` coefficient), then every stack's value at its part of the end point.
 //!
-//! [`dense_weight`] writes a commitment's combined claim out as its weight on the stack, which is what the verifier's
-//! `weight_at` evaluates at the end point; the rounds fold the weights and the stacks low variable first. Flock's
-//! matrices' reduction, when pending, runs its rounds as the batch's first (SPEC.md §13, lever 4a).
-
-use std::collections::BTreeMap;
+//! Each commitment's combined claim is its weight on the stack, which the verifier's `weight_at` evaluates at the end
+//! point. The rounds go low variable first: the first [`BASE_ROUNDS`] read the stacks' words and the weights' pieces
+//! ([`Weight`]: eq tensors, one table per several-point column, the ring switch's one map), nothing of the stacks'
+//! size written; then the folded stacks and weights are written out and folded on. Flock's matrices' reduction, when
+//! pending, runs its rounds as the batch's first (SPEC.md §13, lever 4a).
 
 use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::transcript::KeccakWriter;
-use primitives::field::{F64, F192};
-use primitives::multilinear::eq_table;
+use primitives::field::{F64, F192, F192Unreduced};
 
 use super::poly::{from_v, to_v};
-use crate::claims::{Column, Combined};
-use crate::stacks::StackLayout;
+use super::weight::{Weight, fold, fold_stack};
 
-/// `x ↦ Σ_k c_k x^(2^k)`, GF(2)-linear on `E`, as 24 byte tables: `L(x) = Σ_j T_j[byte_j(x)]`.
-struct Linearised {
-    tables: Vec<[F192; 256]>,
+/// The rounds that read the stacks' words, as [`Weight`] pieces; then every stack and its weight are written out
+/// folded (`2^(vars - BASE_ROUNDS)` words each) and the rounds go on over the tables.
+pub const BASE_ROUNDS: usize = 5;
+
+/// A stack and its weight, written out once folded past the rounds that read the words.
+struct Folded {
+    w: Vec<F192>,
+    c: Vec<F192>,
 }
 
-impl Linearised {
-    fn new(twists: &[(u8, F192)]) -> Self {
-        let image = |x: F192| {
-            let mut power = x;
-            let mut sum = F192::ZERO;
-            let top = twists.iter().map(|&(k, _)| k).max().unwrap_or(0);
-            for k in 0..=top {
-                for &(t, c) in twists {
-                    if t == k {
-                        sum += c * power;
-                    }
+impl Folded {
+    /// `(Σ w_0 c_0, Σ (w_0 + w_1)(c_0 + c_1))` over the pairs; one word is its own pair with zero.
+    fn sums(&self) -> (F192, F192) {
+        let (w, c) = (&self.w, &self.c);
+        if w.len() == 1 {
+            let x = w[0] * c[0];
+            return (x, x);
+        }
+        let half = w.len() / 2;
+        let chunk = 1usize << 12;
+        let (a, b) = parallel::map_reduce(
+            half.div_ceil(chunk),
+            || (F192Unreduced::ZERO, F192Unreduced::ZERO),
+            |t| {
+                let (mut a, mut b) = (F192Unreduced::ZERO, F192Unreduced::ZERO);
+                for i in t * chunk..((t + 1) * chunk).min(half) {
+                    let (w0, w1, c0, c1) = (w[2 * i], w[2 * i + 1], c[2 * i], c[2 * i + 1]);
+                    a ^= w0.mul_unreduced(c0);
+                    b ^= (w0 + w1).mul_unreduced(c0 + c1);
                 }
-                power = power.square();
-            }
-            sum
-        };
-        let mut tables = vec![[F192::ZERO; 256]; 24];
-        for (j, table) in tables.iter_mut().enumerate() {
-            let (limb, byte) = (j / 8, j % 8);
-            let bits: Vec<F192> = (0..8)
-                .map(|i| {
-                    let mut c = [0u64; 3];
-                    c[limb] = 1u64 << (8 * byte + i);
-                    image(F192::new(c[0], c[1], c[2]))
-                })
-                .collect();
-            for v in 1..256usize {
-                let low = v.trailing_zeros() as usize;
-                table[v] = table[v & (v - 1)] + bits[low];
-            }
-        }
-        Self { tables }
+                (a, b)
+            },
+            |x, y| (x.0 ^ y.0, x.1 ^ y.1),
+        );
+        (a.reduce(), b.reduce())
     }
 
-    #[inline]
-    fn at(&self, x: F192) -> F192 {
-        let mut acc = F192::ZERO;
-        for (limb, word) in [x.c0, x.c1, x.c2].into_iter().enumerate() {
-            for byte in 0..8 {
-                acc += self.tables[8 * limb + byte][(word >> (8 * byte)) as usize & 0xff];
-            }
-        }
-        acc
-    }
-}
-
-/// A combined claim's weight on its stack, written out over `len` words. Terms are grouped by the eq table they read
-/// (point and length): each table is built once, and dropped after its terms. Frobenius-twisted terms of one point on
-/// one block (the ring switch's) read the same table, since on the cube `eq(φ^k(p), u) = eq(p, u)^(2^k)`: their sum
-/// is one GF(2)-linear map of it ([`Linearised`]).
-pub fn dense_weight(claim: &Combined<E>, layout: &StackLayout, len: usize) -> Vec<F192> {
-    let mut weight = vec![F192::ZERO; len];
-    let basis = [F192::ONE, F192::new(0, 1, 0), F192::new(0, 0, 1)];
-    // (point, eq length) -> its uses: (block offset, q_flock slot) -> [(twist, scale)].
-    type Uses = BTreeMap<(usize, Option<usize>), Vec<(u8, F192)>>;
-    let mut groups: BTreeMap<(usize, usize), Uses> = BTreeMap::new();
-    for &(column, p, twist, coefficient) in &claim.terms {
-        let coefficient = from_v(coefficient);
-        let (target, slot) = match column {
-            Column::QflockSlot(j) => (Column::Qflock, Some(j)),
-            other => (other, None),
-        };
-        for (limb, vars, offset) in layout.limbs(target) {
-            let len = if slot.is_some() { vars - 8 } else { vars };
-            groups
-                .entry((p, len))
-                .or_default()
-                .entry((offset as usize, slot))
-                .or_default()
-                .push((twist, coefficient * basis[limb]));
+    /// Bind the low variable to `r`; one word is folded with its zero partner.
+    fn fold(&mut self, r: F192) {
+        if self.w.len() == 1 {
+            self.w[0] *= F192::ONE + r;
+            self.c[0] *= F192::ONE + r;
+        } else {
+            self.w = fold(&self.w, r);
+            self.c = fold(&self.c, r);
         }
     }
-    for ((p, len), uses) in groups {
-        let point: Vec<F192> = claim.points[p][..len].iter().map(|&x| from_v(x)).collect();
-        let eq = eq_table(&point);
-        for ((offset, slot), twists) in uses {
-            let plain = twists.iter().all(|&(k, _)| k == 0);
-            let scale = twists.iter().fold(F192::ZERO, |acc, &(_, c)| acc + c);
-            match slot {
-                // q_flock's word `j + 256 u`: the slot's bits, then the point.
-                Some(j) => {
-                    assert!(plain, "no twisted slot terms");
-                    for (u, &e) in eq.iter().enumerate() {
-                        weight[offset + j + (u << 8)] += scale * e;
-                    }
-                }
-                None => {
-                    let block = &mut weight[offset..offset + eq.len()];
-                    if plain {
-                        parallel::chunks_mut_zip(block, &eq, 1 << 14, |_, out, eq| {
-                            for (o, &e) in out.iter_mut().zip(eq) {
-                                *o += scale * e;
-                            }
-                        });
-                    } else {
-                        let map = Linearised::new(&twists);
-                        parallel::chunks_mut_zip(block, &eq, 1 << 14, |_, out, eq| {
-                            for (o, &e) in out.iter_mut().zip(eq) {
-                                *o += map.at(e);
-                            }
-                        });
-                    }
-                }
-            }
-        }
-    }
-    weight
-}
-
-/// Sum and fold one round over a weight and an E-table: `(Σ w_0 c_0, Σ (w_0 + w_1)(c_0 + c_1))`, then both folded
-/// at `r` (an odd tail's partner is zero).
-fn round_sums(w: &[F192], c: &[F192]) -> (F192, F192) {
-    let half = w.len().div_ceil(2);
-    let at = |v: &[F192], i: usize| v.get(i).copied().unwrap_or(F192::ZERO);
-    parallel::map_reduce(
-        half.div_ceil(1 << 12),
-        || (F192::ZERO, F192::ZERO),
-        |chunk| {
-            let (mut a, mut b) = (F192::ZERO, F192::ZERO);
-            for i in chunk << 12..((chunk + 1) << 12).min(half) {
-                let (w0, w1, c0, c1) = (at(w, 2 * i), at(w, 2 * i + 1), at(c, 2 * i), at(c, 2 * i + 1));
-                a += w0 * c0;
-                b += (w0 + w1) * (c0 + c1);
-            }
-            (a, b)
-        },
-        |x, y| (x.0 + y.0, x.1 + y.1),
-    )
-}
-
-fn round_sums_k(w: &[F192], c: &[F64]) -> (F192, F192) {
-    let half = w.len().div_ceil(2);
-    parallel::map_reduce(
-        half.div_ceil(1 << 12),
-        || (F192::ZERO, F192::ZERO),
-        |chunk| {
-            let (mut a, mut b) = (F192::ZERO, F192::ZERO);
-            for i in chunk << 12..((chunk + 1) << 12).min(half) {
-                let (w0, w1) = (w[2 * i], w.get(2 * i + 1).copied().unwrap_or(F192::ZERO));
-                let (c0, c1) = (c[2 * i], c.get(2 * i + 1).copied().unwrap_or(F64::ZERO));
-                a += w0.mul_base(c0);
-                b += (w0 + w1).mul_base(c0 + c1);
-            }
-            (a, b)
-        },
-        |x, y| (x.0 + y.0, x.1 + y.1),
-    )
-}
-
-fn fold(v: &[F192], r: F192) -> Vec<F192> {
-    let half = v.len().div_ceil(2);
-    parallel::map_collect(half, |i| {
-        let (a, b) = (v[2 * i], v.get(2 * i + 1).copied().unwrap_or(F192::ZERO));
-        a + r * (a + b)
-    })
-}
-
-fn fold_k(v: &[F64], r: F192) -> Vec<F192> {
-    let half = v.len().div_ceil(2);
-    parallel::map_collect(half, |i| {
-        let (a, b) = (v[2 * i], v.get(2 * i + 1).copied().unwrap_or(F64::ZERO));
-        F192::from(a) + r.mul_base(a + b)
-    })
 }
 
 /// `Σ_i Π_t tables[t][i]`'s round over the low variable: `q(0)` and the `X^2` coefficient of `q(X)`, whose `X^3`
@@ -216,14 +93,19 @@ fn product_round(tables: &[Vec<F192>; 3]) -> (F192, F192) {
 pub fn prove(
     writer: &mut KeccakWriter,
     stacks: &[(&[F64], usize)],
-    weights: Vec<Vec<F192>>,
+    weights: Vec<Weight>,
     lambda: F192,
     pending: Option<&super::flock::Pending>,
 ) -> Result<(Vec<F192>, Vec<F192>, Option<(Vec<E>, E, E)>), String> {
     let vars = stacks.iter().map(|&(_, v)| v).max().expect("stacks");
+    let shortest = stacks.iter().map(|&(_, v)| v).min().expect("stacks");
+    let base_rounds = BASE_ROUNDS.min(shortest - 1);
+    assert!(base_rounds <= super::weight::LOW_VARS);
     let scales: Vec<F192> = primitives::field::powers(lambda, stacks.len() + 1);
-    let mut w = weights;
-    let mut c: Vec<Vec<F192>> = vec![Vec::new(); stacks.len()];
+    let mut weights = weights;
+    let mut folded: Vec<Folded> = Vec::new();
+    // eq(r_(<j), ·) at the rounds' challenges so far, while the rounds read the words.
+    let mut e = vec![F192::ONE];
     let mut values = vec![F192::ZERO; stacks.len()];
     let mut point = Vec::with_capacity(vars);
     let mut matrix_tables: Option<[Vec<F192>; 3]> =
@@ -236,12 +118,26 @@ pub fn prove(
     let mut matrix_value = F192::ZERO;
     let matrix_scale = scales[stacks.len()];
     for round in 0..vars {
+        if round == base_rounds {
+            folded = stacks
+                .iter()
+                .zip(&weights)
+                .map(|(&(words, v), weight)| {
+                    let len = 1 << (v - base_rounds);
+                    Folded {
+                        w: weight.dense(len),
+                        c: fold_stack(words, &e, len),
+                    }
+                })
+                .collect();
+            weights = Vec::new();
+        }
         let (mut q0, mut q2) = (F192::ZERO, F192::ZERO);
         for k in 0..stacks.len() {
-            let (a, b) = if round == 0 {
-                round_sums_k(&w[k], stacks[k].0)
+            let (a, b) = if round < base_rounds {
+                weights[k].round(stacks[k].0, &e)
             } else {
-                round_sums(&w[k], &c[k])
+                folded[k].sums()
             };
             q0 += scales[k] * a;
             q2 += scales[k] * b;
@@ -259,11 +155,17 @@ pub fn prove(
         writer.send(to_v(q2));
         let r = from_v(writer.sample());
         point.push(r);
-        for k in 0..stacks.len() {
-            c[k] = if round == 0 { fold_k(stacks[k].0, r) } else { fold(&c[k], r) };
-            w[k] = fold(&w[k], r);
-            if round + 1 == stacks[k].1 {
-                values[k] = c[k][0];
+        if round < base_rounds {
+            for weight in &mut weights {
+                weight.fold(r);
+            }
+            e = e.iter().map(|&x| x * (F192::ONE + r)).chain(e.iter().map(|&x| x * r)).collect();
+        } else {
+            for (k, f) in folded.iter_mut().enumerate() {
+                f.fold(r);
+                if round + 1 == stacks[k].1 {
+                    values[k] = f.c[0];
+                }
             }
         }
         if let Some(tables) = &mut matrix_tables {

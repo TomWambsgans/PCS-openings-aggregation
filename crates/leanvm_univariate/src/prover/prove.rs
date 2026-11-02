@@ -23,6 +23,7 @@ use super::opening::{self, Committed};
 use super::poly::{eval_e, eval_k, from_v, novel_from_values, subset_sums, to_v};
 use super::quotients::{self, Quotient};
 use super::stack::{Stack, c1_columns, c2_columns};
+use super::weight::Weight;
 use super::trace::Trace;
 use crate::claims::{Column, Combined, Commitment};
 use crate::contract::NAME;
@@ -417,31 +418,20 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
             Commitment::Setup => (&stack_f, &committed_f),
         }
     };
-    let weights_dense: Vec<Vec<F192>> = combined
+    let weights: Vec<Weight> = combined
         .iter()
-        .map(|(c, claim)| {
-            let (stack, _) = stacks_of(*c);
-            super::batch::dense_weight(claim, &stack.layout, stack.words.len())
-        })
+        .map(|(c, claim)| Weight::new(claim, &stacks_of(*c).0.layout))
         .collect();
+    clock.lap(&mut report, "claims: weights");
     if config.check {
-        for ((c, claim), weight) in combined.iter().zip(&weights_dense) {
-            let (stack, _) = stacks_of(*c);
-            let sum = parallel::map_reduce(
-                stack.words.len().div_ceil(1 << 14),
-                || F192::ZERO,
-                |chunk| {
-                    let range = chunk << 14..((chunk + 1) << 14).min(stack.words.len());
-                    range.fold(F192::ZERO, |acc, i| acc + weight[i].mul_base(stack.words[i]))
-                },
-                |a, b| a + b,
-            );
+        for ((c, claim), weight) in combined.iter().zip(&weights) {
+            let sum = weight.sum(&stacks_of(*c).0.words);
             report
                 .checks
                 .push((format!("{c:?}: its {} relations, combined by ρ, hold", claim.relations), sum == from_v(claim.value)));
         }
+        clock.lap(&mut report, "claims: the combined-claims check (test only)");
     }
-    clock.lap(&mut report, "claims: dense weights");
 
     // 9. The point claims: the batching sumcheck.
     let mut openings = Vec::new();
@@ -455,7 +445,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
                     (&s.words[..], s.layout.vars)
                 })
                 .collect();
-            let (point, values, matrices) = super::batch::prove(&mut writer, &stacks, weights_dense, lambda, pending.as_ref())?;
+            let (point, values, matrices) = super::batch::prove(&mut writer, &stacks, weights, lambda, pending.as_ref())?;
             if let Some(claim) = matrices {
                 report.flock = Some(claim);
             }
