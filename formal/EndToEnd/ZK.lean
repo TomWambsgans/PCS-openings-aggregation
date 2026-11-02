@@ -8,6 +8,7 @@ import ZK.Setup
 import ZK.With
 import ZK.Main
 import ZK.Format
+import ZK.CoinsMatch
 import ZK.End
 import ZK.Axioms
 

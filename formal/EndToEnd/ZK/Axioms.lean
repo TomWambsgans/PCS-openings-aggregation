@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import ZK.End
+import ZK.CoinsMatch
 
 /-! # The axioms of the zero-knowledge bridge's theorems -/
 
@@ -70,6 +71,10 @@ import ZK.End
 /-- info: 'PcsQuotient.EndToEnd.zeroKnowledge_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zeroKnowledge_end
+
+/-- info: 'PcsQuotient.EndToEnd.coinsMatch_of_bijective' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.coinsMatch_of_bijective
 
 /-- info: 'PcsQuotient.EndToEnd.fmt_queryBound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
