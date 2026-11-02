@@ -13,8 +13,8 @@ says the limbs are `primitives::field::F192`'s: adding is `XOR` and multiplying 
 (`FIELD_MUL`), and one is `(1, 0, 0)`. That is, `limbs` is a ring isomorphism from `F` onto
 `GF(2^192) = K[y] / (y^3 + y + 1)`, `K = GF(2)[x] / (x^64 + x^4 + x^3 + x + 1)`, in Rust's
 representation. Such an `F` exists exactly because the two polynomials are irreducible; that, and
-the computable field, are F0c's (`formal/Field`), not proved here: here `F` is any field with such
-an isomorphism.
+the computable field, are F0c's (`formal/Field`): here `F` is any field with such an isomorphism,
+and `Field192.lean` proves that F0c's `Primitives.F192` is one (`isF192_primitives`).
 
 From it: `elem x`, the element a number stands for (its low 192 bits), with `elem_xor`,
 `elem_mulE`, `elem_one`; `F` has `2^192` elements (`card_eq`); and the Frobenius `frobE` is
