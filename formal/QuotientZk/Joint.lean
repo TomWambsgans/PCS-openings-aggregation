@@ -58,15 +58,15 @@ set_option linter.unusedSectionVars false
 /-! ## A secret table's opening -/
 
 /-- **A secret table's opening, as deployed**: its hidden layout with the gadget (`L`, lane indices
-`pos`), its `m` claims' weights (functions of the challenges), the gadget's basis `β` of `E` over
-`K`, the opened positions' encoding (`enc`), and what WHIR shows after the first fold (`rest`), a
+`pos`), its `m` claims' weights (functions of the challenges), the gadget's coefficients `β` (`1, t, t²`, a basis of `E` over
+`K`), the opened positions' encoding (`enc`), and what WHIR shows after the first fold (`rest`), a
 function of the level-0 view and the challenges. -/
 structure SecretOpening (K E Ch ι Y Q O : Type) [Field K] [Field E] [Algebra K E] where
   L : GadgetLayout ι Y
   pos : ι → (Fin 6 → Bool)
   m : ℕ
   Wc : Ch → Fin m → ι → Y → E
-  β : Module.Basis (Fin 3) K E
+  β : Fin 3 → E
   enc : Ch → Q → Y → K
   rest : Ch → (Fin 6 → E × E) × (Y → E) × (Q → ι → K) → O
 
@@ -91,24 +91,34 @@ def claims (c : Ch) (d : ι → Y → K) : Fin S.m → E :=
 structure Conditions : Prop where
   /-- The gadget's pairs `(0, 31)`, `(1, 30)` and overflow lane `32`, `pos` injective. -/
   placed : Gadget.Placed S.L S.pos
+  /-- The pairs' first lanes are not random lanes. -/
+  pairANotRand : ∀ p, ¬ S.L.isRand (S.L.pairA p)
   /-- The lower half of the lane indices is on the stack. -/
   lowHalf : ∀ b : Fin 6 → Bool, b (Fin.last 5) = false → b ∈ Set.range S.pos
-  /-- The cube `32 .. 40` but `32` is random lanes (none a pair's first lane). -/
-  cubeRand : ∀ b ∈ cube true, b ≠ lane 32 →
-    ∃ l, S.pos l = b ∧ S.L.isRand l ∧ ∀ q, l ≠ S.L.pairA q
+  /-- Lanes `32 .. 40` are on the stack. -/
+  cubeOn : ∀ l : Fin 64, 32 ≤ (l : ℕ) → (l : ℕ) < 40 → lane l ∈ Set.range S.pos
+  /-- Lanes `33 .. 40` (the cube `32 .. 40` but `32`) are random lanes. -/
+  cubeRand : ∀ b ∈ cube true, b ≠ lane 32 → ∃ r, S.pos r = b ∧ S.L.isRand r
   /-- **`WeightsFit`**: the claims weigh nothing of the randomness or of the gadget's entries. -/
   weightsFit : ∀ c, S.L.WeightsFit (S.Wc c)
   /-- **(Q)**: the entries below the gadget take every value at the opened positions. -/
   condQ : ∀ c, Function.Surjective (firstEval (S.enc c) S.L.first)
+  /-- The gadget's coefficients are a basis of `E` over `K` (`1, t, t²`). -/
+  basis : ∃ b : Module.Basis (Fin 3) K E, ⇑b = S.β
 
-/-- The opening hides its table given its claims at every good challenge. -/
+/-- The opening hides its table given its claims at every good challenge
+(`GadgetLayout.view_evalDistEq`). -/
 theorem hides [CharP E 2] [FiniteDimensional K E] [SampleableType (ι → Y → K)]
     (h3 : finrank K E = 3) (hS : S.Conditions) (lamOf : Ch → E) (φOf : Ch → Fin 6 → E) (c : Ch)
     (hc : Gadget.GoodCh (K := K) (φOf c) (lamOf c)) :
     Hides (S.view lamOf φOf) S.claims c := by
   intro d d' hd
-  exact Gadget.view_evalDistEq_of_good S.L h3 S.pos hS.placed hS.lowHalf hS.cubeRand (S.Wc c)
-    (hS.weightsFit c) S.β (S.enc c) (hS.condQ c) (lamOf c) (φOf c) hc (S.rest c) hd
+  obtain ⟨b, hb⟩ := hS.basis
+  have h := Gadget.view_evalDistEq_of_good S.L h3 S.pos hS.placed hS.pairANotRand hS.lowHalf
+    hS.cubeOn hS.cubeRand (S.Wc c) (hS.weightsFit c) b (S.enc c) (hS.condQ c) (lamOf c) (φOf c) hc
+    (S.rest c) hd
+  rw [hb] at h
+  exact h
 
 end SecretOpening
 
@@ -286,8 +296,10 @@ theorem hzk_of_factor [Inhabited I] [SampleableType S] (P : Proto S I Ob Mm Kt X
     ∀ σ, good (chOf σ) → (fun s => P.view s σ) <$> ($ᵗ S) =ᵈ (out σ <$> simJ (chOf σ)) := by
   intro σ hσ
   have h : (fun s => P.view s σ) = out σ ∘ jv (chOf σ) := funext fun s => hview s σ
-  rw [h, ← Functor.map_map]
-  exact (hj _ hσ).map _
+  have h' := (hj _ hσ).map (out σ)
+  rw [Functor.map_map] at h'
+  rw [h]
+  exact h'
 
 /-- If the challenges the oracle's answers give are uniform, the joint bad-challenge bound gives
 `zk_rom`'s `hgood`. -/
