@@ -115,3 +115,29 @@ fn whir_bridge_vector() {
     std::fs::write(&file, out).expect("the vector is written");
     eprintln!("{} paths, {} stream scalars: {file}", paths.len(), proof.stream.len());
 }
+
+/// The prefix (`pre` of `famSeed`) of every layout the protocol opens, as hex, with the layout's id:
+/// `cargo test -p quotient --release --test whir_bridge_vector -- --ignored --nocapture opening_prefixes`.
+#[test]
+#[ignore = "prints every layout's prefix; run with --ignored --nocapture"]
+fn opening_prefixes() {
+    use quotient::protocol::{MAX_LOG_ROWS, MIN_LOG_ROWS, quotient_layout, wiring_layout, witness_layout};
+    let hex = |bytes: &[u8]| bytes.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    for log_rows in MIN_LOG_ROWS..=MAX_LOG_ROWS {
+        for (name, layout) in [
+            ("witness", witness_layout(log_rows)),
+            ("wiring", wiring_layout(log_rows)),
+            ("quotient", quotient_layout(log_rows)),
+        ] {
+            let pre = opening::prefix(&layout);
+            assert_eq!(pre[28..60], opening::layout_id(&layout));
+            println!(
+                "{name:<8} 2^{log_rows} rows: log_n {}, {} lanes, id {}\n  pre {}",
+                layout.log_n,
+                layout.lanes(),
+                hex(&pre[28..60]),
+                hex(&pre)
+            );
+        }
+    }
+}

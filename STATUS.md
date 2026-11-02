@@ -12,7 +12,7 @@ Part of this repository. Updated as work lands.
 | Hiding (zero-knowledge) layouts for the secret tables | `crates/quotient/HIDING.md`, `src/hiding.rs` | exact rank tests; Lean proof in progress |
 | EVM verifier (generated from the Rust verifier): selector `verify(bytes32,bytes32,bytes)` = `0xde12c640`, packed 252-byte calldata, index root in storage (owner-gated `setIndexRoot`), three fail-closed `PCS_OPEN` calls, returns the word 1 | `crates/evm` | parity with Rust, adversarial tests |
 | Lean: the reduction (F1) for this protocol: knowledge soundness (Q+3)/2^128 (rounds 2^-166, 2^-164, 3/q, with margin for list unions up to 2^18), HVZK for ideal hiding commitments, completeness, ROM | `formal/` | green, sorry-free, 761 declarations on propext, Classical.choice, Quot.sound |
-| Lean: WHIR openings (F2): leanerVM `mumbai`'s proven `stackedSpec` covers our opening check; ROM soundness for leanVM's transcript shape | `formal/WhirBridge` (built on h1 against mumbai's `lean_vm`) | sorry-free; our current opening seed is the gap → being changed to the proven form |
+| Lean: WHIR openings (F2): leanerVM `mumbai`'s proven `stackedSpec` covers our opening check; ROM soundness for leanVM's transcript shape | `formal/WhirBridge` (built on h1 against mumbai's `lean_vm`) | sorry-free; the Rust opening now has the proven form (`opening::iv`); the Lean mirror of the old seed (`Gaps.lean`, `Test/Check.lean`) to update |
 | Lean: hiding (F3): same view distribution for two tables with the same claims on the good challenges; unopened rows keep ≥ 2,368 / 3,840 bits | `formal/QuotientSecurity/Hiding/` | sorry-free; condition (R) is a hypothesis (provable only to ~2^-54 so far) → layout redesign in progress |
 
 ## Numbers (M4 Max, 16 cores)
@@ -25,12 +25,14 @@ Part of this repository. Updated as work lands.
 
   | step | execution | transaction |
   |---|---|---|
-  | verifier returning the claims | 11,311 | 15,255 |
-  | + three `PCS_OPEN` calls, reply checked (success, 32 bytes, word 1), word 1 returned | 12,023 | 15,967 |
-  | + selector, no-value check | 12,051 | 16,059 |
-  | + index root from storage (cold `SLOAD` + byte reversal) | **14,289** | **18,297** |
+  | verifier returning the claims | 11,311 | 15,267 |
+  | + three `PCS_OPEN` calls, reply checked (success, 32 bytes, word 1), word 1 returned | 12,023 | 15,979 |
+  | + selector, no-value check | 12,051 | 16,071 |
+  | + index root from storage (cold `SLOAD` + byte reversal) | **14,289** | **18,309** |
 
-  At a claim price c (4 claims in 3 calls): 18,297 / 26,297 / 38,297 / 98,297 for c = 0 / 2,000 / 5,000 / 20,000.
+  At a claim price c (4 claims in 3 calls): 18,309 / 26,309 / 38,309 / 98,309 for c = 0 / 2,000 / 5,000 / 20,000.
+  (Transaction gas moves by 12 for each calldata byte that is zero in one proof and not in another: the report's
+  proof, since the per-proof randomness, has one zero byte, the one before it two.)
   Deployment: 6,308-byte code, 1,426,798 gas.
 
 ## Reviews and their outcome
@@ -41,7 +43,7 @@ Part of this repository. Updated as work lands.
   ~2^111: the mock and the contract do it right; now documented as a requirement); with leanerVM's generic list cap
   the copy round as bounded in the paper drops to 125 bits → a tighter Lean bound is in progress; WHIR's code-side
   accounting omits a factor leanerVM proves (leanerVM's certified parameters are fine; forwarded to the F2 bridge);
-  the opening seed should bind the layout and version (planned). Two concrete ZK attacks on the pre-hiding code
+  the opening seed now binds the layout and a version, in the form F2 proves. Two concrete ZK attacks on the pre-hiding code
   (solving the masks from the opened mask lane; per-coset fingerprints that deanonymize the Merkle path) → being
   re-run against the hidden layouts by the hiding reviewer. Fourteen overclaims → wording corrected (README section
   after the design note, doc comments, `formal/README.md`).
@@ -75,9 +77,8 @@ Part of this repository. Updated as work lands.
 
 ## In progress
 
-Rust: per-proof randomness (OS RNG + KDF binding statement and witness) and the opening seed in the form F2 proves
-(fixed prefix with layout and version, root read from the proof); a hidden layout for which condition (R) holds for
-every challenge. FV: F0a (end theorem for χ circuits: zero/one pinning, statement embedding), F0b (the deployed
+Rust: a hidden layout for which condition (R) holds for every challenge. (Done: per-proof randomness, OS RNG +
+KDF binding statement and witness; the opening seed in the form F2 proves, `opening::iv`.) FV: F0a (end theorem for χ circuits: zero/one pinning, statement embedding), F0b (the deployed
 circuit in Lean, Keccak gadget proofs), F4a (the Keccak-256 chain in the random-permutation model), the `Statement`
 package (computable extractor/simulator, executable verifier differential-tested against Rust).
 

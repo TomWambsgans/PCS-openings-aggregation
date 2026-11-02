@@ -161,7 +161,8 @@ pub struct Randomness {
     pub padding: [u8; 32],
 }
 
-/// The key derivation's tags: each in one use, none a prefix of another, each followed by fixed-length fields.
+/// The key derivation's tags: each in one use, none a prefix of another, each followed by fields of fixed length
+/// or (the cells' digests) after their count.
 const KDF_KEY: &[u8] = b"pcs-quotient-kdf-v1-key";
 const KDF_CELLS: &[u8] = b"pcs-quotient-kdf-v1-cells";
 const KDF_MASKS: &[u8] = b"pcs-quotient-kdf-v1-masks";
