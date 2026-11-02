@@ -79,6 +79,27 @@ name = "PcsQuotient"
 srcDir = "../Statement"
 globs = ["PcsQuotient", "PcsQuotient.+"]
 
+# leanVM 42422001's VM (leanISA with `BLAKE2S`), its arithmetization (Clean's six tables), the
+# abstract M3 instance with its Flock region, and the leanISA adaptor, ported from leanerVM
+# `mumbai` at f0393df4 into the namespace `Lv42` (`formal/Lv42`): the statement the univariate
+# PIOP for that leanVM proves against. It compiles against the same `lean_vm` package set
+# (f0393df4 and 6175f1a0 pin the same Lean, Mathlib, CompPoly, Clean, ArkLib and VCVio).
+[[lean_lib]]
+name = "Lv42"
+srcDir = "../Lv42"
+globs = ["Lv42", "Lv42.+"]
+leanOptions = { warningAsError = true }
+
+# The univariate PIOP's bus (`crates/leanvm_univariate/SPEC.md` §5, branch `leanvm-univariate`) as a
+# product heap, `formal/Heap`: the tree, leaf and root identities give the push and pull products'
+# equality, which gives `Lv42`'s `Balanced` but with probability at most `4 N / |E|` over the bus
+# challenges (leanerVM 6175f1a0's Theorem 5.1, `LeanVM.Protocol.sideProduct_collision`).
+[[lean_lib]]
+name = "Heap"
+srcDir = "../Heap"
+globs = ["Heap", "Heap.+"]
+leanOptions = { warningAsError = true }
+
 # ---- The end-to-end libraries ----
 
 # `PcsQuotient.KnowledgeSoundness` from `Compose`'s random-permutation theorem (`Soundness.lean`,
@@ -106,3 +127,13 @@ globs = ["E2ECompleteness", "E2ECompleteness.+"]
 # opens its claims.
 [[lean_lib]]
 name = "Evm"
+
+# The univariate PIOP for leanVM 42422001 (`crates/leanvm_univariate`): its verifier transcribed
+# (`formal/UniStatement`, library `UniStatement`) and its end statements against `Lv42`'s relation
+# (`UniStatement.Security`). The differential runner (`UniStatementTest/Runner.lean`) runs with
+# `lake env lean`, not built.
+[[lean_lib]]
+name = "UniStatement"
+srcDir = "../UniStatement"
+globs = ["UniStatement", "UniStatement.+"]
+leanOptions = { warningAsError = true }

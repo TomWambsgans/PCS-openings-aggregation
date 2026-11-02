@@ -42,6 +42,12 @@ pub trait Channel<S: Scalar> {
     fn require_zero(&mut self, value: S, error: VerifierError) -> Result<(), VerifierError>;
 
     fn require_nonzero(&mut self, value: S, error: VerifierError) -> Result<(), VerifierError>;
+
+    /// The next `bytes` bytes of the stream (at most 8), a big-endian integer, as a scalar holding it in its low
+    /// limb: a packed count, not a field element. Absorbed like every byte of the stream.
+    fn next_integer(&mut self, _bytes: usize) -> Result<S, VerifierError> {
+        unimplemented!("this channel reads no packed integers")
+    }
 }
 
 /// The scalar stream, and the Merkle openings.
@@ -384,6 +390,16 @@ impl Channel<E> for KeccakChannel<'_> {
             }
         }
     }
+
+    fn next_integer(&mut self, bytes: usize) -> Result<E, VerifierError> {
+        assert!((1..=8).contains(&bytes));
+        let data = self
+            .data
+            .get(self.cursor..self.cursor + bytes)
+            .ok_or(VerifierError::StreamExhausted)?;
+        self.cursor += bytes;
+        Ok(E::new(data.iter().fold(0u64, |acc, &b| acc << 8 | b as u64), 0, 0))
+    }
 }
 
 /// The contract's chain, prover side: writes the calldata stream and draws the same challenges.
@@ -408,6 +424,12 @@ impl KeccakWriter {
 
     pub fn send_root(&mut self, halves: [E; 2]) {
         halves.into_iter().for_each(|half| self.stream.extend(half_bytes(half)));
+    }
+
+    /// A packed integer of `bytes` bytes, big-endian ([`Channel::next_integer`]).
+    pub fn send_integer(&mut self, value: u64, bytes: usize) {
+        assert!((1..=8).contains(&bytes) && (bytes == 8 || value >> (8 * bytes) == 0));
+        self.stream.extend(&value.to_be_bytes()[8 - bytes..]);
     }
 
     pub fn sample(&mut self) -> E {

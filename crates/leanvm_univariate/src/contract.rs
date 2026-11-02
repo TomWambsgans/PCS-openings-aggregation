@@ -3,9 +3,11 @@
 //! The verifier as a contract (straight-line code compiled from the recorded verifier, `leanvm_flock_gas::evm`), its
 //! calldata, and what a call costs.
 //!
-//! **Calldata**: selector, the public input (four 64-bit words), then the stream: `C1`'s root, Flock's messages,
-//! `C2`'s root, the values at `t` (SPEC.md §8). No announced sizes: the contract is built for one shape, which the
-//! transcript's IV binds.
+//! **Calldata**: selector, the public input (four 64-bit words, each big-endian: `(cell0.c0, cell0.c1, cell1.c0,
+//! cell1.c1)`; leanVM's 32-byte digest has its words little-endian, so a caller reverses each word's 8 bytes, SPEC.md
+//! §4), then the stream: the six row counts, `C1`'s root, Flock's messages, `C2`'s root, the values at `t`, the
+//! batching sumcheck (SPEC.md §8, §13). The contract is built for one shape class (the heights), which the
+//! transcript's IV binds with the setup roots and the layout words.
 //!
 //! **Calls**: one `PCS_OPEN` call per commitment, each with one weighted claim (SPEC.md §8): words `root, layout,
 //! k = 1, P`, the `P` points (a length, then the coordinates), the claim's `m` terms (`column | point << 32 |
@@ -24,24 +26,110 @@ use crate::verifier::{Blake2s, Claims, Opening, Reduced, Shape, reduce};
 /// The transcript's 16-byte name.
 pub const NAME: [u8; 16] = *b"leanVM-univar-v1";
 
-/// The layout ids `PCS_OPEN` is called with (they name the stacks of SPEC.md §3).
-fn layout_id(commitment: Commitment) -> u64 {
+/// The setup commitments' roots, constants of the code (review M1, F2): `F` from the program and the shape, `A0` and
+/// `B0` from Flock's BLAKE2s R1CS. The prover computes them (`prover::setup::roots`, branch
+/// `leanvm-univariate-prover`, PROVER.md); [`SetupRoots::REFERENCE`] are the reference shape's (memory `2^21`,
+/// bytecode `2^19`), which the gas reports use for every shape (the gas does not depend on them).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SetupRoots {
+    pub f: [u8; 32],
+    pub a0: [u8; 32],
+    pub b0: [u8; 32],
+}
+
+const fn digit(c: u8) -> u8 {
+    match c {
+        b'0'..=b'9' => c - b'0',
+        _ => c - b'a' + 10,
+    }
+}
+
+const fn hex32(text: &[u8; 64]) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    let mut i = 0;
+    while i < 32 {
+        out[i] = digit(text[2 * i]) << 4 | digit(text[2 * i + 1]);
+        i += 1;
+    }
+    out
+}
+
+impl SetupRoots {
+    pub const REFERENCE: Self = Self {
+        f: hex32(b"9b5a0f9bd796c09b8bc328113956464acf865c99b7dfc088c0c0a3208eab5fb7"),
+        a0: hex32(b"93cd9a0352a85dcc663f7068e1f3afa3a00f5220bd2b03d67244f0eb133fd2f7"),
+        b0: hex32(b"c07556508c416240dafd47665831fd51d2eb1104a52c63231101479c7f6cd467"),
+    };
+}
+
+/// The opening a `PCS_OPEN` call is for, its code in the layout word.
+fn layout_code(commitment: Commitment) -> u16 {
     match commitment {
         Commitment::C1 => 0x5501,
         Commitment::C2 => 0x5502,
         Commitment::Setup => 0x5503,
     }
 }
-const A0_LAYOUT: u64 = 0x5504;
-const B0_LAYOUT: u64 = 0x5505;
+const A0_CODE: u16 = 0x5504;
+const B0_CODE: u16 = 0x5505;
 
-/// The setup commitments' roots, constants of the code (the gas does not depend on them).
-fn setup_root(k: u64) -> Word {
-    Word::Const(word([0x1111 * k, 0x2222, 0x3333]))
+/// The shape's bytes: `log_memory`, `log_bytecode`, then the six heights.
+pub fn shape_bytes(shape: &Shape) -> [u8; 8] {
+    let heights = shape.heights();
+    let mut bytes = [0u8; 8];
+    bytes[0] = shape.log_memory as u8;
+    bytes[1] = shape.log_bytecode as u8;
+    for (k, &h) in heights.iter().enumerate() {
+        bytes[2 + k] = h as u8;
+    }
+    bytes
+}
+
+/// A `PCS_OPEN` call's layout word (review M1, F2; the prover's request): the shape's bytes (bytes 0..8), the
+/// opening's code (22..24), the stack's variables (24) and the words its blocks fill, `placed` (25..32), which
+/// WHIR's verifier needs to know the committed lanes. Each shape's stacks have their own words.
+pub fn layout_word(shape: &Shape, code: u16, vars: usize, placed: u64) -> [u8; 32] {
+    assert!(vars < 256 && placed < 1 << 56);
+    let mut word = [0u8; 32];
+    word[..8].copy_from_slice(&shape_bytes(shape));
+    word[22..24].copy_from_slice(&code.to_be_bytes());
+    word[24] = vars as u8;
+    word[25..].copy_from_slice(&placed.to_be_bytes()[1..]);
+    word
+}
+
+/// The five openings' layout words, in call order: `C1`, `C2`, the setup, `A0`, `B0`.
+pub fn layout_words(shape: &Shape) -> [[u8; 32]; 5] {
+    let layouts = crate::verifier::layouts(shape);
+    let of = |c: Commitment| {
+        let layout = &layouts.iter().find(|(k, _)| *k == c).expect("a layout").1;
+        layout_word(shape, layout_code(c), layout.vars, layout.words())
+    };
+    let matrix = |code| layout_word(shape, code, 28, 1 << 28);
+    [of(Commitment::C1), of(Commitment::C2), of(Commitment::Setup), matrix(A0_CODE), matrix(B0_CODE)]
+}
+
+/// The IV the transcript's seed hashes (review M1, F2): the hash of a tag, the program's IV (leanVM's digest of the
+/// bytecode and the R1CS), the setup roots, the shape and the five layout words. The seed then adds the public
+/// input. A constant of the code: it costs no gas.
+pub fn contract_iv(shape: &Shape, program_iv: &[u8; 32], roots: &SetupRoots) -> [u8; 32] {
+    let words = layout_words(shape);
+    let mut data = b"leanVM-univar-iv".to_vec();
+    data.extend_from_slice(program_iv);
+    for root in [roots.f, roots.a0, roots.b0] {
+        data.extend_from_slice(&root);
+    }
+    data.extend_from_slice(&shape_bytes(shape));
+    for w in &words {
+        data.extend_from_slice(w);
+    }
+    leanvm_flock_gas::transcript::keccak256(&data)
 }
 
 /// The verifier for one shape, recorded.
 pub struct Recorded {
+    pub shape: Shape,
+    pub roots: SetupRoots,
     pub graph: Graph,
     pub reduced: Reduced<Sym>,
     pub stream_len: usize,
@@ -58,6 +146,8 @@ pub fn record_verifier(shape: &Shape, blake2s: Blake2s, mode: Claims) -> Recorde
     });
     assert_eq!(roots.len(), 2, "two commitments in the stream");
     Recorded {
+        shape: *shape,
+        roots: SetupRoots::REFERENCE,
         graph,
         reduced,
         stream_len,
@@ -95,16 +185,16 @@ fn combined_words<T: Copy, W: Clone>(claim: &Combined<T>, word: impl Fn(T) -> W,
 /// A commitment's call: its header (root, layout, claims), then its claims.
 fn opening_words<T: Copy, W: Clone>(
     root: W,
-    layout: u64,
+    layout: W,
     opening: &Opening<T>,
     word: impl Fn(T) -> W + Copy,
     number: impl Fn(u64) -> W + Copy,
 ) -> Vec<W> {
     match opening {
-        Opening::Weighted(claim) => [vec![root, number(layout), number(1)], combined_words(claim, word, number)].concat(),
+        Opening::Weighted(claim) => [vec![root, layout, number(1)], combined_words(claim, word, number)].concat(),
         Opening::Point { point, value, bit_slice } => {
             let k = 1 + bit_slice.is_some() as u64;
-            let mut words = vec![root, number(layout), number(k)];
+            let mut words = vec![root, layout, number(k)];
             words.extend(point.iter().map(|&x| word(x)));
             words.push(word(*value));
             if let Some(claim) = bit_slice {
@@ -118,18 +208,20 @@ fn opening_words<T: Copy, W: Clone>(
 /// The calls of `PCS_OPEN`, as runs of output words.
 pub fn calls(recorded: &Recorded) -> Vec<Vec<Word>> {
     let reduced = &recorded.reduced;
+    let layouts = layout_words(&recorded.shape);
+    let roots = recorded.roots;
     let mut out = Vec::new();
     for (commitment, opening) in &reduced.openings {
-        let root = match commitment {
-            Commitment::C1 => Word::Stream(recorded.roots_at[0]),
-            Commitment::C2 => Word::Stream(recorded.roots_at[1]),
-            Commitment::Setup => setup_root(1),
+        let (root, layout) = match commitment {
+            Commitment::C1 => (Word::Stream(recorded.roots_at[0]), layouts[0]),
+            Commitment::C2 => (Word::Stream(recorded.roots_at[1]), layouts[1]),
+            Commitment::Setup => (Word::Const(roots.f), layouts[2]),
         };
-        out.push(opening_words(root, layout_id(*commitment), opening, scalar, number));
+        out.push(opening_words(root, Word::Const(layout), opening, scalar, number));
     }
     if let Some(matrices) = &reduced.matrices {
-        for (k, (layout, value)) in [(A0_LAYOUT, matrices.a), (B0_LAYOUT, matrices.b)].into_iter().enumerate() {
-            let mut words = vec![setup_root(2 + k as u64), number(layout), number(1)];
+        for (root, layout, value) in [(roots.a0, layouts[3], matrices.a), (roots.b0, layouts[4], matrices.b)] {
+            let mut words = vec![Word::Const(root), Word::Const(layout), number(1)];
             words.extend(matrices.point.iter().map(|&x| scalar(x)));
             words.push(scalar(value));
             out.push(words);
@@ -138,10 +230,12 @@ pub fn calls(recorded: &Recorded) -> Vec<Vec<Word>> {
     out
 }
 
-pub fn compile_verifier(recorded: &Recorded, iv: &[u8; 32], measure: bool) -> Contract {
+/// `program_iv` is the program's (leanVM's digest of the bytecode and the R1CS); the contract's IV is derived from it
+/// ([`contract_iv`]), as in every function here that takes one.
+pub fn compile_verifier(recorded: &Recorded, program_iv: &[u8; 32], measure: bool) -> Contract {
     let entry = Entry {
         name: NAME,
-        iv: *iv,
+        iv: contract_iv(&recorded.shape, program_iv, &recorded.roots),
         stream_len: recorded.stream_len,
         measure,
     };
@@ -177,7 +271,7 @@ pub fn rust_verifier(
     blake2s: Blake2s,
     mode: Claims,
 ) -> Result<(Reduced<E>, Vec<E>, Vec<E>), leanvm_flock_gas::VerifierError> {
-    let seed = keccak_seed(&NAME, iv, public_words);
+    let seed = keccak_seed(&NAME, &contract_iv(shape, iv, &SetupRoots::REFERENCE), public_words);
     let mut channel = KeccakChannel::new(
         seed,
         stream,
@@ -346,19 +440,20 @@ fn expected_words(reduced: &Reduced<E>, recorded: &Recorded, stream: &[u8]) -> V
         bytes
     };
     let root = |at: usize| -> [u8; 32] { stream[at..at + 32].try_into().unwrap() };
-    let constant = |k: u64| word([0x1111 * k, 0x2222, 0x3333]);
+    let layouts = layout_words(&recorded.shape);
+    let roots = recorded.roots;
     let mut out = Vec::new();
     for (commitment, opening) in &reduced.openings {
-        let r = match commitment {
-            Commitment::C1 => root(recorded.roots_at[0]),
-            Commitment::C2 => root(recorded.roots_at[1]),
-            Commitment::Setup => constant(1),
+        let (r, layout) = match commitment {
+            Commitment::C1 => (root(recorded.roots_at[0]), layouts[0]),
+            Commitment::C2 => (root(recorded.roots_at[1]), layouts[1]),
+            Commitment::Setup => (roots.f, layouts[2]),
         };
-        out.extend(opening_words(r, layout_id(*commitment), opening, element_word, number));
+        out.extend(opening_words(r, layout, opening, element_word, number));
     }
     if let Some(matrices) = &reduced.matrices {
-        for (k, (layout, value)) in [(A0_LAYOUT, matrices.a), (B0_LAYOUT, matrices.b)].into_iter().enumerate() {
-            out.extend([constant(2 + k as u64), number(layout), number(1)]);
+        for (r, layout, value) in [(roots.a0, layouts[3], matrices.a), (roots.b0, layouts[4], matrices.b)] {
+            out.extend([r, layout, number(1)]);
             out.extend(matrices.point.iter().map(|&x| element_word(x)));
             out.push(element_word(value));
         }
@@ -372,7 +467,7 @@ pub fn parity(shape: &Shape, iv: &[u8; 32], public_words: &[u8; 32], stream: &[u
     let recorded = record_verifier(shape, blake2s, mode);
     let entry = Entry {
         name: NAME,
-        iv: *iv,
+        iv: contract_iv(shape, iv, &recorded.roots),
         stream_len: recorded.stream_len,
         measure: true,
     };
@@ -400,7 +495,7 @@ pub fn parity(shape: &Shape, iv: &[u8; 32], public_words: &[u8; 32], stream: &[u
 fn ends(recorded: &Recorded, iv: &[u8; 32], verify: bool, measure: bool) -> (Vec<Word>, Ending, Entry) {
     let entry = Entry {
         name: NAME,
-        iv: *iv,
+        iv: contract_iv(&recorded.shape, iv, &recorded.roots),
         stream_len: recorded.stream_len,
         measure,
     };

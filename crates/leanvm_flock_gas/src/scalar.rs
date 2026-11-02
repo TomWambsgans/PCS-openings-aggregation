@@ -41,6 +41,18 @@ pub trait Scalar: Copy + Debug + Add<Output = Self> + Mul<Output = Self> + AddAs
     fn sum(values: impl IntoIterator<Item = Self>) -> Self {
         values.into_iter().fold(Self::zero(), |acc, value| acc + value)
     }
+
+    /// Of a scalar that holds an integer `v` in its low limb (one read by [`crate::transcript::Channel::next_integer`]):
+    /// the integer `(v >> shift) mod 2^width`, as a scalar in the same way (a bit is the scalar 0 or 1).
+    fn bits(self, _shift: usize, _width: usize) -> Self {
+        unimplemented!("bit fields of an integer scalar")
+    }
+
+    /// The ring switch's weight `Φ(eq(point, ·))` at `r`, given `1 + r` ([`crate::ring_tower::weight_at`]). The
+    /// recorder's symbol makes it one node of hand-scheduled code (`crate::evm::kernel`).
+    fn ring_weight(point: &[Self], one_plus_r: &[Self], map: &[Self]) -> Self {
+        crate::ring_tower::weight_at(point, one_plus_r, map)
+    }
 }
 
 impl Scalar for E {
@@ -54,6 +66,12 @@ impl Scalar for E {
 
     fn pow(self, exponent: u64) -> Self {
         E::pow(self, exponent)
+    }
+
+    fn bits(self, shift: usize, width: usize) -> Self {
+        assert!(self.c1 == 0 && self.c2 == 0 && shift < 64, "an integer scalar");
+        let mask = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+        E::new((self.c0 >> shift) & mask, 0, 0)
     }
 }
 

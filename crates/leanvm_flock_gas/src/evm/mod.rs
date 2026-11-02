@@ -4,5 +4,6 @@
 
 pub mod codegen;
 pub mod contract;
+pub mod kernel;
 pub mod machine;
 pub mod record;

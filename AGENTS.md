@@ -55,7 +55,7 @@ from where.
     (the bytecode = the recorded graph, and the `PCS_OPEN` mock = `opening::verify` = the Statement's opening,
     by tests);
   - zero knowledge, no hypotheses: `PcsQuotient.EndToEnd.zeroKnowledge_closed`, about 2^-113, for an explicit
-    simulator named in the statement (its full computability in progress).
+    simulator named in the statement; `zeroKnowledge_closed_computable` restates it with a compiled simulator.
 
   The deployed Rust prover is trusted for completeness (the Statement's prover is compared with it on the
   reduction's nine scalars at 2^17 rows only). The theorems are in the random-permutation model and do not

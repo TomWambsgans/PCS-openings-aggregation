@@ -21,7 +21,7 @@ use leanvm_flock_gas::VerifierError;
 use crate::claims::{COMMITMENTS, Column, Combined, Commitment, Relations, Term, term};
 use crate::stacks::{EqCache, StackLayout, limb_basis};
 use crate::domain::{
-    coordinate_functionals, coordinates_at, digits, point_e, prefix_vanishing, suffix_vanishing, vanishing_ratio,
+    active_vanishing_from_bits, coordinate_functionals, coordinates_at, digits, point_e, vanishing_ratio,
 };
 use crate::heap::{HeapLayout, Leaves};
 
@@ -54,6 +54,32 @@ impl Shape {
     pub fn heap(&self) -> HeapLayout {
         HeapLayout::new(self.log_memory, self.log_bytecode, &self.heights())
     }
+
+    /// The shapes a verifier can be built for (review M1, F5): the quotients' degrees are computed without wrapping
+    /// ([`degree`]) at any height, so a shape is rejected only where the protocol needs more: the memory at least
+    /// 2 cells (the public input's), every height below 32 (the counts are 32-bit), and with Flock BLAKE2S's height
+    /// at least 7 (its zerocheck's seven fixed coordinates).
+    pub fn validate(&self, flock: bool) -> Result<(), VerifierError> {
+        let heights = self.heights();
+        let invalid = self.log_memory < 1 || heights.iter().any(|&h| h > 31) || (flock && heights[OP_BLAKE2S] < 7);
+        if invalid {
+            return Err(VerifierError::InvalidShape);
+        }
+        Ok(())
+    }
+
+    /// The fewest rows of a height-`r` table, which sizes its quotients: `2^(r-1) + 1` (0 at height 0).
+    pub fn least_rows(r: usize) -> u64 {
+        if r == 0 { 0 } else { (1 << (r - 1)) + 1 }
+    }
+}
+
+/// A quotient's degree `plus - minus`, or 0 where a small domain makes it negative (review M1, F5).
+pub fn degree(plus: u64, minus: u64) -> u64 {
+    plus.saturating_sub(minus)
+}
+
+impl Shape {
 }
 
 /// The columns whose values a table's rows send at `t` besides its counters: every factor of a product in its
@@ -261,6 +287,8 @@ pub struct Reduced<S> {
     /// The relations combined, and each commitment's stack variables.
     pub relations: usize,
     pub stack_vars: Vec<(Commitment, usize)>,
+    /// The three stacks' layouts (a function of the shape alone: [`layouts`]).
+    pub layouts: Vec<(Commitment, StackLayout)>,
 }
 
 /// What a commitment's one `PCS_OPEN` call carries.
@@ -325,6 +353,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     blake2s: Blake2s,
     mode: Claims,
 ) -> Result<Reduced<S>, VerifierError> {
+    shape.validate(matches!(blake2s, Blake2s::Flock(_)))?;
     let tables = tables();
     let mut c2_columns: Vec<(Column, usize, bool)> = vec![
         (Column::Heap, shape.heap().h, true),
@@ -335,6 +364,17 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     let heap = shape.heap();
     let r_w = shape.constraint_vars();
     let h = heap.h;
+
+    // 0. The tables' row counts (review M1, F1): six 32-bit integers, absorbed with C1's root. A count is at most
+    // its height's 2^r; the contract reads its bits 0..=r.
+    let mut count_bits: Vec<Vec<S>> = Vec::with_capacity(N_TABLES);
+    for &r in &heights {
+        let count = channel.next_integer(4)?;
+        let _phase = enter("row counts: bits, range");
+        channel.require_zero(count.bits(r + 1, 32), VerifierError::TableRows)?;
+        channel.require_zero(count.bits(r, 1) * count.bits(0, r), VerifierError::TableRows)?;
+        count_bits.push((0..=r).map(|b| count.bits(b, 1)).collect());
+    }
 
     // 1. C1, then the bus's and the constraints' challenges.
     let root1 = channel.next_root()?;
@@ -353,14 +393,14 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     // (SPEC.md §13): it is left pending here.
     let mut pending = None;
     let flock = match blake2s {
-        Blake2s::Flock(variant) if mode == Claims::Point && variant.slices != Slices::Claim => {
+        Blake2s::Flock(variant) if mode == Claims::Point => {
             let (point, end, left) = flock_min::verify_deferred(flock_log_n, variant, channel)?;
-            pending = Some(left);
+            pending = Some((left, point.clone()));
             Some((point, end, None))
         }
         Blake2s::Flock(variant) => {
             let reduced = flock_min::verify(flock_log_n, variant, channel)?;
-            Some((reduced.point, reduced.end, Some(reduced.matrices)))
+            Some((reduced.point, Some(reduced.end), Some(reduced.matrices)))
         }
         Blake2s::Omitted => None,
     };
@@ -372,6 +412,13 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     let w = {
         let _phase = enter("digits, vanishing polynomials, coordinates");
         digits(t, digit_count)
+    };
+    // The active rows' vanishing polynomials Z_act(t), from the counts' bits: the active rows are the fixed cosets of
+    // the counts' set bits (SPEC.md §13). Z_pad = w_r / Z_act is never needed: the leaf identity is multiplied by
+    // Z_act, and the counters are nonzero on every row.
+    let active: Vec<S> = {
+        let _phase = enter("row counts: Z_act from the bits");
+        count_bits.iter().zip(&heights).map(|(bits, &r)| active_vanishing_from_bits(&w, bits, r)).collect()
     };
 
     // 4. The values at t, with the relations they take part in.
@@ -446,9 +493,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
         for (table, part) in tables.iter().zip(&parts) {
             let r = heights[table.opcode];
             let n = 1u64 << r;
-            let rows = shape.table_rows[table.opcode];
             let lift = vanishing_ratio(&w, r, r_w);
-            let padding = suffix_vanishing(&w, rows, r);
             let at = |column| Column::Table {
                 table: table.opcode,
                 column,
@@ -462,18 +507,19 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                 terms.push(term(at(inverse), &w[..r], g1 * cond));
                 let g2 = next(&mut power) * lift;
                 known += g2 * cond * (flag + one);
-                quotient_degree = quotient_degree.max(n - 2);
+                quotient_degree = quotient_degree.max(degree(n, 2));
             }
-            // Counters nonzero on the active rows: (z Π c + 1) Z_pad.
+            // Counters nonzero on every row (padding rows' counters are free, so a prover sets them nonzero):
+            // z Π c + 1.
             let mut counters = one;
             for column in table.count_columns() {
                 counters *= part.sent[column].expect("a counter is sent");
             }
-            let g = next(&mut power) * lift * padding;
+            let g = next(&mut power) * lift;
             terms.push(term(Column::Inverse(table.opcode), &w[..r], g * counters));
             known += g;
             let counts = table.count_columns().count() as u64;
-            quotient_degree = quotient_degree.max((n - 1) * (1 + counts) + (n - rows) - n);
+            quotient_degree = quotient_degree.max(degree((n - 1) * (1 + counts), n));
             // BLAKE2S's limb copies equal q_flock's limbs: copy_j - ℓ_j, ℓ_j read through y(t).
             if table.opcode == OP_BLAKE2S {
                 let functionals = coordinate_functionals(r);
@@ -485,7 +531,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                         terms.push(term(Column::QflockSlot(slot), &y, g));
                     }
                 }
-                quotient_degree = quotient_degree.max((r as u64) * (n / 2) - n);
+                quotient_degree = quotient_degree.max(degree((r as u64) * (n / 2), n));
             }
         }
         // The public input: the memory's limbs at cells 0 and 1 are the public lines (leanVM's binding).
@@ -497,7 +543,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
             terms.push(term(Column::Memory(k), &w[..lm], g));
             known += g * (low + t * (low + high));
         }
-        quotient_degree = quotient_degree.max((1 << lm) - 3);
+        quotient_degree = quotient_degree.max(degree(1 << lm, 3));
         relations.push(terms, constraint_value * w[r_w] + known);
     }
     let constraint_chunks = chunks(quotient_degree + 1);
@@ -541,21 +587,24 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                 })
                 .collect();
             let n = 1u64 << block.r;
-            let (pull, push, degree) = match block.leaves {
+            let wr = w[block.r];
+            let (pull, push, degree, scale) = match block.leaves {
                 Leaves::Unused => {
                     relations.push(vec![term(Column::Heap, &mixed, one)], one);
                     continue;
                 }
-                Leaves::Memory => (memory_pull, memory_push, 2 * (n - 1) - n),
-                Leaves::Bytecode => (bytecode_pull, bytecode_push, 2 * (n - 1) - n),
+                Leaves::Memory => (memory_pull, memory_push, degree(2 * (n - 1), n), wr),
+                Leaves::Bytecode => (bytecode_pull, bytecode_push, degree(2 * (n - 1), n), wr),
                 Leaves::Table(t) => {
-                    // Padding rows' leaves are 1, whatever they hold: (R P_pull + P_push) Z_pad + (R + 1) Z_act.
+                    // Padding rows' leaves are 1, whatever they hold: (R P_pull + P_push) Z_pad + (R + 1) Z_act
+                    // = Q w_r, here times Z_act (Z_pad Z_act = w_r): R (P_pull w_r + Z_act^2) + Q w_r Z_act =
+                    // P_push w_r + Z_act^2. Sized for the fewest rows of the height, 2^(r-1) + 1.
                     let part = &parts[t];
-                    let rows = shape.table_rows[t];
-                    let active = prefix_vanishing(&w, rows);
-                    let padding = suffix_vanishing(&w, rows, block.r);
-                    let d = (part.pull_degree.max(part.push_degree) as u64) * (n - 1) + (n - rows) - n;
-                    (part.pull * padding + active, part.push * padding + active, d)
+                    let z = active[t];
+                    let square = z * z;
+                    let rows = Shape::least_rows(block.r);
+                    let d = degree((part.pull_degree.max(part.push_degree) as u64) * (n - 1) + (n - rows), n);
+                    (part.pull * wr + square, part.push * wr + square, d, wr * z)
                 }
             };
             let sizes = chunks(degree + 1);
@@ -570,7 +619,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                 |chunk| Column::LeafQuotient { block: index, chunk },
                 &sizes,
                 &w,
-                w[block.r],
+                scale,
             ));
             relations.push(terms, push);
         }
@@ -583,7 +632,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     let mut bit_slice = Relations::default();
     let mut ring_map: Option<Vec<S>> = None;
     let tower = matches!(blake2s, Blake2s::Flock(Variant { slices: Slices::Tower, .. }));
-    if let Some((flock_point, flock_end, flock_matrices)) = flock {
+    if let Some((flock_point, Some(flock_end), flock_matrices)) = flock {
         match flock_end {
             End::Ring { map, target, .. } if tower && mode == Claims::Point => {
                 // One term for the whole weight, evaluated at the batch's point (SPEC.md §13).
@@ -664,7 +713,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
             .collect()
     };
     let bit_slice = bit_slice.combine(Commitment::C1, S::one());
-    let layouts = layouts(shape, &c2_columns);
+    let layouts = stack_layouts(shape, &c2_columns);
     let stack_vars = layouts.iter().map(|(c, l)| (*c, l.vars)).collect();
     let openings = match mode {
         Claims::Weighted => {
@@ -684,8 +733,14 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
             openings
         }
         Claims::Point => {
-            let (openings, deferred) =
-                batch(channel, &combined, &layouts, bit_slice, ring_map.as_deref(), pending.as_ref())?;
+            let (openings, deferred) = batch(
+                channel,
+                &combined,
+                &layouts,
+                bit_slice,
+                ring_map.as_deref(),
+                pending.as_ref().map(|(p, point)| (p, &point[..])),
+            )?;
             if deferred.is_some() {
                 matrices = deferred;
             }
@@ -698,11 +753,40 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
         matrices,
         relations: relations.list.len(),
         stack_vars,
+        layouts,
     })
 }
 
-/// The three stacks' layouts (SPEC.md §3).
-fn layouts(shape: &Shape, c2_columns: &[(Column, usize, bool)]) -> Vec<(Commitment, StackLayout)> {
+/// The three stacks' layouts of `shape` (SPEC.md §3): `C1`'s, `C2`'s and the setup's. They depend on the shape
+/// alone; `C2`'s columns are the ones [`reduce`] states (its quotients' chunks), read off a run of it.
+pub fn layouts(shape: &Shape) -> Vec<(Commitment, StackLayout)> {
+    struct Null;
+    impl Channel<E> for Null {
+        fn next_scalar(&mut self) -> Result<E, VerifierError> {
+            Ok(E::default())
+        }
+        fn next_root(&mut self) -> Result<[E; 2], VerifierError> {
+            Ok([E::default(); 2])
+        }
+        fn sample(&mut self) -> E {
+            leanvm_flock_gas::field::GEN
+        }
+        fn require_zero(&mut self, _: E, _: VerifierError) -> Result<(), VerifierError> {
+            Ok(())
+        }
+        fn require_nonzero(&mut self, _: E, _: VerifierError) -> Result<(), VerifierError> {
+            Ok(())
+        }
+        fn next_integer(&mut self, _: usize) -> Result<E, VerifierError> {
+            Ok(E::default())
+        }
+    }
+    let words = [E::default(); 4];
+    reduce(shape, words, &mut Null, Blake2s::Omitted, Claims::Weighted).expect("a valid shape").layouts
+}
+
+/// The stacks' layouts, `C2`'s from its column list.
+pub fn stack_layouts(shape: &Shape, c2_columns: &[(Column, usize, bool)]) -> Vec<(Commitment, StackLayout)> {
     let heights = shape.heights();
     let mut c1: Vec<(Column, usize, bool)> = vec![(Column::Qflock, heights[OP_BLAKE2S] + 8, false)];
     for table in tables() {
@@ -765,7 +849,9 @@ fn weight_at<S: Scalar>(
     };
     // Σ coefficient · part, by row: (point, length, twist).
     let mut rows: Vec<((usize, usize, u8), S)> = Vec::new();
-    // q_flock's slots, by point: Σ coefficient · eq(slot bits, r_(<8)).
+    // q_flock's slots, by point: Σ coefficient · eq(slot bits, r_(<8)). Keyed by the point, not by the slot (the
+    // Lean transcription's finding 1 on milestone 1's `EqCache`, which keyed a slot's row by its slot and was right
+    // only because every slot term sits at the one point y(t)).
     let mut slots: Vec<(usize, S)> = Vec::new();
     for &(column, p, twist, coefficient) in &claim.terms {
         if let Column::QflockSlot(j) = column {
@@ -793,7 +879,7 @@ fn weight_at<S: Scalar>(
         let row = if twist == RING_TWIST {
             let map = ring_map.expect("the ring map of a ring-switch term");
             let _phase = enter("claims: the ring switch's weight at the batch's point");
-            ring_tower::weight_at(&point[..len], &cache.one_plus_r()[..len], map)
+            S::ring_weight(&point[..len], &cache.one_plus_r()[..len], map)
         } else {
             cache.row(base_id + p, point, len, twist)
         };
@@ -820,7 +906,7 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
     layouts: &[(Commitment, StackLayout)],
     bit_slice: Option<Combined<S>>,
     ring_map: Option<&[S]>,
-    pending: Option<&flock_min::Pending<S>>,
+    pending: Option<(&flock_min::Pending<S>, &[S])>,
 ) -> Result<(Vec<(Commitment, Opening<S>)>, Option<MatrixClaim<S>>), VerifierError> {
     let _phase = enter("claims: batching sumcheck to point claims");
     let lambda = channel.sample();
@@ -831,17 +917,14 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
         target += scale * claim.value;
         scale *= lambda;
     }
-    if let Some(pending) = pending {
+    if let Some((pending, _)) = pending {
         assert!(pending.rounds() <= vars);
         target += scale * pending.claim;
     }
     let (r, last) = sumcheck(channel, target, 3, &vec![None; vars])?;
     let values = channel.next_scalars(combined.len())?;
     let matrices = match pending {
-        Some(pending) => {
-            let (a, b) = (channel.next_scalar()?, channel.next_scalar()?);
-            Some((pending.terminal(&r, a, b)?, pending.rounds()))
-        }
+        Some(_) => Some((channel.next_scalar()?, channel.next_scalar()?)),
         None => None,
     };
     let _weights = enter("claims: the batch's weights at its point (eq, selectors, twists)");
@@ -864,11 +947,40 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
             },
         ));
     }
-    let matrices = matrices.map(|((value, claim), rounds)| {
-        let extension = (rounds..vars).fold(S::one(), |acc, j| acc * (S::one() + r[j]));
-        sum += scale * value * extension;
-        claim
-    });
+    let mut claim = None;
+    if let (Some((pending, flock_point)), Some((a, b))) = (pending, matrices) {
+        let extension = (pending.rounds()..vars).fold(S::one(), |acc, j| acc * (S::one() + r[j]));
+        if pending.has_slices() {
+            let (value, matrices) = pending.terminal(&r, a, b)?;
+            sum += scale * value * extension;
+            claim = Some(matrices);
+        } else {
+            // Flock (a): the terminal leaves Σ_i μ_i ẑ(i, p) = sum + last, a bit-slice claim joining C1's call.
+            let (weights, matrices) = pending.combination(&r, a, b, extension, scale)?;
+            let mut relation = Relations::default();
+            relation.push(
+                weights
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &coefficient)| Term {
+                        column: Column::QflockBits,
+                        point: flock_point.to_vec(),
+                        twist: i as u8,
+                        coefficient,
+                    })
+                    .collect(),
+                sum + last,
+            );
+            let combination = relation.combine(Commitment::C1, S::one());
+            for (commitment, opening) in openings.iter_mut() {
+                if let (Commitment::C1, Opening::Point { bit_slice, .. }) = (commitment, opening) {
+                    *bit_slice = combination.clone();
+                }
+            }
+            claim = Some(matrices);
+            return Ok((openings, claim));
+        }
+    }
     channel.require_zero(sum + last, VerifierError::StackBatchTerminal)?;
-    Ok((openings, matrices))
+    Ok((openings, claim))
 }
