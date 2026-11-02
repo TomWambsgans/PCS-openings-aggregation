@@ -93,10 +93,11 @@ pub fn wiring_layout(log_rows: usize) -> Layout {
     Layout::new(m, m, m, &[(0, 1 << m)])
 }
 
-/// The random lanes of the witness table's hidden layout: the fewest with which its opening hides it (HIDING.md).
+/// The random lanes of the witness table's hidden layout: with the overflow lane, the cube of lanes `32..40`,
+/// whose fold weights span `E` but for a set of challenges below `2^-188` (condition (S), HIDING.md).
 pub const WITNESS_RANDOM_LANES: usize = 7;
 
-/// The random lanes of the quotient table's hidden layout: the fewest with which its opening hides it (HIDING.md).
+/// The random lanes of the quotient table's hidden layout: as the witness table's ([`WITNESS_RANDOM_LANES`]).
 pub const QUOTIENT_RANDOM_LANES: usize = 7;
 
 /// The fewest rows the hidden layouts take: below `2^17` rows the witness table's lanes are too short for its
@@ -963,7 +964,7 @@ mod tests {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        assert_eq!(hex, "472eea8b46759b72d2a83b5af69188d0a618c4e17f52abaa1d0c793e5705e113");
+        assert_eq!(hex, "8e39cf6a95ae46bf134f38f32a0044c9eca690bc37c68f6134a24df7eaaa2fec");
     }
 
     /// On a small circuit: an honest proof leaves four true claims that open, and a witness that breaks one gate,

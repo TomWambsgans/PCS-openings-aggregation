@@ -182,7 +182,8 @@ fn dense(layout: &Layout, tensors: &[LaneTensor]) -> Vec<F192> {
 }
 
 /// The opening's weight, written out, with only the gadget's patterns `patterns` (all three in the real one,
-/// [`Layout::weight`]): the claims at `points` scaled by `lambdas`, and those patterns.
+/// [`Layout::weight`]): the claims at `points` scaled by `lambdas`, and those patterns by the next of `lambdas`
+/// (one if there is none).
 fn opening_weight(layout: &Layout, points: &[Vec<F192>], lambdas: &[F192], patterns: &[usize]) -> Vec<F192> {
     let tensors: Vec<LaneTensor> = points
         .iter()
@@ -191,10 +192,11 @@ fn opening_weight(layout: &Layout, points: &[Vec<F192>], lambdas: &[F192], patte
         .collect();
     let mut weight = dense(layout, &tensors);
     let log_lane = layout.log_lane();
+    let scale = lambdas.get(points.len()).copied().unwrap_or(F192::ONE);
     for &g in patterns {
         for i in 0..3 {
             for &l in gadget_lanes(g) {
-                weight[(l << log_lane) + layout.gadget_entry(g, i)] += gadget_beta(i);
+                weight[(l << log_lane) + layout.gadget_entry(g, i)] += scale * gadget_beta(i);
             }
         }
     }
@@ -334,7 +336,7 @@ fn view_ranks(layout: &Layout, points: &[Vec<F192>], queries: usize, patterns: &
     let (lanes, log_lane) = (layout.lanes(), layout.log_lane());
     let lane = 1usize << log_lane;
     let placed = layout.placed();
-    let weight = opening_weight(layout, points, &powers(rng.ext(), points.len()), patterns);
+    let weight = opening_weight(layout, points, &powers(rng.ext(), points.len() + 1), patterns);
     let phi = rng.ext_vec(LANE_FOLD);
 
     // The view, as K-rows over the stack's entries: the rounds, `f¹`, the lanes at the opened positions.
@@ -461,7 +463,7 @@ pub(crate) fn data_entries(layout: &Layout, count: usize, rng: &mut Rng) -> Vec<
 
 /// Condition (R) of `HIDING.md`: the K-span the randomness gives the twelve lane-round values once `f¹` is
 /// pinned, through the entries `entries`, for claims at `points` batched by `lambdas` and the gadget's patterns
-/// `patterns`. At entry `y` the random unknowns there ([`random_at`]) leave `f¹(y)` alone along the kernel of
+/// `patterns` (scaled by the next of `lambdas`, or one). At entry `y` the random unknowns there ([`random_at`]) leave `f¹(y)` alone along the kernel of
 /// their fold weights, `ker_y = {k : Σ_u k_u·Σ_{r ∈ u} eq(φ, r) = 0}`, and move the rounds by
 /// `Σ_l W_l(y)·Σ_u k_u·Σ_{r ∈ u} pairing(l, r)`, `W_l(y)` the opening's weight at entry `y` of lane `l`. The span
 /// lies in the 33 dimensions that keep the last claim (asserted); it is 33 when (R) holds.
@@ -475,6 +477,7 @@ pub(crate) fn round_freedom(
 ) -> usize {
     let lanes = layout.lanes();
     let scales: Vec<_> = points.iter().map(|p| layout.scales(p)).collect();
+    let gadget = lambdas.get(points.len()).copied().unwrap_or(F192::ONE);
     let mut freedom = Span::new();
     for &y in entries {
         let unknowns = random_at(layout, y);
@@ -492,7 +495,7 @@ pub(crate) fn round_freedom(
                     .fold(F192::ZERO, |acc, ((p, sc), &lambda)| {
                         acc + lambda * layout.weight_at(p, sc, l, y)
                     });
-                claims + pattern_weight(layout, patterns, l, y)
+                claims + gadget * pattern_weight(layout, patterns, l, y)
             })
             .collect();
         // What one unit of each unknown moves the rounds by.
@@ -622,7 +625,7 @@ fn model_matches_the_prover() {
     transcript.next_scalars(2).unwrap();
     let to = |x: E| F192::new(x.c0, x.c1, x.c2);
     let from = |x: F192| E::new(x.c0, x.c1, x.c2);
-    let lambdas = powers(to(transcript.sample()), 2);
+    let lambdas = powers(to(transcript.sample()), 3);
     let mut claim = from(claims[0].value + lambdas[1] * claims[1].value);
     let mut sent = vec![];
     let mut phi = vec![];
@@ -636,7 +639,11 @@ fn model_matches_the_prover() {
     let points: Vec<Vec<F192>> = claims.iter().map(|c| c.point.clone()).collect();
     let weight = opening_weight(&layout, &points, &lambdas, &[0, 1, 2]);
     let parts = points.iter().zip(&lambdas).map(|(p, &l)| (&p[..], l));
-    assert_eq!(weight, dense(&layout, &layout.weight(parts)), "the prover's tensors");
+    assert_eq!(
+        weight,
+        dense(&layout, &layout.weight(parts, lambdas[2])),
+        "the prover's tensors"
+    );
     let model: Vec<F192> = lane_rounds(&layout, &weight, &phi)
         .iter()
         .map(|form| {
@@ -717,7 +724,7 @@ fn round_freedom_predicts_the_exact_test() {
         let entries: Vec<usize> = (0..1 << layout.log_lane()).collect();
         for patterns in [&[0, 1, 2][..], &[0, 2], &[0, 1], &[1, 2], &[0], &[2], &[]] {
             let phi = rng.ext_vec(LANE_FOLD);
-            let lambdas = powers(rng.ext(), points.len());
+            let lambdas = powers(rng.ext(), points.len() + 1);
             let freedom = round_freedom(&layout, &points, &lambdas, patterns, &phi, &entries);
             let gadget = round_freedom(&layout, &[], &[], patterns, &phi, &gadget_entries(&layout));
             let leak = leak(&layout, &points, 3, patterns, &mut rng);
@@ -757,12 +764,12 @@ fn rounds_are_free_at_full_size() {
         for seed in 0..3 {
             let (witness, quotient) = reduced_points(log_rows, seed);
             let phi = rng.ext_vec(LANE_FOLD);
-            let lambdas = powers(rng.ext(), 2);
+            let lambda = rng.ext();
             for (layout, points) in [
                 (witness_layout(log_rows), vec![witness.clone()]),
                 (quotient_layout(log_rows), quotient.clone()),
             ] {
-                let lambdas = &lambdas[..points.len()];
+                let lambdas = &powers(lambda, points.len() + 1);
                 assert_eq!((gadget_freedom(&layout, &phi), fold_span(&layout, &phi)), (33, 3));
                 let data = data_entries(&layout, 200, &mut rng);
                 let all: Vec<usize> = gadget_entries(&layout)

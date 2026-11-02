@@ -142,12 +142,13 @@ fn open_from(layout: &Layout, stack: &[F64], claims: &[Claim], fs: &Start) -> (H
     let (commitment, tree) = commit_tree(stack, layout.log_n, LANE_FOLD, LOG_INV_RATE);
     let mut ps = ProverState::new(digest_words(&fs.0), digest_words(&opening::PUBLIC_DIGEST));
     ps.add_root(&fs.1);
-    let lambdas = powers(ps.sample(), claims.len());
+    let lambdas = powers(ps.sample(), claims.len() + 1);
     let target = claims
         .iter()
         .zip(&lambdas)
         .fold(F192::ZERO, |acc, (c, &l)| acc + l * c.value);
-    let weight: Vec<LaneTensor> = layout.weight(claims.iter().zip(&lambdas).map(|(c, &l)| (&c.point[..], l)));
+    let parts = claims.iter().zip(&lambdas).map(|(c, &l)| (&c.point[..], l));
+    let weight: Vec<LaneTensor> = layout.weight(parts, lambdas[claims.len()]);
     recursive_prover_with_lane_tensors(&config, layout.log_n, stack, &weight, target, None, &tree[..], &mut ps);
     (commitment.root, ps.into_proof())
 }
@@ -190,7 +191,7 @@ fn replay(layout: &Layout, root: &Hash, claims: &[Claim], fs: &Start, proof: &Pr
     assert_eq!(Digest::from_halves(sent_root[0], sent_root[1]), Ok(Digest(fs.1)));
     let to = |x: E| F192::new(x.c0, x.c1, x.c2);
     let from = |x: F192| E::new(x.c0, x.c1, x.c2);
-    let lambdas = powers(to(tr.sample()), claims.len());
+    let lambdas = powers(to(tr.sample()), claims.len() + 1);
     let mut claim = from(
         claims
             .iter()
@@ -576,7 +577,8 @@ fn translation_case(name: &str, table: &Table, mut delta: Vec<F64>, claims: &[Cl
         "{name}: an honest opening"
     );
     let view = replay(layout, &root, claims, &fs, &proof);
-    let tensors: Vec<LaneTensor> = layout.weight(points.iter().zip(&view.lambdas).map(|(p, &l)| (&p[..], l)));
+    let parts = points.iter().zip(&view.lambdas).map(|(p, &l)| (&p[..], l));
+    let tensors: Vec<LaneTensor> = layout.weight(parts, view.lambdas[points.len()]);
     // The model of the view is the proof's: the twelve values, and the rows at the replayed positions.
     assert_eq!(
         messages(layout, &tensors, &view.phi, stack).to_vec(),
@@ -1001,7 +1003,7 @@ fn rounds_are_free_at_every_size() {
         for draw in 0..8 {
             let (witness, quotient) = reduced_points(log_rows, 1000 * log_rows as u64 + draw);
             let phi = rng.ext_vec(LANE_FOLD);
-            let lambdas = powers(rng.ext(), 2);
+            let lambdas = powers(rng.ext(), 3);
             for (name, layout, points) in [
                 ("witness", witness_layout(log_rows), vec![witness.clone()]),
                 ("quotient", quotient_layout(log_rows), quotient.clone()),
@@ -1016,7 +1018,8 @@ fn rounds_are_free_at_every_size() {
                     .into_iter()
                     .chain(data_entries(&layout, 200, &mut rng))
                     .collect();
-                let freedom = round_freedom(&layout, &points, &lambdas[..points.len()], &[0, 1, 2], &phi, &all);
+                let lambdas = &lambdas[..points.len() + 1];
+                let freedom = round_freedom(&layout, &points, lambdas, &[0, 1, 2], &phi, &all);
                 assert_eq!(freedom, 33, "{at}");
             }
         }

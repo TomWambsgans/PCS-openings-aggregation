@@ -333,10 +333,12 @@ impl Layout {
     }
 
     /// The opening's weight for claims at the given points, each scaled by its challenge, as lane tensors: the
-    /// claims' [`Layout::tensors`], and in a hidden layout the gadget. The overflow lane's tensors, the claims'
-    /// and the gadget's third pattern, are one (they share their lane), so a hidden layout's weight is a tensor a
-    /// claim on its blocks, one on its overflow lane and one a pair of the gadget.
-    pub fn weight<'a>(&self, claims: impl IntoIterator<Item = (&'a [F192], F192)>) -> Vec<LaneTensor> {
+    /// claims' [`Layout::tensors`], and in a hidden layout the gadget scaled by `gadget` (the opening's next power
+    /// of the challenge: the gadget is one more claim, of value zero, so that the opening binds the stack to weigh
+    /// it zero). The overflow lane's tensors, the claims' and the gadget's third pattern, are one (they share
+    /// their lane), so a hidden layout's weight is a tensor a claim on its blocks, one on its overflow lane and one
+    /// a pair of the gadget.
+    pub fn weight<'a>(&self, claims: impl IntoIterator<Item = (&'a [F192], F192)>, gadget: F192) -> Vec<LaneTensor> {
         let tensors = claims.into_iter().flat_map(|(point, scale)| self.tensors(point, scale));
         let Some(s) = self.log_piece else {
             return tensors.collect();
@@ -347,7 +349,7 @@ impl Layout {
             let mut scales = vec![F192::ZERO; lanes];
             gadget_lanes(g).iter().for_each(|&l| scales[l] = F192::ONE);
             let mut low = vec![F192::ZERO; lane];
-            (0..3).for_each(|i| low[self.gadget_entry(g, i)] = gadget_beta(i));
+            (0..3).for_each(|i| low[self.gadget_entry(g, i)] = gadget * gadget_beta(i));
             LaneTensor { scales, low }
         };
         let mut on_overflow = pattern(2);
@@ -730,14 +732,16 @@ fn open_stack(
     let config = config_for_rate(layout.log_n, LOG_INV_RATE).expect("a WHIR shape leanVM supports");
     let mut ps = ProverState::new(digest_words(&iv(layout, claims)), digest_words(&PUBLIC_DIGEST));
     ps.add_root(root);
-    let lambdas = powers(ps.sample(), claims.len());
+    // One power of the challenge a claim, and in a hidden layout the next for the gadget.
+    let lambdas = powers(ps.sample(), claims.len() + 1);
     let target = claims
         .iter()
         .zip(&lambdas)
         .fold(F192::ZERO, |acc, (c, &l)| acc + l * c.value);
     // The combined weight on the stack, as lane tensors ([`Layout::weight`]), each claim's scaled by its power of
     // the challenge, and a hidden layout's gadget. The prover never writes the weight out.
-    let weight: Vec<LaneTensor> = layout.weight(claims.iter().zip(&lambdas).map(|(c, &l)| (&c.point[..], l)));
+    let parts = claims.iter().zip(&lambdas).map(|(c, &l)| (&c.point[..], l));
+    let weight: Vec<LaneTensor> = layout.weight(parts, lambdas[claims.len()]);
     recursive_prover_with_lane_tensors(&config, layout.log_n, stack, &weight, target, None, tree, &mut ps);
     ps.into_proof()
 }
@@ -793,7 +797,7 @@ pub fn verify(
     }
     let lambda = transcript.sample();
     let mut lambdas = vec![one];
-    while lambdas.len() < claims.len() {
+    while lambdas.len() <= claims.len() {
         lambdas.push(*lambdas.last().unwrap() * lambda);
     }
     let target = claims
@@ -815,11 +819,13 @@ pub fn verify(
         .collect();
     let lanes = layout.lanes.clone();
     let (piece, overflow) = (layout.log_piece, layout.overflow());
-    // The gadget, in a hidden layout: per pattern, its lanes and its entries with their weights.
+    // The gadget, in a hidden layout: per pattern, its lanes and its entries with their weights, scaled by the
+    // power of the challenge after the claims'.
+    let scale = lambdas[claims.len()];
     let gadget: Vec<(&[usize], Vec<(usize, E)>)> = match piece {
         Some(_) => (0..3)
             .map(|g| {
-                let entries = (0..3).map(|i| (layout.gadget_entry(g, i), ext(gadget_beta(i))));
+                let entries = (0..3).map(|i| (layout.gadget_entry(g, i), scale * ext(gadget_beta(i))));
                 (gadget_lanes(g), entries.collect())
             })
             .collect(),
@@ -964,6 +970,24 @@ mod tests {
         let mut wrong = claims.clone();
         wrong[0].value += F192::ONE;
         assert!(!opens(&table, &wrong));
+
+        // A cheating stack whose gadget entries do not cancel it: its weight against the gadget is `δ`, what a
+        // gadget weighed with the first claim (unscaled) would let it add to that claim's value. The opening
+        // weighs the gadget by the power after the claims', so it is bound to zero and the false claim fails.
+        let delta = rng.ext();
+        let mut cheat = Table {
+            layout: layout.clone(),
+            stack: table.stack.clone(),
+        };
+        let log_lane = layout.log_lane();
+        for (i, c) in [delta.c0, delta.c1, delta.c2].into_iter().enumerate() {
+            cheat.stack[(gadget_lanes(0)[1] << log_lane) + layout.gadget_entry(0, i)] += F64(c);
+        }
+        let mut offset = claims.clone();
+        offset[0].value += delta;
+        assert_eq!(cheat.eval(&claims[0].point), claims[0].value, "the table is the same");
+        assert!(!opens(&cheat, &offset), "the gadget offsets no claim");
+        assert!(!opens(&cheat, &claims), "nor opens its true claims");
     }
 
     /// The opening's transcript: the prefix binds the layout (layouts of the same chunks that differ in the stack's
