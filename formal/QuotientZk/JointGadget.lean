@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import QuotientSecurity.Hiding.GadgetLayout
+import QuotientSecurity.Hiding.Solve
 import QuotientZk.JointCore
 
 /-!
@@ -474,5 +475,201 @@ theorem deployed_lane_pattern :
     laneBits 33 0 = laneBits 35 0 ∧ laneBits 39 0 = laneBits 35 0 ∧ laneBits 34 0 = !laneBits 35 0 ∧
     laneBits 33 2 = laneBits 35 2 ∧ laneBits 34 2 = laneBits 35 2 ∧ laneBits 39 2 = !laneBits 35 2 := by
   decide
+
+/-! ## (S) and (R) for every good challenge (`GadgetLayout.roundsReached`, `Solve.lean`)
+
+The gadget makes (R) hold for every challenge outside a small explicit set (`HIDING.md`, "Condition
+(R) for every challenge"): `GoodCh φ λ` — no coordinate of `φ` in `{0, 1}`, at most one of
+`φ₀, φ₁, φ₂` in `K` (`¬ TwoInK`), and `λ ≠ 0` (the gadget's scale `λ^m`). There, with the lower half
+of the lane indices and the cube `32 .. 40` on the stack (`hlow`, `hrand`), (S) holds by the cube
+lemma (`span_cube_erase`) and (R) by `GadgetLayout.roundsReached` (`hsolve_of_cube`), so the
+opening hides its table (`view_evalDistEq_of_good`) under (Q) and `WeightsFit` alone. -/
+
+/-- The challenges at which the gadget layout's opening hides: `φ` avoids `{0, 1}` coordinatewise,
+at most one of `φ₀, φ₁, φ₂` lies in `K`, and the batching challenge `λ` is not zero. -/
+def GoodCh (φ : Fin 6 → E) (lam : E) : Prop :=
+  ((∀ i, φ i ≠ 0 ∧ φ i ≠ 1) ∧ ¬ TwoInK (K := K) φ) ∧ lam ≠ 0
+
+/-- The batching powers `λ^c`, the gadget's `λ^m` the last. -/
+def powers (m : ℕ) (lam : E) : Fin (m + 1) → E := fun c => lam ^ (c : ℕ)
+
+section Good
+
+variable (L : GadgetLayout ι Y)
+
+/-- (S) from a span of fold weights of random lanes, none a pair's first lane. -/
+theorem foldSpans_of_span (pos : ι → (Fin 6 → Bool)) (φ : Fin 6 → E) (R : Finset ι)
+    (hR : ∀ l ∈ R, L.isRand l ∧ ∀ q, l ≠ L.pairA q)
+    (h : Submodule.span K ((fun l => HiddenLayout.foldW pos φ l) '' (R : Set ι)) = ⊤) :
+    FoldSpans (K := K) L pos φ := by
+  refine ⟨R.card, fun i => (R.equivFin.symm i : ι), fun i => hR _ (R.equivFin.symm i).2, ?_⟩
+  rw [← h]
+  congr 1
+  ext x
+  constructor
+  · rintro ⟨i, rfl⟩
+    exact ⟨_, (R.equivFin.symm i).2, rfl⟩
+  · rintro ⟨l, hl, rfl⟩
+    refine ⟨R.equivFin ⟨l, hl⟩, ?_⟩
+    simp
+
+/-- **(S) outside the bad set**: the random lanes `33 .. 40` span by the cube lemma. -/
+theorem foldSpans_of_good [FiniteDimensional K E] (h3 : Module.finrank K E = 3)
+    (pos : ι → (Fin 6 → Bool))
+    (hrand : ∀ b ∈ cube true, b ≠ lane 32 → ∃ l, pos l = b ∧ L.isRand l ∧ ∀ q, l ≠ L.pairA q)
+    (φ : Fin 6 → E) (hφ : ∀ i, φ i ≠ 0 ∧ φ i ≠ 1) (hK : ¬ TwoInK (K := K) φ) :
+    FoldSpans (K := K) L pos φ := by
+  classical
+  set R := univ.filter fun l : ι => L.isRand l ∧ ∀ q, l ≠ L.pairA q
+  refine foldSpans_of_span L pos φ R (fun l hl => (mem_filter.mp hl).2) ?_
+  rw [eq_top_iff, ← span_cube_erase h3 φ hφ hK]
+  refine Submodule.span_mono ?_
+  rintro _ ⟨b, ⟨hb, hb32⟩, rfl⟩
+  obtain ⟨l, hpl, hr, ha⟩ := hrand b hb hb32
+  exact ⟨l, by simp [R, hr, ha], by simp [HiddenLayout.foldW, hpl]⟩
+
+/-- The gadget's patterns sit on lanes of the stack. -/
+theorem patE_mem_range (pos : ι → (Fin 6 → Bool)) (hP : Placed L pos) (p : Fin 3)
+    (b : Fin 6 → Bool) (hb : patE (E := E) p b ≠ 0) : b ∈ Set.range pos := by
+  fin_cases p
+  · by_cases h0 : b = lane 0
+    · exact ⟨L.pairA 0, hP.a0.trans h0.symm⟩
+    by_cases h31 : b = lane 31
+    · exact ⟨L.pairB 0, hP.b0.trans h31.symm⟩
+    exact absurd (by simp [patE, pattern0, pairCol, flipC_lane0, unitCol, h0, h31]) hb
+  · by_cases h1 : b = lane 1
+    · exact ⟨L.pairA 1, hP.a1.trans h1.symm⟩
+    by_cases h30 : b = lane 30
+    · exact ⟨L.pairB 1, hP.b1.trans h30.symm⟩
+    exact absurd (by simp [patE, pattern1, pairCol, flipC_lane1, unitCol, h1, h30]) hb
+  · by_cases h32 : b = lane 32
+    · exact ⟨L.ov, hP.ov.trans h32.symm⟩
+    exact absurd (by simp [patE, pattern2, unitCol, h32]) hb
+
+/-- At the gadget's entries, the batched weight is the gadget's, scaled by its power. -/
+theorem combinedW_gent (pos : ι → (Fin 6 → Bool)) (hP : Placed L pos) {m : ℕ}
+    (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc) (β : Fin 3 → E) (lam : Fin (m + 1) → E)
+    (p i : Fin 3) (b : Fin 6 → Bool) :
+    HiddenLayout.combinedW pos (claimsW L pos Wc β) lam b (L.gent p i) =
+      lam (Fin.last m) * β i * patE p b := by
+  have hG : ∀ l, L.gadgetW pos β l (L.gent p i) = β i * patE p (pos l) := by
+    intro l
+    unfold GadgetLayout.gadgetW
+    rw [sum_eq_single p, sum_eq_single i]
+    · simp
+    · intro i' _ hi'
+      rw [if_neg]
+      intro h
+      exact hi' (L.gent_inj p i' p i h).2
+    · simp
+    · intro p' _ hp'
+      refine sum_eq_zero fun i' _ => ?_
+      rw [if_neg]
+      intro h
+      exact hp' (L.gent_inj p' i' p i h).1
+    · simp
+  have hc : ∀ l, ∑ c, lam c * claimsW L pos Wc β c l (L.gent p i) =
+      lam (Fin.last m) * (β i * patE p (pos l)) := by
+    intro l
+    rw [Fin.sum_univ_castSucc]
+    simp only [claimsW, GadgetLayout.withGadget, Fin.snoc_castSucc, Fin.snoc_last, hG]
+    rw [sum_eq_zero fun j _ => by rw [hW.gadget j l _ (atGadget_gent L p i), mul_zero], zero_add]
+  simp only [HiddenLayout.combinedW, hc]
+  by_cases hb : b ∈ Set.range pos
+  · obtain ⟨l₀, rfl⟩ := hb
+    rw [sum_eq_single l₀]
+    · simp [mul_assoc]
+    · intro l _ hl
+      simp [hP.inj.ne hl]
+    · simp
+  · have hz : patE (E := E) p b = 0 := by
+      by_contra h
+      exact hb (patE_mem_range L pos hP p b h)
+    rw [hz, mul_zero]
+    refine sum_eq_zero fun l _ => ?_
+    have : pos l ≠ b := fun h => hb ⟨l, h⟩
+    simp [this]
+
+/-- **(R) outside the bad set**, from `GadgetLayout.roundsReached` and the cube lemma. -/
+theorem roundsReached_of_good [CharP E 2] [FiniteDimensional K E] (h3 : Module.finrank K E = 3)
+    (pos : ι → (Fin 6 → Bool)) (hP : Placed L pos)
+    (hlow : ∀ b : Fin 6 → Bool, b (Fin.last 5) = false → b ∈ Set.range pos)
+    (hrand : ∀ b ∈ cube true, b ≠ lane 32 → ∃ l, pos l = b ∧ L.isRand l ∧ ∀ q, l ≠ L.pairA q)
+    {m : ℕ} (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc) (β : Module.Basis (Fin 3) K E)
+    (lam : Fin (m + 1) → E) (hμ : lam (Fin.last m) ≠ 0) (φ : Fin 6 → E)
+    (hφ : ∀ i, φ i ≠ 0 ∧ φ i ≠ 1) (hK : ¬ TwoInK (K := K) φ) :
+    L.RoundsReached (K := K) pos (claimsW L pos Wc β) lam φ := by
+  have h2K : (2 : K) = 0 := (algebraMap K E).injective (by rw [map_ofNat, map_zero]; exact CharTwo.two_eq_zero)
+  have hup : cube true ⊆ Set.range pos := by
+    intro b hb
+    by_cases h32 : b = lane 32
+    · exact ⟨L.ov, hP.ov.trans h32.symm⟩
+    · obtain ⟨l, hl, -⟩ := hrand b hb h32
+      exact ⟨l, hl⟩
+  have h33 : lane 33 ∈ Set.range pos := hup ⟨by decide, by decide, by decide⟩
+  refine L.roundsReached h2K pos hP.inj (claimsW L pos Wc β) lam φ (lam (Fin.last m)) hμ β
+    (fun p i b => combinedW_gent L pos hP Wc hW β lam p i b) hP.a0 hP.b0 hP.a1 hP.b1 hP.ov hlow
+    h33 hφ (by simp [CharTwo.two_eq_zero]) (hsolve_of_cube h3 φ hφ hK _ hup hlow)
+
+/-- **The gadget layout's opening hides its table at every good challenge**, under (Q) and
+`WeightsFit` (and the layout's lanes): (S) and (R) are discharged. -/
+theorem view_evalDistEq_of_good [CharP E 2] [FiniteDimensional K E] [SampleableType (ι → Y → K)]
+    (h3 : Module.finrank K E = 3) (pos : ι → (Fin 6 → Bool)) (hP : Placed L pos)
+    (hlow : ∀ b : Fin 6 → Bool, b (Fin.last 5) = false → b ∈ Set.range pos)
+    (hrand : ∀ b ∈ cube true, b ≠ lane 32 → ∃ l, pos l = b ∧ L.isRand l ∧ ∀ q, l ≠ L.pairA q)
+    {m : ℕ} (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc) (β : Module.Basis (Fin 3) K E)
+    (enc : Q → Y → K) (hQ : Function.Surjective (firstEval enc L.first)) (lam : E)
+    (φ : Fin 6 → E) (hg : GoodCh (K := K) φ lam)
+    {O : Type} (g : (Fin 6 → E × E) × (Y → E) × (Q → ι → K) → O) {d d' : ι → Y → K}
+    (hd : HiddenLayout.claimsMap (K := K) Wc (L.stackD d) =
+      HiddenLayout.claimsMap Wc (L.stackD d')) :
+    (fun r => g (levelMap L pos Wc β (powers m lam) φ enc (L.stackD d + L.stackR r))) <$>
+        ($ᵗ (ι → Y → K))
+      =ᵈ (fun r => g (levelMap L pos Wc β (powers m lam) φ enc (L.stackD d' + L.stackR r))) <$>
+        ($ᵗ (ι → Y → K)) :=
+  view_evalDistEq L pos hP Wc hW β enc hQ (powers m lam) φ
+    (foldSpans_of_good L h3 pos hrand φ hg.1.1 hg.1.2)
+    (roundsReached_of_good L h3 pos hP hlow hrand Wc hW β (powers m lam)
+      (pow_ne_zero _ hg.2) φ hg.1.1 hg.1.2) g hd
+
+end Good
+
+open Classical in
+/-- **The bad challenges of one opening**: for uniform `((λ, ·), φ)`, `GoodCh` fails with
+probability at most `(12·|E| + 3·|K|²)/|E|² + 1/|E|`. -/
+theorem prob_not_goodCh_le [Fintype K] [Fintype E] [DecidableEq E] [SampleableType E]
+    {Γ : Type} [SampleableType Γ] [Fintype Γ] :
+    Pr{let x ← $ᵗ ((E × Γ) × (Fin 6 → E))}[¬ GoodCh (K := K) x.2 x.1.1]
+      ≤ ((2 * 6 * Fintype.card E + 3 * Fintype.card K ^ 2 : ℕ) : ENNReal) /
+          ((Fintype.card E ^ 2 : ℕ) : ENNReal) + 1 / (Fintype.card E : ENNReal) := by
+  refine (prEvent_not_and_le _ (fun x : (E × Γ) × (Fin 6 → E) =>
+    (∀ i, x.2 i ≠ 0 ∧ x.2 i ≠ 1) ∧ ¬ TwoInK (K := K) x.2) (fun x => x.1.1 ≠ 0)).trans
+    (add_le_add (prob_not_solvable_le (K := K) (Γ := E × Γ)) (le_of_eq ?_))
+  simp only [not_not]
+  rw [prEvent_uniform_fst (fun y : E × Γ => y.1 = 0), prEvent_uniform_fst (fun e : E => e = 0),
+    SampleableType.prEvent_uniformSample, Finset.filter_eq' Finset.univ (0 : E)]
+  simp
+
+/-- At `|K| = 2^64`, `|E| = 2^192`: one opening's bad challenges have probability at most
+`13·2^-192 + 3·2^-256 ≤ 2^-188`. -/
+theorem goodCh_bound_le :
+    (((2 * 6 * 2 ^ 192 + 3 * (2 ^ 64) ^ 2 : ℕ) : ENNReal) / (((2 ^ 192) ^ 2 : ℕ) : ENNReal) +
+      1 / ((2 ^ 192 : ℕ) : ENNReal)) ≤ 1 / 2 ^ 188 := by
+  have h1 := HiddenLayout.natCast_div_le_natCast_div (a := 2 * 6 * 2 ^ 192 + 3 * (2 ^ 64) ^ 2)
+    (b := (2 ^ 192) ^ 2) (c := 15) (d := 2 ^ 192) (by positivity) (by positivity) (by norm_num)
+  calc (((2 * 6 * 2 ^ 192 + 3 * (2 ^ 64) ^ 2 : ℕ) : ENNReal) / (((2 ^ 192) ^ 2 : ℕ) : ENNReal) +
+        1 / ((2 ^ 192 : ℕ) : ENNReal))
+      ≤ ((15 : ℕ) : ENNReal) / ((2 ^ 192 : ℕ) : ENNReal) +
+          ((1 : ℕ) : ENNReal) / ((2 ^ 192 : ℕ) : ENNReal) := by
+        gcongr
+        simp
+    _ = ((16 : ℕ) : ENNReal) / ((2 ^ 192 : ℕ) : ENNReal) := by
+        rw [ENNReal.div_add_div_same]
+        norm_num
+    _ ≤ 1 / 2 ^ 188 := by
+        have h := HiddenLayout.natCast_div_le_natCast_div (a := 16) (b := 2 ^ 192) (c := 1)
+          (d := 2 ^ 188) (by positivity) (by positivity) (by norm_num)
+        refine h.trans (le_of_eq ?_)
+        norm_num
 
 end QuotientZk.Joint.Gadget
