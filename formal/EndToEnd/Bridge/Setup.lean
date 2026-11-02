@@ -22,6 +22,7 @@ the stack's word computed by the NTT (`stackWordFast`). The composition (`formal
   `buildTreeWithHash (keccak256With F) 19 (stackWord 24 wiringColumn)`, `wiringColumn` the circuit's
   wiring table as a `Column 24` (`columnOf`: its first `2^24` entries; no size hypothesis), for every
   monad and permutation;
+* `indexTreeWith_eq`, `setupTreeWith_eq`: the same for the setup's tree (`setupTreeWith`);
 * `wiringSetup_eq`: Compose's `wiringSetup 19 (stackWord 24 wiringColumn)` run with Keccak-256 the
   sponge over `F` and Keccak-f[1600] `F` (`Bridge.keccakCallsWith F`, `Opening.lean`) is
   `setupWith F`'s root as bytes;
@@ -124,6 +125,24 @@ theorem setupWith_eq {m : Type → Type} [Monad m] [LawfulMonad m] (F : KeccakSt
       buildTreeWithHash (keccak256With F) 19 (stackWord 24 wiringColumn) := by
   have hμ : (membership logRows).logRows + 2 = 24 := by rw [membership_logRows]; rfl
   have h := indexRootWith_eq (μ := 24) F (membership logRows) hμ (by norm_num) (by norm_num)
+  rw [show (24 : ℕ) - 6 + 1 = 19 from rfl] at h
+  exact h
+
+/-- **A circuit's commitment tree** is mumbai's tree of `stackWord` of its wiring table. -/
+theorem indexTreeWith_eq {m : Type → Type} [Monad m] [LawfulMonad m]
+    (F : KeccakState → m KeccakState) (c : Circuit) {μ : ℕ} (hμ : c.logRows + 2 = μ) (h6 : 6 ≤ μ)
+    (h64 : μ ≤ 64) :
+    c.indexTreeWith F =
+      buildTreeWithHash (keccak256With F) (μ - 6 + 1) (stackWord μ (columnOf μ c.wiringTable)) := by
+  subst hμ
+  exact commitWith_eq F _ h6 h64 _
+
+/-- **The setup's tree** (`setupTreeWith F`, whose Keccak-256 evaluations the extractor reads) is
+mumbai's tree of `stackWord 24 wiringColumn` at height `19`, Keccak-256 the sponge over `F`. -/
+theorem setupTreeWith_eq {m : Type → Type} [Monad m] [LawfulMonad m]
+    (F : KeccakState → m KeccakState) :
+    setupTreeWith F = buildTreeWithHash (keccak256With F) 19 (stackWord 24 wiringColumn) := by
+  have h := indexTreeWith_eq (μ := 24) F (membership logRows) rfl (by norm_num) (by norm_num)
   rw [show (24 : ℕ) - 6 + 1 = 19 from rfl] at h
   exact h
 
@@ -254,6 +273,10 @@ end Bridge.Setup
 /-- info: 'Bridge.Setup.setupWith_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms Bridge.Setup.setupWith_eq
+
+/-- info: 'Bridge.Setup.setupTreeWith_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Setup.setupTreeWith_eq
 
 /-- info: 'Bridge.Setup.wiringSetup_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
