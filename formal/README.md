@@ -170,8 +170,10 @@ Keccak-256 and of the permutation.
    Fiat–Shamir query answered by the `c`-th challenge and written into the cache (programming), the messages
    and opened rows from the view, a fresh private digest at every unopened leaf of a secret table (so the trees'
    nodes and roots hash fresh values), grinding run as the prover runs it; record the duplex's permutation calls.
-3. Set the state to that record and the cache; read the Statement's proof from the skeleton's (`fmt`: the full
-   Merkle paths from the pruned ones, by calls of `π` answered as below).
+3. Set the state to that record and the cache; read the Statement's proof from the skeleton's (`fmt`,
+   `ZK/Format.lean`: the reduction's nine scalars; per opening the stream, and the verifier's program replayed
+   from the claims it computes, the full Merkle path of every queried position, in the verifier's order,
+   produced from the pruned multiproofs; within `2^23` calls of `π`, answered as below).
 4. Answer every query of the distinguisher: coins forwarded; `π` and `π⁻¹` on lanes, read as bytes, by
    `common`'s two-oracle simulator `S₂` (`simulator2`): a recorded edge from the record (so the duplex the
    distinguisher recomputes from the proof meets the programmed challenges), a fresh forward query that ends a
@@ -185,19 +187,24 @@ expected tries a grind), each a cache lookup, a programmed answer or a uniform d
 step 4, per query one step of `S₂` (lookups in its edges and rooted states, the unpadding of one path, at most
 one cache lookup or uniform answer and one uniform state).
 
-**The theorem** (`zeroKnowledge_end`): `ζ Q = εR Q + 2^-113 + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q) 2^-2368 +
-2^48 2^-2368 + (Qp + Qfmt + Q)² / 2^508` for a distinguisher of `Q` calls of `π` and `π⁻¹` (coins free), at most
-`εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`). Proved: the
+**The theorem** (`zeroKnowledge_deployed_end`, `ZK/End.lean`; `zeroKnowledge_end` for any valid joint model):
+`ζ Q = εR Q + 2^-113 + 2^-165 + 2^24 (2^24 + 2^70 + 2^23 + Q) 2^-2368 + 2^48 2^-2368 + (Qp + 2^23 + Q)² / 2^508`
+for a distinguisher of `Q` calls of `π` and `π⁻¹` (coins free), at most
+`εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + 2^23 + Q)² / 2^508` for `Q ≤ 2^126` (`zkBoundEnd_le`). Proved: the
 distinguisher's coins removed (`ZK/Coins.lean`, a tape drawn first), the ideal experiment of `zkSimulator`
 equal to `QuotientZk`'s simulated game (`rpmIdeal_eq`), `QuotientZk`'s closeness from the joint model
 (`coreClose_of_joint`: `zk_rpm_skel`, `jointHVZK_of_link`, `factors_single`, `factors_pair`), `skelSetup`'s
 operations, duplex discipline and Fiat–Shamir freshness (`fsFresh_setup_deployed_bits`, `2^-113`), the real
-experiment's coins drawn outside the model (`realExperiment_coins`).
-**Named**: the joint model's instance (`JointData.Valid`, its public part `pp`, its view simulator `simV`);
-the prover's and `fmt`'s permutation budgets `Qp`, `Qfmt`; `CoinsMatch` (the Statement's coins are
-the skeleton model's uniform randomness); `ProverBridge` (`εR`: the Statement's prover at fixed coins against the
-skeleton's, then `fmt`: the proof-of-work fuel, the replayed chain, the order of public queries, the proof's
-format).
+experiment's coins drawn outside the model (`realExperiment_coins`), `fmt`'s budget (`fmt_queryBound`), the
+Statement's coins `decodeCoins` of uniform words (`sampleCoinsP_eq`, `coinsMatch_of_bijective`), the joint model
+of the deployed prover (`deployedJointData_valid`; its public part and view simulator the simulator's by
+definition, `pub_deployed`, `simV_deployed`).
+**Named**: the field and F1's facts on the statement and the witness, the simulator's public functions, the
+honest tables' claims (`deployedJointData_valid`'s hypotheses); the prover's permutation budget `Qp`; a bijection
+`e` of the skeleton model's randomness onto the Statement's coins' words; `ProverBridge` (`εR`: the Statement's
+prover at the coins `decodeCoins (e s)` against the skeleton's prover `proverJ` on `skelSetup` at `s`, then
+`fmt`: the proof-of-work fuel `2^25` with no proof on failure, the replayed chain and the order of public queries,
+the proof's format; the skeleton trace test's list of differences is the checklist).
 
 ## End-to-end completeness (`Completeness/`)
 

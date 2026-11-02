@@ -46,6 +46,17 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
   (`JointData.Valid`, its public part `pp`, its view simulator `simV`; `skelSetup`'s `FSFresh` is
   `fsFresh_setup_deployed_bits` from its conditions),
   the budgets `Qp`, `Qfmt`, `CoinsMatch`, `ProverBridge` (`εR`).
+* `ZK/Format.lean`: **`fmt`**, the statement's proof from the skeleton's (the verifier's program replayed,
+  the full Merkle paths produced from the pruned multiproofs), within `2^23` calls of `π`
+  (`fmt_queryBound`).
+* `ZK/CoinsMatch.lean`: the statement's coins are `decodeCoins` of uniform words (`sampleCoinsP_eq`);
+  `coinsMatch_of_bijective`.
+* `ZK/End.lean`: **`zeroKnowledge_deployed_end`**: `zeroKnowledge_end` with the joint model of the deployed
+  prover instantiated (`deployedJointData_valid`, `ZK/Joint.lean`), `fmt` and `coinsMatch_of_bijective`:
+  the simulator `zkSimulator (fun _ ↦ deployedPub rep) (deployedSimV …) skelSetup fmt`. Named: the field,
+  F1's facts, the simulator's public functions, the honest tables' claims, the prover's budget `Qp`, the
+  bijection `e` of the randomness onto the coins' words, `ProverBridge`.
+* `ZK/Joint.lean`: the joint model of the deployed prover (`deployedJointData`, `deployedJointData_valid`).
 * `ZK/Assembly.lean`: the same assembly for the package's own `simulator` given an ideal bridge
   (`zeroKnowledge_of_bridges`, `zeroKnowledge_deployed` on the constant-root skeleton); the joint
   model's data (`JointData`) and the bounds (`zkBound`).
