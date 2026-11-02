@@ -344,4 +344,317 @@ theorem lookTr_filterMap (T : KTable) (x : List UInt8) :
         rw [this, ih]
         simp [Ne.symm hxy]
 
+/-! ## The trace -/
+
+theorem candidates_congr {μ R A' : ℕ} {W₁ W₂ : Word}
+    (h : ∀ v < 2 ^ (μ - laneBits + R), W₁ v = W₂ v) :
+    Candidates μ R A' W₁ = Candidates μ R A' W₂ := by
+  ext q
+  simp only [Candidates, Set.mem_ofPred_eq]
+  have hA : ∀ S, Agrees μ R W₁ q S ↔ Agrees μ R W₂ q S := fun S => by
+    unfold Agrees laneOf
+    constructor
+    · intro hA v hv u
+      rw [← h v v.isLt]
+      exact hA v hv u
+    · intro hA v hv u
+      rw [h v v.isLt]
+      exact hA v hv u
+  simp only [hA]
+
+omit D in
+/-- No collision: the table is injective on the log. -/
+theorem injOn_of_not_freshBad {L : List (List UInt8)} {T : Table}
+    {C₁ : ListCommit B.Msg₁} {C₂ : ListCommit B.Msg₂}
+    (hnb : ¬ FreshBad (listBad W C₁ C₂) T ∅ L) : Set.InjOn T ↑L.toFinset := by
+  have nb : ∀ y ∈ L, ¬ listBad W C₁ C₂ (before L y) y T := fun y hy => by
+    simpa using not_bad_before (listBad W C₁ C₂) T ∅ L hnb y hy (Finset.notMem_empty _)
+  intro y hy z hz hyz
+  have hy' := List.mem_toFinset.mp hy
+  have hz' := List.mem_toFinset.mp hz
+  by_contra hne
+  rcases before_trichotomy L y z hy' hz' hne with h | h
+  · exact nb z hz' (Or.inl (Or.inl ⟨y, h, hyz⟩))
+  · exact nb y hy' (Or.inl (Or.inl ⟨z, h, hyz.symm⟩))
+
+/-- The history of a logged stage's transcript, as `ansOf`. -/
+theorem cacheOfTr_eq_ansOf (T : KTable) (l : List ((d : List UInt8 ⊕ KeccakState) × KeccakCalls d))
+    (hl : ∀ q ∈ l, q.2 = T q.1) :
+    (fun x => cacheOfTr (l.filterMap inlEntry) (.inl x)) =
+      ansOf ((l.map Sigma.fst).filterMap Sum.getLeft?).toFinset (viewT T) := by
+  funext x
+  rw [cacheOfTr_inl, lookTr_filterMap T x l hl]
+  unfold ansOf
+  simp only [List.mem_toFinset]
+
+open Classical in
+/-- **The trace of the deployed run**: on every table of both oracles, a run that breaks
+knowledge soundness while neither the witness nor the quotient opening is doomed at its end and
+the wiring claim holds asks a bad fresh query. -/
+theorem trace_deployed (c₁ : TableCode B.Msg₁) (c₂ : TableCode B.Msg₂) (mW : WitnessMatch D c₁)
+    (mQ : QuotientMatch W D c₂) (A : OracleComp KeccakCalls (RootProof F × OpenProofs))
+    (T : KTable)
+    (hev : BreaksD W c₁ (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)) ∧
+      ¬ EW D (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)) ∧
+      ¬ WDd (P := P) (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)) ∧
+      ¬ EQ D (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A))) :
+    FreshBad (advBad W c₁.commit c₂.commit A) T ∅
+      ((tableQueryLog (deployedExp W D A) T).map Sigma.fst) := by
+  -- The runs, stage by stage.
+  obtain ⟨hLda, hEda⟩ := DA_run W A T
+  set p := evalWithAnswerFn (QueryImpl.ofFn T) A
+  set π := p.1
+  set a := evalWithAnswerFn (QueryImpl.ofFn T) (DA W A)
+  obtain ⟨h1l, h1e⟩ := run_keep (DA W A) (fun a => ourVerifier D.Lw D.R (wIn D a)) T
+  obtain ⟨h2l, h2e⟩ := run_logged (DA W A >>= fun a => (a, ·) <$> ourVerifier D.Lw D.R (wIn D a)) T
+  have hI : innerW W D A =
+      (simulateQ logImplKC (DA W A >>= fun a => (a, ·) <$> ourVerifier D.Lw D.R (wIn D a))).run [] :=
+    rfl
+  obtain ⟨h3l, h3e⟩ := run_keep (innerW W D A) (fun x => ourVerifier D.Lσ D.R (σIn D x.1.1)) T
+  have hM : midσ W D A = innerW W D A >>= fun x => (x, ·) <$> ourVerifier D.Lσ D.R (σIn D x.1.1) :=
+    rfl
+  obtain ⟨h4l, h4e⟩ := run_keep (midσ W D A) (fun y => ourVerifier D.LQ D.R (qIn D y.1.1.1)) T
+  obtain ⟨h5l, h5e⟩ := run_logged (midσ W D A >>= fun y => (y, ·) <$>
+    ourVerifier D.LQ D.R (qIn D y.1.1.1)) T
+  have hD : deployedExp W D A = (simulateQ logImplKC (midσ W D A >>= fun y => (y, ·) <$>
+      ourVerifier D.LQ D.R (qIn D y.1.1.1))).run [] := rfl
+  set lA := tableQueryLog A T
+  set lDA := tableQueryLog (DA W A) T
+  set lW := tableQueryLog (ourVerifier D.Lw D.R (wIn D a)) T
+  set lWfull := tableQueryLog (DA W A >>= fun a => (a, ·) <$> ourVerifier D.Lw D.R (wIn D a)) T
+  set lfull := tableQueryLog (deployedExp W D A) T
+  have hlWfull : lWfull = lDA ++ lW := h1l
+  -- The outcome.
+  have hlfull : lfull = tableQueryLog (midσ W D A >>= fun y => (y, ·) <$>
+      ourVerifier D.LQ D.R (qIn D y.1.1.1)) T := by
+    show tableQueryLog (deployedExp W D A) T = _
+    rw [hD]
+    exact h5l
+  set z := evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)
+  have hz1 : z.1 = evalWithAnswerFn (QueryImpl.ofFn T) (midσ W D A >>= fun y => (y, ·) <$>
+      ourVerifier D.LQ D.R (qIn D y.1.1.1)) := by
+    show (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)).1 = _
+    rw [hD, h5e]
+  have hz2 : z.2 = lfull.filterMap inlEntry := by
+    show (evalWithAnswerFn (QueryImpl.ofFn T) (deployedExp W D A)).2 = _
+    rw [hD, h5e, hlfull]
+  have hz11 : z.1.1 = evalWithAnswerFn (QueryImpl.ofFn T) (midσ W D A) := by
+    rw [hz1, h4e]
+  have hmid : evalWithAnswerFn (QueryImpl.ofFn T) (midσ W D A) =
+      (evalWithAnswerFn (QueryImpl.ofFn T) (innerW W D A),
+        evalWithAnswerFn (QueryImpl.ofFn T)
+          (ourVerifier D.Lσ D.R (σIn D (evalWithAnswerFn (QueryImpl.ofFn T) (innerW W D A)).1.1))) := by
+    rw [hM]
+    exact h3e
+  have hinner : evalWithAnswerFn (QueryImpl.ofFn T) (innerW W D A) =
+      ((a, evalWithAnswerFn (QueryImpl.ofFn T) (ourVerifier D.Lw D.R (wIn D a))),
+        lWfull.filterMap inlEntry) := by
+    rw [hI, h2e, h1e]
+  have hza : z.1.1.1.1.1 = a := by
+    rw [hz11, hmid, hinner]
+  have hzW : z.1.1.1.2 = lWfull.filterMap inlEntry := by
+    rw [hz11, hmid, hinner]
+  have hzQ : z.2 = lfull.filterMap inlEntry := hz2
+  -- The full log: the adversary's, the chain's, the witness opening's, then the rest.
+  have hlmid : tableQueryLog (midσ W D A) T = lWfull ++
+      tableQueryLog (ourVerifier D.Lσ D.R
+        (σIn D (evalWithAnswerFn (QueryImpl.ofFn T) (innerW W D A)).1.1)) T := by
+    rw [hM, h3l, hI, h2l]
+  set rest := tableQueryLog (ourVerifier D.Lσ D.R
+        (σIn D (evalWithAnswerFn (QueryImpl.ofFn T) (innerW W D A)).1.1)) T ++
+      tableQueryLog (ourVerifier D.LQ D.R
+        (qIn D (evalWithAnswerFn (QueryImpl.ofFn T) (midσ W D A)).1.1.1)) T
+  have hrest : lfull = lWfull ++ rest := by
+    rw [hlfull, h4l, hlmid, List.append_assoc]
+  set Lk := lfull.map Sigma.fst
+  set L := Lk.filterMap Sum.getLeft?
+  set LA := (lA.map Sigma.fst).filterMap Sum.getLeft?
+  set HW := (lWfull.map Sigma.fst).filterMap Sum.getLeft?
+  set rW := (rest.map Sigma.fst).filterMap Sum.getLeft?
+  have hLHW : L = HW ++ rW := by
+    simp only [L, Lk, HW, rW, hrest, List.map_append, List.filterMap_append]
+  set x₀ := W.label π.stmt
+  set x₁ := Wire.afterRoot (viewT T x₀) π.r₁
+  set x₂ := (viewT T x₁).toList
+  set x₃ := (viewT T x₂).toList
+  set x₄ := Wire.afterRoot (viewT T x₃) π.r₂
+  set x₅ := W.afterValues (viewT T x₄) π.v
+  set rd := (lW.map Sigma.fst).filterMap Sum.getLeft?
+  have hHWA : HW = LA ++ ([x₀, x₁, x₂, x₃, x₄, x₅] ++ rd) := by
+    simp only [HW, LA, rd, hlWfull, List.map_append, hLda, List.filterMap_append]
+    rw [show [(Sum.inl x₀ : List UInt8 ⊕ KeccakState), .inl x₁, .inl x₂, .inl x₃, .inl x₄,
+        .inl x₅] = [x₀, x₁, x₂, x₃, x₄, x₅].map Sum.inl from rfl, filterMap_getLeft?_map_inl,
+      List.append_assoc]
+  -- The adversary's transcript and the stage transcripts read as the table.
+  set tA := lA.filterMap inlEntry
+  have hsndA : ∀ q ∈ lA, q.2 = T q.1 := tableQueryLog_snd_dep T A
+  have hsndW : ∀ q ∈ lWfull, q.2 = T q.1 := tableQueryLog_snd_dep T _
+  have hsndF : ∀ q ∈ lfull, q.2 = T q.1 := tableQueryLog_snd_dep T _
+  have hA_H : histOfTr tA = LA.toFinset := by
+    simp only [histOfTr, tA, LA, map_fst_filterMap_inlEntry]
+  have hA_T : ∀ d ∈ histOfTr tA, tableOfTr tA d = viewT T d := by
+    intro d hd
+    refine tableOfTr_eq (viewT T) tA (fun e he => ?_) d (by simpa [histOfTr] using hd)
+    obtain ⟨q, hq, hqe⟩ := List.mem_filterMap.mp he
+    obtain ⟨d', u⟩ := q
+    cases d' with
+    | inl x =>
+      simp only [inlEntry, Option.some.injEq] at hqe
+      subst hqe
+      have := hsndA _ hq
+      simp only at this
+      simp [viewT, this]
+    | inr s => simp [inlEntry] at hqe
+  -- The event.
+  obtain ⟨⟨⟨hchk, hbW, hbσ, hbQ⟩, hsat⟩, hEW, hWD, hEQ⟩ := hev
+  unfold EW at hEW
+  unfold WDd at hWD
+  unfold EQ at hEQ
+  rw [hza] at hchk hsat hEW hWD hEQ
+  rw [hzW] at hEW
+  rw [hzQ] at hEQ
+  have hπa : a.π = π := by rw [hEda]
+  have htAa : a.tA = tA := by rw [hEda]
+  -- No bad fresh query, from here on.
+  by_contra hnb
+  have hk : ¬ FreshBad (kcBad W c₁.commit c₂.commit) T ∅ Lk := fun h =>
+    hnb (freshBad_mono (fun _ _ _ h' => Or.inl h') T ∅ Lk h)
+  have hr : ¬ FreshBad (rootBad A) T ∅ Lk := fun h =>
+    hnb (freshBad_mono (fun _ _ _ h' => Or.inr h') T ∅ Lk h)
+  have hl : ¬ FreshBad (listBad W c₁.commit c₂.commit) (viewT T) ∅ L := fun h =>
+    hk (freshBad_kc W c₁.commit c₂.commit T ∅ Lk (by rw [viewH_empty]; exact h))
+  have hord := refers_before hl
+  have hinj := injOn_of_not_freshBad W hl
+  have hLA_L : ∀ y ∈ LA, y ∈ L := fun y hy => by
+    rw [hLHW, hHWA]
+    exact List.mem_append_left _ (List.mem_append_left _ hy)
+  have hHW_L : ∀ y ∈ HW, y ∈ L := fun y hy => by
+    rw [hLHW]
+    exact List.mem_append_left _ hy
+  have hLA_HW : ∀ y ∈ LA, y ∈ HW := fun y hy => by
+    rw [hHWA]
+    exact List.mem_append_left _ hy
+  -- No fresh answer after the adversary's queries is a root it announced.
+  have hLsplit : L = LA ++ (([x₀, x₁, x₂, x₃, x₄, x₅] ++ rd) ++ rW) := by
+    rw [hLHW, hHWA, List.append_assoc]
+  have hLk : Lk = lA.map Sigma.fst ++
+      ([.inl x₀, .inl x₁, .inl x₂, .inl x₃, .inl x₄, .inl x₅] ++ (lW.map Sigma.fst ++
+        rest.map Sigma.fst)) := by
+    simp only [Lk, hrest, hlWfull, List.map_append, List.append_assoc]
+    rw [hLda, List.append_assoc]
+  have hroot : ∀ w ∈ L, (viewT T w = π.r₁ ∨ viewT T w = π.r₂) → w ∈ LA := by
+    intro w hw hwr
+    by_contra hwA
+    have hwk : Sum.inl w ∈ Lk := mem_filterMap_getLeft?.mp hw
+    have hwA' : Sum.inl w ∉ lA.map Sigma.fst := fun h => hwA (mem_filterMap_getLeft?.mpr h)
+    have nb := not_bad_before (rootBad A) T ∅ Lk hr (.inl w) hwk (Finset.notMem_empty _)
+    rw [Finset.empty_union] at nb
+    refine nb ⟨fun q hq => ?_, hwr⟩
+    rw [hLk]
+    exact subset_before_append _ _ hwA' q hq
+  -- A history between the adversary's and the run's reads the adversary's word.
+  have hstabW : ∀ (H : List (List UInt8)), (∀ y ∈ LA, y ∈ H) → (∀ y ∈ H, y ∈ L) →
+      ∀ (r : Bytes32), (r = π.r₁ ∨ r = π.r₂) → ∀ ht ℓ,
+        merkleWord H.toFinset (viewT T) ht ℓ r = merkleWord LA.toFinset (viewT T) ht ℓ r := by
+    intro H hAH hHL r hr' ht ℓ
+    refine merkleWord_stable (fun y hy => List.mem_toFinset.mpr (hAH y (List.mem_toFinset.mp hy)))
+      (fun w hw hwr => List.mem_toFinset.mpr (hroot w (hHL w (List.mem_toFinset.mp hw)) ?_))
+      (fun y hy w hw h => ?_) ht ℓ
+    · rcases hr' with rfl | rfl
+      · exact Or.inl hwr
+      · exact Or.inr hwr
+    · have hyA := List.mem_toFinset.mp hy
+      have hb := hord w (hHL w (List.mem_toFinset.mp hw)) y (hLA_L y hyA) h
+      rw [hLsplit, before_append_of_mem LA _ hyA] at hb
+      exact List.mem_toFinset.mpr (mem_of_mem_before LA w y hb)
+  -- The adversary's extractor reads the table on the adversary's queries.
+  have hext : ∀ (c : TableCode B.Msg₁), c.dec (merkleWord (histOfTr tA) (tableOfTr tA) c.height
+      c.leafLen π.r₁) = c.dec (merkleWord LA.toFinset (viewT T) c.height c.leafLen π.r₁) := by
+    intro c
+    have := (c.commit).congr (histOfTr tA) (tableOfTr tA) (viewT T) π.r₁ hA_T
+    rw [hA_H] at this ⊢
+    exact this
+  -- The witness opening: a candidate of its word satisfies its claims.
+  have hODW : ¬ OpeningDoomed D.Lw D.R (wIn D a) (cacheOfTr (lWfull.filterMap inlEntry)) :=
+    fun h => hEW ⟨hbW, h⟩
+  unfold OpeningDoomed at hODW
+  push Not at hODW
+  obtain ⟨q, hq, hqc⟩ := hODW
+  rw [cacheOfTr_eq_ansOf T lWfull hsndW] at hq
+  have hwordW := candidates_congr (μ := D.Lw.logN) (R := D.R)
+    (A' := (code₀ D.Lw.logN D.R).thr)
+    (W₁ := Rom.extract (ansOf HW.toFinset (viewT T)) (wIn D a).1.1 (rootHeight D.Lw.logN D.R)
+      (2 ^ laneFold))
+    (W₂ := wordOfMerkle (rootHeight D.Lw.logN D.R) (2 ^ laneFold)
+      (merkleWord HW.toFinset (viewT T) (rootHeight D.Lw.logN D.R) (8 * 2 ^ laneFold)
+        (toB (wIn D a).1.1)))
+    fun v hv => (wordOfMerkle_eq_extract (hinj.mono (fun y hy =>
+      List.mem_toFinset.mpr (hHW_L y (List.mem_toFinset.mp hy)))) _ _ _ hv).symm
+  rw [hwordW] at hq
+  have hrW : toB (wIn D a).1.1 = π.r₁ := by
+    simp only [wIn, hπa]
+    exact LeanVM.Rpm.digestToRpm_ofRpm _
+  rw [hrW, hstabW HW hLA_HW hHW_L π.r₁ (Or.inl rfl)] at hq
+  have hgW := mW.complete (merkleWord LA.toFinset (viewT T) c₁.height c₁.leafLen π.r₁) q (by
+    rw [mW.height, mW.leaf]
+    exact hq)
+  have hcW := mW.claims π (a.ch) q (by
+    intro cl hcl
+    have := hqc cl (by simpa [wIn, hπa] using hcl)
+    exact this)
+  -- The quotient opening, likewise, on the whole run's history.
+  have hODQ : ¬ OpeningDoomed D.LQ D.R (qIn D a) (cacheOfTr (lfull.filterMap inlEntry)) :=
+    fun h => hEQ ⟨hbQ, h⟩
+  unfold OpeningDoomed at hODQ
+  push Not at hODQ
+  obtain ⟨q', hq', hqc'⟩ := hODQ
+  rw [cacheOfTr_eq_ansOf T lfull hsndF] at hq'
+  have hwordQ := candidates_congr (μ := D.LQ.logN) (R := D.R)
+    (A' := (code₀ D.LQ.logN D.R).thr)
+    (W₁ := Rom.extract (ansOf L.toFinset (viewT T)) (qIn D a).1.1 (rootHeight D.LQ.logN D.R)
+      (2 ^ laneFold))
+    (W₂ := wordOfMerkle (rootHeight D.LQ.logN D.R) (2 ^ laneFold)
+      (merkleWord L.toFinset (viewT T) (rootHeight D.LQ.logN D.R) (8 * 2 ^ laneFold)
+        (toB (qIn D a).1.1)))
+    fun v hv => (wordOfMerkle_eq_extract hinj _ _ _ hv).symm
+  rw [hwordQ] at hq'
+  have hrQ : toB (qIn D a).1.1 = π.r₂ := by
+    simp only [qIn, hπa]
+    exact LeanVM.Rpm.digestToRpm_ofRpm _
+  rw [hrQ, hstabW L hLA_L (fun y hy => hy) π.r₂ (Or.inr rfl)] at hq'
+  have hgQ := mQ.complete (merkleWord LA.toFinset (viewT T) c₂.height c₂.leafLen π.r₂) q' (by
+    rw [mQ.height, mQ.leaf]
+    exact hq')
+  have hcQ := mQ.claims π (a.ch) q' (by
+    intro cl hcl
+    exact hqc' cl (by simpa [qIn, hπa] using hcl))
+  -- The verifier's claims hold for the two candidates; the witness candidate fails the relation.
+  set g := mW.read q
+  set R := mQ.read q'
+  have hσc : wiringClaim P a.ch.t a.π.v.2 := by
+    by_contra h
+    exact hWD ⟨hbσ, h⟩
+  rw [hπa] at hchk hσc
+  have hacc : P.Accepts (W.decode π.stmt) g.1 R.1 a.ch.α a.ch.β a.ch.γ a.ch.t π.v.1 π.v.2 a.ch.ρ :=
+    (accepts_iff _ _ _ _ _ _ _ _ _ _).mpr ⟨hcW, hσc, hchk, hcQ⟩
+  have hgsat : ¬ P.Sat (W.decode π.stmt) (P.cells g.1) := by
+    rw [hπa, htAa] at hsat
+    refine hsat g ?_
+    show g ∈ c₁.dec (merkleWord (histOfTr tA) (tableOfTr tA) c₁.height c₁.leafLen π.r₁)
+    rw [hext]
+    exact hgW
+  -- The candidates read off the adversary's queries are those read off the run's.
+  have hg : g ∈ c₁.commit.cands L.toFinset (viewT T) π.r₁ := by
+    show g ∈ c₁.dec (merkleWord L.toFinset (viewT T) c₁.height c₁.leafLen π.r₁)
+    rw [hstabW L hLA_L (fun y hy => hy) π.r₁ (Or.inl rfl)]
+    exact hgW
+  have hR : R ∈ c₂.commit.cands L.toFinset (viewT T) π.r₂ := by
+    show R ∈ c₂.dec (merkleWord L.toFinset (viewT T) c₂.height c₂.leafLen π.r₂)
+    rw [hstabW L hLA_L (fun y hy => hy) π.r₂ (Or.inr rfl)]
+    exact hgQ
+  rw [hEda] at hacc
+  refine hl (trace_core W c₁.commit c₂.commit L (viewT T) π g R (fun y hy => ?_) hg hR hacc hgsat)
+  rw [hLsplit]
+  exact List.mem_append_right _ (List.mem_append_left _ (List.mem_append_left _ hy))
+
 end Compose
