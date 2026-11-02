@@ -146,10 +146,11 @@ permutation `F` (the deployed Keccak-256 and Keccak-f[1600] included), transcrip
 prover randomness: if the honest prover returns a proof and its challenges `(α, β, t)` are not
 degenerate, the deployed verifier, with its three openings `opening::verify` on the deployed
 layouts, accepts it for the statement the secret proves. Hypotheses: F0b's circuit `M` (Keccak
-correctness forward), laid as the wiring, the deployed weights and a basis in `K`. -/
+correctness forward) on a wiring keeping what its cells carry (`WiringKeeps`), the deployed
+weights and a basis in `K` (all met by the deployed instance, `Membership.lean`). -/
 theorem completeness_end (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) (M : MembershipCircuit) {x Y : E}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (tr : Transcript)
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (tr : Transcript)
     (H : Bytes → Digest) (F : KeccakState → KeccakState) (fuel : ℕ) (s : Secret)
     (m : Fin 4 → Fin 3 → K) (padW padQ : ℕ → ℕ → K) (π : DeployedProof)
     (hπ : honestProve I x Y BK M tr witnessOpening.toSystem quotientOpening.toSystem H F fuel s m
@@ -175,7 +176,7 @@ fraction, such that for every hash function, permutation, transcript and padding
 when the openings' proofs of work succeed, is accepted unless the run's `(α, β, t)` is in `Bad`. -/
 theorem completeness_end_bad_set (I : Instance E) (BK : CantorBasis K (22 + 2))
     (hB : ∀ k, I.basis.β k = algebraMap K E (BK.β k)) (M : MembershipCircuit) {x Y : E}
-    (hc : I.c = coordWeight x Y) (hw : I.wiring = wiringOf M.C) (s : Secret)
+    (hc : I.c = coordWeight x Y) (hw : WiringKeeps I.wiring M.C) (s : Secret)
     (m : Fin 4 → Fin 3 → K) :
     ∃ Bad : Finset (E × E × E),
       (Bad.card : ℝ≥0∞) / (Fintype.card (E × E × E) : ℝ≥0∞) ≤ (17 * 2 ^ 24 + 8 : ℝ≥0∞) / 2 ^ 192 ∧
