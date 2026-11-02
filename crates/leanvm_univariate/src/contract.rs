@@ -3,9 +3,11 @@
 //! The verifier as a contract (straight-line code compiled from the recorded verifier, `leanvm_flock_gas::evm`), its
 //! calldata, and what a call costs.
 //!
-//! **Calldata**: selector, the public input (four 64-bit words), then the stream: `C1`'s root, Flock's messages,
-//! `C2`'s root, the values at `t` (SPEC.md §8). No announced sizes: the contract is built for one shape, which the
-//! transcript's IV binds.
+//! **Calldata**: selector, the public input (four 64-bit words, each big-endian: `(cell0.c0, cell0.c1, cell1.c0,
+//! cell1.c1)`; leanVM's 32-byte digest has its words little-endian, so a caller reverses each word's 8 bytes, SPEC.md
+//! §4), then the stream: the six row counts, `C1`'s root, Flock's messages, `C2`'s root, the values at `t`, the
+//! batching sumcheck (SPEC.md §8, §13). The contract is built for one shape class (the heights), which the
+//! transcript's IV binds with the setup roots and the layout words.
 //!
 //! **Calls**: one `PCS_OPEN` call per commitment, each with one weighted claim (SPEC.md §8): words `root, layout,
 //! k = 1, P`, the `P` points (a length, then the coordinates), the claim's `m` terms (`column | point << 32 |
