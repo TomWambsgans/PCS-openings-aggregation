@@ -264,6 +264,7 @@ lake build PcsQuotientTest differential      # the constants' properties, the te
 cargo run --release -p quotient --example statement_vectors -- vectors.txt --index
 .lake/build/bin/differential vectors.txt     # Lean's verdicts, claims, commitments and streams vs Rust's
 .lake/build/bin/differential --self-test     # the extractor's inversion and decoding, the simulator
+.lake/build/bin/differential --weights       # the prover's weight vs the verifier's; fakeStack's claims
 ```
 
 The test (`PcsQuotientTest/Differential.lean`) checks, line by line: on random nine-scalar streams at
@@ -276,4 +277,6 @@ commitments, the membership circuit's at `2^22` rows included (`I`, about five m
 prover, given the Rust prover's masks and seed (its padding expanded by ChaCha12 as the Rust's), sends the
 Rust prover's stream and its proof is accepted (`Q`). `--self-test` runs the extractor's Merkle inversion
 through a transcript (a small tree: mumbai's replay is quadratic), its decoding of an honest hidden witness
-table back to the input bits, and the simulator's proof of a false statement.
+table back to the input bits, and the simulator's proof of a false statement (about two hours at `2^17`
+rows); `--weights` that the prover's and the simulator's weight on a hidden stack (`Layout.weightAt`) is the
+verifier's (`stackWeight`) and that `fakeStack` meets the quotient table's two claim shapes.
