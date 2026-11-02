@@ -15,7 +15,10 @@
 //! stack is the claim's `eq`, read wherever the stack holds the table's entries. All the claims on one
 //! commitment are opened together, as one random combination, which binds them to one table of the root's
 //! level-0 Johnson list (leanVM's WHIR takes no out-of-domain sample at level 0): claims on one commitment must never
-//! be opened separately.
+//! be opened separately. An opening's transcript has leanVM's shape, which `formal/WhirBridge` proves sound
+//! (`family_sound`): its IV is one hash of a prefix fixed by the verifier (the label, a [`VERSION`], the layout's
+//! id, its size and WHIR's rate: [`prefix`]) and the claims, its public digest zero, and the root the proof's
+//! first two scalars, which the verifier checks are the root it expects ([`iv`]).
 //!
 //! A **hidden** layout ([`Layout::hidden`]) makes the commitment and its opening independent of the table given
 //! the claims (`HIDING.md`): every lane's first piece of `2^LOG_PIECE` entries is random, the pieces the table's
@@ -33,6 +36,13 @@ use primitives::multilinear::{eq_table, mle_eval, mle_eval_par};
 use rand::{RngCore, SeedableRng, rngs::StdRng};
 
 const LABEL: &[u8] = b"pcs-quotient-opening";
+
+/// The version of this opening protocol and of the PCS under it, bound into every opening's transcript
+/// ([`prefix`]). It changes with anything that changes what an opening proves but that the prefix does not
+/// encode: the WHIR configuration (version 2: leanVM's at `c445e3d5`, its 128-bit profile), the weight a claim
+/// puts on a layout, the transcript's shape. Version 1 was the seed before it: `(keccak256(LABEL),
+/// keccak256(root ‖ claims))`, the root never absorbed.
+pub const VERSION: u64 = 2;
 
 /// The first fold of leanVM's WHIR: `2^6` lanes.
 pub const LANE_FOLD: usize = 6;
@@ -553,9 +563,34 @@ pub fn commit_in(table: &Table, scratch: Vec<F64>) -> Committed {
     }
 }
 
-/// The opening's seed: its label, then the root and the claims it opens.
-pub(crate) fn seed(root: &Hash, claims: &[Claim]) -> ([u8; 32], [u8; 32]) {
-    let mut bytes = root.to_vec();
+/// The bytes of [`prefix`]: the label's 20, then four fields of fixed width.
+pub const PREFIX_LEN: usize = 20 + 8 + 32 + 8 + 8;
+const _: () = assert!(LABEL.len() == 20);
+
+/// What the opening's IV hashes before the claims, fixed by the verifier's layout, in fixed-width fields:
+/// [`LABEL`] (20 bytes), [`VERSION`] (8 bytes, little-endian), the layout's id ([`layout_id`], 32 bytes), the
+/// stack's size `log_n` (8 bytes) and WHIR's rate [`LOG_INV_RATE`] (8 bytes): [`PREFIX_LEN`] bytes.
+pub fn prefix(layout: &Layout) -> [u8; PREFIX_LEN] {
+    let fields = [
+        LABEL,
+        &VERSION.to_le_bytes(),
+        &layout_id(layout),
+        &(layout.log_n as u64).to_le_bytes(),
+        &(LOG_INV_RATE as u64).to_le_bytes(),
+    ]
+    .concat();
+    fields.try_into().expect("fixed-width fields")
+}
+
+/// The opening's IV: Keccak-256 of [`prefix`] then the claims as they were always written, each its point's
+/// coordinates then its value, a field element as its three limbs, 8 little-endian bytes each (no lengths: under
+/// one layout every claim is `24 (vars + 1)` bytes, which the verifier checks). It is the transcript's one hash
+/// step. The public digest is zero, and the root is not hashed: the prover sends it as the proof's first two
+/// scalars ([`ProverState::add_root`]), and the verifier reads them and checks they are the root it expects
+/// before anything else. That is leanVM's transcript shape, which `formal/WhirBridge` proves sound in the
+/// random-oracle model for claims the adversary chooses (`family_sound`, its seeding `famSeed pre`).
+pub fn iv(layout: &Layout, claims: &[Claim]) -> [u8; 32] {
+    let mut bytes = prefix(layout).to_vec();
     for claim in claims {
         for x in claim.point.iter().chain([&claim.value]) {
             for limb in [x.c0, x.c1, x.c2] {
@@ -563,7 +598,57 @@ pub(crate) fn seed(root: &Hash, claims: &[Claim]) -> ([u8; 32], [u8; 32]) {
             }
         }
     }
-    (keccak256(LABEL), keccak256(&bytes))
+    keccak256(&bytes)
+}
+
+/// The public digest the opening's transcript starts from: zero (not a hash answer).
+pub const PUBLIC_DIGEST: [u8; 32] = [0; 32];
+
+fn put(bytes: &mut Vec<u8>, n: usize) {
+    bytes.extend_from_slice(&(n as u64).to_le_bytes());
+}
+
+/// A layout's id: Keccak-256 of every field of the layout, so that two layouts that stack a table differently
+/// (a hidden layout's parameters included) never share a prefix. Encoded as 8-byte little-endian integers: the
+/// table's variables, the stack's, the number of lanes, each lane (its kind, `0` a block, `1` the overflow lane,
+/// `2` a random lane, then the block or `0`), then the piece's `log` (absent: `0`; present: `1` then the value),
+/// the number of overflow pieces and each of them, and the share lane (as the piece). A field added to
+/// [`Layout`] must be added here: the destructuring does not compile without it.
+pub fn layout_id(layout: &Layout) -> [u8; 32] {
+    let mut bytes = vec![];
+    encode_layout(layout, &mut bytes);
+    keccak256(&bytes)
+}
+
+fn encode_layout(layout: &Layout, bytes: &mut Vec<u8>) {
+    let Layout {
+        vars,
+        log_n,
+        lanes,
+        log_piece,
+        pieces,
+        share,
+    } = layout;
+    let option = |bytes: &mut Vec<u8>, value: &Option<usize>| match *value {
+        None => put(bytes, 0),
+        Some(v) => [1, v].into_iter().for_each(|n| put(bytes, n)),
+    };
+    put(bytes, *vars);
+    put(bytes, *log_n);
+    put(bytes, lanes.len());
+    for lane in lanes {
+        let (kind, block) = match *lane {
+            Lane::Block(b) => (0, b),
+            Lane::Overflow => (1, 0),
+            Lane::Random => (2, 0),
+        };
+        put(bytes, kind);
+        put(bytes, block);
+    }
+    option(bytes, log_piece);
+    put(bytes, pieces.len());
+    pieces.iter().for_each(|&p| put(bytes, p));
+    option(bytes, share);
 }
 
 /// Prove every one of `claims` on one committed table, in one opening.
@@ -591,8 +676,8 @@ fn open_stack(
     claims: &[Claim],
 ) -> Proof {
     let config = config_for_rate(layout.log_n, LOG_INV_RATE).expect("a WHIR shape leanVM supports");
-    let (iv, statement) = seed(root, claims);
-    let mut ps = ProverState::new(digest_words(&iv), digest_words(&statement));
+    let mut ps = ProverState::new(digest_words(&iv(layout, claims)), digest_words(&PUBLIC_DIGEST));
+    ps.add_root(root);
     let lambdas = powers(ps.sample(), claims.len());
     let target = claims
         .iter()
@@ -652,8 +737,12 @@ pub fn verify(
     if claims.iter().any(|claim| claim.point.len() != layout.vars) {
         return Err(verifier::VerifierError::WhirShape);
     }
-    let (iv, statement) = seed(root, claims);
-    let mut transcript = Transcript::new(proof, Digest(iv), Digest(statement), true);
+    let mut transcript = Transcript::new(proof, Digest(iv(layout, claims)), Digest(PUBLIC_DIGEST), true);
+    // The root, the proof's first two scalars: the one the verifier expects, or nothing further is read.
+    let halves = transcript.next_scalars(2)?;
+    if Digest::from_halves(halves[0], halves[1])? != Digest(*root) {
+        return Err(verifier::VerifierError::MerkleRootMismatch);
+    }
     let lambda = transcript.sample();
     let mut lambdas = vec![one];
     while lambdas.len() < claims.len() {
@@ -819,5 +908,64 @@ mod tests {
         let mut wrong = claims.clone();
         wrong[0].value += F192::ONE;
         assert!(!opens(&table, &wrong));
+    }
+
+    /// The opening's transcript: the prefix binds the layout (layouts of the same chunks that differ in the stack's
+    /// size, in being hidden, in a hidden layout's random lanes or in its piece have different ids, prefixes and
+    /// IVs), the IV binds the claims and not the root, and the proof's first two scalars are the root, which the
+    /// verifier checks before anything else.
+    #[test]
+    fn transcript_binds_the_layout_the_claims_and_the_root() {
+        let chunks = [(3, 1 << 15), (0, 3000), (9, (1 << 14) + 700), (5, 1 << 15)];
+        let layouts = [
+            Layout::new(20, 15, 20, &chunks),
+            Layout::new(20, 15, 21, &chunks),
+            Layout::hidden(20, 15, 20, &chunks, 4),
+            Layout::hidden(20, 15, 20, &chunks, 5),
+            Layout::hidden_with(20, 15, 20, &chunks, 4, 7),
+        ];
+        let claim = Claim {
+            point: vec![F192::ONE; 20],
+            value: F192::ZERO,
+        };
+        let mut other = claim.clone();
+        other.point[19] = F192::ZERO;
+        for layout in &layouts {
+            let pre = prefix(layout);
+            assert_eq!(&pre[..20], LABEL);
+            assert_eq!(pre[20..28], VERSION.to_le_bytes());
+            assert_eq!(pre[28..60], layout_id(layout));
+            assert_eq!(pre[60..68], (layout.log_n as u64).to_le_bytes());
+            assert_eq!(pre[68..76], (LOG_INV_RATE as u64).to_le_bytes());
+        }
+        let mut ivs: Vec<_> = layouts.iter().map(|l| iv(l, std::slice::from_ref(&claim))).collect();
+        ivs.push(iv(&layouts[0], &[other]));
+        ivs.push(iv(&layouts[0], &[]));
+        let distinct: std::collections::HashSet<_> = ivs.iter().collect();
+        assert_eq!(distinct.len(), ivs.len());
+
+        // The root rides the proof: its first two scalars; read against another root, the opening is rejected.
+        let layout = Layout::new(18, 14, 16, &[(3, 1 << 14), (0, 3000)]);
+        let table = Table::new(layout, |l, _, lane| {
+            for (i, w) in lane.iter_mut().enumerate() {
+                *w = pseudo(l << 32 | i);
+            }
+        });
+        let point = Rng::new(0x5E).ext_vec(18);
+        let claims = [Claim {
+            value: table.eval(&point),
+            point,
+        }];
+        let committed = commit(&table);
+        let proof = open(&table, &committed, &claims);
+        assert_eq!(proof.stream[..2], fiat_shamir::merkle::hash_to_scalars(&committed.root));
+        let wire = wire_proof(&proof);
+        assert_eq!(verify(&table.layout, &committed.root, &claims, &wire), Ok(()));
+        let mut elsewhere = committed.root;
+        elsewhere[5] ^= 1;
+        assert_eq!(
+            verify(&table.layout, &elsewhere, &claims, &wire),
+            Err(verifier::VerifierError::MerkleRootMismatch)
+        );
     }
 }
