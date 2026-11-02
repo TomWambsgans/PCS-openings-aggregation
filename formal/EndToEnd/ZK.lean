@@ -14,6 +14,7 @@ import ZK.ProverBridge
 import ZK.ProverBridgeDuplex
 import ZK.ProverBridgeMerkle
 import ZK.Final
+import ZK.Budget
 import ZK.Axioms
 
 /-!
@@ -81,6 +82,12 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
   search (`ProverBridgeDuplex.lean`: `draw_rel`, `grind_rel`); the skeleton's trees are mumbai's and
   `fmt`'s expansion of the pruned multiproofs gives mumbai's full openings (`ProverBridgeMerkle.lean`:
   `tree_levels`, `tree_root`, `expandMulti_eq`).
+* `ZK/Budget.lean`: the prover's permutation budget (`hprover`). The skeleton hashes the renderer's
+  rows and the claims' bytes; on every path whose messages have rows of at most `1536` bytes and
+  claims' bytes of at most `1488`, every Keccak-256 input is at most `1564` bytes (`Wp`,
+  `fine_skelSetup`), so the prover makes at most `(2^24 + 2^70) · 12` calls of `π` (`cost_proverJ`).
+  **`hprover_of_renderer`** (any renderer whose messages pass), **`hprover_whir`** (WHIR's honest
+  prover: rows of at most `192` words), given the wiring codeword's rows of at most `1564` bytes.
 * `ZK/Assembly.lean`: the same assembly for the package's own `simulator` given an ideal bridge
   (`zeroKnowledge_of_bridges`, `zeroKnowledge_deployed` on the constant-root skeleton); the joint
   model's data (`JointData`) and the bounds (`zkBound`).
