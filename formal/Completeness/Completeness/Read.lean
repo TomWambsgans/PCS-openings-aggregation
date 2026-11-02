@@ -152,4 +152,92 @@ theorem witness_inChunks (BK : CantorBasis K (22 + 2)) (f : (Fin (22 + 2) → Bo
         omega
   · rfl
 
+/-- The quotient layout's chunks, at `LOG_ROWS = 22`. -/
+abbrev qChunks : List (ℕ × ℕ) :=
+  WhirBridge.quotientChunks (WhirBridge.cellVars WhirBridge.logRows) WhirBridge.qSpill 64
+
+theorem cellVars_logRows : WhirBridge.cellVars WhirBridge.logRows = 24 := rfl
+
+theorem inChunks_of {chunks : List (ℕ × ℕ)} {c : ℕ × ℕ} (hc : c ∈ chunks) {j : ℕ} (hj : j < c.2)
+    {t : ℕ} (ht : t = c.1 * 2 ^ 24 + j) :
+    InChunks (WhirBridge.cellVars WhirBridge.logRows) chunks t := by
+  refine ⟨c, hc, j, hj, ?_⟩
+  rw [cellVars_logRows]
+  exact ht
+
+theorem h_inChunks {e d t : ℕ} (he : e < 3) (hd : d < 2 ^ 24) (ht : t = d + 2 ^ 24 * (16 * e)) :
+    InChunks (WhirBridge.cellVars WhirBridge.logRows) qChunks t := by
+  refine inChunks_of (c := (16 * e, 2 ^ 24)) ?_ hd (by rw [ht]; ring)
+  interval_cases e <;> decide
+
+theorem q_inChunks {e d t : ℕ} (he : e < 3) (hd : d < 3 * 2 ^ 24 + 9280)
+    (ht : t = d + 2 ^ 24 * (4 + 16 * e)) :
+    InChunks (WhirBridge.cellVars WhirBridge.logRows) qChunks t := by
+  by_cases h3 : d < 3 * 2 ^ 24
+  · have hdg : d / 2 ^ 24 < 3 := by omega
+    have hsplit := Nat.div_add_mod d (2 ^ 24)
+    refine inChunks_of (c := (16 * e + 4 + d / 2 ^ 24, 2 ^ 24)) ?_ (j := d % 2 ^ 24)
+      (Nat.mod_lt _ (by positivity)) ?_
+    · generalize d / 2 ^ 24 = dg at hdg
+      interval_cases e <;> interval_cases dg <;> decide
+    · rw [ht]
+      dsimp only
+      linarith
+  · refine inChunks_of (c := (16 * e + 7, 9280)) ?_ (j := d - 3 * 2 ^ 24) (by dsimp only; omega)
+      (by rw [ht]; dsimp only; omega)
+    interval_cases e <;> decide
+
+theorem g_inChunks {d t : ℕ} (hd : d < 7 * 2 ^ 22 + 64) (ht : t = d + 2 ^ 24 * 8) :
+    InChunks (WhirBridge.cellVars WhirBridge.logRows) qChunks t := by
+  by_cases h1 : d < 2 ^ 24
+  · exact inChunks_of (c := (8, 2 ^ 24)) (by decide) h1 (by rw [ht]; ring)
+  · exact inChunks_of (c := (9, 3 * 2 ^ 24 / 4 + 64)) (by decide) (j := d - 2 ^ 24)
+      (by dsimp only; omega) (by rw [ht]; dsimp only; omega)
+
+/-- Where the quotient table is not zero, by numbers (any number `M` of low digits). -/
+theorem quotientTable_support_idx (M : ℕ) (R : Params.Quotients E) (qGateK : K[X])
+    (b : Fin (M + 1 + 1 + 1 + 1) → Bool) (hne : quotientTable limbE M R qGateK b ≠ 0) :
+    ∃ (d : ℕ) (κ τ e₀ e₁ : Bool),
+      idx b = d + 2 ^ M * ((if κ then 1 else 0) + 2 * if τ then 1 else 0) +
+        2 ^ (M + 1 + 1) * ((if e₀ then 1 else 0) + 2 * if e₁ then 1 else 0) ∧
+      slotLive κ τ (limbIdx e₀ e₁) = true ∧ d < slotBound κ τ := by
+  obtain ⟨X, e₀, e₁, rfl⟩ := exists_snoc_snoc b
+  obtain ⟨low, κ, τ, rfl⟩ := exists_snoc_snoc X
+  obtain ⟨hlive, hbound⟩ := quotientTable_support limbE M R qGateK low κ τ e₀ e₁ hne
+  exact ⟨idx low, κ, τ, e₀, e₁, by rw [idx_quad_snoc, idx_quad_snoc], hlive, hbound⟩
+
+/-- The chunks a live limb below its slot's bound lies in. -/
+theorem inChunks_of_slot (d : ℕ) (κ τ e₀ e₁ : Bool) (hlive : slotLive κ τ (limbIdx e₀ e₁) = true)
+    (hbound : d < slotBound κ τ) :
+    InChunks (WhirBridge.cellVars WhirBridge.logRows) qChunks
+      (d + 2 ^ 26 * ((if κ then 1 else 0) + 2 * if τ then 1 else 0) +
+        2 ^ 28 * ((if e₀ then 1 else 0) + 2 * if e₁ then 1 else 0)) := by
+  cases κ <;> cases τ <;> cases e₀ <;> cases e₁ <;>
+    simp only [slotLive, limbIdx, slotBound, Bool.false_eq_true, ↓reduceIte,
+      decide_eq_true_eq] at hlive hbound <;>
+    simp only [Bool.false_eq_true, ↓reduceIte, ite_true, ite_false, zero_mul, add_zero, one_mul] <;>
+    first
+      | exact absurd hlive (by decide)
+      | exact h_inChunks (e := 0) (by norm_num) hbound (by ring1)
+      | exact h_inChunks (e := 1) (by norm_num) hbound (by ring1)
+      | exact h_inChunks (e := 2) (by norm_num) hbound (by ring1)
+      | exact q_inChunks (e := 0) (by norm_num) hbound (by ring1)
+      | exact q_inChunks (e := 1) (by norm_num) hbound (by ring1)
+      | exact q_inChunks (e := 2) (by norm_num) hbound (by ring1)
+      | exact g_inChunks hbound (by ring1)
+
+/-- **The honest quotient table vanishes off its chunks.** -/
+theorem quotient_inChunks (R : Params.Quotients E) (qGateK : K[X]) (n : ℕ)
+    (hn : ¬ InChunks (WhirBridge.cellVars WhirBridge.logRows) qChunks n) :
+    natTable (quotientTable limbE (22 + 2 + 1 + 1) R qGateK) n = 0 := by
+  unfold natTable
+  split_ifs with hlt
+  · by_contra hne
+    obtain ⟨d, κ, τ, e₀, e₁, hidx, hlive, hbound⟩ :=
+      quotientTable_support_idx (22 + 2 + 1 + 1) R qGateK _ hne
+    rw [idx_bitsOf _ _ hlt] at hidx
+    rw [hidx] at hn
+    exact hn (inChunks_of_slot d κ τ e₀ e₁ hlive hbound)
+  · rfl
+
 end Completeness
