@@ -14,7 +14,7 @@ transcribed:
   on lanes `0 .. 32` and random lanes there if there are fewer, the overflow lane `32`, the random
   lanes, the other blocks, the given-up pieces then the tails); `witnessLayout r`, `quotientLayout r`:
   the protocol's two hidden tables at `2^r` rows.
-* `Layout.OK`: what the model needs of a layout (pieces of `2^8`, lanes of more, `34 ≤ L ≤ 64` lanes,
+* `Layout.OK`: what the model needs of a layout (pieces of `2^8`, lanes of more, `40 ≤ L ≤ 64` lanes,
   the overflow lane `32` and no other, lanes `30` and `31` blocks, the held pieces within the overflow
   lane), decided for both layouts at every supported size (`deployed_ok`, `decide +kernel`), with their
   shapes (`deployed_shape`: `40` and `63` lanes, `33` and `167` pieces, the random lanes exactly
@@ -25,7 +25,8 @@ transcribed:
 * `hiddenWord_eq`: **the stack `Table::hidden` writes is `stackD d + stackR r`**, `d` the table's
   entries where the layout holds them (`place`), `r` the lanes' random words: the model's randomness
   (with the pairs' copies and the overflow lane's zeros) and its table part are the Rust's.
-* The lanes `GadgetLayout.roundsReached` asks for (`pos_pairA0`, …, `pos_low`, `pos_33`, `pos_pat`).
+* The lanes `GadgetLayout.roundsReached` and `Solve.hsolve_of_cube` ask for (`pos_injective`,
+  `pos_pairA0`, …, `pos_ov`, `pos_low`, `pos_33`, `pos_cube`, `pos_pat`).
 -/
 
 namespace QuotientSecurity.Hiding
@@ -147,7 +148,7 @@ def quotientLayout (r : ℕ) : Layout :=
 structure Layout.OK (L : Layout) : Prop where
   piece : L.logPiece = logPieceD
   lane : logPieceD < L.logLane
-  lanes_ge : 34 ≤ L.lanes.length
+  lanes_ge : 40 ≤ L.lanes.length
   lanes_le : L.lanes.length ≤ 64
   overflow : L.overflow = overflowLane
   at_ov : L.lanes[overflowLane]? = some .overflow
@@ -158,7 +159,7 @@ structure Layout.OK (L : Layout) : Prop where
 
 /-- `Layout.OK` as one decidable conjunction. -/
 def Layout.OKb (L : Layout) : Prop :=
-  L.logPiece = logPieceD ∧ logPieceD < L.logLane ∧ 34 ≤ L.lanes.length ∧ L.lanes.length ≤ 64 ∧
+  L.logPiece = logPieceD ∧ logPieceD < L.logLane ∧ 40 ≤ L.lanes.length ∧ L.lanes.length ≤ 64 ∧
     L.overflow = overflowLane ∧ L.lanes[overflowLane]? = some .overflow ∧
     (∀ l < L.lanes.length, L.lanes[l]? = some .overflow → l = overflowLane) ∧
     L.lanes[30]?.map Lane.isBlock = some true ∧ L.lanes[31]?.map Lane.isBlock = some true ∧
@@ -309,6 +310,10 @@ theorem pos_low (h : L.OK) : ∀ b : Fin 6 → Bool, b (Fin.last 5) = false → 
 
 theorem pos_33 (h : L.OK) : lane 33 ∈ Set.range L.pos :=
   ⟨⟨33, by have := h.lanes_ge; omega⟩, rfl⟩
+
+/-- The upper cube `32 .. 40` is lanes of the layout (`Solve.cube_true_subset`'s hypothesis). -/
+theorem pos_cube (h : L.OK) : ∀ l : Fin 64, 32 ≤ (l : ℕ) → (l : ℕ) < 40 → lane l ∈ Set.range L.pos :=
+  fun l _ hl2 => ⟨⟨l, by have := h.lanes_ge; omega⟩, rfl⟩
 
 /-- The gadget's patterns weigh only lanes of the layout. -/
 theorem pos_pat {E : Type} [Field E] (h : L.OK) (p : Fin 3) (b : Fin 6 → Bool)
