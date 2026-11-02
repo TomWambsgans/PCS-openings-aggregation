@@ -5,16 +5,19 @@
 import ZK.Coins
 import QuotientZk.FreshJoint
 import QuotientZk.Instance.JointV
+import QuotientZk.Instance.Nondeg
 
 /-!
 # `PcsQuotient.ZeroKnowledge` from `formal/QuotientZk`
 
 The end statement `PcsQuotient.ZeroKnowledge ζ` (`formal/Statement`, `Security.lean`) from
-`QuotientZk.DRpm.zk_rpm_skel` (zero knowledge of a skeleton prover in mumbai's random-permutation
-model) with the joint model's honest-verifier zero knowledge and factorizations
-(`QuotientZk.Instance.jointHVZK_of_linkV`, `factors_singleV`, `factors_pairV`: the joint model whose
-openings read the five values, as the deployed quotient claim's point does), for an explicit `ζ`
-(`zkBound`), and the distinguisher's coins removed (`ZK/Coins.lean`).
+`QuotientZk.DRpm.zk_rpm_skel_approx` (zero knowledge of a skeleton prover in mumbai's
+random-permutation model, the honest-verifier simulator within `εz`) with the joint model's
+honest-verifier zero knowledge and factorizations (`QuotientZk.Instance.jointHVZKε_of_linkV`,
+`factors_singleV`, `factors_pairV`: the joint model whose openings read the five values, as the
+deployed quotient claim's point does, the honest tables' claims required off the degenerate
+challenges and masks, `ClaimsND`), for an explicit `ζ` (`zkBound`), and the distinguisher's coins
+removed (`ZK/Coins.lean`).
 
 **Two theorems.** `zeroKnowledge_of_bridges` for any skeleton (`FSFresh` and the duplex discipline
 named); **`zeroKnowledge_deployed`** for the deployed skeleton (`QuotientZk.Deployed.skel` at the
@@ -44,17 +47,20 @@ deployed shape, `2^22` rows), where both are proved (`fsFresh_deployed` from no 
     simulator for which it holds with `εI = 0`.
 
 **The bound** (`zkBound`, a function of the distinguisher's calls `Q` of `π` and `π⁻¹`):
-`εR Q + εFS + 2^-165 + 2^24 (QP + Qfmt + Q) 2^-2368 + 2^48 2^-2368 + (Qp + Qfmt + Q)² / 2^508 + εI Q`,
-for a skeleton of `QP` operations, a prover of `Qp` permutation calls, `fmt` of `Qfmt`; at most
-`εR Q + εFS + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508 + εI Q` when `QP + Qfmt + Q ≤ 2^128`
+`εR Q + εFS + epsHV + 2^24 (QP + Qfmt + Q) 2^-2368 + 2^48 2^-2368 + (Qp + Qfmt + Q)² / 2^508 + εI Q`,
+`epsHV = 2^-165 + 2^-125 + 2/2^192` (the joint model's bad challenges, `goodT`, and its degenerate
+masks, `ClaimsND`; below `2^-124`), for a skeleton of `QP` operations, a prover of `Qp`
+permutation calls, `fmt` of `Qfmt`; at most
+`εR Q + εFS + epsHV + 2^-2200 + (Qp + Qfmt + Q)² / 2^508 + εI Q` when `QP + Qfmt + Q ≤ 2^128`
 (`zkBound_le`). Deployed (`zkBoundDeployed`): `QP = 2^70`, `εFS = epsFSDeployed ≤ 2^-113`, so at most
-`εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508 + εI Q` for `Qfmt + Q ≤ 2^127`
+`εR Q + 2^-113 + epsHV + 2^-2200 + (Qp + Qfmt + Q)² / 2^508 + εI Q` for `Qfmt + Q ≤ 2^127`
 (`zkBoundDeployed_le`).
 -/
 
 open OracleComp OracleSpec Common Polynomial Module QuotientSecurity QuotientSecurity.Hiding
 open QuotientZk.Joint QuotientZk.Deployed.Fresh
-open QuotientZk.Instance (ChV LinkV jointSimV jointHVZK_of_linkV factors_singleV factors_pairV)
+open QuotientZk.Instance (ChV LinkV jointSimV jointHVZK_of_linkV jointHVZKε_of_linkV ClaimsND
+  factors_singleV factors_pairV)
 open QuotientZk.Deployed (Inp Out Msg Tbl Pos KSt DSpec)
 open scoped ENNReal
 
@@ -122,8 +128,9 @@ def JointData.simV (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι�
 /-- **The joint model's hypotheses** (`zk_rpm_deployed_jointV_fs'`'s, by the same names): F1's (`h3`, `hE`,
 `hvan`, `hsat`: the witness satisfies the relation, `hvan0`), the sizes (`hq`, `hK`, `hN`, `hdeg`, `h40₁`,
 `h40₂`), the simulator's public functions (`hinK`, `hsig`), each secret opening's conditions (`hS₁`,
-`hS₂`: (Q), `WeightsFit`, the layout's lanes), the claims of the honest and simulated tables (`hT₁`,
-`hT₂`, `hsimT₁`, `hsimT₂`), the challenges uniform (`hch`); and `fsFresh_deployed`'s conditions on the
+`hS₂`: (Q), `WeightsFit`, the layout's lanes), the claims of the honest tables off the degenerate
+challenges and masks (`hT₁`, `hT₂`, under `ClaimsND`: the claims' scales, the row outside `K`, the copy
+denominator) and of the simulated tables (`hsimT₁`, `hsimT₂`), the challenges uniform (`hch`); and `fsFresh_deployed`'s conditions on the
 prover (`hcw`: the claims' bytes read a challenge through windows of min-entropy `2^-191`; `hrow₀`: the
 witness table's first row of min-entropy `2^-2368`; `hlong`: rows longer than `192` bytes; `hcK`: the
 witness table committed first; `hclW`, `hclσ`, `hclQ`: the openings' claims at their places; `hn`). -/
@@ -143,10 +150,10 @@ structure JointData.Valid (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O
   hsig : ∀ t, J.sigmaAt t = J.P₀.sigmaPoly.eval t
   hS₁ : J.S₁.Conditions
   hS₂ : J.S₂.Conditions
-  hT₁ : ∀ c, good J.P₀ J.gK J.van c → ∀ m,
+  hT₁ : ∀ c, good J.P₀ J.gK J.van c → ∀ m, ClaimsND (K := K) J.P₀ J.gK J.van c m →
     J.S₁.claims (c, redMsgs J.P₀ J.gK J.van c.1.1.2 m) (J.T₁ c m) =
       J.cl₁ c (redMsgs J.P₀ J.gK J.van c.1.1.2 m)
-  hT₂ : ∀ c, good J.P₀ J.gK J.van c → ∀ m,
+  hT₂ : ∀ c, good J.P₀ J.gK J.van c → ∀ m, ClaimsND (K := K) J.P₀ J.gK J.van c m →
     J.S₂.claims (c, redMsgs J.P₀ J.gK J.van c.1.1.2 m) (J.T₂ c m) =
       J.cl₂ c (redMsgs J.P₀ J.gK J.van c.1.1.2 m)
   hsimT₁ : ∀ c, good J.P₀ J.gK J.van c → ∀ v, J.S₁.claims (c, v) (J.simT₁ c v) = J.cl₁ c v
@@ -196,12 +203,16 @@ end Bridges
 
 /-! ## The bound -/
 
+/-- **The joint model's error**: its bad challenges (`goodT`: F1's and the openings' `2^-165`, the
+claims' scales and the row `2^-125`) and its degenerate masks (`ClaimsND`, `2/2^192`). -/
+noncomputable def epsHV : ℝ≥0∞ := 1 / 2 ^ 165 + 1 / 2 ^ 125 + 2 / 2 ^ 192
+
 /-- **The zero-knowledge error** for a distinguisher of `Q` calls of `π` and `π⁻¹`: the bridges'
-`εR Q`, `εI Q`; Fiat–Shamir's `εFS`; the joint model's bad challenges `2^-165`; the unopened rows'
+`εR Q`, `εI Q`; Fiat–Shamir's `εFS`; the joint model's `epsHV`; the unopened rows'
 entropy `2^24 (QP + Qfmt + Q) δ + 2^48 δ`, `δ = 2^-2368` (`QP` the skeleton's operations, `Qfmt` the
 formatting's calls); the random permutation's `(Qp + Qfmt + Q)² / 2^508` (`Qp` the prover's calls). -/
 noncomputable def zkBound (QP Qp Qfmt : ℕ) (εFS : ℝ≥0∞) (εR εI : ℕ → ℝ≥0∞) (Q : ℕ) : ℝ≥0∞ :=
-  εR Q + (εFS + 1 / 2 ^ 165 +
+  εR Q + (εFS + epsHV +
     (((2 ^ 24 * (QP + (Qfmt + Q)) : ℕ) : ℝ≥0∞) * ((2 : ℝ≥0∞) ^ 2368)⁻¹ +
       (((2 ^ 24) ^ 2 : ℕ) : ℝ≥0∞) * ((2 : ℝ≥0∞) ^ 2368)⁻¹) +
     ((Qp + (Qfmt + Q) : ℕ) ^ 2 : ℝ≥0∞) / 2 ^ 508) + εI Q
@@ -211,7 +222,7 @@ operations), the entropy terms are at most `2^-2200`. -/
 theorem zkBound_le (QP Qp Qfmt : ℕ) (εFS : ℝ≥0∞) (εR εI : ℕ → ℝ≥0∞) (Q : ℕ)
     (hQ : QP + (Qfmt + Q) ≤ 2 ^ 128) :
     zkBound QP Qp Qfmt εFS εR εI Q ≤
-      εR Q + (εFS + 1 / 2 ^ 165 + ((2 : ℝ≥0∞) ^ 2200)⁻¹ +
+      εR Q + (εFS + epsHV + ((2 : ℝ≥0∞) ^ 2200)⁻¹ +
         ((Qp + (Qfmt + Q) : ℕ) ^ 2 : ℝ≥0∞) / 2 ^ 508) + εI Q := by
   unfold zkBound
   have h := QuotientZk.Deployed.merkleTerm_le (QP + (Qfmt + Q)) hQ
@@ -279,12 +290,13 @@ theorem zeroKnowledge_of_bridges
   have hQ : ∀ s, QueryCostAtMost (QuotientZk.DRpm.zkGameRpmD Jw.P (skel stmt) D s)
       permutationCallCost (Qp + (Qfmt + Q)) := fun s ↦
     Common.QueryCostAtMost.bind (hprover stmt w hw s) fun pf ↦ queryCost_liftPerm _ _ (hD pf)
-  have hHV := jointHVZK_of_linkV Jw.P hv.h3 Jw.P₀ hv.hE Jw.stmtE Jw.gK Jw.van hv.hvan hv.hsat
+  have hHV := jointHVZKε_of_linkV Jw.P hv.h3 Jw.P₀ hv.hE Jw.stmtE Jw.gK Jw.van hv.hvan hv.hsat
     hv.hvan0 hv.hq hv.hK hv.hN hv.hdeg Jw.inK hv.hinK Jw.sigmaAt hv.hsig Jw.wir Jw.S₁ Jw.S₂ hv.hS₁
     hv.hS₂ Jw.T₁ Jw.T₂ Jw.cl₁ Jw.cl₂ hv.hT₁ hv.hT₂ Jw.simT₁ Jw.simT₂ hv.hsimT₁ hv.hsimT₂ Jw.lk hv.hch
   have hfac := factors_singleV hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ Jw.lk
   have hfac₂ := factors_pairV hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ Jw.lk
-  have hmain := QuotientZk.DRpm.zk_rpm_skel Jw.P (skel stmt) Jw.simV _ εFS (1 / 2 ^ 165)
+  have hmain := QuotientZk.DRpm.zk_rpm_skel_approx Jw.P (skel stmt) Jw.simV _ εFS
+    (1 / 2 ^ 165 + 1 / 2 ^ 125) (2 / 2 ^ 192)
     ((2 : ℝ≥0∞) ^ 2368)⁻¹ ((2 : ℝ≥0∞) ^ 2368)⁻¹ QP (Qfmt + Q) (Qp + (Qfmt + Q)) (hskel stmt)
     (hFS stmt w hw) hHV.1 hHV.2 (fun σ k x hx v y ↦ (hfac σ k x hx y).some.bound v)
     (fun σ k x k' x' hx hx' hne v ↦ (hfac₂ σ k x k' x' hx hx' hne).some.bound v)
@@ -293,7 +305,7 @@ theorem zeroKnowledge_of_bridges
   rw [QuotientZk.Deployed.card_positions] at hmain
   have h := ((hreal stmt w hw D₀ Q hD₀).trans hmain).trans (hideal stmt w hw D₀ Q hD₀)
   refine h.mono (le_of_eq ?_)
-  simp only [zkBound]
+  simp only [zkBound, epsHV]
 
 /-- `epsFS` grows with the operations. -/
 theorem epsFS_mono (c : ℕ) {Q Q' : ℕ} (h : Q ≤ Q') (εc δ₀ : ℝ≥0∞) :
@@ -331,10 +343,10 @@ noncomputable def zkBoundDeployed (Qp Qfmt : ℕ) (εR εI : ℕ → ℝ≥0∞)
   zkBound (2 ^ 70) Qp Qfmt epsFSDeployed εR εI
 
 /-- **The deployed error at our sizes**: for a distinguisher and a formatting of at most `2^127` calls
-together, `zkBoundDeployed Q ≤ εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508 + εI Q`. -/
+together, `zkBoundDeployed Q ≤ εR Q + 2^-113 + epsHV + 2^-2200 + (Qp + Qfmt + Q)² / 2^508 + εI Q`. -/
 theorem zkBoundDeployed_le (Qp Qfmt : ℕ) (εR εI : ℕ → ℝ≥0∞) (Q : ℕ) (hQ : Qfmt + Q ≤ 2 ^ 127) :
     zkBoundDeployed Qp Qfmt εR εI Q ≤
-      εR Q + (((2 : ℝ≥0∞) ^ 113)⁻¹ + 1 / 2 ^ 165 + ((2 : ℝ≥0∞) ^ 2200)⁻¹ +
+      εR Q + (((2 : ℝ≥0∞) ^ 113)⁻¹ + epsHV + ((2 : ℝ≥0∞) ^ 2200)⁻¹ +
         ((Qp + (Qfmt + Q) : ℕ) ^ 2 : ℝ≥0∞) / 2 ^ 508) + εI Q := by
   have h : 2 ^ 70 + (Qfmt + Q) ≤ 2 ^ 128 := by
     have : (2 : ℕ) ^ 70 + 2 ^ 127 ≤ 2 ^ 128 := by norm_num

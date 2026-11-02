@@ -75,6 +75,30 @@ theorem bind {α : Type} (μ : ProbComp α) (f g : α → ProbComp Bool) (ε : �
 
 end Close
 
+/-- **Two distributions within `ε` for every continuation**: whatever is run after a draw from `A`
+or from `B`, the two games output `true` with probabilities within `ε` (a bound on the statistical
+distance of `A` and `B`). -/
+def VClose {α : Type} (A B : ProbComp α) (ε : ℝ≥0∞) : Prop :=
+  ∀ g : α → ProbComp Bool, Close (A >>= g) (B >>= g) ε
+
+namespace VClose
+
+theorem of_evalDistEq {α : Type} {A B : ProbComp α} (h : A =ᵈ B) : VClose A B 0 :=
+  fun g => Close.of_evalDistEq (h.bind_left g)
+
+theorem mono {α : Type} {A B : ProbComp α} {ε ε' : ℝ≥0∞} (h : VClose A B ε) (hε : ε ≤ ε') :
+    VClose A B ε' :=
+  fun g => (h g).mono hε
+
+/-- A public function of the two draws. -/
+theorem map {α β : Type} {A B : ProbComp α} {ε : ℝ≥0∞} (h : VClose A B ε) (f : α → β) :
+    VClose (f <$> A) (f <$> B) ε := by
+  intro g
+  rw [bind_map_left, bind_map_left]
+  exact h (g ∘ f)
+
+end VClose
+
 /-! ## The distinguisher inside the game -/
 
 section Distinguisher
@@ -171,16 +195,19 @@ theorem prEvent_run'_eq {α σ' : Type} (A : StateT σ' ProbComp α) (st : σ') 
     Pr{let b ← A.run' st}[p b] = Pr{let z ← A.run st}[p z.1] := by
   rw [StateT.run'_eq, prEvent_map]
 
-/-- **Zero knowledge in the random-oracle model.** -/
-theorem zk_rom [Fintype (K × X)] (skel : OracleComp (OpSpec I O M K X) Pf) (c₀ : List (I × O))
+/-- **Zero knowledge in the random-oracle model, the honest-verifier simulator within `εz`**: at
+every good challenge the view is within `εz` of `simV` (`VClose`), and the bound is
+`εFS + (εhv + εz) + N (|c₀| + QP + QD) δ + N² δ₂`. -/
+theorem zk_rom_approx [Fintype (K × X)] (skel : OracleComp (OpSpec I O M K X) Pf)
+    (c₀ : List (I × O))
     (simV : List O → ProbComp (View M I K X)) (good : List O → Prop)
-    (εFS εhv δ δ₂ : ℝ≥0∞) (QP QD : ℕ)
+    (εFS εhv εz δ δ₂ : ℝ≥0∞) (QP QD : ℕ)
     (hQP : IsTotalQueryBound skel QP)
     (hFS : Pr{let x ← (do
         let s ← $ᵗ S
         let z ← (simulateQ (implReal P s) skel).run (St.init c₀)
         return z.2.fs)}[x = true] ≤ εFS)
-    (hzk : ∀ σ, good σ → (fun s => P.view s σ) <$> ($ᵗ S) =ᵈ simV σ)
+    (hzk : ∀ σ, good σ → VClose ((fun s => P.view s σ) <$> ($ᵗ S)) (simV σ) εz)
     (hgood : Pr{let σ ← uniformList O P.n}[¬ good σ] ≤ εhv)
     (hent : ∀ σ k x, P.opened σ k x = false → ∀ v y,
       Pr{let s ← $ᵗ S}[P.view s σ = v ∧ P.rows s σ k x = y] ≤
@@ -191,7 +218,7 @@ theorem zk_rom [Fintype (K × X)] (skel : OracleComp (OpSpec I O M K X) Pf) (c�
           δ₂ * Pr{let s ← $ᵗ S}[P.view s σ = v])
     (D : Pf → OracleComp (I →ₒ O) Bool) (hD : ∀ π, IsTotalQueryBound (D π) QD) :
     Close (realGame P skel c₀ D) (simGame P simV skel c₀ D)
-      (εFS + εhv + ((Fintype.card (K × X) * (c₀.length + (QP + QD)) : ℕ) * δ +
+      (εFS + (εhv + εz) + ((Fintype.card (K × X) * (c₀.length + (QP + QD)) : ℕ) * δ +
         (Fintype.card (K × X) ^ 2 : ℕ) * δ₂)) := by
   classical
   set G := game skel D
@@ -285,14 +312,20 @@ theorem zk_rom [Fintype (K × X)] (skel : OracleComp (OpSpec I O M K X) Pf) (c�
       (do let σ ← uniformList O P.n; let v ← (fun s => P.view s σ) <$> ($ᵗ S);
           (simulateQ (implView P σ v) G).run' st₀)
       (do let σ ← uniformList O P.n; let v ← simV σ; (simulateQ (implView P σ v) G).run' st₀)
-      εhv := by
-    refine (Close.bind _ _ _ (fun σ => if good σ then 0 else 1) fun σ => ?_).mono ?_
+      (εhv + εz) := by
+    refine (Close.bind _ _ _ (fun σ => if good σ then εz else 1) fun σ => ?_).mono ?_
     · by_cases hσ : good σ
       · simp only [hσ, ite_true]
-        exact Close.of_evalDistEq ((hzk σ hσ).bind_left _)
+        exact hzk σ hσ _
       · simp only [hσ, ite_false]
         constructor <;> exact le_add_left (prEvent_le_one _)
-    · refine le_trans (le_of_eq ?_) hgood
+    · have hsplit : ∀ σ, Pr{let y ← uniformList O P.n}[y = σ] * (if good σ then εz else 1) ≤
+          Pr{let y ← uniformList O P.n}[y = σ] * (if good σ then 0 else 1) +
+            Pr{let y ← uniformList O P.n}[y = σ] * εz := fun σ => by
+        by_cases hσ : good σ <;> simp [hσ]
+      refine (ENNReal.tsum_le_tsum hsplit).trans ?_
+      rw [ENNReal.tsum_add, ENNReal.tsum_mul_right, tsum_prEvent_eq_one, one_mul]
+      refine add_le_add (le_trans (le_of_eq ?_) hgood) le_rfl
       rw [prEvent_eq_tsum_ite]
       refine tsum_congr fun σ => ?_
       by_cases hσ : good σ <;> simp [hσ]
@@ -315,6 +348,32 @@ theorem zk_rom [Fintype (K × X)] (skel : OracleComp (OpSpec I O M K X) Pf) (c�
   refine hchain.mono (le_of_eq ?_)
   simp only [add_zero, zero_add]
   ring
+
+/-- **Zero knowledge in the random-oracle model.** -/
+theorem zk_rom [Fintype (K × X)] (skel : OracleComp (OpSpec I O M K X) Pf) (c₀ : List (I × O))
+    (simV : List O → ProbComp (View M I K X)) (good : List O → Prop)
+    (εFS εhv δ δ₂ : ℝ≥0∞) (QP QD : ℕ)
+    (hQP : IsTotalQueryBound skel QP)
+    (hFS : Pr{let x ← (do
+        let s ← $ᵗ S
+        let z ← (simulateQ (implReal P s) skel).run (St.init c₀)
+        return z.2.fs)}[x = true] ≤ εFS)
+    (hzk : ∀ σ, good σ → (fun s => P.view s σ) <$> ($ᵗ S) =ᵈ simV σ)
+    (hgood : Pr{let σ ← uniformList O P.n}[¬ good σ] ≤ εhv)
+    (hent : ∀ σ k x, P.opened σ k x = false → ∀ v y,
+      Pr{let s ← $ᵗ S}[P.view s σ = v ∧ P.rows s σ k x = y] ≤
+        δ * Pr{let s ← $ᵗ S}[P.view s σ = v])
+    (hent₂ : ∀ σ k x k' x', P.opened σ k x = false → P.opened σ k' x' = false →
+      (k, x) ≠ (k', x') → ∀ v,
+        Pr{let s ← $ᵗ S}[P.view s σ = v ∧ P.rows s σ k x = P.rows s σ k' x'] ≤
+          δ₂ * Pr{let s ← $ᵗ S}[P.view s σ = v])
+    (D : Pf → OracleComp (I →ₒ O) Bool) (hD : ∀ π, IsTotalQueryBound (D π) QD) :
+    Close (realGame P skel c₀ D) (simGame P simV skel c₀ D)
+      (εFS + εhv + ((Fintype.card (K × X) * (c₀.length + (QP + QD)) : ℕ) * δ +
+        (Fintype.card (K × X) ^ 2 : ℕ) * δ₂)) :=
+  (zk_rom_approx P skel c₀ simV good εFS εhv 0 δ δ₂ QP QD hQP hFS
+    (fun σ hσ => VClose.of_evalDistEq (hzk σ hσ)) hgood hent hent₂ D hD).mono
+    (le_of_eq (by rw [add_zero]))
 
 end Main
 
