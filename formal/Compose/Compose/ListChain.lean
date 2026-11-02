@@ -165,21 +165,38 @@ def logImpl : QueryImpl HashSpec (StateT Transcript (OracleComp HashSpec)) := fu
 def logged {α : Type} (oa : OracleComp HashSpec α) : OracleComp HashSpec (α × Transcript) :=
   (simulateQ logImpl oa).run []
 
-/-- **The experiment**: the adversary's proof, the chain's challenges on it, and the transcript of
-every query, the adversary's and the chain's. -/
-def rootExperiment (A : OracleComp HashSpec (RootProof F)) :
-    OracleComp HashSpec ((RootProof F × Chals F) × Transcript) :=
-  logged (A >>= fun π => chainWith W hashQuery π >>= fun ch => pure (π, ch))
+/-- **A run**: the adversary's reduction proof and the rest of what it outputs (the openings), the
+chain's challenges, and what the verifier computes after the chain (the openings' verdicts). -/
+structure Run (F O β : Type) where
+  proof : RootProof F
+  rest : O
+  chals : Chals F
+  out : β
+
+/-- **The run**: the adversary, the chain on its reduction proof, then `post` (the openings, any
+computation of the hash). -/
+def rootRun {O β : Type} (A : OracleComp HashSpec (RootProof F × O))
+    (post : RootProof F × O → Chals F → OracleComp HashSpec β) :
+    OracleComp HashSpec (Run F O β) :=
+  A >>= fun p => chainWith W hashQuery p.1 >>= fun ch => post p ch >>= fun b =>
+    pure ⟨p.1, p.2, ch, b⟩
+
+/-- **The experiment**: the run, with the transcript of every query, the adversary's, the
+chain's and the openings'. -/
+def rootExperiment {O β : Type} (A : OracleComp HashSpec (RootProof F × O))
+    (post : RootProof F × O → Chals F → OracleComp HashSpec β) :
+    OracleComp HashSpec (Run F O β × Transcript) :=
+  logged (rootRun W A post)
 
 /-- **What wins**: some candidate of the first root and some candidate of the second, read off the
 transcript, satisfy the claims the verifier checks at the chain's challenges, while the first's
 cells fail the relation for the statement. -/
-def ListWins (C₁ : ListCommit B.Msg₁) (C₂ : ListCommit B.Msg₂)
-    (z : (RootProof F × Chals F) × Transcript) : Prop :=
-  ∃ g ∈ C₁.cands (histOfTr z.2) (tableOfTr z.2) z.1.1.r₁,
-    ∃ R ∈ C₂.cands (histOfTr z.2) (tableOfTr z.2) z.1.1.r₂,
-      P.Accepts (W.decode z.1.1.stmt) g.1 R.1 z.1.2.α z.1.2.β z.1.2.γ z.1.2.t z.1.1.v.1 z.1.1.v.2
-          z.1.2.ρ ∧ ¬ P.Sat (W.decode z.1.1.stmt) (P.cells g.1)
+def ListWins {O β : Type} (C₁ : ListCommit B.Msg₁) (C₂ : ListCommit B.Msg₂)
+    (z : Run F O β × Transcript) : Prop :=
+  ∃ g ∈ C₁.cands (histOfTr z.2) (tableOfTr z.2) z.1.proof.r₁,
+    ∃ R ∈ C₂.cands (histOfTr z.2) (tableOfTr z.2) z.1.proof.r₂,
+      P.Accepts (W.decode z.1.proof.stmt) g.1 R.1 z.1.chals.α z.1.chals.β z.1.chals.γ z.1.chals.t
+          z.1.proof.v.1 z.1.proof.v.2 z.1.chals.ρ ∧ ¬ P.Sat (W.decode z.1.proof.stmt) (P.cells g.1)
 
 /-- The union bound's factor: `L₁` candidates for the first challenge, `L₁ L₂` pairs for the
 others. -/
@@ -631,78 +648,88 @@ theorem chain_queryBound (π : RootProof F) : IsTotalQueryBound (chainWith W has
   simp only [chainWith, hashQuery]
   repeat' (first | trivial | refine isTotalQueryBound_query_bind_iff.mpr ⟨by norm_num, fun _ => ?_⟩)
 
-/-- The run before logging: the adversary, then the chain. -/
-def rootRun (A : OracleComp HashSpec (RootProof F)) :
-    OracleComp HashSpec (RootProof F × Chals F) :=
-  A >>= fun π => chainWith W hashQuery π >>= fun ch => pure (π, ch)
+variable {O β : Type}
 
-theorem rootRun_queryBound (A : OracleComp HashSpec (RootProof F)) (Q : ℕ)
-    (hQ : IsTotalQueryBound A Q) : IsTotalQueryBound (rootRun W A) (Q + 6) := by
-  have h : ∀ π, IsTotalQueryBound (chainWith W hashQuery π >>= fun ch =>
-      (pure (π, ch) : OracleComp HashSpec (RootProof F × Chals F))) (6 + 0) :=
-    fun π => isTotalQueryBound_bind (chain_queryBound W π) fun ch =>
-      (trivial : IsTotalQueryBound (pure (π, ch) : OracleComp HashSpec (RootProof F × Chals F)) 0)
+theorem rootRun_queryBound (A : OracleComp HashSpec (RootProof F × O))
+    (post : RootProof F × O → Chals F → OracleComp HashSpec β) (Q QV : ℕ)
+    (hQ : IsTotalQueryBound A Q) (hV : ∀ p ch, IsTotalQueryBound (post p ch) QV) :
+    IsTotalQueryBound (rootRun W A post) (Q + 6 + QV) := by
+  have h : ∀ p : RootProof F × O, IsTotalQueryBound (chainWith W hashQuery p.1 >>= fun ch =>
+      post p ch >>= fun b => (pure ⟨p.1, p.2, ch, b⟩ : OracleComp HashSpec (Run F O β)))
+        (6 + (QV + 0)) :=
+    fun p => isTotalQueryBound_bind (chain_queryBound W p.1) fun ch =>
+      isTotalQueryBound_bind (hV p ch) fun b =>
+        (trivial : IsTotalQueryBound (pure ⟨p.1, p.2, ch, b⟩ : OracleComp HashSpec (Run F O β)) 0)
   have := isTotalQueryBound_bind hQ h
-  rwa [Nat.add_zero] at this
+  rwa [Nat.add_zero, ← Nat.add_assoc] at this
 
-theorem rootExperiment_queryBound (A : OracleComp HashSpec (RootProof F)) (Q : ℕ)
-    (hQ : IsTotalQueryBound A Q) : IsTotalQueryBound (rootExperiment W A) (Q + 6) :=
-  isTotalQueryBound_logged_run _ _ _ (rootRun_queryBound W A Q hQ)
+theorem rootExperiment_queryBound (A : OracleComp HashSpec (RootProof F × O))
+    (post : RootProof F × O → Chals F → OracleComp HashSpec β) (Q QV : ℕ)
+    (hQ : IsTotalQueryBound A Q) (hV : ∀ p ch, IsTotalQueryBound (post p ch) QV) :
+    IsTotalQueryBound (rootExperiment W A post) (Q + 6 + QV) :=
+  isTotalQueryBound_logged_run _ _ _ (rootRun_queryBound W A post Q QV hQ hV)
 
-/-- The run against a table: the adversary's proof, the chain's challenges, and the chain's six
-inputs after the adversary's queries. -/
-theorem rootRun_run (A : OracleComp HashSpec (RootProof F)) (T : Table) :
-    let π := evalWithAnswerFn (QueryImpl.ofFn T) A
-    let x₀ := W.label π.stmt
-    let x₁ := Wire.afterRoot (T x₀) π.r₁
+/-- The run against a table: the adversary's output, the chain's challenges, the verdict after,
+and the chain's six inputs between the adversary's queries and the openings'. -/
+theorem rootRun_run (A : OracleComp HashSpec (RootProof F × O))
+    (post : RootProof F × O → Chals F → OracleComp HashSpec β) (T : Table) :
+    let p := evalWithAnswerFn (QueryImpl.ofFn T) A
+    let x₀ := W.label p.1.stmt
+    let x₁ := Wire.afterRoot (T x₀) p.1.r₁
     let x₂ := (T x₁).toList
     let x₃ := (T x₂).toList
-    let x₄ := Wire.afterRoot (T x₃) π.r₂
-    let x₅ := W.afterValues (T x₄) π.v
-    (tableQueryLog (rootRun W A) T).map Sigma.fst =
-        (tableQueryLog A T).map Sigma.fst ++ [x₀, x₁, x₂, x₃, x₄, x₅] ∧
-      evalWithAnswerFn (QueryImpl.ofFn T) (rootRun W A) =
-        (π, ⟨W.chal (T x₁), W.chal (T x₂), W.chal (T x₃), W.chal (T x₄), W.chal (T x₅)⟩) := by
-  intro π x₀ x₁ x₂ x₃ x₄ x₅
+    let x₄ := Wire.afterRoot (T x₃) p.1.r₂
+    let x₅ := W.afterValues (T x₄) p.1.v
+    let ch : Chals F := ⟨W.chal (T x₁), W.chal (T x₂), W.chal (T x₃), W.chal (T x₄), W.chal (T x₅)⟩
+    (tableQueryLog (rootRun W A post) T).map Sigma.fst =
+        (tableQueryLog A T).map Sigma.fst ++
+          ([x₀, x₁, x₂, x₃, x₄, x₅] ++ (tableQueryLog (post p ch) T).map Sigma.fst) ∧
+      evalWithAnswerFn (QueryImpl.ofFn T) (rootRun W A post) =
+        ⟨p.1, p.2, ch, evalWithAnswerFn (QueryImpl.ofFn T) (post p ch)⟩ := by
+  intro p x₀ x₁ x₂ x₃ x₄ x₅ ch
   constructor
   · simp only [rootRun, chainWith, hashQuery, tableQueryLog_bind, tableQueryLog_pure,
-      List.map_append, List.map_nil, evalWithAnswerFn_bind, evalWithAnswerFn_liftM_query,
-      evalWithAnswerFn_pure]
+      List.map_append, List.append_nil, evalWithAnswerFn_bind,
+      evalWithAnswerFn_liftM_query, evalWithAnswerFn_pure]
     rfl
   · simp only [rootRun, chainWith, hashQuery, evalWithAnswerFn_bind,
       evalWithAnswerFn_liftM_query, evalWithAnswerFn_pure]
     rfl
 
 /-- The experiment against a table: the run's result and its transcript. -/
-theorem rootExperiment_run (A : OracleComp HashSpec (RootProof F)) (T : Table) :
-    tableQueryLog (rootExperiment W A) T = tableQueryLog (rootRun W A) T ∧
-      evalWithAnswerFn (QueryImpl.ofFn T) (rootExperiment W A) =
-        (evalWithAnswerFn (QueryImpl.ofFn T) (rootRun W A),
-          (tableQueryLog (rootRun W A) T).map fun q => (q.1, q.2)) := by
+theorem rootExperiment_run (A : OracleComp HashSpec (RootProof F × O))
+    (post : RootProof F × O → Chals F → OracleComp HashSpec β) (T : Table) :
+    tableQueryLog (rootExperiment W A post) T = tableQueryLog (rootRun W A post) T ∧
+      evalWithAnswerFn (QueryImpl.ofFn T) (rootExperiment W A post) =
+        (evalWithAnswerFn (QueryImpl.ofFn T) (rootRun W A post),
+          (tableQueryLog (rootRun W A post) T).map fun q => (q.1, q.2)) := by
   refine ⟨log_logged_run T _ [], ?_⟩
-  have := eval_logged_run T (rootRun W A) []
+  have := eval_logged_run T (rootRun W A post) []
   rw [List.nil_append] at this
   exact this
 
 open Classical in
 /-- **The trace**: on every table, a winning run asks a bad fresh query. -/
-theorem trace_listBad (A : OracleComp HashSpec (RootProof F)) (T : Table)
-    (hwin : ListWins W C₁ C₂ (evalWithAnswerFn (QueryImpl.ofFn T) (rootExperiment W A))) :
-    FreshBad (listBad W C₁ C₂) T ∅ ((tableQueryLog (rootExperiment W A) T).map Sigma.fst) := by
-  obtain ⟨hlogE, hevalE⟩ := rootExperiment_run W A T
-  obtain ⟨hL, heval⟩ := rootRun_run W A T
-  set π := evalWithAnswerFn (QueryImpl.ofFn T) A
+theorem trace_listBad (A : OracleComp HashSpec (RootProof F × O))
+    (post : RootProof F × O → Chals F → OracleComp HashSpec β) (T : Table)
+    (hwin : ListWins W C₁ C₂ (evalWithAnswerFn (QueryImpl.ofFn T) (rootExperiment W A post))) :
+    FreshBad (listBad W C₁ C₂) T ∅
+      ((tableQueryLog (rootExperiment W A post) T).map Sigma.fst) := by
+  obtain ⟨hlogE, hevalE⟩ := rootExperiment_run W A post T
+  obtain ⟨hL, heval⟩ := rootRun_run W A post T
+  set p := evalWithAnswerFn (QueryImpl.ofFn T) A
+  set π := p.1
   set x₀ := W.label π.stmt
   set x₁ := Wire.afterRoot (T x₀) π.r₁
   set x₂ := (T x₁).toList
   set x₃ := (T x₂).toList
   set x₄ := Wire.afterRoot (T x₃) π.r₂
   set x₅ := W.afterValues (T x₄) π.v
-  set L := (tableQueryLog (rootRun W A) T).map Sigma.fst
+  set L := (tableQueryLog (rootRun W A post) T).map Sigma.fst
   rw [hlogE]
   rw [hevalE, heval] at hwin
   -- The transcript's candidates are the table's on the inputs asked.
-  set tr : Transcript := (tableQueryLog (rootRun W A) T).map fun q => (q.1, q.2)
+  set tr : Transcript := (tableQueryLog (rootRun W A post) T).map fun q => (q.1, q.2)
   have htrH : histOfTr tr = L.toFinset := by
     simp only [histOfTr, tr, L, List.map_map]
     rfl
@@ -739,7 +766,7 @@ theorem trace_listBad (A : OracleComp HashSpec (RootProof F)) (T : Table)
     hinj a (mem_of_mem_before L a y ha) b (mem_of_mem_before L b y hb) hab
   have mem : ∀ y ∈ [x₀, x₁, x₂, x₃, x₄, x₅], y ∈ L := fun y hy => by
     rw [hL]
-    exact List.mem_append_right _ hy
+    exact List.mem_append_right _ (List.mem_append_left _ hy)
   have m0 := mem x₀ (by simp)
   have m1 := mem x₁ (by simp)
   have m2 := mem x₂ (by simp)
@@ -815,28 +842,31 @@ end Trace
 
 /-- **The reduction's knowledge soundness with real roots, union-bounded over the lists, in the
 random-oracle model.** For every adversary making at most `Q` queries of the random oracle
-`H : bytes → 32 bytes` that outputs a statement, two roots and five values, the probability that
-some candidate of the first root and some candidate of the second (read off the transcript of
-every query, by any list commitment) satisfy the verifier's claims at the chain's challenges while
-the first's cells fail the relation is at most
-`(Q + 6) (max L₁ (L₁ L₂) · roundError + 4 (Q + 6) / 2^256)`. -/
-theorem knowledgeSoundness_list (A : OracleComp HashSpec (RootProof F)) (Q : ℕ)
-    (hQ : IsTotalQueryBound A Q) :
-    Pr{let z ← (simulateQ randomOracle (rootExperiment W A)).run' ∅}[ListWins W C₁ C₂ z] ≤
-      ((Q + 6 : ℕ) : ℝ≥0∞) * ((listFactor C₁.bound C₂.bound : ℝ≥0∞) * (roundError P B : ℝ≥0∞) +
-        4 * ((Q + 6 : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
-  refine prEvent_randomOracle_le_of_freshBad (rootExperiment W A) (Q + 6)
-    (rootExperiment_queryBound W A Q hQ) (Set.range fun v : Bytes32 => v.toList)
+`H : bytes → 32 bytes` that outputs a statement, two roots, five values and anything else (the
+openings), and every computation `post` after the chain of at most `QV` queries (the openings'
+verifier), the probability that some candidate of the first root and some candidate of the second
+(read off the transcript of every query, by any list commitment) satisfy the verifier's claims at
+the chain's challenges while the first's cells fail the relation is at most
+`(Q + 6 + QV) (max L₁ (L₁ L₂) · roundError + 4 (Q + 6 + QV) / 2^256)`. -/
+theorem knowledgeSoundness_list {O β : Type} (A : OracleComp HashSpec (RootProof F × O))
+    (post : RootProof F × O → Chals F → OracleComp HashSpec β) (Q QV : ℕ)
+    (hQ : IsTotalQueryBound A Q) (hV : ∀ p ch, IsTotalQueryBound (post p ch) QV) :
+    Pr{let z ← (simulateQ randomOracle (rootExperiment W A post)).run' ∅}[ListWins W C₁ C₂ z] ≤
+      ((Q + 6 + QV : ℕ) : ℝ≥0∞) * ((listFactor C₁.bound C₂.bound : ℝ≥0∞) *
+        (roundError P B : ℝ≥0∞) + 4 * ((Q + 6 + QV : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
+  refine prEvent_randomOracle_le_of_freshBad (rootExperiment W A post) (Q + 6 + QV)
+    (rootExperiment_queryBound W A post Q QV hQ hV) (Set.range fun v : Bytes32 => v.toList)
     (Set.finite_range _) (ListWins W C₁ C₂) (listBad W C₁ C₂) _ (fun S hS c t ht hcard => ?_)
-    (fun T h => trace_listBad W C₁ C₂ A T h)
+    (fun T h => trace_listBad W C₁ C₂ A post T h)
   have hS' : ∀ v : Bytes32, v.toList ∈ S := fun v => hS _ ⟨v, rfl⟩
   refine (prob_listBad W C₁ C₂ hS' c t ht).trans ?_
-  have hcard' : (histOf c).card < Q + 6 := by
+  have hcard' : (histOf c).card < Q + 6 + QV := by
     simpa [histOf, Finset.card_map] using hcard
   rw [add_comm]
   gcongr
-  have : 4 * (histOf c).card + 3 ≤ 4 * (Q + 6) := by omega
-  calc ((4 * (histOf c).card + 3 : ℕ) : ℝ≥0∞) ≤ ((4 * (Q + 6) : ℕ) : ℝ≥0∞) := by exact_mod_cast this
-    _ = 4 * ((Q + 6 : ℕ) : ℝ≥0∞) := by push_cast; ring
+  have : 4 * (histOf c).card + 3 ≤ 4 * (Q + 6 + QV) := by omega
+  calc ((4 * (histOf c).card + 3 : ℕ) : ℝ≥0∞) ≤ ((4 * (Q + 6 + QV) : ℕ) : ℝ≥0∞) := by
+        exact_mod_cast this
+    _ = 4 * ((Q + 6 + QV : ℕ) : ℝ≥0∞) := by push_cast; ring
 
 end Compose
