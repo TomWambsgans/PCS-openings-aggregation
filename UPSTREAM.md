@@ -5,8 +5,8 @@
 Issues found in code this repository vendors from [leanVM](https://github.com/leanEthereum/leanVM) (commit
 `c445e3d51a5a85031df47240595698f3b24897bf`, see NOTICE.md) that affect leanVM itself, written so that each can be
 forwarded as it stands. Paths are leanVM's, which this repository keeps. Line numbers are those of this
-repository's copy before the fix, at commit `f6e68a5`. That copy carries local additions, so its line numbers
-differ from leanVM's.
+repository's copy before the fix, at commit `f6e68a5` (items 1 and 2) or `25d06ea` (items 3 to 5). That copy
+carries local additions, so its line numbers differ from leanVM's.
 
 ## 1. Aliasing UB in the in-place Reed-Solomon encodes (medium)
 
@@ -156,3 +156,59 @@ No WHIR commitment here comes near such widths. They have at most a few hundred 
 edge case of a public API, and it is not fixed here. One fix: floor the row-group budget at one layer
 (`fit(L2_WORDS).max(1)`). That leaves every plan with `fit2 >= 1`, which covers every current use. Another: assert
 `num_ntts <= L2_WORDS / 2` with a clear message.
+
+## 3. The level-0 query grinding comment says 0 bits; it is 17 (documentation)
+
+**File.** `crates/pcs/src/whir.rs`, in `recursive_prover_with_basis` (line 1804 of this repository's copy at
+`25d06ea`, before the fix):
+
+```rust
+// Query-phase PoW grinding for L0 (0 bits in the production profile; the
+// canonical 0 nonce is still absorbed to keep the transcript in lockstep).
+ps.grind(config.grinding_bits[0] as u32);
+```
+
+The production profile grinds `QUERY_GRINDING_BITS = 17` bits at every level, level 0 included
+(`crates/pcs/src/whir_config.rs:62`, and the verifier's `const QUERY_GRINDING_BITS: u32 = 17` in
+`crates/verifier/src/whir.rs:17`, which `grind_check` requires at level 0 too). Only the test-only
+`default_config` grinds 0 bits. The code is right; the comment would mislead an auditor counting the query bits
+(level 0's 222 to 225 queries close `128 - 17 = 111` bits, not 128). **Fix (applied here):** the comment says
+17 bits in the production profile, 0 only in `default_config`.
+
+## 4. The level-0 OOD row's comment omits its assumptions (documentation)
+
+**File.** `crates/pcs/src/whir_config.rs`, the security schema's comment (line 321 at `25d06ea`) and
+`paper_ood_bits`'s doc (line 565):
+
+> Binding to a single codeword of the (Johnson-bounded) interleaved list is via `ood_samples` explicit
+> multilinear OOD evaluations, except at L0, where the opening's own post-commit random evaluation claim plays
+> the OOD role (union over the list, `L*mu/q`), so `ood_samples = 0`.
+
+At level 0 the PCS takes no OOD sample, so a root binds only to a Johnson list; the row's bits
+(`192 - log2 L - log2 mu`) are a property of the protocol that uses the PCS, and hold only if:
+
+- **the outer protocol binds the list**: it opens all the claims on one root together, in one opening (two
+  openings of one root can be of two list members: for a table with two claims, splitting them into two
+  openings is forgeable at about `2^111` work at these parameters), and it union-bounds over the list every
+  challenge it draws after the commitment and before the claims (each of the `L` members may be the one later
+  opened);
+- **the claim point is uniform in `E^mu`**, drawn after the commitment: then two distinct list members agree at
+  it with probability at most `mu/q`, and `L*mu/q` over the list. A point that is a degree-`D` image of fewer
+  challenges (for instance built from one field element, as in a univariate-to-multilinear reduction) costs
+  `L*D/q` instead;
+- **a fixed point binds nothing** (a claim at a point known before the commitment, such as a "top coefficient"
+  claim, distinguishes no list members chosen with it in mind).
+
+**Fix (applied here, comments only):** both comments state these assumptions.
+
+## 5. The proximity-gap accounting omits the fold's `2^(ℓ-1)` factor (documentation, parameters)
+
+**File.** `crates/pcs/src/whir_config.rs`, `paper_thm_ca_johnson_log_a` (line 436 at `25d06ea`), whose doc says the
+two-row MCA error `a/|F|` "is also the fold error of a `2^ℓ`-row word". leanerVM's proof of the fold error
+(`mumbai`, the theorems that certify these WHIR levels) carries a factor `2^(ℓ-1)` on it, which this accounting
+omits: 5 bits at the first fold of `2^6` lanes. leanerVM certifies the deployed parameters (the query counts and
+grinding) with a smaller `η` of its own (`LeanVM/Protocol/Whir/Params/Deployed.lean`, `certTable`), so the
+deployed configuration is covered there, but the per-level proximity-gap bits this file computes (and that
+`validate` checks against 128) are not the certified ones. **Not changed here** (flagged in the comment): the fix
+is to carry the factor in `paper_thm_ca_johnson_log_a`, or to cite leanerVM's certified `η` instead of the
+search's.

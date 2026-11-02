@@ -11,8 +11,11 @@
 //!   but for the first commitment's root and sibling hashes. This checks the model of the view (V1)–(V3) is
 //!   complete against the actual proof bytes, at the real sizes.
 //! - [`reused_seed_confirms_the_witness`], [`reused_masks_confirm_the_witness`]: what `prove`'s randomness must
-//!   be. HIDING.md and `prove` ask for the masks and the seed to be "uniform and secret", which a fixed secret
-//!   meets; two proofs that share either one let an observer confirm a guessed witness.
+//!   be. HIDING.md and `prove` asked for the masks and the seed to be "uniform and secret", which a fixed secret
+//!   meets; two proofs that share either one let an observer confirm a guessed witness. (Since fixed: `prove`
+//!   draws its own randomness per proof from the operating system, and `prove_with_randomness`, the
+//!   deterministic entry point, documents it as fresh per proof, never reused. The two tests now show that
+//!   explicit reuse through `prove_with_randomness` is unsafe, and that two proofs of `prove` do not reuse.)
 //! - [`rounds_are_free_at_every_size`]: condition (R) and (S) at every supported size, more draws.
 
 use fiat_shamir::digest_words;
@@ -121,13 +124,22 @@ fn folded(layout: &Layout, phi: &[F192], stack: &[F64]) -> Vec<F192> {
         .collect()
 }
 
-/// An opening of `claims` on `stack`, by the real prover (what [`opening::open`] runs), from a transcript seeded
-/// with `fs` rather than with the stack's own root: two stacks opened from one seed draw the same challenges as
-/// long as their transcripts agree.
-fn open_from(layout: &Layout, stack: &[F64], claims: &[Claim], fs: &([u8; 32], [u8; 32])) -> (Hash, Proof) {
+/// An opening transcript's start: its IV ([`opening::iv`]) and the root it sends first.
+type Start = ([u8; 32], Hash);
+
+/// The start of an opening of `claims` against `root`, as [`opening::open`] makes it.
+fn start(layout: &Layout, root: &Hash, claims: &[Claim]) -> Start {
+    (opening::iv(layout, claims), *root)
+}
+
+/// An opening of `claims` on `stack`, by the real prover (what [`opening::open`] runs), from the transcript start
+/// `fs`, whose root may be another stack's rather than this one's: two stacks opened from one start draw the same
+/// challenges as long as their transcripts agree.
+fn open_from(layout: &Layout, stack: &[F64], claims: &[Claim], fs: &Start) -> (Hash, Proof) {
     let config = config_for_rate(layout.log_n, LOG_INV_RATE).expect("a supported shape");
     let (commitment, tree) = commit_tree(stack, layout.log_n, LANE_FOLD, LOG_INV_RATE);
-    let mut ps = ProverState::new(digest_words(&fs.0), digest_words(&fs.1));
+    let mut ps = ProverState::new(digest_words(&fs.0), digest_words(&opening::PUBLIC_DIGEST));
+    ps.add_root(&fs.1);
     let lambdas = powers(ps.sample(), claims.len());
     let target = claims
         .iter()
@@ -171,11 +183,13 @@ fn sample_queries(tr: &mut verifier::Transcript, block: u64, count: usize) -> Ve
 }
 
 /// Replay an opening as its verifier does, from public data alone, through the first level's Merkle opening
-/// (checked against `root`).
-fn replay(layout: &Layout, root: &Hash, claims: &[Claim], fs: &([u8; 32], [u8; 32]), proof: &Proof) -> FirstLevel {
+/// (checked against `root`): from the start `fs`, whose root the proof's first two scalars must be.
+fn replay(layout: &Layout, root: &Hash, claims: &[Claim], fs: &Start, proof: &Proof) -> FirstLevel {
     use verifier::{Digest, E, Transcript};
     let wire = opening::wire_proof(proof);
-    let mut tr = Transcript::new(&wire, Digest(fs.0), Digest(fs.1), true);
+    let mut tr = Transcript::new(&wire, Digest(fs.0), Digest(opening::PUBLIC_DIGEST), true);
+    let sent_root = tr.next_scalars(2).unwrap();
+    assert_eq!(Digest::from_halves(sent_root[0], sent_root[1]), Ok(Digest(fs.1)));
     let to = |x: E| F192::new(x.c0, x.c1, x.c2);
     let from = |x: F192| E::new(x.c0, x.c1, x.c2);
     let lambdas = powers(to(tr.sample()), claims.len());
@@ -548,8 +562,8 @@ fn fingerprint(layout: &Layout, stack: &[F64]) -> F64 {
 }
 
 /// Run the translation on `table` and `table + delta` (`delta` a change of the table's entries that keeps the
-/// claims), open both with the real prover from one transcript seed, and compare every byte. Holds two stacks
-/// at a time.
+/// claims), open both with the real prover from one transcript start (the first stack's root sent in both, the
+/// challenges being fixed, as in HIDING.md's theorem), and compare every byte. Holds two stacks at a time.
 fn translation_case(name: &str, table: &Table, mut delta: Vec<F64>, claims: &[Claim], rng: &mut Rng) {
     let (layout, stack) = (&table.layout, &table.stack[..]);
     let placed = layout.placed();
@@ -566,7 +580,7 @@ fn translation_case(name: &str, table: &Table, mut delta: Vec<F64>, claims: &[Cl
     let points: Vec<Vec<F192>> = claims.iter().map(|c| c.point.clone()).collect();
     // The first stack's own opening, exactly as `opening::open` makes it.
     let root = commit_tree(stack, layout.log_n, LANE_FOLD, LOG_INV_RATE).0.root;
-    let fs = opening::seed(&root, claims);
+    let fs = start(layout, &root, claims);
     let (root_again, proof) = open_from(layout, stack, claims, &fs);
     assert_eq!(root_again, root);
     assert_eq!(
@@ -639,7 +653,7 @@ fn translation_case(name: &str, table: &Table, mut delta: Vec<F64>, claims: &[Cl
         assert_eq!(a.leaf_data, b.leaf_data, "{name}: deeper rows");
         assert_eq!(a.sibling_hashes, b.sibling_hashes, "{name}: deeper siblings");
     }
-    // The second opening checks against its own root (the verifier's transcript replayed from the same seed).
+    // The second opening checks against its own root (the verifier's transcript replayed from the same start).
     let again = replay(layout, &other_root, claims, &fs, &other_proof);
     assert_eq!(again.rows, view.rows);
     println!(
@@ -660,9 +674,23 @@ fn translation_case(name: &str, table: &Table, mut delta: Vec<F64>, claims: &[Cl
     );
 }
 
-/// The witness table's seed, as `prove` derives it.
+/// The witness table's seed, as `prove` derives it from the padding's.
 fn witness_seed(seed: &[u8; 32]) -> [u8; 32] {
-    primitives::hash::hash(&[b"pcs-quotient-pad-".as_slice(), b"witness", seed].concat())
+    crate::protocol::table_seed(seed, b"witness")
+}
+
+/// A proof by the deterministic entry point, its masks and padding given: the randomness this file reuses.
+fn prove_with(
+    circuit: &crate::circuit::Circuit,
+    index: &crate::protocol::Index,
+    index_root: &Hash,
+    statement: &crate::statement::Statement,
+    cells: &[F64],
+    masks: [[F64; 3]; 4],
+    padding: [u8; 32],
+) -> crate::protocol::Proved {
+    let randomness = crate::protocol::Randomness { masks, padding };
+    crate::protocol::prove_with_randomness(circuit, index, index_root, statement, cells, &randomness)
 }
 
 /// For a candidate witness's coefficients, the twelve mask coefficients the proof's four `a_j` pin, and the
@@ -715,7 +743,7 @@ fn coefficients_of(cells: &[F64]) -> Vec<F64> {
 /// module's documentation.
 #[test]
 fn translation_holds_on_real_openings() {
-    use crate::protocol::{Index, prove, quotient_layout, witness_layout};
+    use crate::protocol::{Index, quotient_layout, witness_layout};
     let mut rng = Rng::new(0x7E5);
     let (circuit, inputs, statement) = two_witnesses();
     let index = Index::new(&circuit);
@@ -723,15 +751,8 @@ fn translation_holds_on_real_openings() {
     let secret = rng.bit();
     let masks: [[F64; 3]; 4] = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
     let seed: [u8; 32] = std::array::from_fn(|_| rng.next_u8());
-    let proved = prove(
-        &circuit,
-        &index,
-        &index_root,
-        &statement,
-        &circuit.cells(&inputs(secret)),
-        &masks,
-        &seed,
-    );
+    let cells = circuit.cells(&inputs(secret));
+    let proved = prove_with(&circuit, &index, &index_root, &statement, &cells, masks, seed);
 
     // The witness table of the other witness, with the masks the proof's `a_j` pin for it, and this proof's
     // padding: it has the same claim.
@@ -818,10 +839,22 @@ fn translation_holds_at_the_benchmark_size() {
     }
 }
 
+/// How the two proofs of a reuse test get their randomness.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Draw {
+    /// Through `prove_with_randomness`, the part under test reused (the other part fresh).
+    Reused,
+    /// Through `prove_with_randomness`, both parts fresh.
+    Fresh,
+    /// Through `prove`, which draws its own.
+    Prove,
+}
+
 /// Two proofs that share the padding's seed (fresh masks each): the witness table's block lanes hold the same
 /// first piece in both, so their opened rows, less a candidate witness's codeword past the first piece, fit one
 /// polynomial of degree below `2^8` across both proofs' positions (about 446 > 256) only for the true witness.
-/// From public data alone: the proofs, the openings, the circuit. With fresh seeds neither candidate fits.
+/// From public data alone: the proofs, the openings, the circuit. With fresh seeds neither candidate fits, nor
+/// with two proofs of `prove`, which draws a fresh seed for each.
 #[test]
 fn reused_seed_confirms_the_witness() {
     use crate::protocol::{Index, open, prove, verify, witness_layout};
@@ -857,7 +890,7 @@ fn reused_seed_confirms_the_witness() {
         .map(|&h| candidate_stack(&coefficients_of(&circuit.cells(&inputs(h)))))
         .collect();
 
-    for reuse in [true, false] {
+    for draw in [Draw::Reused, Draw::Fresh, Draw::Prove] {
         let secret = rng.bit();
         let cells = circuit.cells(&inputs(secret));
         let first_seed: [u8; 32] = std::array::from_fn(|_| rng.next_u8());
@@ -865,26 +898,22 @@ fn reused_seed_confirms_the_witness() {
         let views: Vec<FirstLevel> = (0..2)
             .map(|k| {
                 let masks: [[F64; 3]; 4] = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
-                let seed: [u8; 32] = if reuse || k == 0 {
+                let seed: [u8; 32] = if draw == Draw::Reused || k == 0 {
                     first_seed
                 } else {
                     std::array::from_fn(|_| rng.next_u8())
                 };
-                let proved = prove(
-                    &circuit,
-                    &index,
-                    &index_committed.root,
-                    &statement,
-                    &cells,
-                    &masks,
-                    &seed,
-                );
+                let root = &index_committed.root;
+                let proved = match draw {
+                    Draw::Prove => prove(&circuit, &index, root, &statement, &cells),
+                    _ => prove_with(&circuit, &index, root, &statement, &cells, masks, seed),
+                };
                 let openings = open(proved.tables, &proved.claims, &index, &index_committed);
                 // The observer's side: the reduction's verifier, then the witness opening's first level.
                 let (roots, claims) =
                     verify(&index_committed.root, &statement, &proved.proof, circuit.log_rows).unwrap();
                 let claims = [claims.witness];
-                let fs = opening::seed(&roots[0], &claims);
+                let fs = start(&layout, &roots[0], &claims);
                 replay(&layout, &roots[0], &claims, &fs, &openings.witness)
             })
             .collect();
@@ -913,17 +942,18 @@ fn reused_seed_confirms_the_witness() {
             }
             fits.push(all);
         }
-        println!("seed reused: {reuse}; the secret bit {secret}; which candidates fit: {fits:?}");
-        if reuse {
+        println!("seed {draw:?}; the secret bit {secret}; which candidates fit: {fits:?}");
+        if draw == Draw::Reused {
             assert_eq!(fits, [!secret, secret], "a reused seed confirms the witness");
         } else {
-            assert_eq!(fits, [false, false], "fresh seeds: neither fits");
+            assert_eq!(fits, [false, false], "{draw:?} seeds: neither fits");
         }
     }
 }
 
 /// Two proofs that share the masks (fresh seeds): for a candidate witness, the first proof's `a_j` pin the masks,
-/// and the second proof's `a_j` then match only for the true witness. From the proofs' scalars alone.
+/// and the second proof's `a_j` then match only for the true witness. From the proofs' scalars alone. With fresh
+/// masks neither candidate matches, nor with two proofs of `prove`, which derives fresh masks for each.
 #[test]
 fn reused_masks_confirm_the_witness() {
     use crate::protocol::{Index, prove};
@@ -936,21 +966,23 @@ fn reused_masks_confirm_the_witness() {
         .iter()
         .map(|&h| coefficients_of(&circuit.cells(&inputs(h))))
         .collect();
-    for reuse in [true, false] {
+    for draw in [Draw::Reused, Draw::Fresh, Draw::Prove] {
         let secret = rng.bit();
         let cells = circuit.cells(&inputs(secret));
         let first_masks: [[F64; 3]; 4] = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
         let streams: Vec<Vec<F192>> = (0..2)
             .map(|k| {
-                let masks = if reuse || k == 0 {
+                let masks = if draw == Draw::Reused || k == 0 {
                     first_masks
                 } else {
                     std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())))
                 };
                 let seed: [u8; 32] = std::array::from_fn(|_| rng.next_u8());
-                prove(&circuit, &index, &index_root, &statement, &cells, &masks, &seed)
-                    .proof
-                    .stream
+                let proved = match draw {
+                    Draw::Prove => prove(&circuit, &index, &index_root, &statement, &cells),
+                    _ => prove_with(&circuit, &index, &index_root, &statement, &cells, masks, seed),
+                };
+                proved.proof.stream
             })
             .collect();
         let fits: Vec<bool> = candidates
@@ -965,11 +997,11 @@ fn reused_masks_confirm_the_witness() {
                 })
             })
             .collect();
-        println!("masks reused: {reuse}; the secret bit {secret}; which candidates fit: {fits:?}");
-        if reuse {
+        println!("masks {draw:?}; the secret bit {secret}; which candidates fit: {fits:?}");
+        if draw == Draw::Reused {
             assert_eq!(fits, [!secret, secret], "reused masks confirm the witness");
         } else {
-            assert_eq!(fits, [false, false], "fresh masks: neither fits");
+            assert_eq!(fits, [false, false], "{draw:?} masks: neither fits");
         }
     }
 }
@@ -1041,7 +1073,7 @@ fn coset_fingerprints_and_mask_recovery_fail() {
     use crate::circuit::{Builder, Src, public_words};
     use crate::domain::{chain, point};
     use crate::hiding::rank;
-    use crate::protocol::{Index, open, prove, verify, witness_layout};
+    use crate::protocol::{Index, open, verify, witness_layout};
     use crate::statement::{LEAF_PAD, Statement, Y_PAD, pair};
     const LOG_ROWS: usize = 18;
     let constant_block = |byte: u8| -> Vec<Src> {
@@ -1077,7 +1109,7 @@ fn coset_fingerprints_and_mask_recovery_fail() {
     let cells = circuit.cells(&bits(&x));
     let masks: [[F64; 3]; 4] = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
     let seed: [u8; 32] = std::array::from_fn(|_| rng.next_u8());
-    let proved = prove(&circuit, &index, &index_root, &statement, &cells, &masks, &seed);
+    let proved = prove_with(&circuit, &index, &index_root, &statement, &cells, masks, seed);
     let prover_stack = proved.tables.witness.stack.clone();
     let proof = proved.proof.clone();
     let openings = open(proved.tables, &proved.claims, &index, &index_committed);
@@ -1090,7 +1122,7 @@ fn coset_fingerprints_and_mask_recovery_fail() {
     let s = layout.log_piece().unwrap();
     let piece = 1usize << s;
     let claims = [claims.witness];
-    let fs = opening::seed(&roots[0], &claims);
+    let fs = start(&layout, &roots[0], &claims);
     let view = replay(&layout, &roots[0], &claims, &fs, &openings.witness);
     let mut opened: Vec<(usize, Vec<F64>)> = view.queries.iter().copied().zip(view.rows.iter().cloned()).collect();
     opened.sort_by_key(|o| o.0);

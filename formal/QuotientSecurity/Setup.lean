@@ -24,10 +24,12 @@ namespace QuotientSecurity
 
 /-- **A circuit**: `2^22` rows of four cells, a cell being named by 24 bits. Its points are the
 span of a Cantor basis, `wiring` says which cells must be equal, and `c k` is the weight that bit
-`k < 8` of a cell's index gives it in a public word. The theorems hold for every circuit, and
-mean what the circuit makes them mean: with the identity wiring and zero weights, every statement
-has a satisfying assignment. They are about `quotient::circuit::membership` when the wiring and
-the weights are that circuit's, which Lean does not check. -/
+`k < 8` of a cell's index gives it in a public word. `soundness`, `zero_knowledge` and
+`completeness` hold for every circuit, and mean what the circuit makes them mean: with the
+identity wiring and zero weights, every statement has a satisfying assignment.
+`soundness_circuit` is for an instance whose wiring lays a loop-free χ circuit `C` (`Laid`,
+`CircuitLayout.lean`) and whose weights are `coordinate_weight`'s (`c = coordWeight x Y`); that
+`C` is `quotient::circuit::membership` is not yet in Lean. -/
 structure Instance (F : Type) [Field F] [CharP F 2] where
   basis : CantorBasis F (22 + 2)
   wiring : Equiv.Perm (Fin (22 + 2) → Bool)
@@ -61,13 +63,20 @@ other twenty-two its row.
 
 The cells are arbitrary field elements, and the relation alone does not make them bits: with the
 identity wiring and zero weights every statement satisfies it (`formal/Review/Degenerate.lean`).
-For a loop-free circuit of χ gates whose input rows read their own output three times,
-`cells_determined` (`Circuit.lean`) shows that a satisfying assignment is the circuit's computation
-on some input bits, given that the zero and the one are pinned (its hypotheses `hzero`, `hone`),
-which public words 5 and 4 provide when the statement's words 4 to 7 are `(1, 0, 0, 0)`. That
-step, the link from an `Instance`'s cells to `Params`' cells, and the deployed circuit itself are
-not yet in Lean (layer F0 of `formal/README.md`): the end theorems do not use `cells_determined`
-and hold for every wiring. -/
+What makes them a computation is the circuit the wiring lays (`Pinning.lean`). For an instance
+whose wiring lays a loop-free χ circuit `C` (`Laid`: every `X`, `Y`, `C` cell on the cycle of
+what it reads, public word 5's 128 bits on the zero's cycle, word 4's bit 0 the one's anchor and
+its other bits on the zero's cycle) and whose weights are `coordinate_weight`'s with `x ≠ 1`,
+`Y ≠ 1`, and a statement whose words 4 and 5 are 1 and 0: word 5 pins the zero's cycle to 0
+(`zero_pinned`), then word 4 pins the one's cycle to 1 (`one_pinned`), `cells_determined`
+(carried to an instance's cells by `Instance.cells_determined`) makes every output a bit, and a
+satisfying assignment is `C`'s computation on some input bits whose public words are the
+statement's (`Instance.proves_of_relation`). For the statement `(y, root)`, whose words are
+`statementWords` (its four halves, then `1, 0, 0, 0`), `soundness_circuit` and
+`soundness_circuit_bits` are the end theorems that say so. Conversely, on `wiringOf C` every
+computation of `C` satisfies the relation for its public words (`relation_wiringOf`,
+`relation_statementWords`). The deployed circuit as a Lean `C`, and its computation being
+Keccak-256 membership, are not yet in Lean (layer F0 of `formal/README.md`). -/
 def Relation (stmt : Fin 8 → F) (w : (Fin (22 + 2) → Bool) → F) : Prop :=
   (∀ y : Fin 22 → Bool, gate (w (cellBits (y, 0))) (w (cellBits (y, 1)))
       (w (cellBits (y, 2))) (w (cellBits (y, 3))) = 0) ∧

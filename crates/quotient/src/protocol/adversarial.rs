@@ -5,8 +5,12 @@
 //!
 //! The review compared these lines with those of commit d940553 (whose prover kept every codeword and wrote the
 //! weight out): the lean prover made the same proofs. The hidden layouts (201a5d1) then changed the proofs on
-//! purpose, so the lines are now pinned to the prover of f6e68a5 (hidden layouts, lean prover): a regression pin
-//! of this prover's own outputs, not a comparison with an independent one.
+//! purpose, so the lines were pinned to the prover of f6e68a5 (hidden layouts, lean prover): a regression pin
+//! of this prover's own outputs, not a comparison with an independent one. They moved once more, on purpose,
+//! when the openings' transcripts took leanVM's shape (`opening::iv`: the IV hashes a prefix binding the layout
+//! and a version, then the claims; the root is the proof's first two scalars): the reduction's proofs are
+//! unchanged, every opening changed. (Before re-pinning, the old pins were reproduced with the new
+//! `prove_with_randomness` and the old seed: the API change alone moved nothing.)
 
 use super::*;
 use crate::circuit::{Builder, Src, public_words};
@@ -97,8 +101,9 @@ fn case(circuit: &Circuit, index: &Index, index_committed: &Committed, seed: u64
     }
     let masks: [[F64; 3]; 4] = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
     // The tables' padding seed (an input since the hidden layouts), drawn after what d940553's case drew.
-    let pad: [u8; 32] = std::array::from_fn(|_| rng.next_u64() as u8);
-    let proved = prove(circuit, index, &index_committed.root, &statement, &cells, &masks, &pad);
+    let padding: [u8; 32] = std::array::from_fn(|_| rng.next_u64() as u8);
+    let randomness = Randomness { masks, padding };
+    let proved = prove_with_randomness(circuit, index, &index_committed.root, &statement, &cells, &randomness);
     let fits = proved.fits;
     let openings = open(proved.tables, &proved.claims, index, index_committed);
     let fp = fingerprint(&proved.proof, [&openings.witness, &openings.wiring, &openings.quotient]);
@@ -111,134 +116,135 @@ fn case(circuit: &Circuit, index: &Index, index_committed: &Committed, seed: u64
     (fits, fp)
 }
 
-/// What the prover of f6e68a5 (hidden layouts, lean prover) makes on these cases: `(log_rows, seed, broken,
-/// fits, fingerprint)`. Re-pinned when the hidden layouts changed the proofs: the review pinned d940553's here.
+/// What the prover makes on these cases, its masks and padding given (`prove_with_randomness`): `(log_rows, seed,
+/// broken, fits, fingerprint)`. Re-pinned when the hidden layouts changed the proofs (the review pinned
+/// d940553's here), then when the openings' transcripts took leanVM's shape.
 const PINNED: &[(usize, u64, bool, bool, &str)] = &[
     (
         17,
         0,
         false,
         true,
-        "6fcabeeb779165ded777ab034faa57b6e7f73068f58d2a4138b574bf9d1f70f3",
+        "f0b5c6ae598499dd429c406fd094de19d923aa3d9a750cb11d33d76499e984a3",
     ),
     (
         17,
         0,
         true,
         false,
-        "a4bd85c7b31ad81287bf3a64265a43051d984f06455b577d8e37450d37b438ea",
+        "e5ac471eb9577bbd75aafd8448806e9367a2f3a73865243844d30d436ff6013d",
     ),
     (
         17,
         1,
         false,
         true,
-        "80841d13558e779109229bac0138c0aa9271018f57e7596265604021161e0b13",
+        "0186523831d71fa8fa0577827ba6edc75fdf85aee7325302fc2ecfa1beb753be",
     ),
     (
         17,
         1,
         true,
         false,
-        "91bd5422a929d827f442146a1958c523a4f755ebed816b8cebc560895425861e",
+        "867858f9d4eef117be44c5caf8eda77e45d6edee92853e9cce6d3d9112c1ea60",
     ),
     (
         17,
         2,
         false,
         true,
-        "8e9b10446a0554e8f08db396866f9139a0c39cd2250d83a6aa900066526ae8d2",
+        "4f41f631eede19fcfb3e117801ceba9fa5f7711c552120e8cdfb21d304bfbdf6",
     ),
     (
         17,
         2,
         true,
         false,
-        "bdd730e0c94197226b0f36358a334d79d8ea4a1c6d1ad03c30ab28cc914d1162",
+        "fb5209f201835062d7b3d41b5e62ccce9fe4a6ca5a0036ce1f38cb37e26be76d",
     ),
     (
         17,
         3,
         false,
         true,
-        "2c5941bec0b0c3579de40716cf64565bf30294c37f8f1c717ae5a99413140ad5",
+        "8f8d14b92de096ca53df280cca3e77a0612fbe469791921f2fc5e70a0d274d92",
     ),
     (
         17,
         3,
         true,
         false,
-        "2af4c894f5bb4bff3209bfcb69900ef1f452f0ed09a197111ddf0861a215fd31",
+        "1144d0f134e8d6fba2023270a684f266467b2808193a2c1d6f3e025af4ab87f8",
     ),
     (
         18,
         0,
         false,
         true,
-        "2b2a82cb7d6cc3d8aa97ba5bdc76d4ba22108f938805129f0d5f2954bca620e9",
+        "ec566bfff0bd591137966e4dedfb485b1457513d62a5cc9153a0005b81a16e53",
     ),
     (
         18,
         0,
         true,
         false,
-        "3fb90077573b38362a851c09049e51921cf586f8a8c020a95d87c1f35e721f6d",
+        "d14cd20d62512a98b48532005072b8018e37d5bef56e517e2b544464e7cacea6",
     ),
     (
         18,
         1,
         false,
         true,
-        "83a65598483079ab52ab3ae29656279e85641fd5f87bc6fa6830375f20c451e8",
+        "29fdf3dd480201be013c809dfad4069b8f3f5e0172c5aa609f2b8618b3fd4b70",
     ),
     (
         18,
         1,
         true,
         false,
-        "46b679a7e3acf8e7e83ea8f38034a9c819354e5872c4f3bf24517e841618927b",
+        "df850d6ea50874f20e665413dd8d101e1f195b76cf551c4e0f04d7207806d88d",
     ),
     (
         18,
         2,
         false,
         true,
-        "84ee1e10ce01bba783422179eaad7cd7ebf8f525e99ad17b268e522a535c6894",
+        "e76030adefa23f32b87b77bad2cf2ad291cf868220f4dfcdb010dbc4fa150270",
     ),
     (
         18,
         2,
         true,
         false,
-        "81dd4042010c4ffba0c88f96fafe3e5ed5f28e1b01fabac1261202bef66b5cd6",
+        "37f67867075a76b268335c1769572d562a72e22db34cdcae8f65124ff9256e8f",
     ),
     (
         19,
         0,
         false,
         true,
-        "9a0cfffbff1c32c29014bd08506da276d7257a5ba8f68561bf08736d64fbb76a",
+        "ab50ca3a38b7be6c8ea8118625c42c4a4189c9dab589794067ca510fe4d4785b",
     ),
     (
         19,
         0,
         true,
         false,
-        "2958f14c9804813a3e525f79a8733b962647c767a7a489d7474d4d4e8ceb23f1",
+        "a9596fa66c10896e3aa742fd881ad1a6ae14a904dcf67953fb03fb1daa6db2e3",
     ),
     (
         19,
         1,
         false,
         true,
-        "8b3d2abb4ffa4d507c7670586f56e14e294a4680bed1d64a0c527aa6ceefd562",
+        "04d5ae663babe88ba92b962c90ca9899f61749d698f61463876255ce021664d5",
     ),
     (
         19,
         1,
         true,
         false,
-        "859284bf8f7a18ee1332a56e4144b10e49e9ee18d7d78128e46e22a22cde3b0b",
+        "8f11316f42be2b34eb3050e954128ad4e38888a8d57e42cd0f22ffa1ee5f3afb",
     ),
 ];
 
