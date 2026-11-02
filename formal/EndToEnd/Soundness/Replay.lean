@@ -54,8 +54,7 @@ theorem toArray_beq (x z : KeccakState) : (x.toArray == z.toArray) = decide (x =
   by_cases h : x = z
   · subst h
     simp
-  · have h' : x.toArray ≠ z.toArray := fun e ↦ h (Vector.toArray_inj.mp e)
-    simp [h, h']
+  · simp [h]
 
 theorem list_beq (a b : List UInt64) : (a == b) = decide (a = b) := by
   by_cases h : a = b <;> simp [h]
@@ -89,7 +88,8 @@ theorem capBytes_bind_append (bs c : Bytes) :
   · have h' : ¬ (bs ++ c).length ≤ maxAbsorbed := by
       rw [List.length_append]
       omega
-    simp [h, h']
+    rw [ite_eq_right h, ite_eq_right h']
+    rfl
 
 /-- A new edge that extends a chain, in both replays. -/
 theorem rel_chain {σ : TranscriptReplay} {φ : State} (h : Rel σ φ) (x y s : KeccakState)
@@ -145,8 +145,11 @@ theorem rel_init : Rel ⟨[], [(Vector.replicate 25 0, [])]⟩ State.init where
     show ((∅ : Std.HashMap (List UInt64) (KeccakState × Option Bytes)).insert _ _)[c]? = _
     rw [Std.HashMap.getElem?_insert, Std.HashMap.getElem?_empty, list_beq, List.find?_cons,
       List.find?_nil]
-    by_cases hc : (Vector.replicate 25 (0 : UInt64) : KeccakState).toList.drop 17 = c <;>
-      simp [hc, capPath, capBytes]
+    by_cases hc : (Vector.replicate 25 (0 : UInt64) : KeccakState).toList.drop 17 = c
+    · rw [decide_eq_true hc]
+      rfl
+    · rw [decide_eq_false hc]
+      rfl
   paths := by simp [State.init, capPath, capBytes]
 
 theorem rel_foldl (T : List (PermutationQuery KeccakState × KeccakState)) :
@@ -177,18 +180,18 @@ theorem findSome_unpad (lens : List ℕ) (bs : Bytes) :
       rw [hu] at this
       exact (Option.some.inj this).symm
     by_cases hl : m.length ∈ lens
-    · rw [Option.filter_some, if_pos (by simpa using hl)]
+    · rw [Option.filter_some, ite_eq_left (by simpa using hl)]
       rcases hF : lens.findSome? (fun ℓ ↦
           if keccakPadded (bs.take ℓ) = bs then some (bs.take ℓ) else none) with _ | v
       · rw [List.findSome?_eq_none_iff] at hF
         have h1 := hF m.length hl
         have hpre : bs.take m.length = m := by rw [← hm]; exact Rpm.padded_prefix m
-        rw [hpre, if_pos hm] at h1
+        rw [hpre, ite_eq_left hm] at h1
         cases h1
       · obtain ⟨ℓ, -, hv⟩ := List.exists_of_findSome?_eq_some hF
         split_ifs at hv with hp
         · rw [← Option.some.inj hv, hit ℓ hp]
-    · rw [Option.filter_some, if_neg (by simpa using hl), List.findSome?_eq_none_iff]
+    · rw [Option.filter_some, ite_eq_right (by simpa using hl), List.findSome?_eq_none_iff]
       intro ℓ hℓ
       split_ifs with hp
       · exfalso
@@ -222,6 +225,7 @@ theorem evaluationOf_capPath (lens : List ℕ)
         have := hlens _ hl
         rw [← hm, Rpm.length_padded]
         exact this)
+      rw [Option.map_some, Option.filter_some]
       simp [hlen]
 
 /-- **The replay with hash maps gives mumbai's evaluations** of the lengths `lens`, newest first. -/
@@ -231,7 +235,7 @@ theorem transcriptEvaluations_eq (lens : List ℕ)
     transcriptEvaluations lens T =
       (keccakEvaluationsOfTranscript T).filter fun e ↦ decide (e.1.length ∈ lens) := by
   have hr := (rel_foldl T rel_init).paths
-  unfold transcriptEvaluations replay keccakEvaluationsOfTranscript
+  unfold transcriptEvaluations PcsQuotient.Replay.replay keccakEvaluationsOfTranscript
   rw [hr, List.filterMap_map, List.filter_filterMap]
   congr 1
   funext p
@@ -256,8 +260,7 @@ theorem firstAnswers_foldl (P : List (Bytes × Digest)) (x : Bytes) :
     by_cases h : e.1 = x
     · subst h
       by_cases hm : e.1 ∈ m
-      · obtain ⟨d, hd⟩ := Option.isSome_iff_exists.mp (Std.HashMap.mem_iff_isSome_getElem?.mp hm)
-        simp [hm, hd]
+      · simp [hm]
       · rw [Std.HashMap.getElem?_eq_none hm]
         simp [hm]
     · simp [h]
@@ -272,10 +275,7 @@ theorem firstAnswers_get (P : List (Bytes × Digest)) (x : Bytes) :
 theorem answeredPairs_eq (P : List (Bytes × Digest)) :
     answeredPairs P = answerPairs (lookupEvaluation P) (P.map (·.1)) := by
   unfold answeredPairs answerPairs
-  rw [List.filterMap_map]
-  congr 1
-  funext e
-  simp [firstAnswers_get]
+  simp only [firstAnswers_get, List.filterMap_map, Function.comp_def]
 
 /-- The key of a pair `(x, d)` is `(d, |x|)`. -/
 def keyHit (d : Digest) (len : ℕ) (p : Bytes × Digest) : Bool :=
@@ -296,7 +296,12 @@ theorem find_all_uniqueHit (f : Bytes × Digest → Bool) :
   | [] => rfl
   | a :: l => by
     by_cases ha : f a = true
-    · simp [List.find?_cons, ha, List.filter_cons_of_pos ha, uniqueHit, List.all_filter]
+    · rw [List.find?_cons, ha, List.filter_cons_of_pos ha]
+      show (if (a :: l).all (fun p' ↦ !f p' || decide (p'.1 = a.1)) then some a.1 else none) =
+        uniqueHit (a :: l.filter f)
+      rw [List.all_cons, ha]
+      simp only [uniqueHit, List.all_filter, Bool.not_true, Bool.false_or, decide_true,
+        Bool.true_and]
     · have hfa : f a = false := by simpa using ha
       have ih := find_all_uniqueHit f l
       simp only [List.find?_cons, hfa, List.filter_cons_of_neg ha, List.all_cons, Bool.not_false,

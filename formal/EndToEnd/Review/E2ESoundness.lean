@@ -367,14 +367,15 @@ namespace Review.E2ESoundness.Demo
 open LeanVM.Parameters LeanVM.Extraction
 
 /-- The same at `2^9` words (`κ = 3`, `16` columns, unique-decoding radius `4`; the interpreter's
-products in `K` are slow, so a small stack): lane `0` a pseudorandom polynomial, its symbol at column
-`0` changed with `corrupt`. -/
-def smallWord (corrupt : Bool) : ℕ → List K :=
+products in `K` are slow, so a small stack), as its columns (computed once: a definition returning a
+function may be eta-expanded by the compiler and recompute them at every column): lane `0` a
+pseudorandom polynomial, its symbol at column `0` changed with `corrupt`. -/
+def smallColumns (corrupt : Bool) : Array (List K) :=
   let c : Array K := Array.ofFn (n := 2 ^ 3) fun i =>
     K.ofLane (UInt64.ofNat (i.val * 2654435761 + 12345))
   let e := novelFwd 3 1 c
-  fun v => (List.range 64).reverse.map fun u =>
-    if u = 0 then (if corrupt && v == 0 then e.getD v 0 + 1 else e.getD v 0) else 0
+  Array.ofFn (n := 16) fun v => (List.range 64).reverse.map fun u =>
+    if u = 0 then (if corrupt && v.val == 0 then e.getD v.val 0 + 1 else e.getD v.val 0) else 0
 
 end Review.E2ESoundness.Demo
 
@@ -383,10 +384,12 @@ end Review.E2ESoundness.Demo
 -- one wrong symbol: no fast candidate, and the unique-decoding stage recovers the stack, the fast
 -- path's of the word without the error
 #eval
-  let ud := PcsQuotient.UniqueDecoding.uniqueStacks 9 1 (Review.E2ESoundness.Demo.smallWord true)
-  ((LeanVM.Extraction.fastStacks 9 1 (Review.E2ESoundness.Demo.smallWord false)).length,
-    (LeanVM.Extraction.fastStacks 9 1 (Review.E2ESoundness.Demo.smallWord true)).length, ud.length,
-    ud == LeanVM.Extraction.fastStacks 9 1 (Review.E2ESoundness.Demo.smallWord false))
+  let clean := Review.E2ESoundness.Demo.smallColumns false
+  let bad := Review.E2ESoundness.Demo.smallColumns true
+  let ud := PcsQuotient.UniqueDecoding.uniqueStacks 9 1 (fun v => bad.getD v [])
+  let fast := LeanVM.Extraction.fastStacks 9 1 (fun v => clean.getD v [])
+  (fast.length, (LeanVM.Extraction.fastStacks 9 1 (fun v => bad.getD v [])).length, ud.length,
+    ud == fast)
 
 /-! ## The review's own lemmas: no `sorry` -/
 

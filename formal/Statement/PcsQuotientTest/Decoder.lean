@@ -58,15 +58,19 @@ def roundTripTest (m seed : ℕ) : Bool :=
 /-- The message of lane `u` of the test words: pseudorandom novel coefficients. -/
 def message (κ seed u : ℕ) : Array K := Array.ofFn fun i : Fin (2 ^ κ) ↦ kOf (seed + 7919 * u) i.val
 
-/-- A word of `64` lanes, lane `u < lanes` the encoding of `message κ seed u` (the others zero), its
-symbols changed (by `+ 1 + v`) at the columns `bad`. -/
-def word (κ R seed lanes : ℕ) (bad : List ℕ) : ℕ → List K :=
+/-- The columns of a word of `64` lanes, lane `u < lanes` the encoding of `message κ seed u` (the others
+zero), its symbols changed (by `+ 1 + v`) at the columns `bad`. -/
+def columns (κ R seed lanes : ℕ) (bad : List ℕ) : Array (List K) :=
   let enc := (List.range lanes).toArray.map fun u ↦ novelFwd κ R (message κ seed u)
-  fun v ↦
-    let wrong := decide (v ∈ bad)
+  Array.ofFn fun v : Fin (2 ^ (κ + R)) ↦
+    let wrong := decide (v.val ∈ bad)
     (List.range 64).reverse.map fun u ↦
-      let s := (enc.getD u #[]).getD v 0
-      if wrong then s + 1 + K.ofBits v else s
+      let s := (enc.getD u #[]).getD v.val 0
+      if wrong then s + 1 + K.ofBits v.val else s
+
+/-- A word read off its columns. (The columns are computed once, outside: a definition returning a
+function may be eta-expanded by the compiler and recompute them at every column.) -/
+def colAt (cols : Array (List K)) (v : ℕ) : List K := cols.getD v []
 
 /-- `e` pseudorandom distinct columns of `2^m`. -/
 def badColumns (m e seed : ℕ) : List ℕ :=
@@ -74,7 +78,8 @@ def badColumns (m e seed : ℕ) : List ℕ :=
 
 /-- Lane `0` decoded with `e` wrong columns. -/
 def laneTest (κ R seed e : ℕ) : Bool :=
-  laneDecode κ R (word κ R seed 1 (badColumns (κ + R) e seed)) 0 == some (message κ seed 0)
+  let cols := columns κ R seed 1 (badColumns (κ + R) e seed)
+  laneDecode κ R (colAt cols) 0 == some (message κ seed 0)
 
 end PcsQuotientTest.Decoder
 
@@ -95,10 +100,10 @@ open PcsQuotientTest.Decoder
 -- `μ = 9` (`κ = 3`, `16` columns, radius `4`), all `64` lanes, two wrong columns among the first `8`:
 -- the fast path finds no stack, the unique decoder one, the fast path's stack of the clean word
 #eval
-  let w := word 3 1 77 64 [0, 5]
-  let clean := word 3 1 77 64 []
-  ((fastStacks 9 1 clean).length, (fastStacks 9 1 w).length, (uniqueStacks 9 1 w).length,
-    uniqueStacks 9 1 w == fastStacks 9 1 clean)
+  let w := columns 3 1 77 64 [0, 5]
+  let clean := columns 3 1 77 64 []
+  ((fastStacks 9 1 (colAt clean)).length, (fastStacks 9 1 (colAt w)).length,
+    (uniqueStacks 9 1 (colAt w)).length, uniqueStacks 9 1 (colAt w) == fastStacks 9 1 (colAt clean))
 
 /-! ## The replay and the inversion with hash maps -/
 
