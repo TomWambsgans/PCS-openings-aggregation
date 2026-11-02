@@ -9,3 +9,5 @@ import UniComplete.Claims
 import UniComplete.Witness
 import UniComplete.Honest
 import UniComplete.Whir
+import UniComplete.VerifierH
+import UniComplete.VerifierHSim
