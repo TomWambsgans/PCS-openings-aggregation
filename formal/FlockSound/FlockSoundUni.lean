@@ -4,6 +4,9 @@ import FlockSoundUni.Loops
 import FlockSoundUni.Decode
 import FlockSoundUni.Shape
 import FlockSoundUni.Link
+import FlockSoundUni.Parse
+import FlockSoundUni.Prefix
+import FlockSoundUni.Catch
 
 /-- info: 'FlockSound.Uni.card_hit_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
@@ -68,3 +71,67 @@ import FlockSoundUni.Link
 /-- info: 'FlockSound.Uni.flock_link' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms FlockSound.Uni.flock_link
+
+/-- info: 'FlockSound.Uni.flockProg_root' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.flockProg_root
+
+/-- info: 'FlockSound.Uni.card_flockBad' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.card_flockBad
+
+/-- info: 'FlockSound.Uni.zcBad_congr' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.zcBad_congr
+
+/-- info: 'FlockSound.Uni.sumBad_congr'' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.sumBad_congr'
+
+/-- info: 'FlockSound.Uni.trueAt_congr' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.trueAt_congr
+
+/-- info: 'FlockSound.Uni.badAt_congr' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.badAt_congr
+
+/-- info: 'FlockSound.Uni.agree_pfx' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.agree_pfx
+
+/-- info: 'FlockSound.Uni.hitIn_of_mem' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.hitIn_of_mem
+
+/-- info: 'FlockSound.Uni.fits_of_doneFits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.fits_of_doneFits
+
+/-- info: 'FlockSound.Uni.sc_consistent' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.sc_consistent
+
+/-- info: 'FlockSound.Uni.zc_consistent' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.zc_consistent
+
+/-- info: 'FlockSound.Uni.lin_consistent' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.lin_consistent
+
+/-- info: 'FlockSound.Uni.outOf_parse' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.outOf_parse
+
+/-- info: 'FlockSound.Uni.hit_of_bad' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.hit_of_bad
+
+/-- info: 'FlockSound.Uni.catches_of_tx' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.catches_of_tx
+
+/-- info: 'FlockSound.Uni.flockSound_of_tx' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.flockSound_of_tx

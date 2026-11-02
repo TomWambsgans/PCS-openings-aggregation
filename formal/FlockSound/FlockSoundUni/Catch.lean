@@ -369,4 +369,139 @@ theorem outOf_parse :
 
 end Run
 
+/-! ## Each bad event is a hit -/
+
+section Hit
+
+variable (qf : Column (8 + κ)) (R : Front E 3 3 8 κ (4 + κ) 6)
+
+theorem badAt_τ (a : Fin (4 + κ)) :
+    badAt qf R 0 a = pointBad (4 + κ) (sampledTables (mainSetup κ).hsize (mainSetup κ).fixed
+      (Front.zRes (mainSetup κ) (zOf qf))) R.τs a := by
+  unfold badAt
+  rw [ite_eq_left rfl, dite_eq_left a.isLt]
+
+theorem badAt_z :
+    badAt qf R 1 0 = skipBad (mainSetup κ).node (Front.zA (mainSetup κ) (zOf qf))
+      (Front.zB (mainSetup κ) (zOf qf)) (Front.zZ (zOf qf)) (Front.τ (mainSetup κ) R) R.cv := by
+  unfold badAt
+  rw [ite_eq_right (by omega), ite_eq_left rfl, ite_eq_left rfl]
+
+theorem badAt_zc (t : Fin (3 + 8 + κ)) :
+    badAt qf R (2 + t) 0 = zcBad (mainSetup κ).node (Front.zA (mainSetup κ) (zOf qf))
+      (Front.zB (mainSetup κ) (zOf qf)) (Front.zZ (zOf qf)) (pinTab (zOf qf) (mainSetup κ).cpos)
+      (Front.τ (mainSetup κ) R) R.z (Front.c₀ (mainSetup κ) R) R.zq R.zχ t := by
+  have := t.isLt
+  unfold badAt
+  rw [ite_eq_right (by omega), ite_eq_right (by omega), dite_eq_left (by omega), ite_eq_left rfl]
+  congr 1
+  ext
+  simp
+
+theorem badAt_α :
+    badAt qf R (13 + κ) 0 = alphaBad R.va R.vb (Front.vc (mainSetup κ) R)
+      (skipVal (mainSetup κ).node (Front.zA (mainSetup κ) (zOf qf)) R.z R.zχ)
+      (skipVal (mainSetup κ).node (Front.zB (mainSetup κ) (zOf qf)) R.z R.zχ)
+      (skipVal (mainSetup κ).node (Front.zZ (zOf qf)) R.z R.zχ)
+      (zhat (zOf qf) (Front.rt (mainSetup κ) R) (mainSetup κ).cpos) := by
+  unfold badAt
+  rw [ite_eq_right (by omega), ite_eq_right (by omega), dite_eq_right (by omega), ite_eq_left rfl,
+    ite_eq_left rfl]
+
+theorem badAt_lin (t : Fin 8) :
+    badAt qf R (14 + κ + t) 0 = sumBad 2 8 (fun _ ↦ none)
+      (linRev (linFun (mainSetup κ).A (mainSetup κ).B (zOf qf) (mainSetup κ).cpos (mainSetup κ).node
+        R.z (Front.rl (mainSetup κ) R) (Front.rh (mainSetup κ) R) (Front.rt (mainSetup κ) R) R.α))
+      R.lq R.lχ t := by
+  have := t.isLt
+  unfold badAt
+  rw [ite_eq_right (by omega), ite_eq_right (by omega), dite_eq_right (by omega),
+    ite_eq_right (by omega), dite_eq_left (by omega), ite_eq_left rfl]
+  congr 1
+  ext
+  simp
+
+theorem badAt_ring (a : Fin (mainSetup κ).sh.length) :
+    badAt qf R (22 + κ) a = ringBad univ (mainSetup κ).w (mainSetup κ).sh
+      (fun cy ↦ R.s cy - strue (zOf qf) (Front.rt (mainSetup κ) R) (Front.χ' (mainSetup κ) R) cy) R.f
+      a := by
+  unfold badAt
+  rw [ite_eq_right (by omega), ite_eq_right (by omega), dite_eq_right (by omega),
+    ite_eq_right (by omega), dite_eq_right (by omega), ite_eq_left rfl,
+    dite_eq_left (show (a : ℕ) < 6 from a.isLt)]
+
+/-- **Each of `Front.Bad`'s events on the transcript's parse is a hit of `flockBad`.** -/
+theorem hit_of_bad {done : Done} (hF : Fits κ done)
+    (hbad : Front.Bad (mainSetup κ) (parse κ done) (zOf qf)) : HitIn (flockBad κ) qf done := by
+  have hl := hF.len
+  unfold Front.Bad at hbad
+  rcases hbad with ⟨a, ha⟩ | hz | ⟨t, ht⟩ | hα | ⟨t, ht⟩ | ⟨a, ha⟩
+  · refine hitIn_of_mem qf (j := 0) (i := a) (by omega) (by rw [hF.r0]; exact a.isLt) ?_
+    rw [badAt_τ]
+    exact ha
+  · refine hitIn_of_mem qf (j := 1) (i := 0) (by omega) (by rw [hF.r1c]; omega) ?_
+    rw [badAt_z, ← headD_eq_getD']
+    exact hz
+  · have ht2 := t.isLt
+    refine hitIn_of_mem qf (j := 2 + t) (i := 0) (by omega)
+      (by rw [(hF.mid _ (by omega) (by omega)).2]; omega) ?_
+    rw [badAt_zc, ← headD_eq_getD', ← rd_drop]
+    exact ht
+  · refine hitIn_of_mem qf (j := 13 + κ) (i := 0) (by omega)
+      (by rw [(hF.mid _ (by omega) (by omega)).2]; omega) ?_
+    rw [badAt_α, ← headD_eq_getD']
+    exact hα
+  · have ht8 := t.isLt
+    refine hitIn_of_mem qf (j := 14 + κ + t) (i := 0) (by omega)
+      (by rw [(hF.mid _ (by omega) (by omega)).2]; omega) ?_
+    rw [badAt_lin, ← headD_eq_getD', ← rd_drop]
+    exact ht
+  · refine hitIn_of_mem qf (j := 22 + κ) (i := a) (by omega)
+      (by rw [hF.r6c]; exact (show (a : ℕ) < 6 from a.isLt)) ?_
+    rw [badAt_ring]
+    exact ha
+
+end Hit
+
+/-! ## The catch, and the interface -/
+
+/-- **The bad family catches, given the evaluator transcription**: on a completed transcript whose
+ring claim holds of the column and whose pending claim is its sum, the column satisfies Flock's
+relation or a challenge is in its bad set (`flock_front` at leanVM's constants on the parse). -/
+theorem catches_of_tx (tx : Tx κ) : Catches (flockProg κ) (flockBad κ) := by
+  intro qf done hfit hend hpend
+  have hF := fits_of_doneFits hfit
+  by_cases hold : FlockHolds κ qf
+  · exact Or.inl hold
+  right
+  have hend' : FlockEndHolds qf (outOf κ done) := hend
+  have hpend' : PendingHolds (outOf κ done).2.2 := hpend
+  rw [outOf_parse tx hF] at hend' hpend'
+  have hring : ∑ u, stagedMap (mainSetup κ).sh (parse κ done).f
+      (eqP (Front.p (mainSetup κ) (parse κ done)) u) * colWord qf u =
+      Front.target (mainSetup κ) (parse κ done) := by
+    have h := hend'
+    simp only [FlockEndHolds] at h
+    rw [tx.ring, tx.target] at h
+    exact h
+  have hnot : ¬ R1CSHolds (mainSetup κ).A (mainSetup κ).B (zOf qf) (mainSetup κ).cpos :=
+    fun h ↦ hold ((r1csHolds_iff rfl _ qf).mp h)
+  rcases flock_front (mainSetup κ)
+      (leanvmSetup_valid 3 3 κ (4 + κ) rfl (by decide) (by omega) towerShifts (Or.inr rfl) _ _ _)
+      (zOf qf) (colBits_bool rfl qf) (colWord qf) (colPack rfl qf) (parse κ done)
+      (zc_consistent tx hF).2 (lin_consistent tx hF).2 hring hnot with hbad | hfalse
+  · exact hit_of_bad qf hF hbad
+  · exfalso
+    apply hfalse
+    have h := hpend'
+    unfold PendingHolds at h
+    rw [tx.sum, tx.claim] at h
+    exact h
+
+/-- **Flock's interface from the evaluator transcription**: the chain program `flockProg κ`, its link
+(`flock_link`), the bad family `flockBad κ` with its sizes `dBound κ`, which catches given `Tx κ`. -/
+noncomputable def flockSound_of_tx (tx : Tx κ) : FlockSound κ :=
+  ofFamily (flockProg κ) (flockProg_root κ) (flockProg_tail κ) (fun F ↦ flock_link κ F) (flockBad κ)
+    (dBound κ) (card_flockBad κ) (catches_of_tx tx)
+
 end FlockSound.Uni
