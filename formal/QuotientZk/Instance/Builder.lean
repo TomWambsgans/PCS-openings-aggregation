@@ -45,8 +45,9 @@ values `valsW c v`, `valsQ P₀ stmt Y c v` whenever some table's are.
 lanes of `2^ℓ = 2^19` or `2^22` entries, `H = 33` or `167` held pieces, points of `n = 25` or `30`
 coordinates). A column is `m` evaluations of a claim's weight at an entry (`Layout.claimW`:
 `O(6L + nH)`, about `4·10^3` operations) and `r` coordinates; inserting it is at most `r` reduction
-steps of `O(r)` operations (each reduced vector computed once, `mat`); the solution `O(r²)`. **A scan
-of `k` entries costs `O(k·(4·10^3·m + r²))`**. It stops after the first entries whose columns span
+steps, each `O(r)` operations (each reduced vector computed once, `mat`) and an append of at most
+`2^r` weighted entries; the solution likewise. **A scan of `k` entries costs
+`O(k·(4·10^3·m + r² + r·2^r))` operations**. It stops after the first entries whose columns span
 `K^r` (after the `6` or `9` candidates at the challenges above), and **after at most
 `N = #candidates + L·2^ℓ` entries in any case** (`6 + 40·2^19`, `9 + 63·2^22`: `scan`'s fuel). The
 table lists at most `2^r - 1` weighted entries (at most `r` distinct ones, the rows' entries); an
