@@ -21,7 +21,8 @@ The relation's hashes are the deployed Keccak-256 (`Relation.lean`): the circuit
 deployed Keccak-f[1600], independent of `π`.
 
 * **Knowledge soundness** (`KnowledgeSoundness ε`): for every adversary of at most `Q` calls of `π`
-  and `π⁻¹`, the verifier accepts its statement and proof while **`extractor`**, reading only the
+  and `π⁻¹`, given the setup's commitment (the circuit's index root), the verifier accepts its
+  statement and proof while **`extractor`**, reading only the
   statement, the proof, the adversary's transcript and the public setup's tree (the circuit
   commitment's Merkle tree, as its Keccak-256 evaluations), outputs no witness, with probability at
   most `ε Q`.
@@ -137,9 +138,10 @@ def prover {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState) (st
 /-- **The extractor**: `transcriptExtractorFor` (`Extractor.lean`) at the membership circuit. From the
 statement, the public setup's tree (its Keccak-256 evaluations `setupEvals`, `Tree.evaluations`), the
 adversary's transcript and the proof, a secret: the witness table's tree inverted through the setup's
-and the transcript's Keccak-256 evaluations, its word list-decoded, and the first candidate's cells'
-input bits that spell a witness. Straight-line: it reads the setup's tree and the transcript, it
-neither queries `π` nor runs the adversary again. -/
+and the transcript's Keccak-256 evaluations (hash maps), its word decoded (interpolation, then unique
+decoding, then list decoding, each only if the stages before give no witness), and the first
+candidate's cells' input bits that spell a witness. Straight-line: it reads the setup's tree and the
+transcript, it neither queries `π` nor runs the adversary again. Its cost is `Extractor.lean`'s table. -/
 def extractor (stmt : Statement) (setupEvals : List (List UInt8 × Digest)) (T : OracleQueryLog)
     (proof : Proof) : Option Secret :=
   transcriptExtractorFor (membership logRows) stmt setupEvals T proof
@@ -151,9 +153,10 @@ def simulator (stmt : Statement) : Simulator.SimM (Option Proof) :=
 
 /-! ### Knowledge soundness -/
 
-/-- An adversary in the random-permutation model: a computation with private coins and oracle access
-to `π` and `π⁻¹` that outputs a statement and a proof. -/
-abbrev Adversary : Type := OracleComp RandomPermutationOracles (Statement × Proof)
+/-- An adversary in the random-permutation model: given the public setup's commitment (the circuit's
+index root, which it could also recompute with `π`), a computation with private coins and oracle
+access to `π` and `π⁻¹` that outputs a statement and a proof. -/
+abbrev Adversary : Type := Digest → OracleComp RandomPermutationOracles (Statement × Proof)
 
 /-- An outcome of the experiment: the statement and the proof, the verdict, the setup's Keccak-256
 evaluations (its tree, `Tree.evaluations`), and the adversary's transcript, its queries and their
@@ -168,13 +171,14 @@ abbrev Outcome.setupEvaluations (z : Outcome) : List (List UInt8 × Digest) := z
 abbrev Outcome.transcript (z : Outcome) : OracleQueryLog := z.2.2
 
 /-- **The knowledge-soundness experiment**: the setup (the circuit commitment's tree over `π`), the
-adversary, its queries recorded (`Common.loggedOracles`), then the verifier over `π` on its statement
-and proof with the tree's root, the whole game run against the lazily sampled permutation from no
-edge; the outcome holds the setup tree's Keccak-256 evaluations, public, for the extractor. -/
+adversary given the tree's root, its queries recorded (`Common.loggedOracles`), then the verifier over
+`π` on its statement and proof with the tree's root, the whole game run against the lazily sampled
+permutation from no edge; the outcome holds the setup tree's Keccak-256 evaluations, public, for the
+extractor. -/
 noncomputable def soundnessExperiment (A : Adversary) : ProbComp Outcome :=
   runWithRandomPermutation do
     let tree ← setupTreeWith queryPermutation
-    let (z, transcript) ← (simulateQ loggedOracles A).run []
+    let (z, transcript) ← (simulateQ loggedOracles (A tree.root)).run []
     let accepted ← verifier queryPermutation tree.root z.1 z.2
     return ((z, accepted), Tree.evaluations tree, transcript)
 
@@ -185,9 +189,10 @@ def BreaksKnowledgeSoundness (z : Outcome) : Prop :=
     Relation z.statement w
 
 /-- **Knowledge soundness in the random-permutation model**, for the extractor `extractor`, with the
-error `ε Q` for `Q` calls of `π` and `π⁻¹` by the adversary (its coins free). -/
+error `ε Q` for `Q` calls of `π` and `π⁻¹` by the adversary on any commitment it is given (its coins
+free). -/
 def KnowledgeSoundness (ε : ℕ → ℝ≥0∞) : Prop :=
-  ∀ (A : Adversary) (Q : ℕ), QueryCostAtMost A permutationCallCost Q →
+  ∀ (A : Adversary) (Q : ℕ), (∀ root, QueryCostAtMost (A root) permutationCallCost Q) →
     Pr{let z ← soundnessExperiment A}[BreaksKnowledgeSoundness z] ≤ ε Q
 
 /-! ### Completeness -/
