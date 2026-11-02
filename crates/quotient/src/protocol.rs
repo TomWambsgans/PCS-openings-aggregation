@@ -940,9 +940,10 @@ mod tests {
     }
 
     /// The prover's output, pinned: the proof and its three openings on the toy circuit hash to what the prover
-    /// made when the openings' transcripts took leanVM's shape (`opening::iv`), and the randomness came to be
-    /// derived from one seed (the pin before, with the masks and the padding's seed drawn directly, was
-    /// `aebdde8c…`; before the hidden layouts, at d940553, `7d2d3430…`), so a change to how the prover computes
+    /// made when the hidden layouts took the gadget (`HIDING.md`; the pin before, when the openings' transcripts
+    /// took leanVM's shape (`opening::iv`) and the randomness came to be derived from one seed, was `4462f71d…`;
+    /// with the masks and the padding's seed drawn directly, `aebdde8c…`; before the hidden layouts, at d940553,
+    /// `7d2d3430…`), so a change to how the prover computes
     /// cannot change a byte of what it proves. The proof's seed is part of the input: [`prove_with_randomness`] is
     /// deterministic, and the randomness is [`Randomness::derive`]'s, as [`prove`]'s is.
     #[test]
@@ -962,7 +963,7 @@ mod tests {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect();
-        assert_eq!(hex, "4462f71d9f6a296121c28f4b1ac24ff0389d905f7c8941b724ec7bd7a832d6c0");
+        assert_eq!(hex, "472eea8b46759b72d2a83b5af69188d0a618c4e17f52abaa1d0c793e5705e113");
     }
 
     /// On a small circuit: an honest proof leaves four true claims that open, and a witness that breaks one gate,

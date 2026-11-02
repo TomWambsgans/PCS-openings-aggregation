@@ -160,7 +160,10 @@ impl Layout {
     ) -> Self {
         let log_lane = log_n - LANE_FOLD;
         assert!(log_piece < log_lane && log_lane <= log_chunk && log_chunk <= vars);
-        assert!(GADGET < 1 << log_piece, "a first piece of 2^{log_piece} entries has no room past the gadget");
+        assert!(
+            GADGET < 1 << log_piece,
+            "a first piece of 2^{log_piece} entries has no room past the gadget"
+        );
         let (mut blocks, mut tails) = (vec![], vec![]);
         for &(chunk, len) in chunks {
             assert!(chunk >> (vars - log_chunk) == 0 && len <= 1 << log_chunk);
@@ -351,9 +354,17 @@ impl Layout {
         let mut out = vec![];
         for tensor in tensors {
             let scale = tensor.scales[overflow];
-            if !scale.is_zero() && tensor.scales.iter().enumerate().all(|(l, x)| l == overflow || x.is_zero()) {
+            if !scale.is_zero()
+                && tensor
+                    .scales
+                    .iter()
+                    .enumerate()
+                    .all(|(l, x)| l == overflow || x.is_zero())
+            {
                 let low = &mut on_overflow.low[1 << s..];
-                low.iter_mut().zip(&tensor.low[1 << s..]).for_each(|(o, &e)| *o += scale * e);
+                low.iter_mut()
+                    .zip(&tensor.low[1 << s..])
+                    .for_each(|(o, &e)| *o += scale * e);
             } else {
                 out.push(tensor);
             }
@@ -640,7 +651,8 @@ fn put(bytes: &mut Vec<u8>, n: usize) {
 /// (a hidden layout's parameters included) never share a prefix. Encoded as 8-byte little-endian integers: the
 /// table's variables, the stack's, the number of lanes, each lane (its kind, `0` a block, `1` the overflow lane,
 /// `2` a random lane, then the block or `0`), then the piece's `log` (absent: `0`; present: `1` then the value),
-/// the number of overflow pieces and each of them, and the share lane (as the piece). A field added to
+/// the number of overflow pieces and each of them, and the gadget (`0` in a public layout; in a hidden one
+/// [`GADGET`] then each pattern's number of lanes, its lanes and its three entries). A field added to
 /// [`Layout`] must be added here: the destructuring does not compile without it.
 pub fn layout_id(layout: &Layout) -> [u8; 32] {
     let mut bytes = vec![];
@@ -655,7 +667,6 @@ fn encode_layout(layout: &Layout, bytes: &mut Vec<u8>) {
         lanes,
         log_piece,
         pieces,
-        share,
     } = layout;
     let option = |bytes: &mut Vec<u8>, value: &Option<usize>| match *value {
         None => put(bytes, 0),
@@ -676,7 +687,20 @@ fn encode_layout(layout: &Layout, bytes: &mut Vec<u8>) {
     option(bytes, log_piece);
     put(bytes, pieces.len());
     pieces.iter().for_each(|&p| put(bytes, p));
-    option(bytes, share);
+    // The gadget, which a hidden layout's opening adds to the weight: none in a public layout (`0`, as the share
+    // lane a public layout had none of); in a hidden one [`GADGET`], then each pattern's lanes (their number, then
+    // each) and its three entries.
+    match log_piece {
+        None => put(bytes, 0),
+        Some(_) => {
+            put(bytes, GADGET);
+            for g in 0..3 {
+                put(bytes, gadget_lanes(g).len());
+                gadget_lanes(g).iter().for_each(|&l| put(bytes, l));
+                (0..3).for_each(|i| put(bytes, layout.gadget_entry(g, i)));
+            }
+        }
+    }
 }
 
 /// Prove every one of `claims` on one committed table, in one opening.
@@ -837,7 +861,10 @@ pub fn verify(
         });
         let gadget = gadget.iter().fold(zero, |acc, (pattern, entries)| {
             let on = pattern.iter().fold(zero, |sum, &l| sum + lane_eq[l]);
-            acc + on * entries.iter().fold(zero, |sum, &(y, beta)| sum + beta * eq_index(low, y))
+            acc + on
+                * entries
+                    .iter()
+                    .fold(zero, |sum, &(y, beta)| sum + beta * eq_index(low, y))
         });
         claims + gadget
     };
@@ -949,9 +976,9 @@ mod tests {
         let layouts = [
             Layout::new(20, 15, 20, &chunks),
             Layout::new(20, 15, 21, &chunks),
-            Layout::hidden(20, 15, 20, &chunks, 4),
-            Layout::hidden(20, 15, 20, &chunks, 5),
-            Layout::hidden_with(20, 15, 20, &chunks, 4, 7),
+            Layout::hidden(20, 15, 20, &chunks, 7),
+            Layout::hidden(20, 15, 20, &chunks, 8),
+            Layout::hidden_with(20, 15, 20, &chunks, 7, 7),
         ];
         let claim = Claim {
             point: vec![F192::ONE; 20],

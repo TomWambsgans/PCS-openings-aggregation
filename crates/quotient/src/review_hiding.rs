@@ -26,7 +26,9 @@ use primitives::field::{F64, F192, powers};
 use primitives::multilinear::eq_table;
 use primitives::test_rng::Rng;
 
-use crate::hiding::{column, coords, guessed_witness, keeps_last_claim, kernel, random_at, two_witnesses};
+use crate::hiding::{
+    column, coords, gadget_entries, guessed_witness, keeps_last_claim, kernel, random_at, two_witnesses,
+};
 use crate::opening::{self, Claim, LANE_FOLD, LOG_INV_RATE, Lane, Layout, Table};
 
 /// Gauss–Jordan elimination of `m` over its first `cols` columns (the rest ride along): the pivot columns, row
@@ -145,11 +147,7 @@ fn open_from(layout: &Layout, stack: &[F64], claims: &[Claim], fs: &Start) -> (H
         .iter()
         .zip(&lambdas)
         .fold(F192::ZERO, |acc, (c, &l)| acc + l * c.value);
-    let weight: Vec<LaneTensor> = claims
-        .iter()
-        .zip(&lambdas)
-        .flat_map(|(c, &l)| layout.tensors(&c.point, l))
-        .collect();
+    let weight: Vec<LaneTensor> = layout.weight(claims.iter().zip(&lambdas).map(|(c, &l)| (&c.point[..], l)));
     recursive_prover_with_lane_tensors(&config, layout.log_n, stack, &weight, target, None, &tree[..], &mut ps);
     (commitment.root, ps.into_proof())
 }
@@ -246,8 +244,9 @@ fn rows_at(layout: &Layout, stack: &[F64], positions: &[usize]) -> Vec<Vec<F64>>
 /// HIDING.md's translation, run: `delta` changes a hidden stack's table entries only (its padding is untouched)
 /// and keeps every claim; add to it a change of the padding alone after which the lane rounds, `f¹` and the
 /// rows at `positions` do not move. Step 1 (past the first pieces): three random lanes cancel `f¹`'s change at
-/// every entry, then changes that keep `f¹` (the kernels of condition (R)) cancel what is left of the rounds'.
-/// Step 2: each lane's first piece cancels its rows' change. Panics if a step has no solution.
+/// every entry, then changes that keep `f¹` (the kernels of condition (R), at the gadget's entries and at
+/// sampled data entries) cancel what is left of the rounds'. Step 2: each lane's first piece below the gadget
+/// cancels its rows' change. Panics if a step has no solution.
 fn translate(
     layout: &Layout,
     tensors: &[LaneTensor],
@@ -263,10 +262,8 @@ fn translate(
     let held = layout.pieces().len();
     let e = eq_table(phi);
 
-    // Step 1: three random lanes (not the share) whose fold weights span E over K: condition (S).
-    let random: Vec<usize> = (0..lanes)
-        .filter(|&l| layout.lane(l) == Lane::Random && layout.share() != Some(l))
-        .collect();
+    // Step 1: three random lanes whose fold weights span E over K: condition (S).
+    let random: Vec<usize> = (0..lanes).filter(|&l| layout.lane(l) == Lane::Random).collect();
     let mut chosen = None;
     'search: for a in 0..random.len() {
         for b in a + 1..random.len() {
@@ -305,7 +302,7 @@ fn translate(
         keeps_last_claim(&left, phi),
         "the rounds' change keeps the claim and the last value"
     );
-    let mut ys: Vec<usize> = vec![];
+    let mut ys: Vec<usize> = gadget_entries(layout);
     for holds in [true, false] {
         let pool: Vec<usize> = (piece..lane).filter(|&y| ((y >> s) <= held) == holds).collect();
         for _ in 0..64.min(pool.len()) {
@@ -378,19 +375,20 @@ fn translate(
     );
     assert!(folded(layout, phi, delta).iter().all(|x| x.is_zero()), "and f¹");
 
-    // Step 2: each lane's first piece cancels its rows' change at the opened positions, by one right inverse
-    // of the first piece's evaluation there (the same for every lane, so `f¹`'s first piece stays put).
+    // Step 2: each lane's first piece below the gadget cancels its rows' change at the opened positions, by one
+    // right inverse of that part's evaluation there (the same for every lane, so `f¹`'s first piece stays put).
+    let free = piece - opening::GADGET;
     let mut distinct = positions.to_vec();
     distinct.sort_unstable();
     distinct.dedup();
-    assert!(distinct.len() < piece, "condition (Q)");
+    assert!(distinct.len() < free, "condition (Q)");
     let rows = rows_at(layout, delta, &distinct);
     let mut system: Vec<Vec<F64>> = distinct
         .iter()
         .zip(&rows)
-        .map(|(&x, row)| [&column(s, x)[..piece], &row[..]].concat())
+        .map(|(&x, row)| [&column(s, x)[..free], &row[..]].concat())
         .collect();
-    let pivots = rref(&mut system, piece);
+    let pivots = rref(&mut system, free);
     assert_eq!(
         pivots.len(),
         distinct.len(),
@@ -398,7 +396,7 @@ fn translate(
     );
     for (i, &y) in pivots.iter().enumerate() {
         for l in 0..lanes {
-            delta[l * lane + y] += system[i][piece + l];
+            delta[l * lane + y] += system[i][free + l];
         }
     }
     assert!(
@@ -425,8 +423,8 @@ fn entries(layout: &Layout, stack: &[F64]) -> Vec<F64> {
     out
 }
 
-/// Whether stack entry `i` is padding: first pieces, random lanes (the share's held pieces included), the
-/// overflow lane past its held pieces.
+/// Whether stack entry `i` is padding: first pieces (the gadget's entries included), random lanes, the overflow
+/// lane past its held pieces.
 fn is_padding(layout: &Layout, i: usize) -> bool {
     let s = layout.log_piece().expect("a hidden layout");
     let (l, y) = (i >> layout.log_lane(), i & ((1 << layout.log_lane()) - 1));
@@ -443,16 +441,13 @@ fn is_padding(layout: &Layout, i: usize) -> bool {
 fn random_claim_kernel(layout: &Layout, points: &[Vec<F192>], rng: &mut Rng) -> Vec<F64> {
     let placed = layout.placed();
     let lane = 1usize << layout.log_lane();
-    let share = layout.share().unwrap();
     let mut delta = vec![F64::ZERO; placed];
     for (i, d) in delta.iter_mut().enumerate() {
-        // The table's entries: block lanes past the first piece, the overflow lane's held pieces (the share
-        // lane's are its padding).
+        // The table's entries: block lanes past the first piece, the overflow lane's held pieces.
         if !is_padding(layout, i) {
             *d = F64(rng.next_u64());
         }
     }
-    assert!(delta[share * lane..(share + 1) * lane].iter().all(|x| x.is_zero()));
     // The claims of a change, as K-coordinates; fix them with entries every claim weighs.
     let unit: Vec<Vec<LaneTensor>> = points.iter().map(|p| layout.tensors(p, F192::ONE)).collect();
     let claims_of = |delta: &[F64]| -> Vec<F64> {
@@ -534,13 +529,10 @@ fn random_claim_kernel(layout: &Layout, points: &[Vec<F192>], rng: &mut Rng) -> 
     delta
 }
 
-/// A random `K`-linear functional of a stack's table entries (the overflow lane's held entries are the table's
-/// plus the share lane's there): equal on two stacks, but with probability `2^-64`, only if they hold the same
-/// table entries in the same places.
+/// A random `K`-linear functional of a stack's table entries: equal on two stacks, but with probability `2^-64`,
+/// only if they hold the same table entries in the same places.
 fn fingerprint(layout: &Layout, stack: &[F64]) -> F64 {
     let chunk = 1usize << 12;
-    let lane = 1usize << layout.log_lane();
-    let (overflow, share) = (layout.overflow().unwrap(), layout.share().unwrap());
     parallel::map_reduce(
         stack.len() / chunk,
         || F64::ZERO,
@@ -549,12 +541,7 @@ fn fingerprint(layout: &Layout, stack: &[F64]) -> F64 {
                 .filter(|&i| !is_padding(layout, i))
                 .fold(F64::ZERO, |acc, i| {
                     let w = (i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) ^ 0xD6E8_FEB8_6659_FD93;
-                    let entry = if i / lane == overflow {
-                        stack[i] + stack[share * lane + i % lane]
-                    } else {
-                        stack[i]
-                    };
-                    acc + F64(w) * entry
+                    acc + F64(w) * stack[i]
                 })
         },
         |a, b| a + b,
@@ -589,11 +576,7 @@ fn translation_case(name: &str, table: &Table, mut delta: Vec<F64>, claims: &[Cl
         "{name}: an honest opening"
     );
     let view = replay(layout, &root, claims, &fs, &proof);
-    let tensors: Vec<LaneTensor> = points
-        .iter()
-        .zip(&view.lambdas)
-        .flat_map(|(p, &l)| layout.tensors(p, l))
-        .collect();
+    let tensors: Vec<LaneTensor> = layout.weight(points.iter().zip(&view.lambdas).map(|(p, &l)| (&p[..], l)));
     // The model of the view is the proof's: the twelve values, and the rows at the replayed positions.
     assert_eq!(
         messages(layout, &tensors, &view.phi, stack).to_vec(),
@@ -875,7 +858,7 @@ fn reused_seed_confirms_the_witness() {
         for l in 0..lanes {
             if let Lane::Block(b) = layout.lane(l) {
                 for k in 1..lane / piece {
-                    let from = (b << log_lane) + (k ^ (l & 1)) * piece;
+                    let from = (b << log_lane) + k * piece;
                     if from < n {
                         stack[l * lane + k * piece..l * lane + (k + 1) * piece]
                             .copy_from_slice(&w_hat[from..from + piece]);
@@ -1007,10 +990,11 @@ fn reused_masks_confirm_the_witness() {
 }
 
 /// Conditions (R) and (S) at every size `prove` takes (`2^17` to `2^22` rows), at the reduction's own claim
-/// points, more draws than `rounds_are_free_at_full_size`.
+/// points, more draws than `rounds_are_free_at_full_size`: through the gadget's entries alone, and with the
+/// claims through data entries too.
 #[test]
 fn rounds_are_free_at_every_size() {
-    use crate::hiding::{reduced_points, round_freedom};
+    use crate::hiding::{data_entries, fold_span, gadget_freedom, reduced_points, round_freedom};
     use crate::protocol::{quotient_layout, witness_layout};
     let mut rng = Rng::new(0xA11);
     for log_rows in 17..=22 {
@@ -1018,23 +1002,29 @@ fn rounds_are_free_at_every_size() {
             let (witness, quotient) = reduced_points(log_rows, 1000 * log_rows as u64 + draw);
             let phi = rng.ext_vec(LANE_FOLD);
             let lambdas = powers(rng.ext(), 2);
-            let w = std::slice::from_ref(&witness);
-            assert_eq!(
-                round_freedom(&witness_layout(log_rows), w, &lambdas[..1], &phi, 200, &mut rng),
-                (33, 3),
-                "witness, 2^{log_rows} rows, draw {draw}"
-            );
-            assert_eq!(
-                round_freedom(&quotient_layout(log_rows), &quotient, &lambdas, &phi, 200, &mut rng),
-                (33, 3),
-                "quotient, 2^{log_rows} rows, draw {draw}"
-            );
+            for (name, layout, points) in [
+                ("witness", witness_layout(log_rows), vec![witness.clone()]),
+                ("quotient", quotient_layout(log_rows), quotient.clone()),
+            ] {
+                let at = format!("{name}, 2^{log_rows} rows, draw {draw}");
+                assert_eq!(
+                    (gadget_freedom(&layout, &phi), fold_span(&layout, &phi)),
+                    (33, 3),
+                    "{at}"
+                );
+                let all: Vec<usize> = gadget_entries(&layout)
+                    .into_iter()
+                    .chain(data_entries(&layout, 200, &mut rng))
+                    .collect();
+                let freedom = round_freedom(&layout, &points, &lambdas[..points.len()], &[0, 1, 2], &phi, &all);
+                assert_eq!(freedom, 33, "{at}");
+            }
         }
     }
 }
 
-/// A candidate's witness table as a hidden stack holds it in its block lanes (past their first piece, odd lanes'
-/// pieces swapped in pairs), everything else zero: what an observer who knows the public layout can encode.
+/// A candidate's witness table as a hidden stack holds it in its block lanes (past their first piece), everything
+/// else zero: what an observer who knows the public layout can encode.
 fn block_data_stack(layout: &Layout, w_hat: &[F64]) -> Vec<F64> {
     let (lanes, log_lane) = (layout.lanes(), layout.log_lane());
     let lane = 1usize << log_lane;
@@ -1043,7 +1033,7 @@ fn block_data_stack(layout: &Layout, w_hat: &[F64]) -> Vec<F64> {
     for l in 0..lanes {
         if let Lane::Block(b) = layout.lane(l) {
             for k in 1..lane / piece {
-                let from = (b << log_lane) + (k ^ (l & 1)) * piece;
+                let from = (b << log_lane) + k * piece;
                 if from + piece <= w_hat.len() {
                     stack[l * lane + k * piece..l * lane + (k + 1) * piece].copy_from_slice(&w_hat[from..from + piece]);
                 }
@@ -1057,11 +1047,11 @@ fn block_data_stack(layout: &Layout, w_hat: &[F64]) -> Vec<F64> {
 /// `crates/quotient/tests/review_opening_leaks.rs`: a `2^18`-row circuit, `x` secret, `y = H(x | 0x11..)` and
 /// `leaf = H(x | 0x22..)` public), adapted to the hidden layout and asserting that they no longer distinguish.
 ///
-/// (a) *The masks from the mask lane.* The twelve mask words now sit in the overflow lane, at the masks' piece,
-///     plus the share `ρ`. Solving the overflow lane's opened words for the sixteen mask entries alone is
-///     inconsistent; with the lane's random first piece as unknowns too (what it really holds), its 256 columns
-///     already reach every value at the ≤ 225 opened positions, so the true masks and any other twelve words are
-///     equally consistent: the masks, and so `g_j(w_2(t))`, stay hidden.
+/// (a) *The masks from the mask lane.* The twelve mask words now sit in the overflow lane, at the masks' piece.
+///     Solving the overflow lane's opened words for the sixteen mask entries alone is inconsistent; with the
+///     lane's random first piece as unknowns too (what it really holds), its 247 columns below the gadget already
+///     reach every value at the ≤ 225 opened positions, so the true masks and any other twelve words are equally
+///     consistent: the masks, and so `g_j(w_2(t))`, stay hidden.
 /// (b) *Coset fingerprints.* Per coset `a` of `H_lane` the old forms `Σ_b M[a][b]·row[b]` (now read at each
 ///     block's lane) match no prediction: neither from the coset's true cells, nor from the whole true witness,
 ///     nor from another witness's. What separates the observed forms from the true witness's prediction is
@@ -1128,7 +1118,9 @@ fn coset_fingerprints_and_mask_recovery_fail() {
     opened.sort_by_key(|o| o.0);
     opened.dedup_by_key(|o| o.0);
     let positions: Vec<usize> = opened.iter().map(|o| o.0).collect();
-    let first: Vec<Vec<F64>> = positions.iter().map(|&x| column(s, x)[..piece].to_vec()).collect();
+    // A lane's first piece below the gadget (random in every lane; at the gadget the overflow lane holds zeros).
+    let free = piece - opening::GADGET;
+    let first: Vec<Vec<F64>> = positions.iter().map(|&x| column(s, x)[..free].to_vec()).collect();
     // Whether `A z = v` has a solution.
     let consistent = |a: &[Vec<F64>], v: &[F64]| -> bool {
         let cols = a[0].len();
