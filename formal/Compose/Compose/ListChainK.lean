@@ -1042,4 +1042,351 @@ theorem prob_listBadK (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (
 
 end Bad
 
+/-! ## The trace: a winning run asks a bad fresh query -/
+
+section TraceLemmas
+
+variable {M : Type}
+
+theorem allIn_cons_tail (T : Table) (y : List UInt8) (es : List (List UInt8)) :
+    allIn T y es = y :: (allIn T y es).tail := by
+  cases es <;> rfl
+
+theorem allIn_append' (T : Table) : ∀ (y : List UInt8) (es₁ es₂ : List (List UInt8)),
+    allIn T y (es₁ ++ es₂) = allIn T y es₁ ++ (allIn T (lastIn T y es₁) es₂).tail
+  | y, [], es₂ => by
+    rw [List.nil_append, allIn_cons_tail T y es₂]
+    rfl
+  | y, e :: es₁, es₂ => by
+    simp only [List.cons_append, allIn, lastIn, allIn_append' T _ es₁ es₂]
+
+theorem tail_allIn_append (T : Table) (y : List UInt8) (es₁ es₂ : List (List UInt8)) :
+    (allIn T y (es₁ ++ es₂)).tail = (allIn T y es₁).tail ++ (allIn T (lastIn T y es₁) es₂).tail := by
+  rw [allIn_append', allIn_cons_tail T y es₁]
+  simp only [List.cons_append, List.tail_cons]
+
+theorem length_tail_allIn (T : Table) : ∀ (y : List UInt8) (es : List (List UInt8)),
+    (allIn T y es).tail.length = es.length
+  | _, [] => rfl
+  | y, e :: es => by
+    simp only [allIn, List.tail_cons, List.length_cons]
+    rw [allIn_cons_tail, List.length_cons, length_tail_allIn T _ es]
+
+theorem length_allIn_replicate (T : Table) (x : List UInt8) (n : ℕ) :
+    (allIn T x (List.replicate n [])).length = n + 1 := by
+  rw [allIn_cons_tail, List.length_cons, length_tail_allIn, List.length_replicate]
+
+/-- The challenges of rounds one after the other. -/
+theorem chalsT_append (lim : F ≃ Limbs) (T : Table) (y : List UInt8) (rs₀ rs₂ : List RoundSpec)
+    (ms₀ ms₂ : List (RMsg F)) (h : ms₀.length = rs₀.length) :
+    chalsT lim T y (rs₀ ++ rs₂) (ms₀ ++ ms₂) =
+      chalsT lim T y rs₀ ms₀ ++ chalsT lim T (lastIn T y (absorbs lim rs₀ ms₀)) rs₂ ms₂ := by
+  unfold chalsT
+  rw [absorbs_append lim rs₀ rs₂ ms₀ ms₂ h, tail_allIn_append, List.map_append, List.map_append,
+    groupK_append]
+  rw [List.length_map, List.length_map, length_tail_allIn, length_absorbs]
+
+theorem chalsT_single (lim : F ≃ Limbs) (T : Table) (y : List UInt8) (s : RoundSpec)
+    (m : RMsg F) : chalsT lim T y [s] [m] =
+      [((allIn T (stepIn (T y) (encM lim m)) (List.replicate s.ns [])).map T).map (chalL lim)] := by
+  unfold chalsT
+  rw [absorbs_single]
+  simp only [allIn, List.tail_cons]
+  exact groupK_single s _ (by simp [length_allIn_replicate])
+
+/-- A round's challenges: the states of its squeezes from its first input. -/
+theorem chalsT_cons (lim : F ≃ Limbs) (T : Table) (y : List UInt8) (s : RoundSpec)
+    (rs : List RoundSpec) (m : RMsg F) (ms : List (RMsg F)) :
+    chalsT lim T y (s :: rs) (m :: ms) =
+      ((allIn T (stepIn (T y) (encM lim m)) (List.replicate s.ns [])).map T).map (chalL lim) ::
+        chalsT lim T (lastIn T y (absorbs lim [s] [m])) rs ms := by
+  have h := chalsT_append lim T y [s] rs [m] ms rfl
+  simp only [List.singleton_append] at h
+  rw [h, chalsT_single]
+  rfl
+
+theorem candLists_append (C : ℕ → ListCommit M) (H : Hist) (T : Table) :
+    ∀ (i : ℕ) (ms₀ ms₂ : List (RMsg F)),
+      candLists C H T i (ms₀ ++ ms₂) = candLists C H T i ms₀ ++ candLists C H T (i + ms₀.length) ms₂
+  | i, [], ms₂ => by simp [candLists]
+  | i, m :: ms₀, ms₂ => by
+    simp only [List.cons_append, candLists, candLists_append C H T (i + 1) ms₀ ms₂,
+      List.length_cons, List.cons.injEq, true_and]
+    rw [show i + 1 + ms₀.length = i + (ms₀.length + 1) by omega]
+
+theorem forall₂_append_split {α β : Type} {R' : α → β → Prop} :
+    ∀ {a₁ a₂ : List α} {b₁ b₂ : List β}, a₁.length = b₁.length →
+      List.Forall₂ R' (a₁ ++ a₂) (b₁ ++ b₂) → List.Forall₂ R' a₁ b₁ ∧ List.Forall₂ R' a₂ b₂
+  | [], _, [], _, _, h => ⟨List.Forall₂.nil, h⟩
+  | _ :: _, _, _ :: _, _, hl, h => by
+    cases h with
+    | cons h1 h2 =>
+      obtain ⟨e1, e2⟩ := forall₂_append_split (by simpa using hl) h2
+      exact ⟨List.Forall₂.cons h1 e1, e2⟩
+  | [], _, _ :: _, _, hl, _ => by simp at hl
+  | _ :: _, _, [], _, hl, _ => by simp at hl
+
+/-- **An opened transcript split at a round** splits its candidates, messages and challenges. -/
+theorem opened_eq_append_cons : ∀ (p : Opened M F) (cs : List (Option M)) (ms : List (RMsg F))
+    (chs : List (List F)) (m' : Option M × List F) (c' : List F) (rest : Opened M F),
+    opened cs ms chs = p ++ (m', c') :: rest →
+      ∃ cs₀ c cs₁ ms₀ m ms₁ chs₀ ch chs₁, cs = cs₀ ++ c :: cs₁ ∧ ms = ms₀ ++ m :: ms₁ ∧
+        chs = chs₀ ++ ch :: chs₁ ∧ cs₀.length = p.length ∧ ms₀.length = p.length ∧
+        chs₀.length = p.length ∧ p = opened cs₀ ms₀ chs₀ ∧ m' = (c, m.2) ∧ c' = ch
+  | [], c :: cs, m :: ms, ch :: chs, m', c', rest, h => by
+    simp only [opened, List.nil_append, List.cons.injEq, Prod.mk.injEq] at h
+    exact ⟨[], c, cs, [], m, ms, [], ch, chs, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+      by rw [← h.1.1], h.1.2.symm⟩
+  | q :: p, c₀ :: cs, m₀ :: ms, ch₀ :: chs, m', c', rest, h => by
+    simp only [opened, List.cons_append, List.cons.injEq] at h
+    obtain ⟨cs₀, c, cs₁, ms₀, m, ms₁, chs₀, ch, chs₁, e1, e2, e3, l1, l2, l3, ep, em, ec⟩ :=
+      opened_eq_append_cons p cs ms chs m' c' rest h.2
+    exact ⟨c₀ :: cs₀, c, cs₁, m₀ :: ms₀, m, ms₁, ch₀ :: chs₀, ch, chs₁, by rw [e1]; rfl,
+      by rw [e2]; rfl, by rw [e3]; rfl, by simp [l1], by simp [l2], by simp [l3],
+      by rw [← h.1, ep]; rfl, em, ec⟩
+  | [], [], _, _, _, _, _, h => by simp [opened] at h
+  | [], _ :: _, [], _, _, _, _, h => by simp [opened] at h
+  | [], _ :: _, _ :: _, [], _, _, _, h => by simp [opened] at h
+  | _ :: _, [], _, _, _, _, _, h => by simp [opened] at h
+  | _ :: _, _ :: _, [], _, _, _, _, h => by simp [opened] at h
+  | _ :: _, _ :: _, _ :: _, [], _, _, _, h => by simp [opened] at h
+
+theorem fitsAll_split : ∀ (rs : List RoundSpec) (ms₀ : List (RMsg F)) (m : RMsg F)
+    (ms₁ : List (RMsg F)), FitsAll rs (ms₀ ++ m :: ms₁) →
+      ∃ rs₀ s rs₁, rs = rs₀ ++ s :: rs₁ ∧ FitsAll rs₀ ms₀ ∧ m.Fits s ∧ FitsAll rs₁ ms₁
+  | s :: rs, [], m, ms₁, h => ⟨[], s, rs, rfl, trivial, h.1, h.2⟩
+  | s :: rs, m₀ :: ms₀, m, ms₁, h => by
+    obtain ⟨rs₀, s', rs₁, e, h1, h2, h3⟩ := fitsAll_split rs ms₀ m ms₁ h.2
+    exact ⟨s :: rs₀, s', rs₁, by rw [e]; rfl, ⟨h.1, h1⟩, h2, h3⟩
+  | [], [], _, _, h => h.elim
+  | [], _ :: _, _, _, h => h.elim
+
+theorem encM_mem_absorbs (lim : F ≃ Limbs) : ∀ (rs : List RoundSpec) (ms : List (RMsg F)),
+    ms.length = rs.length → ∀ m ∈ ms, encM lim m ∈ absorbs lim rs ms
+  | [], [], _, m, h => by simp at h
+  | s :: rs, m₀ :: ms, hl, m, h => by
+    simp only [absorbs, List.headD_cons, List.tail_cons, List.mem_cons, List.mem_append]
+    rcases List.mem_cons.mp h with rfl | h
+    · exact Or.inl rfl
+    · exact Or.inr (Or.inr (encM_mem_absorbs lim rs ms (by simpa using hl) m h))
+  | [], _ :: _, hl, _, _ => by simp at hl
+  | _ :: _, [], hl, _, _ => by simp at hl
+
+/-- Every step's bytes follow a state in one of the chain's inputs. -/
+theorem step_mem_allIn (T : Table) : ∀ (y : List UInt8) (es : List (List UInt8)),
+    ∀ e ∈ es, ∃ st, stepIn st e ∈ allIn T y es
+  | _, [], e, h => by simp at h
+  | y, e' :: es, e, h => by
+    rcases List.mem_cons.mp h with rfl | h
+    · exact ⟨T y, by rw [allIn, allIn_cons_tail]; simp⟩
+    · obtain ⟨st, hst⟩ := step_mem_allIn T _ es e h
+      exact ⟨st, by rw [allIn]; exact List.mem_cons_of_mem _ hst⟩
+
+/-- **The input absorbing a root refers to it.** -/
+theorem refers_stepIn_encM (lim : F ≃ Limbs) (st r : Bytes32) (l : List F) :
+    Refers (stepIn st (encM lim (some r, l))) r := by
+  refine Or.inr (Or.inr ?_)
+  simp [stepIn, encM, List.drop_append, List.take_append]
+
+theorem candLists_stable (C : ℕ → ListCommit M) {H H' : Hist} {T : Table} :
+    ∀ (i : ℕ) (ms : List (RMsg F)),
+      (∀ m ∈ ms, ∀ r, m.1 = some r → ∀ k, (C k).cands H T r = (C k).cands H' T r) →
+        candLists C H T i ms = candLists C H' T i ms
+  | _, [], _ => rfl
+  | i, m :: ms, h => by
+    simp only [candLists, List.cons.injEq]
+    refine ⟨?_, candLists_stable C (i + 1) ms fun m' hm' => h m' (List.mem_cons_of_mem _ hm')⟩
+    unfold optC
+    split
+    · next r hr => rw [h m List.mem_cons_self r hr i]
+    · rfl
+
+theorem optC_stable (C : ListCommit M) {H H' : Hist} {T : Table} (m : RMsg F)
+    (h : ∀ r, m.1 = some r → C.cands H T r = C.cands H' T r) : optC C H T m = optC C H' T m := by
+  unfold optC
+  split
+  · next r hr => rw [h r hr]
+  · rfl
+
+/-- **No collision orders the chain's inputs**: each input comes before every later one. -/
+theorem chain_pairwise {L : List (List UInt8)} {T : Table}
+    (hord : ∀ y ∈ L, ∀ z ∈ L, Refers z (T y) → y ∈ before L z) :
+    ∀ (y : List UInt8) (es : List (List UInt8)), (∀ z ∈ allIn T y es, z ∈ L) →
+      (allIn T y es).Pairwise (fun a b => a ∈ before L b)
+  | y, [], _ => List.pairwise_singleton _ _
+  | y, e :: es, h => by
+    rw [allIn, List.pairwise_cons]
+    have hy : y ∈ L := h y (by simp [allIn])
+    have hrest : ∀ z ∈ allIn T (stepIn (T y) e) es, z ∈ L := fun z hz =>
+      h z (by rw [allIn]; exact List.mem_cons_of_mem _ hz)
+    have ih := chain_pairwise hord _ es hrest
+    have hy' : y ∈ before L (stepIn (T y) e) :=
+      hord y hy _ (hrest _ (head_mem_allIn _ _ _)) (Or.inl (take_stepIn _ _).symm)
+    refine ⟨fun z hz => ?_, ih⟩
+    rw [allIn_cons_tail] at hz ih
+    rcases List.mem_cons.mp hz with rfl | hz
+    · exact hy'
+    · exact before_subset_of_mem L _ z ((List.pairwise_cons.mp ih).1 z hz) hy'
+
+end TraceLemmas
+
+section Trace
+
+variable {St M : Type} [SampleableType F] (K : ChainSpec F St) (C : ℕ → ListCommit M)
+  (R : Piop K M)
+
+open Classical in
+/-- **The trace, on a log**: if the log holds the chain's inputs, and some candidates of the
+rounds' roots, read off the log, make the transcript lost at the start and won at the end, then
+some fresh input of the log is bad. -/
+theorem trace_coreK (L : List (List UInt8)) (T : Table) (s : St) (ms : List (RMsg F))
+    (cs : List (Option M)) (hfit : FitsAll K.rounds ms)
+    (hmem : ∀ y ∈ allIn T (K.label s) (absorbs K.lim K.rounds ms), y ∈ L)
+    (hcs : List.Forall₂ (· ∈ ·) cs (candLists C L.toFinset T 0 ms))
+    (hwin : R.LostWon s (opened cs ms (chalsT K.lim T (K.label s) K.rounds ms))) :
+    FreshBad (listBadK K C R) T ∅ L := by
+  by_contra hnb
+  have nb : ∀ y ∈ L, ¬ listBadK K C R (before L y) y T := fun y hy => by
+    simpa using not_bad_before (listBadK K C R) T ∅ L hnb y hy (Finset.notMem_empty _)
+  -- No collision: the answers to distinct inputs differ, and an input's answer is referred to
+  -- by another only if it was asked first.
+  have hinj : ∀ y ∈ L, ∀ z ∈ L, T y = T z → y = z := by
+    intro y hy z hz hyz
+    by_contra hne
+    rcases before_trichotomy L y z hy hz hne with h | h
+    · exact nb z hz (Or.inl (Or.inl ⟨y, h, hyz⟩))
+    · exact nb y hy (Or.inl (Or.inl ⟨z, h, hyz.symm⟩))
+  have hord : ∀ y ∈ L, ∀ z ∈ L, Refers z (T y) → y ∈ before L z := by
+    intro y hy z hz h
+    by_contra hb
+    by_cases hyz : y = z
+    · subst hyz
+      exact nb y hy (Or.inl (Or.inr ⟨y, Finset.mem_insert_self _ _, h⟩))
+    · rcases before_trichotomy L y z hy hz hyz with h' | h'
+      · exact hb h'
+      · exact nb y hy (Or.inl (Or.inr ⟨z, Finset.mem_insert_of_mem h', h⟩))
+  have injB : ∀ y, Set.InjOn T ↑(before L y) := fun y a ha b hb hab =>
+    hinj a (mem_of_mem_before L a y ha) b (mem_of_mem_before L b y hb) hab
+  -- After a root is absorbed, its candidates are the ones the history already fixed.
+  have stab : ∀ {N : Type} (Cn : ListCommit N) (r : Bytes32) (y z : List UInt8), y ∈ L →
+      Refers y r → (y = z ∨ y ∈ before L z) →
+        Cn.cands L.toFinset T r = Cn.cands (before L z) T r := by
+    intro N Cn r y z hy hry hyz
+    have hsub : ∀ w, w ∈ before L y → w ∈ before L z := by
+      rcases hyz with rfl | h
+      · exact fun w hw => hw
+      · exact fun w hw => before_subset_of_mem L y z h hw
+    refine Cn.stable (before L z) L.toFinset T r (fun w hw => List.mem_toFinset.mpr
+      (mem_of_mem_before L w z hw)) (fun w hw hwr => ?_) (fun y' hy' w hw h => ?_)
+    · rw [← hwr] at hry
+      exact hsub w (hord w (List.mem_toFinset.mp hw) y hy hry)
+    · exact before_subset_of_mem L y' z hy' (hord w (List.mem_toFinset.mp hw) y'
+        (mem_of_mem_before L y' z hy') h)
+  -- The round that turns the state from lost to won.
+  obtain ⟨p, m', c', rest, hfull, hpre, hpost⟩ := R.exists_bad_of_lostWon s _ hwin
+  obtain ⟨cs₀, c, cs₁, ms₀, m, ms₁, chs₀, ch, chs₁, ecs, ems, echs, l1, l2, l3, ep, em, ec⟩ :=
+    opened_eq_append_cons p cs ms _ m' c' rest hfull
+  rw [ems] at hfit
+  obtain ⟨rs₀, s₁, rs₁, ers, hf0, hfm, hf1⟩ := fitsAll_split K.rounds ms₀ m ms₁ hfit
+  have hl0 : ms₀.length = rs₀.length := hf0.length_eq
+  have htake : K.rounds.take rs₀.length = rs₀ := by
+    rw [ers]
+    exact List.take_left' rfl
+  have hspec : K.spec rs₀.length = s₁ := by
+    rw [ChainSpec.spec, ers, List.getD_eq_getElem?_getD, List.getElem?_append_right le_rfl]
+    simp
+  have hjlt : rs₀.length < K.rounds.length := by
+    rw [ers]
+    simp
+  -- The round's first input and its squeezes.
+  set lab := K.label s
+  set y₀ := lastIn T lab (absorbs K.lim rs₀ ms₀)
+  set x := stepIn (T y₀) (encM K.lim m) with hx
+  have hxl : x = lastIn T lab (absorbs K.lim rs₀ ms₀ ++ [encM K.lim m]) := by
+    rw [lastIn_concat]
+  -- The challenges split at the round.
+  have hchs : chalsT K.lim T lab K.rounds ms =
+      chalsT K.lim T lab rs₀ ms₀ ++ (((allIn T x (List.replicate s₁.ns [])).map T).map
+        (chalL K.lim) :: chalsT K.lim T (lastIn T y₀ (absorbs K.lim [s₁] [m])) rs₁ ms₁) := by
+    rw [ers, ems, chalsT_append K.lim T lab rs₀ (s₁ :: rs₁) ms₀ (m :: ms₁) hl0, chalsT_cons]
+  rw [echs] at hchs
+  have hl0' : chs₀.length = (chalsT K.lim T lab rs₀ ms₀).length := by
+    rw [l3, ← l2, hl0, chalsT, length_groupK]
+  obtain ⟨hc0, hc1⟩ := List.append_inj hchs hl0'
+  simp only [List.cons.injEq] at hc1
+  -- The chain's inputs, up to the round's first input and its squeezes.
+  have hchain : allIn T lab (absorbs K.lim K.rounds ms) =
+      prevIn T lab (absorbs K.lim rs₀ ms₀ ++ [encM K.lim m]) ++
+        (allIn T x (List.replicate s₁.ns []) ++
+          (allIn T (lastIn T x (List.replicate s₁.ns [])) (absorbs K.lim rs₁ ms₁)).tail) := by
+    rw [ers, ems, absorbs_append K.lim rs₀ (s₁ :: rs₁) ms₀ (m :: ms₁) hl0]
+    rw [show absorbs K.lim (s₁ :: rs₁) (m :: ms₁) =
+      [encM K.lim m] ++ (List.replicate s₁.ns [] ++ absorbs K.lim rs₁ ms₁) by simp [absorbs]]
+    rw [← List.append_assoc, allIn_append, ← hxl, allIn_append']
+  have hpw := chain_pairwise hord _ _ hmem
+  rw [hchain, List.pairwise_append, List.pairwise_append] at hpw
+  obtain ⟨-, ⟨hsq, -, -⟩, hcross⟩ := hpw
+  have hxmem : x ∈ L := hmem x (by rw [hchain]; simp [head_mem_allIn])
+  -- The chain before `x` was asked before it.
+  have hprev : ∀ z ∈ prevIn T lab (absorbs K.lim rs₀ ms₀ ++ [encM K.lim m]), z ∈ before L x :=
+    fun z hz => hcross z hz x (List.mem_append_left _ (head_mem_allIn _ _ _))
+  -- The round's squeezes after `x` are fresh, and distinct.
+  rw [allIn_cons_tail, List.pairwise_cons] at hsq
+  have hfresh : ∀ z ∈ (allIn T x (List.replicate s₁.ns [])).tail, z ∉ before L x :=
+    fun z hz => not_mem_before_of_mem_before (hsq.1 z hz)
+  have hnodup : (allIn T x (List.replicate s₁.ns [])).Nodup := by
+    rw [allIn_cons_tail]
+    refine List.nodup_cons.mpr ⟨fun hx' => not_mem_before_self L x (hsq.1 x hx'), ?_⟩
+    exact hsq.2.imp fun {a b} (h : a ∈ before L b) (e : a = b) =>
+      not_mem_before_self L b (e ▸ h)
+  -- The candidates of the rounds up to `j`, read off the history before `x`.
+  have hroots : ∀ m₂ ∈ ms₀ ++ [m], ∀ r, m₂.1 = some r → ∀ k,
+      (C k).cands L.toFinset T r = (C k).cands (before L x) T r := by
+    intro m₂ hm₂ r hr k
+    have he : encM K.lim m₂ ∈ absorbs K.lim rs₀ ms₀ ++ [encM K.lim m] := by
+      rcases List.mem_append.mp hm₂ with h | h
+      · exact List.mem_append_left _ (encM_mem_absorbs K.lim rs₀ ms₀ hl0 m₂ h)
+      · rw [List.mem_singleton.mp h]
+        exact List.mem_append_right _ List.mem_cons_self
+    obtain ⟨st, hst⟩ := step_mem_allIn T lab _ _ he
+    obtain ⟨o, l'⟩ := m₂
+    simp only at hr
+    subst hr
+    rw [allIn_eq, ← hxl] at hst
+    have hy : stepIn st (encM K.lim (some r, l')) ∈ L := by
+      rcases List.mem_append.mp hst with h | h
+      · exact mem_of_mem_before L _ x (hprev _ h)
+      · rw [List.mem_singleton.mp h]
+        exact hxmem
+    refine stab (C k) r _ x hy (refers_stepIn_encM K.lim st r l') ?_
+    rcases List.mem_append.mp hst with h | h
+    · exact Or.inr (hprev _ h)
+    · exact Or.inl (List.mem_singleton.mp h)
+  rw [ecs, ems, candLists_append] at hcs
+  have hlc : cs₀.length = (candLists C L.toFinset T 0 ms₀).length := by
+    rw [length_candLists, l1, l2]
+  obtain ⟨hcs0, hcs1⟩ := forall₂_append_split hlc hcs
+  simp only [candLists, Nat.zero_add] at hcs1
+  have hc : c ∈ optC (C ms₀.length) L.toFinset T m := by
+    cases hcs1 with
+    | cons h _ => exact h
+  rw [candLists_stable C 0 ms₀ fun m₂ hm₂ => hroots m₂ (List.mem_append_left _ hm₂)] at hcs0
+  rw [optC_stable (C ms₀.length) m fun r hr => hroots m (by simp) r hr _] at hc
+  -- The bad round.
+  refine nb x hxmem (Or.inr ⟨rs₀.length, s, ms₀, m, ⟨hjlt, by rw [htake]; exact hf0,
+    by rw [hspec]; exact hfm, by rw [htake]; exact hxl, fun z hz => by
+      rw [htake] at hz
+      exact hprev z hz, injB x⟩, ?_, ?_, cs₀, c, hcs0, ?_, ?_, ?_⟩)
+  · rw [ChainSpec.sqIns, hspec]
+    exact hfresh
+  · rw [ChainSpec.sqIns, hspec]
+    exact hnodup
+  · rwa [hl0] at hc
+  · rw [htake, ← hc0, ← ep, ← em]
+    exact hpre
+  · rw [htake, ← hc0, ← ep, ← em, ChainSpec.sqIns, hspec, ← hc1.1, ← ec]
+    exact hpost
+
+end Trace
+
 end Compose
