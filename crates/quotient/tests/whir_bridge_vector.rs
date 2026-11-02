@@ -3,7 +3,9 @@
 //! `opening::tests`, lanes out of order and a gap, `placed` short of the stack), written in the form leanerVM
 //! mumbai's Lean verifier reads: the scalar stream, then one full Merkle path per query (the pruned batches
 //! expanded, as `Transcript::finish` returns them). `formal/WhirBridge/Test/Check.lean` runs the Lean mirror of
-//! `opening::verify` on it.
+//! `opening::verify` on it. The opening has leanVM's transcript shape (`opening::iv`: the IV `keccak256(prefix ‖
+//! claims)`, a zero public digest, the root as the stream's first two scalars), which `variantProg` and
+//! `famSeed` model; the vector's `prefix` line is `pre`, byte by byte.
 //!
 //! `cargo test -p quotient --test whir_bridge_vector -- --ignored` writes `target/whir_bridge_vector.txt`
 //! (or `$WHIR_BRIDGE_VECTOR`).
@@ -56,8 +58,9 @@ fn whir_bridge_vector() {
     let wire = opening::wire_proof(&proof);
     assert_eq!(opening::verify(&table.layout, &committed.root, &claims, &wire), Ok(()));
 
-    // Replay the opening (`opening::verify`'s seed and calls, nothing checked) for every query's full path.
-    let mut bytes = committed.root.to_vec();
+    // Replay the opening (`opening::verify`'s transcript and calls, nothing checked) for every query's full path:
+    // the IV `keccak256(prefix ‖ claims)`, a zero public digest, the root as the first two scalars.
+    let mut bytes = opening::prefix(&table.layout).to_vec();
     for claim in &claims {
         for x in claim.point.iter().chain([&claim.value]) {
             for limb in limbs(x) {
@@ -65,9 +68,11 @@ fn whir_bridge_vector() {
             }
         }
     }
-    let iv = primitives::hash::hash(b"pcs-quotient-opening");
-    let statement = primitives::hash::hash(&bytes);
-    let mut transcript = Transcript::new(&wire, Digest(iv), Digest(statement), false);
+    let iv = primitives::hash::hash(&bytes);
+    assert_eq!(iv, opening::iv(&table.layout, &claims));
+    let mut transcript = Transcript::new(&wire, Digest(iv), Digest([0; 32]), false);
+    let halves = transcript.next_scalars(2).expect("the root's two scalars");
+    assert_eq!(Digest::from_halves(halves[0], halves[1]), Ok(Digest(committed.root)));
     let _lambda = transcript.sample();
     let zero = E::new(0, 0, 0);
     verifier::whir::verify_whir(
@@ -90,6 +95,8 @@ fn whir_bridge_vector() {
             .chain((0..layout.lanes()).map(|l| layout.block(l) as u64)),
     );
     out += &line("root", words(&committed.root));
+    // The IV's prefix, byte by byte (`opening::prefix`, `pre` of `famSeed`).
+    out += &line("prefix", opening::prefix(layout).iter().map(|&b| b as u64));
     for claim in &claims {
         out += &line("claim", claim.point.iter().chain([&claim.value]).flat_map(limbs));
     }

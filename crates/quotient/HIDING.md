@@ -5,7 +5,8 @@ crates/flock/membership-zk.md), whose Lemma 4, Lemma 5 and "the siblings" this a
 # Hiding the commitments and their openings
 
 The reduction (`protocol::reduce`) leaves two roots, five field elements and four claims; its masks make the
-field elements uniform. This note is about the rest of what a prover publishes for its two secret tables: the
+four `a_j` uniform given the statement and `t`, and the fifth, `next = σ(t)`, is not masked but is public: the
+wiring polynomial, a function of the circuit, at `t`. This note is about the rest of what a prover publishes for its two secret tables: the
 **roots** (in calldata) and the **WHIR openings** of the claims. Before this change both were deterministic
 functions of the witness: the witness table `R1` held `w_hat` and the masks in clear lanes, so a verifier who
 guesses a witness could recompute the root from it (the four `a_j` pin the twelve masks), and the opened rows of
@@ -31,7 +32,8 @@ claim of the opening has the same value. If
 then a translation of the padding (a bijection) maps the opening's view of `T` up to WHIR's first fold onto that
 of `T'`: the six lane rounds, the folded table `f¹`, and every opened row. Everything WHIR shows after the first
 fold (the first in-lane message, the commitments to `f¹` and the deeper levels, their out-of-domain values, rounds,
-rows, the final polynomial) is a function of `f¹` and the challenges, so the whole opening of `T` is distributed
+the grinding nonces, rows, the final polynomial) is a function of `f¹` and the challenges (a nonce is the
+smallest valid one, a function of the transcript before it), so the whole opening of `T` is distributed
 as that of `T'`. Given the view, every unopened row of the first commitment keeps `L - 3` uniform `K`-elements,
 `64(L - 3)` bits: `2368` for `R1` (40 lanes), `3840` for `R2` (63 lanes). Modelling Keccak-256, where it hashes the
 first commitment's rows, as a random oracle, the **roots and the openings** of `T` and `T'` are then
@@ -39,13 +41,14 @@ indistinguishable but with probability `2·H·2^(ℓ+1)·2^(-64(L-3))` for `H` o
 `membership-zk.md`, unchanged: exchange the oracle's values on each pair of corresponding unopened rows; inner
 nodes and the root then agree).
 
-With the reduction's own masking (the `a_j` and `next` uniform given the statement, so the claims are functions of
-uniform values), the prover's whole output for one statement is the same for any two witnesses. What is not
+With the reduction's own masking (the `a_j` uniform given the statement and `t`, `next = σ(t)` public, so the
+claims are functions of uniform and public values), the prover's whole output for one statement is the same for
+any two witnesses. What is not
 hidden: the statement, the circuit, the wiring table and its opening, the sizes.
 
 **Assumptions.** Keccak-256 as a random oracle on the first commitment's rows; the transcript hashes as
 programmable random oracles for Fiat–Shamir (the standard transfer, as in `membership-zk.md`, not redone here);
-the padding seed is 32 secret uniform bytes (below); an honest verifier's challenges (conditions (S) and (R) are
+the masks and the padding seed are secret, uniform and fresh per proof, never reused (below); an honest verifier's challenges (conditions (S) and (R) are
 on them, see "What remains open").
 
 ## The layout
@@ -81,11 +84,20 @@ contract, are those of the plain layouts.
 **Soundness does not change**: the WHIR verifier is leanVM's, and the table a stack encodes is held on the same
 blocks and pieces as before or fewer (the spills now take 37 pieces, not a lane), which `fits` checks.
 
-**Randomness.** `prove` takes the masks and a 32-byte `seed`, which must be uniform and secret:
-`protocol::fresh_randomness` draws both from `rand`'s thread generator (ChaCha, seeded by the operating system).
+**Randomness.** The masks and the padding's seed must be uniform, secret, and **fresh per proof, never
+reused**: two proofs that share the padding's seed have the same random first pieces, which their opened rows
+then pin across both proofs' positions (about 446 > 256), and two that share the masks let the second proof's
+`a_j` be predicted from the first's for a guessed witness; either confirms the guess (`review_hiding.rs`,
+`reused_seed_confirms_the_witness`, `reused_masks_confirm_the_witness`). So `protocol::prove` draws its own: a
+32-byte seed per proof from the operating system (`protocol::fresh_seed`, `rand`'s `OsRng`, which keeps no
+state in the process and so does not repeat in a fork), from which `protocol::Randomness::derive` makes both by
+Keccak-256 with distinct tags, a key binding the seed, the circuit's commitment, the statement and a digest of
+the witness's cells: a seed that repeats anyway (a restored snapshot) gives unrelated randomness for another
+witness or statement, and the same proof again for the same ones. `protocol::prove_with_randomness` takes the
+randomness, deterministic, for tests and reproducible benchmarks, with the same requirement.
 A table's seed is Keccak-256(`"pcs-quotient-pad-" ‖ table ‖ seed`); lane `l` is filled by ChaCha12 (`rand`'s
 `StdRng`) keyed by Keccak-256(table seed ‖ `l`), so the prover is deterministic given the seed and fills lanes in
-parallel. Tests and the benchmark draw the seed from `primitives::test_rng`.
+parallel. Tests and the benchmark draw the proof's seed from `primitives::test_rng`.
 
 ## Why it hides
 
