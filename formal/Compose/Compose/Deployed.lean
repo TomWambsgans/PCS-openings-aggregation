@@ -145,10 +145,16 @@ theorem readsInl_openingDoomed {α : Type} (L : Layout) (R : ℕ)
   simp only [OpeningDoomed, hc]
 
 /-- **An opening makes at most `10122` queries** (F2's `variantQueries`): the seed's two, then the
-program's, whose cost F2 bounds (`isTotalQueryBound_fam`); a rejected root stops after the seed. -/
+program's, whose cost F2 bounds (`isTotalQueryBound_fam`); a rejected root stops after the seed,
+and an empty claim list is rejected before any query. -/
 theorem ourVerifier_queryBound (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking) × Proof) :
     IsTotalQueryBound (ourVerifier L R w) 10122 := by
   rw [ourVerifier_eq]
+  by_cases he : w.1.2.claims.isEmpty = false
+  swap
+  · simp only [he]
+    trivial
+  simp only [he, ↓reduceIte]
   by_cases hc : rootOf w.2 = some w.1.1
   · simp only [hc, ↓reduceIte]
     rw [← verifierFam_eq L R w, ← variantQueries_eq]
