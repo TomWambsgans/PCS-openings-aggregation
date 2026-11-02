@@ -63,8 +63,12 @@ random streams.
      degrees, every commitment's combined relations against its stack, the Rust verifier, the EVM contract on the
      real calldata, and mutations.
    - `unused_words_are_not_relied_on`: the stacks' words past their blocks filled with pseudo-random words.
+   - `setup_roots`: the roots of `F` (from the program and the shape), `A0` and `B0` (from Flock's R1CS), for the
+     contract's generation.
 
-   `tests/prove_kernels.rs` times the NTT kernels alone.
+   `tests/prove_tiny.rs` needs no trace, and runs with the other tests. It takes review M1's tiny executions
+   (15–31 cycles, all six tables, memory and bytecode of `2^4` and `2^5`), proves and verifies them, and compares
+   the stream byte for byte with the review's prover's. `tests/prove_kernels.rs` times the NTT kernels alone.
 
 ## The prover, phase by phase (`src/prover/prove.rs`)
 
@@ -210,6 +214,19 @@ takes 0.14 s.
   the tail. The weights are zero there, and the point claims are on the whole stack's multilinear, whatever the
   tail holds.
 
+## Cross-checked against review M1's independent honest prover (`tests/prove_tiny.rs`)
+
+`tests/review_honest.rs` (leanvm-univariate `b948bfc`) is the review's own prover, written from SPEC.md: polynomials
+in the monomial basis, every identity divided exactly, no WHIR (stand-in roots).
+
+- On its executions at memory and bytecode sizes `(2^5, 2^4)`, `(2^4, 2^5)` and `(2^5, 2^5)`, this prover writes
+  **the same stream, byte for byte**, when it sends the same stand-in roots: the 84-or-so values at `t`, the 15
+  rounds of the batching sumcheck and its end values.
+- The batching sumcheck's rounds are sums over every word of the three stacks, so the two provers' `C1`, `C2` and
+  setup stacks agree: every basis-`B` coefficient, the heap, and every quotient chunk.
+- With its real WHIR roots, the prover's proofs of these executions are accepted at all four sizes, including
+  `(2^4, 2^4)` with DEREF's table empty (height 0).
+
 ## What is missing
 
 1. **(a′)'s skip of 3** (`FLOCK_MAIN`; the prover returns an error).
@@ -219,7 +236,15 @@ takes 0.14 s.
      (`k + 6` rounds) and the ring switch here take `k` as a parameter already.
 2. **Extension W** (weighted claims): no opening prover. `PCS_OPEN` would run the weight itself.
 3. **The setup roots in the contract** are placeholder constants (`contract::setup_root`). The prover computes the
-   real ones (`F`'s; `A0`'s begins `93cd9a03…` and `B0`'s `c0755650…`), which a deployment must put in the code.
+   real ones (`setup::roots`; test `setup_roots`), which a deployment must put in the code: `F`'s from the program
+   and the shape, `A0`'s and `B0`'s from the R1CS. Review M1's F2 asks for exactly this. The gas-iteration branch
+   is to bind them in the IV. At the aggregation guest and the 1,000-signature shape, measured in 3.3 s:
+
+   ```text
+   F  9b5a0f9bd796c09b8bc328113956464acf865c99b7dfc088c0c0a3208eab5fb7   (memory 2^21, bytecode 2^19)
+   A0 93cd9a0352a85dcc663f7068e1f3afa3a00f5220bd2b03d67244f0eb133fd2f7
+   B0 c07556508c416240dafd47665831fd51d2eb1104a52c63231101479c7f6cd467
+   ```
 4. **The `A0`, `B0` openings run in the test**, after the proof (`tests/prove_real.rs`), not in `prove`. They are
    fixed commitments, opened per proof: about 3 s for the two, not in the phase table above.
 
