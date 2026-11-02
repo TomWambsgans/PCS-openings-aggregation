@@ -3,6 +3,7 @@
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
   f0393df4, file lean_vm/LeanVM/Arithmetization/Bytecode.lean. MIT OR Apache-2.0; see NOTICE.md.
+  `LeanVM` renamed `Lv42`.
 
   The sixteen-slot bytecode encoding of an instruction, its eight-coordinate bus entry, and the
   decoder for canonical eight-coordinate entries.

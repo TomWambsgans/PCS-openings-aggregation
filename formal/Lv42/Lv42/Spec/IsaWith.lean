@@ -2,7 +2,8 @@
   Lv42.Spec.IsaWith
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Spec/IsaWith.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Spec/IsaWith.lean. MIT OR Apache-2.0; see NOTICE.md. `LeanVM`
+  renamed `Lv42`.
 
   leanISA with the relation `BLAKE2S` checks a parameter: the deployed machine at the compression
   function, the Flock-blind machine at canonical cells.

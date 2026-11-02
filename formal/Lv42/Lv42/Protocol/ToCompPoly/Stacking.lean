@@ -2,9 +2,9 @@
   Lv42.Protocol.ToCompPoly.Stacking
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Protocol/ToCompPoly/Stacking.lean. MIT OR Apache-2.0; see
-  NOTICE.md. Adds `evalMle_eq_sumCube_hadamard`, f0393df4's lemma of `Multilinear`, which leanerVM
-  `6175f1a0`'s `Multilinear` (imported here) no longer has.
+  f0393df4, file lean_vm/LeanVM/Protocol/ToCompPoly/Stacking.lean. MIT OR Apache-2.0; see NOTICE.md.
+  `LeanVM` renamed `Lv42`. Adds `evalMle_eq_sumCube_hadamard`, f0393df4's lemma of `Multilinear`,
+  which leanerVM `6175f1a0`'s `Multilinear` (imported here) no longer has.
 
   Aligned stacking of hypercube tables of different heights into one table, and the selection
   identity: the stack at a point whose high coordinates are a block's selector bits is that

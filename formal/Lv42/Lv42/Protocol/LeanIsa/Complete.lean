@@ -3,6 +3,7 @@
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
   f0393df4, file lean_vm/LeanVM/Protocol/LeanIsa/Complete.lean. MIT OR Apache-2.0; see NOTICE.md.
+  `LeanVM` renamed `Lv42`.
 
   The adaptor's completeness direction: a witness satisfying leanISA's constraint system stacks
   into a column satisfying the leanISA instance's relation, and is read back off it.

@@ -2,7 +2,8 @@
   Lv42.Arithmetization.Completeness.Theorem
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Arithmetization/Completeness/Theorem.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Arithmetization/Completeness/Theorem.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   Constraint completeness: a valid execution whose tables fit the row cap has a witness that
   satisfies the constraint statement and represents it.

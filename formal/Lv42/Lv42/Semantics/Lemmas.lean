@@ -2,7 +2,8 @@
   Lv42.Semantics.Lemmas
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Semantics/Lemmas.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Semantics/Lemmas.lean. MIT OR Apache-2.0; see NOTICE.md. `LeanVM`
+  renamed `Lv42`.
 
   The lemmas about the definitions of `Lv42.Spec.Isa`: addressing, fetching, the step, and the
   execution loop.

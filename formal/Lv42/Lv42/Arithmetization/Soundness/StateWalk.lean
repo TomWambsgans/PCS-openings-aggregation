@@ -2,7 +2,8 @@
   Lv42.Arithmetization.Soundness.StateWalk
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/StateWalk.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/StateWalk.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   The state channel of a satisfying witness: every row of the six tables is a step of the program
   over the committed image, no row sits at the sentinel counter, and the balanced state pair

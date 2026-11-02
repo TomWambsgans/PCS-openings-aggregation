@@ -3,6 +3,7 @@
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
   f0393df4, file lean_vm/LeanVM/Arithmetization/Statement.lean. MIT OR Apache-2.0; see NOTICE.md.
+  `LeanVM` renamed `Lv42`.
 
   The constraint statement of leanISA: the ensemble of the six opcode tables, the two seed
   blocks and the verifier; bus balance as a multiset equality; the checks the verifier makes

@@ -2,7 +2,8 @@
   Lv42.Arithmetization.Soundness.Lookup
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/Lookup.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/Lookup.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   The offline memory-checking argument behind the two lookup channels: a list of nonzero counts
   closed under multiplication by `g` and shorter than the order of `g` is empty, so a balanced

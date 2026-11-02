@@ -2,7 +2,8 @@
   Lv42.Arithmetization.Completeness.Skeletons
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Arithmetization/Completeness/Skeletons.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Arithmetization/Completeness/Skeletons.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   The skeletons of a run: one per step, the state stepped from and the instruction fetched there,
   and the number of rows each table gets from them.

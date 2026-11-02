@@ -2,7 +2,9 @@
   Lv42.Spec.Isa
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Spec/Isa.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Spec/Isa.lean. MIT OR Apache-2.0; see NOTICE.md. `LeanVM` renamed
+  `Lv42`. Changed: the docstring of `run` cites the halting rule of leanVM `42422001`'s Rust
+  executor.
 
   leanISA, the leanVM instruction set: memory, instructions, programs, one step, valid
   executions; and the encoding of an instruction as sixteen `K` slots.
@@ -268,7 +270,13 @@ def Program.finalPc (prog : Program) : K := gpow (2 ^ prog.logSize - 1)
 /-- The machine halts at `(finalPc, 1)`. -/
 def Regs.final (prog : Program) : Regs K := ⟨prog.finalPc, 1⟩
 
-/-- `n` steps from `r`, halting at `finalPc`: `none` if a step fails or the machine halts first. -/
+/-- `n` steps from `r`, halting at `finalPc`: `none` if a step fails or the machine halts first.
+The machine halts when `pc` reaches `finalPc`, whatever `fp` is; a valid execution then asks
+`fp = 1` (`ValidExecution`, `Regs.final`). This is leanVM `42422001`'s rule: its executor stops
+at `pc == ending_pc`, the last slot, and fails there unless `fp` is main's frame `g^0`
+(`crates/leanvm_core/src/cpu/execute.rs:541-546`, `HaltOutsideMain`; registers start at
+`(g^0, g^0)`, `:302`). (leanerVM `6175f1a0`, for the Keccak-era leanVM, halts only at the final
+state, both registers.) -/
 noncomputable def run {κ : ℕ} (prog : Program) (L : MemImage κ) : ℕ → Regs K → Option (Regs K)
   | 0, r => some r
   | n + 1, r => if r.pc = prog.finalPc then none else step prog L r >>= run prog L n

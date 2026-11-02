@@ -3,6 +3,8 @@
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
   f0393df4, file lean_vm/LeanVM/Protocol/Blake2sCircuit.lean. MIT OR Apache-2.0; see NOTICE.md.
+  `LeanVM` renamed `Lv42`. It imports the Flock constants (`Lv42.Parameters.Flock`) instead of
+  f0393df4's verifier (`Spec/Verifier.lean`, `Protocol/Compile/Prog.lean`), which is not ported.
 
   The BLAKE2s compression circuit of leanVM's Flock argument, as a product-gate circuit on a
   block of `2 ^ 14` positions, with its soundness against the compression function `compress`

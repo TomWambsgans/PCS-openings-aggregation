@@ -2,7 +2,8 @@
   Lv42.Arithmetization.Soundness.Bus
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/Bus.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/Bus.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   What a satisfying witness sends on the bus: the verifier's two states, the rows of the six
   opcode tables in their shared shape, the memory block's seed and finalize of the image, and the

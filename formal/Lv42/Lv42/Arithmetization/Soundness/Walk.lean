@@ -2,7 +2,8 @@
   Lv42.Arithmetization.Soundness.Walk
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/Walk.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/Walk.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   The walk decomposition of a balanced state channel: edges that are steps, whose pushed and
   pulled states balance against a start and the final registers, contain a run from the start to

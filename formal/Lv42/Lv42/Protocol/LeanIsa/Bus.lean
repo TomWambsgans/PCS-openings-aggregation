@@ -3,6 +3,7 @@
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
   f0393df4, file lean_vm/LeanVM/Protocol/LeanIsa/Bus.lean. MIT OR Apache-2.0; see NOTICE.md.
+  `LeanVM` renamed `Lv42`.
 
   The bus of a leanISA witness read as the M3 model's one bus: the sixteen-slot tuples of its
   interactions, side by side, and the three channel pairs' balances as one permutation.

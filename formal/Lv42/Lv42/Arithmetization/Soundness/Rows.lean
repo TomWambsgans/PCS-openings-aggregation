@@ -2,7 +2,8 @@
   Lv42.Arithmetization.Soundness.Rows
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/Rows.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Arithmetization/Soundness/Rows.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   What an arbitrary row of each of the six opcode tables sends, in the shape every table shares,
   and what the table's soundness makes of it: under the guarantees of its pulls, the row is a step

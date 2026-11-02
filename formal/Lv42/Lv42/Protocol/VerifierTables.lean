@@ -2,8 +2,8 @@
   Lv42.Protocol.VerifierTables
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Spec/Verifier.lean (its tables, `verifier.py:730-879`).
-  MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Spec/Verifier.lean (its tables, `verifier.py:730-879`). MIT OR
+  Apache-2.0; see NOTICE.md.
 
   The verifier's six instruction tables, as far as the arithmetization reads them: their opcodes
   and column names, and the padding row (zero but for the `BLAKE2S` value limbs, which hold

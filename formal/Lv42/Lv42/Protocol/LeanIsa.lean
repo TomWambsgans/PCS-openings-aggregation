@@ -2,7 +2,10 @@
   Lv42.Protocol.LeanIsa
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Protocol/LeanIsa.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Protocol/LeanIsa.lean. MIT OR Apache-2.0; see NOTICE.md. `LeanVM`
+  renamed `Lv42`. It imports the verifier's tables (`Lv42.Protocol.VerifierTables`) instead of
+  f0393df4's verifier and GKR bus phase (`Spec/Verifier.lean`, `Protocol/Bus.lean`), which are not
+  ported, and drops `leanIsa_conditions` and its leaf-count lemmas, which are about that bus phase.
 
   The leanISA instance of the M3 model, and the two maps of the adaptor: the committed stack of
   a constraint-system witness, and the witness read back off any stack.

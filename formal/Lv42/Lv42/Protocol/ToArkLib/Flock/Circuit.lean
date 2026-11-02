@@ -2,7 +2,8 @@
   Lv42.Protocol.ToArkLib.Flock.Circuit
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Protocol/ToArkLib/Flock/Circuit.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Protocol/ToArkLib/Flock/Circuit.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   Boolean circuits of product gates over GF(2) whose linear wires are substituted away, as data:
   linear forms are bitsets, a gate is a pair of forms, and the circuit lowers to a block R1CS with

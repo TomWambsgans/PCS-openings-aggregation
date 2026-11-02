@@ -2,7 +2,8 @@
   Lv42.Arithmetization.Completeness.Messages
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Arithmetization/Completeness/Messages.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Arithmetization/Completeness/Messages.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   What the row of each of the six tables sends on the bus: the state step, the bytecode read, and
   the memory reads, as the explicit messages the row circuit emits.

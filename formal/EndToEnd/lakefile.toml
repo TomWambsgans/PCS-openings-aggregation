@@ -88,6 +88,7 @@ globs = ["PcsQuotient", "PcsQuotient.+"]
 name = "Lv42"
 srcDir = "../Lv42"
 globs = ["Lv42", "Lv42.+"]
+leanOptions = { warningAsError = true }
 
 # ---- The end-to-end libraries ----
 

@@ -2,7 +2,8 @@
   Lv42.Protocol.ToArkLib.Flock.BlockR1CS
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Protocol/ToArkLib/Flock/BlockR1CS.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Protocol/ToArkLib/Flock/BlockR1CS.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   One block of a rank-one constraint system whose third matrix is the identity: two Boolean
   matrices, with evaluators of their products and of their transposes' products. Candidate for

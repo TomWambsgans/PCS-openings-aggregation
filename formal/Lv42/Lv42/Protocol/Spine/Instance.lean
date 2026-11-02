@@ -3,6 +3,8 @@
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
   f0393df4, file lean_vm/LeanVM/Protocol/Spine/Instance.lean. MIT OR Apache-2.0; see NOTICE.md.
+  `LeanVM` renamed `Lv42`. It imports the Flock constants (`Lv42.Parameters.Flock`) instead of
+  f0393df4's verifier (`Spec/Verifier.lean`, `Protocol/Compile/Prog.lean`), which is not ported.
 
   The abstract instance the proof system is stated over, and the relation it proves knowledge of.
 -/

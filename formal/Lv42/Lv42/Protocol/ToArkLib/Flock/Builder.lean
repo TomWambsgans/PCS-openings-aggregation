@@ -2,7 +2,8 @@
   Lv42.Protocol.ToArkLib.Flock.Builder
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Protocol/ToArkLib/Flock/Builder.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Protocol/ToArkLib/Flock/Builder.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   A builder for product-gate circuits: a state monad whose one effect records a gate at the next
   free position, with two compositional contracts for its programs, soundness against a

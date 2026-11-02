@@ -3,6 +3,7 @@
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
   f0393df4, file lean_vm/LeanVM/Protocol/LeanIsa/Sound.lean. MIT OR Apache-2.0; see NOTICE.md.
+  `LeanVM` renamed `Lv42`.
 
   The adaptor's soundness direction: a stack satisfying the leanISA instance's relation carries a
   witness satisfying leanISA's constraint system.

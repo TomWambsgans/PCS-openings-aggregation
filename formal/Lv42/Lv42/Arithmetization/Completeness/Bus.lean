@@ -2,7 +2,8 @@
   Lv42.Arithmetization.Completeness.Bus
 
   Adapted from leanerVM (https://github.com/Verified-zkEVM/leanerVM), branch mumbai, commit
-  f0393df4, file lean_vm/LeanVM/Arithmetization/Completeness/Bus.lean. MIT OR Apache-2.0; see NOTICE.md.
+  f0393df4, file lean_vm/LeanVM/Arithmetization/Completeness/Bus.lean. MIT OR Apache-2.0; see
+  NOTICE.md. `LeanVM` renamed `Lv42`.
 
   What a row sends on each of the six channels, and the counts the reads of a sequence of rows
   get.
