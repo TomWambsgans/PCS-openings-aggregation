@@ -23,5 +23,6 @@ pub mod opening;
 pub mod poly;
 pub mod prove;
 pub mod quotients;
+pub mod setup;
 pub mod stack;
 pub mod trace;

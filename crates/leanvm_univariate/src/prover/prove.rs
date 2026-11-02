@@ -20,7 +20,7 @@ use super::flock::FlockWitness;
 use super::opening::{self, Committed};
 use super::poly::{eval_e, eval_k, from_v, novel_from_values, subset_sums, to_v};
 use super::quotients::{self, Quotient};
-use super::stack::{Stack, c1_columns, c2_columns, setup_columns};
+use super::stack::{Stack, c1_columns, c2_columns};
 use super::trace::Trace;
 use crate::claims::{Column, Combined, Commitment};
 use crate::contract::NAME;
@@ -178,14 +178,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
         stack1.put_k(Column::Memory(k), &column.b);
     }
     stack1.put_k(Column::BytecodeFinal, &c1.bytecode_final.b);
-    let mut stack_f = Stack::new(StackLayout::new(&setup_columns(&shape)));
-    {
-        // The 16 slots interleaved: word `slot + 16 k`.
-        let n = 1usize << trace.log_bytecode;
-        let tuple: Vec<F64> = (0..16 * n).map(|i| setup.slots[i % 16].b[i / 16]).collect();
-        stack_f.put_k(Column::BytecodeTuple, &tuple);
-        stack_f.put_k(Column::Address, &setup.address.b);
-    }
+    let mut stack_f = super::setup::f_stack(&shape, &setup);
     if config.garbage {
         stack1.fill_unused(0xC1);
         stack_f.fill_unused(0xF0);

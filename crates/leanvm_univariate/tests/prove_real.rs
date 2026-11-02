@@ -187,15 +187,12 @@ fn end_to_end(blake2s: Blake2s) {
     // Flock's two setup claims, opened: A0 and B0 committed with WHIR (2^28 words each) and opened at the claim's point.
     if let Some((point, a, b)) = &report.flock {
         let started = std::time::Instant::now();
-        let (a0, b0) = leanvm_univariate::prover::matrices::setup_matrices();
-        println!("  A0, B0 built in {:.2} s", started.elapsed().as_secs_f64());
+        let [(a0, a0c), (b0, b0c)] = leanvm_univariate::prover::setup::matrices();
+        println!("  A0, B0 built and committed in {:.2} s", started.elapsed().as_secs_f64());
         let point: Vec<F192> = point.iter().map(|&x| leanvm_univariate::prover::poly::from_v(x)).collect();
-        for (name, layout, words, value) in [("A0", 0x5504u64, a0, *a), ("B0", 0x5505, b0, *b)] {
+        for (name, layout, words, committed, value) in [("A0", 0x5504u64, a0, a0c, *a), ("B0", 0x5505, b0, b0c, *b)] {
             let value = leanvm_univariate::prover::poly::from_v(value);
             assert_eq!(primitives::multilinear::mle_eval_par(&words, &point), value, "{name} at the claim's point");
-            let started = std::time::Instant::now();
-            let committed = opening::commit(&words, 28, 1 << 28);
-            let commit = started.elapsed().as_secs_f64();
             let started = std::time::Instant::now();
             let proof = opening::open(&words, &committed, layout, &point, value);
             let open = started.elapsed().as_secs_f64();
@@ -203,8 +200,8 @@ fn end_to_end(blake2s: Blake2s) {
             opening::verify(&committed.root, 28, 1 << 28, layout, &point, value, &opening::wire_proof(&proof))
                 .expect("the setup opening verifies");
             println!(
-                "  {name}: committed in {commit:.2} s (root {:02x?}), opened in {open:.2} s, verified",
-                &committed.root[..8]
+                "  {name}: root {}, opened in {open:.2} s, verified",
+                leanvm_univariate::prover::setup::hex(&committed.root)
             );
         }
     }
@@ -237,6 +234,27 @@ fn proves_and_verifies() {
 #[ignore]
 fn proves_and_verifies_with_flock() {
     end_to_end(Blake2s::Flock(FLOCK_LEANVM_SKIP));
+}
+
+/// The setup roots a contract for this trace's program and shape is generated with (review M1's F2): `F` from the
+/// program and the shape, `A0` and `B0` from Flock's BLAKE2s R1CS.
+#[test]
+#[ignore]
+fn setup_roots() {
+    let Some(trace) = trace() else {
+        println!("LEANVM_TRACE is not set: no program");
+        return;
+    };
+    parallel::init();
+    let started = std::time::Instant::now();
+    let setup = leanvm_univariate::prover::columns::setup_polys(&trace);
+    let roots = leanvm_univariate::prover::setup::roots(&trace.shape(), &setup);
+    use leanvm_univariate::prover::setup::hex;
+    println!("  shape {:?}", trace.shape());
+    println!("  F  {}", hex(&roots.f));
+    println!("  A0 {}", hex(&roots.a0));
+    println!("  B0 {}", hex(&roots.b0));
+    println!("  in {:.2} s", started.elapsed().as_secs_f64());
 }
 
 /// The verifier relies on nothing in the stacks' words past their blocks: filled with pseudo-random words, the
