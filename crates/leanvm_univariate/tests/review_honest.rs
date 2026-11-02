@@ -234,8 +234,9 @@ impl Rng {
 // ---------------------------------------------------------------------------------------------------------------
 // The execution: a tiny program run from (pc 1, fp 1) to (g^15, 1).
 
-const LM: usize = 4;
-const LB: usize = 4;
+thread_local! { static SIZES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((4, 4)) }; }
+fn lm() -> usize { SIZES.get().0 }
+fn lb() -> usize { SIZES.get().1 }
 
 fn col(table: &Table, name: &str) -> usize {
     table.columns.iter().position(|&c| c == name).unwrap_or_else(|| panic!("column {name}"))
@@ -316,7 +317,7 @@ struct Witness {
 fn execution(rng: &mut Rng) -> Witness {
     let tables = tables();
     let public = [rng.next(), rng.next(), rng.next(), rng.next()];
-    let mut memory = vec![[ZERO; 3]; 1 << LM];
+    let mut memory = vec![[ZERO; 3]; 1 << lm()];
     memory[0] = [E::new(public[0], 0, 0), E::new(public[1], 0, 0), ZERO];
     memory[1] = [E::new(public[2], 0, 0), E::new(public[3], 0, 0), ZERO];
     memory[2] = [rng.k(), rng.k(), rng.k()];
@@ -335,28 +336,21 @@ fn execution(rng: &mut Rng) -> Witness {
         *cell = [rng.k(), rng.k(), ZERO];
     }
     let blake = [8, 9, 10, 11, 12, 14, 8];
-    let program: Vec<(usize, Vec<u64>)> = vec![
-        (OP_SET, vec![2]),
-        (OP_XOR, vec![2, 3, 4]),
-        (OP_MUL, vec![2, 3, 5]),
-        (OP_JUMP, vec![6, 7, 7]),
-        (OP_BLAKE2S, blake.to_vec()),
-        (OP_SET, vec![3]),
-        (OP_XOR, vec![2, 3, 4]),
-        (OP_MUL, vec![2, 3, 5]),
-        (OP_JUMP, vec![6, 7, 7]),
-        (OP_BLAKE2S, blake.to_vec()),
-        (OP_SET, vec![4]),
-        (OP_XOR, vec![2, 3, 4]),
-        (OP_MUL, vec![2, 3, 5]),
-        (OP_JUMP, vec![6, 7, 7]),
-        (OP_BLAKE2S, blake.to_vec()),
-    ];
-    assert_eq!(program.len(), (1 << LB) - 1);
-    let cell_of = |address: E| (0..1u64 << LM).find(|&c| gpow(c) == address).expect("an address of the memory");
-    let mut memory_count = vec![ONE; 1 << LM];
-    let mut bytecode_count = vec![ONE; 1 << LB];
-    let mut bytecode = vec![[ZERO; 16]; 1 << LB];
+    // Five instructions a round, the SET's cell cycling 2, 3, 4; as many as the bytecode's 2^lb - 1 steps.
+    let program: Vec<(usize, Vec<u64>)> = (0..(1usize << lb()) - 1)
+        .map(|step| match step % 5 {
+            0 => (OP_SET, vec![2 + (step / 5 % 3) as u64]),
+            1 => (OP_XOR, vec![2, 3, 4]),
+            2 => (OP_MUL, vec![2, 3, 5]),
+            3 => (OP_JUMP, vec![6, 7, 7]),
+            _ => (OP_BLAKE2S, blake.to_vec()),
+        })
+        .collect();
+    assert!(lm() >= 4, "the program reads cells up to 15");
+    let cell_of = |address: E| (0..1u64 << lm()).find(|&c| gpow(c) == address).expect("an address of the memory");
+    let mut memory_count = vec![ONE; 1 << lm()];
+    let mut bytecode_count = vec![ONE; 1 << lb()];
+    let mut bytecode = vec![[ZERO; 16]; 1 << lb()];
     let mut active: Vec<Vec<Vec<E>>> = vec![vec![]; N_TABLES];
     for (step, (opcode, cells)) in program.iter().enumerate() {
         let table = &tables[*opcode];
@@ -389,7 +383,7 @@ fn execution(rng: &mut Rng) -> Witness {
         active[*opcode].push(row);
     }
     // The last instruction is never run: any content.
-    bytecode[(1 << LB) - 1] = std::array::from_fn(|s| if s >= 3 { rng.k() } else { ZERO });
+    bytecode[(1 << lb()) - 1] = std::array::from_fn(|s| if s >= 3 { rng.k() } else { ZERO });
     for (i, slots) in bytecode.iter_mut().enumerate() {
         slots[0] = SEP_BYTECODE;
         slots[1] = gpow(i as u64);
@@ -440,8 +434,8 @@ fn execution(rng: &mut Rng) -> Witness {
 
 fn shape_of(table_rows: [u64; N_TABLES]) -> Shape {
     Shape {
-        log_memory: LM,
-        log_bytecode: LB,
+        log_memory: lm(),
+        log_bytecode: lb(),
         table_rows,
     }
 }
@@ -659,30 +653,30 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
     let mut memory = Vec::new();
     for k in 0..3 {
         let values: Vec<E> = witness.memory.iter().map(|cell| cell[k]).collect();
-        let (coefficients, mono) = bases.b[LM].from_values(&values);
-        c1.push(Column::Memory(k), LM, coefficients);
+        let (coefficients, mono) = bases.b[lm()].from_values(&values);
+        c1.push(Column::Memory(k), lm(), coefficients);
         memory.push(mono);
     }
-    let (coefficients, memory_final) = bases.b[LM].from_values(&witness.memory_final);
-    c1.push(Column::Memory(3), LM, coefficients);
-    let (coefficients, bytecode_final) = bases.b[LB].from_values(&witness.bytecode_final);
-    c1.push(Column::BytecodeFinal, LB, coefficients);
+    let (coefficients, memory_final) = bases.b[lm()].from_values(&witness.memory_final);
+    c1.push(Column::Memory(3), lm(), coefficients);
+    let (coefficients, bytecode_final) = bases.b[lb()].from_values(&witness.bytecode_final);
+    c1.push(Column::BytecodeFinal, lb(), coefficients);
     let h_b = heights[OP_BLAKE2S];
     c1.push(Column::Qflock, h_b + 8, witness.qflock.clone());
-    let addresses: Vec<E> = (0..1u64 << LM).map(gpow).collect();
-    let (coefficients, address) = bases.b[LM].from_values(&addresses);
-    setup.push(Column::Address, LM, coefficients);
+    let addresses: Vec<E> = (0..1u64 << lm()).map(gpow).collect();
+    let (coefficients, address) = bases.b[lm()].from_values(&addresses);
+    setup.push(Column::Address, lm(), coefficients);
     let mut slots = Vec::new();
-    let mut tuple_words = vec![ZERO; 1 << (LB + 4)];
+    let mut tuple_words = vec![ZERO; 1 << (lb() + 4)];
     for s in 0..16 {
         let values: Vec<E> = witness.bytecode.iter().map(|slots| slots[s]).collect();
-        let (coefficients, mono) = bases.b[LB].from_values(&values);
+        let (coefficients, mono) = bases.b[lb()].from_values(&values);
         for (k, &c) in coefficients.iter().enumerate() {
             tuple_words[s + 16 * k] = c;
         }
         slots.push(mono);
     }
-    setup.push(Column::BytecodeTuple, LB + 4, tuple_words);
+    setup.push(Column::BytecodeTuple, lb() + 4, tuple_words);
 
     writer.send_root([E::new(0x1111, 0x2222, 0), E::new(0x3333, 0x4444, 0)]);
     let alphas: Vec<E> = (0..4).map(|_| writer.sample()).collect();
@@ -756,7 +750,7 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
     }
     heap_values[0] = tamper.node_zero.unwrap_or(ZERO);
     let init = beta + weights[0] * SEP_STATE + weights[1] + weights[2];
-    let fin = beta + weights[0] * SEP_STATE + weights[1] * gpow((1 << LB) - 1) + weights[2];
+    let fin = beta + weights[0] * SEP_STATE + weights[1] * gpow((1 << lb()) - 1) + weights[2];
     let balanced = heap_values[1] * init == fin;
 
     // C2: the heap, its tree quotient, the leaf quotients and the constraint quotient.
@@ -839,7 +833,7 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
         let line = Poly::constant(low).add(&Poly::x().scale(low + high));
         add_constraint(memory[k].add(&line), &l, &mut power);
     }
-    quotient_degree = quotient_degree.max((1 << LM) - 3);
+    quotient_degree = quotient_degree.max((1 << lm()) - 3);
     let (constraint_quotient, rem) = constraint.divmod(&w[r_w]);
     exact &= rem == Poly::zero();
     let constraint_chunks = chunks(quotient_degree + 1);
@@ -921,7 +915,7 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
         (Commitment::C2, StackLayout::new(&c2_list)),
         (
             Commitment::Setup,
-            StackLayout::new(&[(Column::BytecodeTuple, LB + 4, false), (Column::Address, LM, false)]),
+            StackLayout::new(&[(Column::BytecodeTuple, lb() + 4, false), (Column::Address, lm(), false)]),
         ),
     ];
 
@@ -1058,6 +1052,28 @@ fn honest_proof_is_accepted() {
             assert_eq!(verify(&witness, &proof, mode), Ok(true), "{mode:?}");
         }
     });
+}
+
+/// Completeness at other sizes: the memory larger than the bytecode and smaller (the bytecode's block first in the
+/// heap, as at 128 signatures), tables of 8 rows, every unused-block arrangement these give.
+#[test]
+fn honest_proofs_at_other_sizes() {
+    for (memory, bytecode) in [(5, 4), (4, 5), (5, 5)] {
+        deep(move || {
+            SIZES.set((memory, bytecode));
+            let bases = Bases::new(8);
+            let mut rng = Rng(0x5EED ^ (memory << 8 | bytecode) as u64);
+            let witness = execution(&mut rng);
+            let shape = shape_of(witness.active);
+            let blocks: Vec<_> = shape.heap().blocks.iter().map(|b| (b.leaves, b.r)).collect();
+            println!("lm {memory} lb {bytecode}: rows {:?}, H {}, blocks {blocks:?}", witness.active, shape.heap().h);
+            for mode in [Claims::Weighted, Claims::Point] {
+                let proof = prove(&witness, mode, Tamper::default(), &bases);
+                assert!(proof.exact, "every identity divides exactly");
+                assert_eq!(verify(&witness, &proof, mode), Ok(true), "lm {memory} lb {bytecode} {mode:?}");
+            }
+        });
+    }
 }
 
 /// Negative control: the same execution, but the proof claims a public input the memory does not hold. The constraint
@@ -1249,5 +1265,37 @@ fn verifying_contract_accepts_the_honest_proof_and_rejects_mutations() {
         let mut long = data.clone();
         long.push(0);
         assert!(!accepted(&long, &PcsOpen::attesting_all(0)), "one byte long");
+
+        // The deployable verifying build (crates/evm_link), cut into contracts of at most 4 KB, likewise.
+        use leanvm_flock_gas::evm::codegen::{Ending, Entry, compile_deployable};
+        let call_words = leanvm_univariate::contract::calls(&recorded);
+        let ending = Ending::PcsOpen(call_words.iter().map(Vec::len).collect());
+        let entry = Entry {
+            name: NAME,
+            iv: IV,
+            stream_len: recorded.stream_len,
+            measure: false,
+        };
+        let real = compile_deployable(&recorded.graph, &call_words.concat(), &ending, &entry, 4096);
+        let deployed = leanvm_flock_gas::evm::contract::deploy(&real, &[]);
+        println!("deployable verifying build: {} contracts", deployed.contracts.len());
+        assert!(deployed.contracts.len() > 1, "cut into parts");
+        let linked_accepts =
+            |data: &[u8], block: &PcsOpen| deployed.chain.call(deployed.address, data, block).output.as_deref() == Some(&one[..]);
+        assert!(linked_accepts(&data, &block), "the linked build accepts the honest proof");
+        for &at in offsets.iter().step_by(7) {
+            let mut mutated = data.clone();
+            mutated[header + at] ^= 1;
+            assert!(!linked_accepts(&mutated, &PcsOpen::attesting_all(0)), "linked, byte {at} changed");
+        }
+        for skip in 0..3 {
+            let mut partial = PcsOpen::default();
+            for (k, input) in outcome.pcs_calls.iter().enumerate() {
+                if k != skip {
+                    partial.register(input.clone());
+                }
+            }
+            assert!(!linked_accepts(&data, &partial), "linked, call {skip} not attested");
+        }
     });
 }
