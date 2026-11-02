@@ -163,3 +163,57 @@ theorem deployed_prEvent_le [CharP K 2] [FiniteDimensional K E] [Fintype K] [Fin
 end Deployed
 
 end QuotientSecurity.Hiding
+
+/-! ### Axioms -/
+
+/-- info: 'QuotientSecurity.Hiding.novel_natDegree' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.novel_natDegree
+
+/-- info: 'QuotientSecurity.Hiding.novel_mle' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.novel_mle
+
+/-- info: 'QuotientSecurity.Hiding.novel_firstEval_surjective' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.novel_firstEval_surjective
+
+/-- info: 'QuotientSecurity.Hiding.novel_unopened' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.novel_unopened
+
+/-- info: 'QuotientSecurity.Hiding.deployed_queries' depends on axioms: [propext] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.deployed_queries
+
+/-- info: 'QuotientSecurity.Hiding.deployed_Q' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.deployed_Q
+
+/-- info: 'QuotientSecurity.Hiding.Deployed.deployed_ok' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.Deployed.deployed_ok
+
+/-- info: 'QuotientSecurity.Hiding.Deployed.deployed_shape' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.Deployed.deployed_shape
+
+/-- info: 'QuotientSecurity.Hiding.Deployed.Layout.hiddenWord_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.Deployed.Layout.hiddenWord_eq
+
+/-- info: 'QuotientSecurity.Hiding.Deployed.Layout.weightsFit' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.Deployed.Layout.weightsFit
+
+/-- info: 'QuotientSecurity.Hiding.Deployed.Layout.weight_combinedW' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.Deployed.Layout.weight_combinedW
+
+/-- info: 'QuotientSecurity.Hiding.Deployed.Layout.prEvent_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.Deployed.Layout.prEvent_le
+
+/-- info: 'QuotientSecurity.Hiding.Deployed.deployed_prEvent_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.Deployed.deployed_prEvent_le

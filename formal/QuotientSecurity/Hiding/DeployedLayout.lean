@@ -254,13 +254,13 @@ def toGadget (h : L.OK) : GadgetLayout (Fin L.lanes.length) (Fin (2 ^ L.logLane)
     omega
   gent_held p i := by
     have := p.isLt; have := i.isLt
-    simp only [heldSet, mem_filter, mem_univ, true_and, gadgetEntry, logPieceD, gadgetD, not_and]
+    simp only [heldSet, gadgetEntry, logPieceD, gadgetD]
     norm_num
     omega
   held_first := by
     rw [Finset.disjoint_left]
     intro y hy hf
-    simp only [heldSet, mem_filter, mem_univ, true_and, logPieceD] at hy
+    simp only [heldSet, logPieceD] at hy
     simp only [firstFree, mem_filter, mem_univ, true_and] at hf
     norm_num at hy
     omega

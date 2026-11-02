@@ -234,7 +234,7 @@ theorem claimTerm_first (h : L.OK) (lam : E) (point : List E) (l : ℕ) (y : ℕ
     exact Nat.div_eq_of_lt hy
   have hA : ((L.part lam point).low.drop logPieceD).length ≤ L.logLane - logPieceD := by
     have := part_low_length (L := L) lam point
-    simp only [List.length_drop, hs]
+    simp only [List.length_drop]
     omega
   have hpl : (L.part lam point).pieces.length = L.pieces.length := by simp [part, pieceScales]
   have hfit : L.pieces.length + 1 ≤ 2 ^ (L.logLane - logPieceD) := by
