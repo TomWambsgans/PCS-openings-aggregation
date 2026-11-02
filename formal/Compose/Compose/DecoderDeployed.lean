@@ -113,23 +113,23 @@ theorem knowledgeSoundness_deployed_decoded (r : ℕ) (h1 : WhirBridge.minLogRow
     (read₁ : Tab D.Lw → B.Msg₁) (read₂ : Tab D.LQ → B.Msg₂)
     (hcl₁ : WitnessClaims D read₁) (hcl₂ : QuotientClaims W D read₂)
     (setup : OracleComp KeccakCalls Bytes32)
-    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) (QS Q QO : ℕ)
+    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) (QS Q : ℕ)
     (hS : IsTotalQueryBound setup QS) (hQ : ∀ ir, IsTotalQueryBound (A ir) Q)
-    (hO : ∀ (L : Layout) w, IsTotalQueryBound (ourVerifier L D.R w) QO) (εσ : ℝ≥0∞)
+    (εσ : ℝ≥0∞)
     (hσ : Pr{let z ← (simulateQ randomOracle (deployedExp W D (withSetup setup A))).run' ∅}[
       WDd (P := P) z] ≤ εσ) :
     Pr{let z ← (simulateQ randomOracle (deployedExp W D (withSetup setup A))).run' ∅}[
         BreaksD W (tableCode D.Lw D.R
           (admissible_of_eq hLw hR (layouts_ok r h1 h2).1) read₁) z] ≤
-      openingBound (QS + Q + 6) + εσ + openingBound (QS + Q + 6 + QO + QO) +
-        ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) *
+      openingBound (QS + Q + 6) + εσ + openingBound (QS + Q + 6 + 10122 + 10122) +
+        ((QS + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) *
           ((listFactor (Whir.Params.certOf D.Lw.logN D.R 0).listHi
               (Whir.Params.certOf D.LQ.logN D.R 0).listHi : ℝ≥0∞) * (roundError P B : ℝ≥0∞) +
-          5 * ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) / 2 ^ 256) :=
+          5 * ((QS + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) / 2 ^ 256) :=
   knowledgeSoundness_deployed_setup W D _ _
     (witnessMatch D (admissible_of_eq hLw hR (layouts_ok r h1 h2).1) read₁ hcl₁)
     (quotientMatch W D (admissible_of_eq hLQ hR (layouts_ok r h1 h2).2.2) read₂ hcl₂)
-    setup A QS Q QO hS hQ hO r h1 h2 (Or.inl hLw) (Or.inr (Or.inr hLQ)) hR εσ hσ
+    setup A QS Q hS hQ r h1 h2 (Or.inl hLw) (Or.inr (Or.inr hLQ)) hR εσ hσ
 
 /-- The decoders' certified lists at our layouts are at most `2^18`. -/
 theorem listHi_le_of_eq (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r) (h2 : r ≤ WhirBridge.maxLogRows)
@@ -148,19 +148,19 @@ theorem knowledgeSoundness_deployed_decoded_bits (hq : Fintype.card F = 2 ^ 192)
     (read₁ : Tab D.Lw → B.Msg₁) (read₂ : Tab D.LQ → B.Msg₂)
     (hcl₁ : WitnessClaims D read₁) (hcl₂ : QuotientClaims W D read₂)
     (setup : OracleComp KeccakCalls Bytes32)
-    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) (QS Q QO : ℕ)
+    (A : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) (QS Q : ℕ)
     (hS : IsTotalQueryBound setup QS) (hQ : ∀ ir, IsTotalQueryBound (A ir) Q)
-    (hO : ∀ (L : Layout) w, IsTotalQueryBound (ourVerifier L D.R w) QO) (εσ : ℝ≥0∞)
+    (εσ : ℝ≥0∞)
     (hσ : Pr{let z ← (simulateQ randomOracle (deployedExp W D (withSetup setup A))).run' ∅}[
       WDd (P := P) z] ≤ εσ) :
     Pr{let z ← (simulateQ randomOracle (deployedExp W D (withSetup setup A))).run' ∅}[
         BreaksD W (tableCode D.Lw D.R
           (admissible_of_eq hLw hR (layouts_ok r h1 h2).1) read₁) z] ≤
-      openingBound (QS + Q + 6) + εσ + openingBound (QS + Q + 6 + QO + QO) +
-        ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) * (((1 / 2 ^ 128 : ℝ≥0) : ℝ≥0∞) +
-          5 * ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
+      openingBound (QS + Q + 6) + εσ + openingBound (QS + Q + 6 + 10122 + 10122) +
+        ((QS + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) * (((1 / 2 ^ 128 : ℝ≥0) : ℝ≥0∞) +
+          5 * ((QS + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
   refine (knowledgeSoundness_deployed_decoded W D r h1 h2 hLw hLQ hR read₁ read₂ hcl₁ hcl₂ setup
-    A QS Q QO hS hQ hO εσ hσ).trans ?_
+    A QS Q hS hQ εσ hσ).trans ?_
   have hb := listHi_le_of_eq D r h1 h2 hLw hLQ hR
   gcongr
   exact listError_le_generic hq hN hw hd hb.1 hb.2

@@ -10,8 +10,17 @@ import Compose.Extract
 import Compose.AdversaryLog
 import Compose.Coupling
 import Compose.Deployed
+import Compose.Wiring
+import Compose.DeployedWired
+import Compose.WiredDecoded
+import Compose.WiringSetup
 import Compose.Axioms
 import Compose.Decoder
 import Compose.DecoderCost
 import Compose.DecoderDeployed
 import Compose.DecoderAxioms
+import Compose.Rpm
+import Compose.RpmAxioms
+import Compose.Reduce
+import Compose.Claims
+import Compose.ClaimsAxioms
