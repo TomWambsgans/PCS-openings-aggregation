@@ -394,3 +394,165 @@ pub fn parity(shape: &Shape, iv: &[u8; 32], public_words: &[u8; 32], stream: &[u
         assert_eq!(got, &want[..], "word {k}");
     }
 }
+
+/// What the contract writes and how it ends: the calls of `PCS_OPEN` (`verify`), or those words and every checked
+/// value returned (`!verify`, for parity).
+fn ends(recorded: &Recorded, iv: &[u8; 32], verify: bool, measure: bool) -> (Vec<Word>, Ending, Entry) {
+    let entry = Entry {
+        name: NAME,
+        iv: *iv,
+        stream_len: recorded.stream_len,
+        measure,
+    };
+    let calls = calls(recorded);
+    if verify {
+        let ending = Ending::PcsOpen(calls.iter().map(Vec::len).collect());
+        (calls.concat(), ending, entry)
+    } else {
+        let checks = recorded.graph.zero.iter().chain(&recorded.graph.nonzero);
+        let outputs = calls
+            .concat()
+            .into_iter()
+            .chain(checks.map(|&(id, _)| Word::Node(id)))
+            .collect();
+        (outputs, Ending::Return, entry)
+    }
+}
+
+/// One deployed contract of a deployable verifier: code bytes, and its deployment (execution, and transaction gas
+/// without the base under EIP-7623).
+#[derive(Clone, Debug)]
+pub struct ContractCost {
+    pub code_bytes: usize,
+    pub deployment_execution: u64,
+    pub deployment_tx: u64,
+}
+
+/// The deployable verifier: a verifying call, and the contracts (the driver first).
+#[derive(Clone, Debug)]
+pub struct DeployableReport {
+    pub report: GasReport,
+    pub straight: u64,
+    pub contracts: Vec<ContractCost>,
+}
+
+/// Measure the verifier as contracts of at most `limit` bytes (`leanvm_flock_gas::evm`'s linker, `crates/evm_link`):
+/// deploy them, each by a transaction; run the measuring build, cut at the same places, as [`measure`] runs the one
+/// contract.
+pub fn measure_deployable(
+    shape: &Shape,
+    iv: &[u8; 32],
+    blake2s: Blake2s,
+    mode: Claims,
+    limit: usize,
+) -> DeployableReport {
+    use leanvm_flock_gas::evm::codegen::{compile_deployable, compile_deployable_like};
+    use leanvm_flock_gas::evm::contract::{deploy, install};
+    let recorded = record_verifier(shape, blake2s, mode);
+    let (outputs, ending, entry) = ends(&recorded, iv, true, false);
+    let real = compile_deployable(&recorded.graph, &outputs, &ending, &entry, limit);
+    let deployed = deploy(&real, &[]);
+    let (outputs, ending, entry) = ends(&recorded, iv, true, true);
+    let measuring = compile_deployable_like(&recorded.graph, &outputs, &ending, &entry, &real);
+    assert_eq!(measuring.linked.starts(), real.linked.starts());
+    let installed = install(&measuring, &[]);
+    let stream = sample_stream(recorded.stream_len, 0x6A5);
+    let data = calldata(&[0x5a; 32], &stream);
+    let straight = measure(shape, iv, blake2s, mode);
+    let calls_count = straight.calls;
+    let run = |claim_gas: u64| -> Outcome {
+        let outcome = installed
+            .chain
+            .call(installed.address, &data, &PcsOpen::attesting_all(claim_gas));
+        assert_eq!(outcome.output.as_deref(), Some(&word([1, 0, 0])[..]), "the measuring run returns 1");
+        assert_eq!(outcome.pcs_calls.len(), calls_count, "one call per commitment");
+        outcome
+    };
+    let outcome = run(0);
+    assert_eq!(run(1000).execution, outcome.execution + 1000 * straight.claims as u64);
+    let mut phases: Vec<PhaseGas> = Vec::new();
+    for (address, gas_by_pc) in &outcome.gas_by_code {
+        let tags = &installed
+            .contracts
+            .iter()
+            .find(|c| c.address == *address)
+            .expect("a contract of the deployment")
+            .tags;
+        for (pc, &gas) in gas_by_pc.iter().enumerate() {
+            if gas == 0 {
+                continue;
+            }
+            let phase = tags.get(pc).copied().unwrap_or(CALLS);
+            match phases.iter_mut().find(|p| p.phase == phase) {
+                Some(p) => p.gas += gas,
+                None => phases.push(PhaseGas { phase, gas }),
+            }
+        }
+    }
+    let measured = phases.iter().find(|p| p.phase == MEASURE).map_or(0, |p| p.gas);
+    let parts = real.linked.parts.len();
+    assert_eq!(
+        measured,
+        (real.checks + calls_count + parts + (parts > 0) as usize) as u64,
+        "one JUMPDEST a check, a call of PCS_OPEN, a call of a part and the last part's word"
+    );
+    phases.retain(|p| p.phase != MEASURE);
+    phases.sort_by_key(|p| std::cmp::Reverse(p.gas));
+    // `deploy` deploys the parts first and the driver last.
+    let mut contracts: Vec<ContractCost> = deployed
+        .contracts
+        .iter()
+        .map(|c| ContractCost {
+            code_bytes: c.code_bytes,
+            deployment_execution: c.execution,
+            deployment_tx: c.transaction(40),
+        })
+        .collect();
+    contracts.rotate_right(1);
+    let mut report = straight.clone();
+    report.execution = outcome.execution - measured;
+    report.phases = phases;
+    report.code_bytes = real.linked.code_bytes();
+    DeployableReport {
+        report,
+        straight: straight.execution,
+        contracts,
+    }
+}
+
+/// The deployable build against the Rust verifier: its returning build (cut where the verifying one would be) returns
+/// the words the Rust verifier computes, word for word. Returns how many contracts it was cut into.
+pub fn parity_deployable(
+    shape: &Shape,
+    iv: &[u8; 32],
+    public_words: &[u8; 32],
+    stream: &[u8],
+    blake2s: Blake2s,
+    mode: Claims,
+    limit: usize,
+) -> usize {
+    use leanvm_flock_gas::evm::codegen::{compile_deployable, compile_deployable_like};
+    use leanvm_flock_gas::evm::contract::install;
+    let recorded = record_verifier(shape, blake2s, mode);
+    let (outputs, ending, entry) = ends(&recorded, iv, false, false);
+    let returning = compile_deployable(&recorded.graph, &outputs, &ending, &entry, limit);
+    let (outputs, ending, entry) = ends(&recorded, iv, false, true);
+    let installed = install(
+        &compile_deployable_like(&recorded.graph, &outputs, &ending, &entry, &returning),
+        &[],
+    );
+    let output = installed
+        .chain
+        .call(installed.address, &calldata(public_words, stream), &PcsOpen::default())
+        .output
+        .expect("a measuring build does not revert");
+    let (reduced, zero, nonzero) =
+        rust_verifier(shape, iv, public_words, stream, blake2s, mode).expect("the stream's length");
+    let mut expected = expected_words(&reduced, &recorded, stream);
+    expected.extend(zero.iter().chain(&nonzero).map(|&x| leanvm_flock_gas::evm::machine::element_word(x)));
+    assert_eq!(output.len(), 32 * expected.len(), "words returned");
+    for (k, (got, want)) in output.chunks(32).zip(&expected).enumerate() {
+        assert_eq!(got, &want[..], "word {k}");
+    }
+    returning.linked.parts.len() + 1
+}

@@ -1,47 +1,18 @@
 // Adapted from leanVM (https://github.com/leanEthereum/leanVM), branch PCS-openings-aggregation, commit 651453c6,
 // file crates/evm/src/codegen.rs; new here: the calls of `PCS_OPEN`, the selector, the index root in storage
-// (`Entry`), `setIndexRoot` and the creation code. MIT OR Apache-2.0; see NOTICE.md.
+// (`Entry`), `setIndexRoot` and the creation code; the assembly is now `crates/evm_link`'s, which also links the
+// program into contracts that each fit EIP-170's limit ([`compile_linked`]). MIT OR Apache-2.0; see NOTICE.md.
 //! A recorded graph as EVM bytecode: straight-line code, a value used once left on the stack and a shared one
 //! kept in a memory slot, which is reused after its last read.
 
-use std::cmp::Reverse;
-use std::collections::BinaryHeap;
+use evm_link::op::{
+    AND, CALLDATACOPY, CALLDATALOAD, CALLDATASIZE, CALLER, CALLVALUE, CODECOPY, CODESIZE, DUP1, DUP2, FIELD_MUL,
+    ISZERO, JUMPDEST, JUMPI, KECCAK256, MLOAD, MSTORE, OR, POP, PUSH0, PUSH32, RETURN, REVERT, SHL, SHR, SLOAD, SSTORE,
+    STOP, SWAP1, SWAP2, XOR, push, push_usize,
+};
+use evm_link::{Item, Options, Program};
 
-use crate::machine::{FIELD_MUL, PCS_OPEN};
 use crate::record::{Graph, Node};
-
-const STOP: u8 = 0x00;
-const KECCAK256: u8 = 0x20;
-const ISZERO: u8 = 0x15;
-const AND: u8 = 0x16;
-const OR: u8 = 0x17;
-const XOR: u8 = 0x18;
-const SHL: u8 = 0x1b;
-const SHR: u8 = 0x1c;
-const CALLER: u8 = 0x33;
-const CALLVALUE: u8 = 0x34;
-const CALLDATALOAD: u8 = 0x35;
-const CALLDATASIZE: u8 = 0x36;
-const CALLDATACOPY: u8 = 0x37;
-const CODESIZE: u8 = 0x38;
-const CODECOPY: u8 = 0x39;
-const RETURNDATASIZE: u8 = 0x3d;
-const MLOAD: u8 = 0x51;
-const MSTORE: u8 = 0x52;
-const SLOAD: u8 = 0x54;
-const SSTORE: u8 = 0x55;
-const JUMPI: u8 = 0x57;
-const GAS: u8 = 0x5a;
-const JUMPDEST: u8 = 0x5b;
-const PUSH0: u8 = 0x5f;
-const PUSH32: u8 = 0x7f;
-const DUP1: u8 = 0x80;
-const DUP2: u8 = 0x81;
-const SWAP1: u8 = 0x90;
-const SWAP2: u8 = 0x91;
-const RETURN: u8 = 0xf3;
-const STATICCALL: u8 = 0xfa;
-const REVERT: u8 = 0xfd;
 
 /// Memory below the slots is scratch for hashing: the seed's 112 bytes (at 0, or at 16 when the circuit's
 /// commitment is in storage), or a state and the scalars it absorbs.
@@ -72,21 +43,6 @@ pub struct Entry {
     /// The circuit's commitment: in the code, or (`None`) in storage slot [`INDEX_ROOT_SLOT`], which the creation
     /// code writes and the owner may change ([`SET_INDEX_ROOT`]).
     pub index_root: Option<[u8; 32]>,
-}
-
-/// `PUSH` of a big-endian number, in as few bytes as it takes.
-fn push(bytes: &[u8]) -> Vec<u8> {
-    let trimmed = &bytes[bytes.iter().position(|&b| b != 0).unwrap_or(bytes.len())..];
-    if trimmed.is_empty() {
-        return vec![PUSH0];
-    }
-    let mut code = vec![PUSH0 + trimmed.len() as u8];
-    code.extend_from_slice(trimmed);
-    code
-}
-
-fn push_usize(value: usize) -> Vec<u8> {
-    push(&value.to_be_bytes())
 }
 
 /// `PUSH2` of an address in the code: one length whatever the address, so code can be laid out in two passes.
@@ -120,11 +76,7 @@ fn reverse_halves() -> Vec<u8> {
 
 /// A field element as a word: limb 0 lowest.
 fn word(limbs: [u64; 3]) -> [u8; 32] {
-    let mut bytes = [0; 32];
-    for (i, limb) in limbs.iter().enumerate() {
-        bytes[24 - 8 * i..32 - 8 * i].copy_from_slice(&limb.to_be_bytes());
-    }
-    bytes
+    evm_link::op::word(limbs)
 }
 
 /// A word the contract writes to its output region.
@@ -148,49 +100,38 @@ pub enum Ending {
     PcsOpen(Vec<usize>),
 }
 
-enum Item {
-    Code(Vec<u8>),
-    /// Keep the value on top of the stack in the node's slot, too.
-    Store(u32),
-    Load(u32),
-    /// Pop the value into output word `k`.
-    Output(usize),
-    /// Copy `words` constant words, from `data` on in the code's data, to output words `first` on.
-    CopyConst {
-        first: usize,
-        words: usize,
-        data: usize,
-    },
-    /// Call `PCS_OPEN` on `words` output words from `first` on, and revert unless it attests.
-    PcsOpen {
-        first: usize,
-        words: usize,
-    },
-    /// Jump to the revert if the top of the stack is nonzero.
-    FailIf,
-    /// Jump to the contract's other entry ([`SET_INDEX_ROOT`]'s, or else the revert) if the top of the stack is
-    /// nonzero.
-    NotVerify,
-}
+/// No tags: this contract's gas is not broken down by phase.
+const UNTAGGED: &str = "";
 
 struct Compiler<'a> {
     graph: &'a Graph,
     entry: &'a Entry,
     /// Where calldata holds the arguments: after the selector, if any.
     base: usize,
-    /// The output word of [`Word::StoredRoot`], if any.
+    /// The output word of [`Word::StoredRoot`], if the seed writes it.
     stored_root: Option<usize>,
     /// Kept in memory: used more than once, and not a constant.
     shared: Vec<bool>,
     done: Vec<bool>,
     /// Stack words evaluating a node takes.
     depth: Vec<u32>,
-    items: Vec<Item>,
+    items: Vec<(Item, &'static str)>,
+    /// For [`evm_link::link`]: a seam after every node.
+    seams: bool,
 }
 
 impl Compiler<'_> {
     fn code(&mut self, bytes: &[u8]) {
-        self.items.push(Item::Code(bytes.to_vec()));
+        self.items.push((Item::Code(bytes.to_vec()), UNTAGGED));
+    }
+
+    fn item(&mut self, item: Item) {
+        self.items.push((item, UNTAGGED));
+    }
+
+    /// Push the offset of calldata bytes `offset..offset + len`, which the code then reads.
+    fn calldata(&mut self, offset: usize, len: usize) {
+        self.item(Item::Calldata { offset, len });
     }
 
     fn operands(node: Node) -> Vec<u32> {
@@ -207,7 +148,7 @@ impl Compiler<'_> {
     fn eval(&mut self, id: u32) {
         let at = id as usize;
         if self.shared[at] && self.done[at] {
-            self.items.push(Item::Load(id));
+            self.item(Item::Load(id));
             return;
         }
         match self.graph.nodes[at] {
@@ -217,7 +158,7 @@ impl Compiler<'_> {
                     Node::Root(_) => self.base + COMMITMENT + 32 * (k as usize / 2),
                     _ => self.base + 32 * (k as usize / 2),
                 };
-                self.code(&push_usize(offset));
+                self.calldata(offset, 32);
                 self.code(&[CALLDATALOAD]);
                 if k % 2 == 0 {
                     self.code(&[&push_usize(128)[..], &[SHR]].concat());
@@ -226,7 +167,7 @@ impl Compiler<'_> {
                 }
             }
             Node::Input(i) => {
-                self.code(&push_usize(self.base + SCALARS + SCALAR_BYTES * i as usize));
+                self.calldata(self.base + SCALARS + SCALAR_BYTES * i as usize, 32);
                 self.code(&[&[CALLDATALOAD][..], &push_usize(64), &[SHR]].concat());
             }
             Node::Add(a, b) | Node::Mul(a, b) => {
@@ -266,13 +207,9 @@ impl Compiler<'_> {
                     let prefix = [&self.entry.name[..], &root].concat();
                     self.code(&[&push(&prefix[..32])[..], &[PUSH0, MSTORE]].concat());
                     self.code(&[&push(&prefix[16..])[..], &push_usize(16), &[MSTORE]].concat());
-                    let copy = [
-                        &push_usize(64)[..],
-                        &push_usize(self.base),
-                        &push_usize(48),
-                        &[CALLDATACOPY],
-                    ];
-                    self.code(&copy.concat());
+                    self.code(&push_usize(64));
+                    self.calldata(self.base, 64);
+                    self.code(&[&push_usize(48)[..], &[CALLDATACOPY]].concat());
                     self.code(&[&push_usize(112)[..], &[PUSH0, KECCAK256]].concat());
                 }
                 None => {
@@ -283,16 +220,12 @@ impl Compiler<'_> {
                     self.code(&[&push(&self.entry.name)[..], &[PUSH0, MSTORE], &slot, &[SLOAD]].concat());
                     if let Some(k) = self.stored_root {
                         self.code(&[[DUP1].as_slice(), &reverse_halves()].concat());
-                        self.items.push(Item::Output(k));
+                        self.item(Item::Output(k));
                     }
                     self.code(&[&push_usize(32)[..], &[MSTORE]].concat());
-                    let copy = [
-                        &push_usize(64)[..],
-                        &push_usize(self.base),
-                        &push_usize(64),
-                        &[CALLDATACOPY],
-                    ];
-                    self.code(&copy.concat());
+                    self.code(&push_usize(64));
+                    self.calldata(self.base, 64);
+                    self.code(&[&push_usize(64)[..], &[CALLDATACOPY]].concat());
                     self.code(&[&push_usize(112)[..], &push_usize(16), &[KECCAK256]].concat());
                 }
             },
@@ -315,31 +248,57 @@ impl Compiler<'_> {
         }
         if self.shared[at] {
             self.done[at] = true;
-            self.items.push(Item::Store(id));
+            self.item(Item::Store(id));
+        }
+        if self.seams && !matches!(self.graph.nodes[at], Node::Const(_)) {
+            self.item(Item::Seam);
         }
     }
 }
 
 /// A contract, and what one call of it executes: its code is straight-line, so every instruction runs once.
+#[derive(Clone)]
 pub struct Contract {
-    /// The code, with no owner ([`creation_code`] writes one at `owner_at`).
+    /// The code, with no owner ([`creation_code`] writes one at `owner_at`); a driver's, with no parts' addresses.
     pub code: Vec<u8>,
     /// Where the code holds its owner, the word a `PUSH32` pushes, if it reads the circuit's commitment from
     /// storage.
     pub owner_at: Option<usize>,
     pub field_muls: usize,
     pub hashes: usize,
-    /// Memory it touches, in words.
+    /// Memory it touches, in words (a driver's: its own).
     pub memory_words: usize,
+    /// The parts it `DELEGATECALL`s in order, if it is a driver ([`compile_linked`]), and where its code holds each
+    /// one's address (the 20 bytes of a `PUSH20`).
+    pub parts: Vec<Vec<u8>>,
+    pub part_at: Vec<usize>,
 }
 
-/// The contract. A call of the verifier is calldata of the selector ([`VERIFY`], if `entry` has one) and the
-/// arguments: the statement, the commitments and `inputs` scalars of the proof, of `SCALAR_BYTES` each. On
-/// such a call, with no value, it reverts unless every node of `graph.nonzero` is nonzero, else writes `outputs`
-/// to a region of fresh memory, one word each, and ends as `ending` says. Any other call is one of
-/// `setIndexRoot(bytes32 root)`, if the circuit's commitment is in storage, or reverts: from the owner, with no
-/// value, it stores `root` in slot [`INDEX_ROOT_SLOT`] and returns nothing.
-pub fn compile(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, inputs: usize) -> Contract {
+impl Contract {
+    /// The driver calling its parts at `addresses`: a contract with no parts left to place.
+    pub fn calling(&self, addresses: &[[u8; 20]]) -> Contract {
+        assert_eq!(addresses.len(), self.parts.len(), "an address a part");
+        let mut code = self.code.clone();
+        for (&at, address) in self.part_at.iter().zip(addresses) {
+            code[at..at + 20].copy_from_slice(address);
+        }
+        Contract {
+            code,
+            parts: Vec::new(),
+            part_at: Vec::new(),
+            ..self.clone()
+        }
+    }
+}
+
+/// The program, and the setIndexRoot tail's maker.
+struct Compiled {
+    program: Program,
+    field_muls: usize,
+    hashes: usize,
+}
+
+fn program(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, inputs: usize, linkable: bool) -> Compiled {
     assert!(
         entry.selector || entry.index_root.is_some(),
         "setIndexRoot needs a selector"
@@ -353,11 +312,13 @@ pub fn compile(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, 
     );
     let n = graph.nodes.len();
     let mut uses = vec![0u32; n];
-    let output_nodes = outputs.iter().filter_map(|word| match word {
-        Word::Node(id) => Some(id),
-        _ => None,
-    });
-    for &root in graph.nonzero.iter().chain(output_nodes) {
+    let output_nodes = || {
+        outputs.iter().filter_map(|word| match word {
+            Word::Node(id) => Some(*id),
+            _ => None,
+        })
+    };
+    for root in graph.nonzero.iter().copied().chain(output_nodes()) {
         uses[root as usize] += 1;
     }
     for at in (0..n).rev() {
@@ -367,8 +328,13 @@ pub fn compile(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, 
             }
         }
     }
+    let mut kept = uses.clone();
+    if linkable {
+        // An output's node is kept, so that every output is written in the last part, after the last seam.
+        output_nodes().for_each(|id| kept[id as usize] += 1);
+    }
     let shared: Vec<bool> = (0..n)
-        .map(|at| uses[at] > 1 && !matches!(graph.nodes[at], Node::Const(_)))
+        .map(|at| kept[at] > 1 && !matches!(graph.nodes[at], Node::Const(_)))
         .collect();
     let mut depth = vec![1u32; n];
     for at in 0..n {
@@ -400,11 +366,13 @@ pub fn compile(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, 
         graph,
         entry,
         base,
-        stored_root,
+        // Linked, the seed's part is not the outputs': the last part reads the root again (a warm `SLOAD`).
+        stored_root: if linkable { None } else { stored_root },
         shared,
         done: vec![false; n],
         depth,
         items: Vec::new(),
+        seams: linkable,
     };
     // Not a call of the verifier: calldata of another length, or of another selector, or value.
     compiler.code(&[&[CALLDATASIZE][..], &push_usize(calldata_len), &[XOR]].concat());
@@ -418,11 +386,19 @@ pub fn compile(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, 
         ];
         compiler.code(&[&selector.concat()[..], &[OR, CALLVALUE, OR]].concat());
     }
-    compiler.items.push(Item::NotVerify);
+    compiler.item(Item::OtherIf);
     for &id in &graph.nonzero {
         compiler.eval(id);
         compiler.code(&[ISZERO]);
-        compiler.items.push(Item::FailIf);
+        compiler.item(Item::FailIf);
+    }
+    if linkable {
+        for id in output_nodes() {
+            if !matches!(graph.nodes[id as usize], Node::Const(_)) && !compiler.done[id as usize] {
+                compiler.eval(id);
+                compiler.code(&[POP]);
+            }
+        }
     }
     // The region is fresh memory: a zero word is left as it is, and a run of constants is copied from the code
     // (`CODECOPY` and its three operands, 12 gas and 3 a word) when that is cheaper than a `PUSH` of each nonzero
@@ -442,7 +418,7 @@ pub fn compile(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, 
         };
         let nonzero = constants().filter(|bytes| **bytes != [0; 32]).count();
         if 12 + 3 * run < 9 * nonzero {
-            compiler.items.push(Item::CopyConst {
+            compiler.item(Item::CopyConst {
                 first: k,
                 words: run,
                 data: data.len(),
@@ -458,170 +434,137 @@ pub fn compile(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, 
                 continue;
             }
             Word::Const(bytes) => compiler.code(&push(&bytes)),
-            Word::Calldata(offset) => compiler.code(&[&push_usize(base + offset)[..], &[CALLDATALOAD]].concat()),
-            Word::StoredRoot => {
+            Word::Calldata(offset) => {
+                compiler.calldata(base + offset, 32);
+                compiler.code(&[CALLDATALOAD]);
+            }
+            Word::StoredRoot if compiler.stored_root.is_some() => {
                 k += 1;
                 continue;
             }
+            Word::StoredRoot => {
+                let slot = push_usize(INDEX_ROOT_SLOT.into());
+                compiler.code(&[&slot[..], &[SLOAD], &reverse_halves()].concat());
+            }
         }
-        compiler.items.push(Item::Output(k));
+        compiler.item(Item::Output(k));
         k += 1;
     }
     if let Ending::PcsOpen(runs) = ending {
         assert_eq!(runs.iter().sum::<usize>(), outputs.len(), "the calls cover the region");
         let mut first = 0;
         for &words in runs {
-            compiler.items.push(Item::PcsOpen { first, words });
+            compiler.item(Item::PcsOpen { first, words });
             first += words;
         }
     }
-    if let Some(k) = stored_root {
+    if let Some(k) = compiler.stored_root {
         let written = compiler
             .items
             .iter()
-            .any(|item| matches!(item, Item::Output(at) if *at == k));
+            .any(|(item, _)| matches!(item, Item::Output(at) if *at == k));
         assert!(written, "the seed writes the stored root");
     }
     let count = |of: &dyn Fn(Node) -> bool| (0..n).filter(|&at| uses[at] > 0 && of(graph.nodes[at])).count();
-    let field_muls = count(&|node| matches!(node, Node::Mul(..)));
-    let hashes = count(&|node| matches!(node, Node::Hash(..) | Node::Seed));
-    let items = compiler.items;
-
-    // A slot is free again after its node's last read.
-    let mut reads = vec![0u32; n];
-    for item in &items {
-        if let Item::Load(id) = item {
-            reads[*id as usize] += 1;
-        }
-    }
-    let mut slot = vec![0usize; n];
-    let (mut free, mut n_slots) = (BinaryHeap::new(), 0);
-    for item in &items {
-        match item {
-            Item::Store(id) => {
-                slot[*id as usize] = free.pop().map_or_else(
-                    || {
-                        n_slots += 1;
-                        n_slots - 1
-                    },
-                    |Reverse(s)| s,
-                );
-            }
-            Item::Load(id) => {
-                reads[*id as usize] -= 1;
-                if reads[*id as usize] == 0 {
-                    free.push(Reverse(slot[*id as usize]));
-                }
-            }
-            _ => {}
-        }
-    }
     let absorbed = graph.nodes.iter().map(|node| match node {
         Node::Hash(_, _, n) => *n as usize,
         _ => 0,
     });
-    let slots = SEED_SCRATCH.max(32 * (1 + absorbed.max().unwrap_or(0)));
-    let address = |id: u32| push_usize(slots + 32 * slot[id as usize]);
-    let returned = slots + 32 * n_slots;
-
-    // `setIndexRoot(bytes32 root)`: revert unless calldata is its selector and `root`, with no value, from the
-    // owner; else store `root`. The owner is the word of a `PUSH32`, which the creation code writes.
-    let set_index_root = |fail: usize| {
-        let mut code = [
-            &[JUMPDEST, PUSH0, CALLDATALOAD][..],
-            &push_usize(224),
-            &[SHR],
-            &push(&SET_INDEX_ROOT),
-        ]
-        .concat();
-        code.extend(
-            [
-                &[XOR, CALLDATASIZE][..],
-                &push_usize(4 + 32),
-                &[XOR, OR, CALLVALUE, OR, CALLER, PUSH32],
-            ]
-            .concat(),
-        );
-        let owner = code.len();
-        code.extend([0; 32]);
-        code.extend([&[XOR, OR][..], &push2(fail), &[JUMPI], &push_usize(4), &[CALLDATALOAD]].concat());
-        code.extend([&push_usize(INDEX_ROOT_SLOT.into())[..], &[SSTORE, STOP]].concat());
-        (code, owner)
-    };
-
-    // Code, then `setIndexRoot` if the root is in storage, then the revert, then the constants copied: a `PUSH2` of
-    // any of these addresses has one length on both passes.
-    let assemble = |other: usize, fail: usize, data_at: usize| {
-        let mut code = Vec::new();
-        for item in &items {
-            match *item {
-                Item::Code(ref bytes) => code.extend_from_slice(bytes),
-                Item::Store(id) => code.extend([&[DUP1][..], &address(id), &[MSTORE]].concat()),
-                Item::Load(id) => code.extend([&address(id)[..], &[MLOAD]].concat()),
-                Item::Output(k) => code.extend([&push_usize(returned + 32 * k)[..], &[MSTORE]].concat()),
-                Item::CopyConst { first, words, data } => code.extend(
-                    [
-                        &push_usize(32 * words)[..],
-                        &push2(data_at + data),
-                        &push_usize(returned + 32 * first),
-                        &[CODECOPY],
-                    ]
-                    .concat(),
-                ),
-                // `STATICCALL(gas, PCS_OPEN, input, input length, 0, 32)`: the call attests iff it succeeds and
-                // returns exactly one word, the word 1 (then at 0, the hashing scratch, free by now). A failed or
-                // reverted call, an absent precompile, the word 0, or more or fewer bytes, revert.
-                Item::PcsOpen { first, words } => code.extend(
-                    [
-                        &push_usize(32)[..],
-                        &[PUSH0],
-                        &push_usize(32 * words),
-                        &push_usize(returned + 32 * first),
-                        &push(PCS_OPEN.as_slice()),
-                        &[GAS, STATICCALL, ISZERO, RETURNDATASIZE],
-                        &push_usize(32),
-                        &[XOR, OR, PUSH0, MLOAD],
-                        &push_usize(1),
-                        &[XOR, OR],
-                        &push2(fail),
-                        &[JUMPI],
-                    ]
-                    .concat(),
-                ),
-                Item::FailIf => code.extend([&push2(fail)[..], &[JUMPI]].concat()),
-                Item::NotVerify => code.extend([&push2(other)[..], &[JUMPI]].concat()),
-            }
-        }
-        match ending {
-            Ending::Return => {
-                code.extend([&push_usize(32 * outputs.len())[..], &push_usize(returned), &[RETURN]].concat())
-            }
-            // The word 1, which an account without code does not return.
-            Ending::PcsOpen(_) => {
-                code.extend([&push_usize(1)[..], &[PUSH0, MSTORE], &push_usize(32), &[PUSH0, RETURN]].concat())
-            }
-        }
-        code
-    };
-    const REVERT_CODE: [u8; 4] = [JUMPDEST, PUSH0, PUSH0, REVERT];
-    let body = assemble(0, 0, 0).len();
-    let stored = entry.index_root.is_none();
-    let fail = body + if stored { set_index_root(0).0.len() } else { 0 };
-    let mut code = assemble(if stored { body } else { fail }, fail, fail + REVERT_CODE.len());
-    let mut owner_at = None;
-    if stored {
-        let (tail, owner) = set_index_root(fail);
-        owner_at = Some(code.len() + owner);
-        code.extend(tail);
+    Compiled {
+        program: Program {
+            items: compiler.items,
+            data,
+            scratch: SEED_SCRATCH.max(32 * (1 + absorbed.max().unwrap_or(0))),
+            outputs: outputs.len(),
+            ending: match ending {
+                Ending::Return => evm_link::Ending::Return,
+                Ending::PcsOpen(_) => evm_link::Ending::Attest,
+            },
+            calldata_len,
+        },
+        field_muls: count(&|node| matches!(node, Node::Mul(..))),
+        hashes: count(&|node| matches!(node, Node::Hash(..) | Node::Seed)),
     }
-    code.extend(REVERT_CODE);
-    code.extend(data);
+}
+
+/// `setIndexRoot(bytes32 root)`: revert unless calldata is its selector and `root`, with no value, from the owner;
+/// else store `root`. The owner is the word of a `PUSH32`, which the creation code writes.
+fn set_index_root(fail: usize) -> (Vec<u8>, Option<usize>) {
+    let mut code = [
+        &[JUMPDEST, PUSH0, CALLDATALOAD][..],
+        &push_usize(224),
+        &[SHR],
+        &push(&SET_INDEX_ROOT),
+    ]
+    .concat();
+    code.extend(
+        [
+            &[XOR, CALLDATASIZE][..],
+            &push_usize(4 + 32),
+            &[XOR, OR, CALLVALUE, OR, CALLER, PUSH32],
+        ]
+        .concat(),
+    );
+    let owner = code.len();
+    code.extend([0; 32]);
+    code.extend([&[XOR, OR][..], &push2(fail), &[JUMPI], &push_usize(4), &[CALLDATALOAD]].concat());
+    code.extend([&push_usize(INDEX_ROOT_SLOT.into())[..], &[SSTORE, STOP]].concat());
+    (code, Some(owner))
+}
+
+fn options(entry: &Entry) -> Options<'static> {
+    let other: evm_link::Other<'static> = &set_index_root;
+    Options {
+        jump_width: 2,
+        other: entry.index_root.is_none().then_some(other),
+        ..Options::default()
+    }
+}
+
+/// The contract. A call of the verifier is calldata of the selector ([`VERIFY`], if `entry` has one) and the
+/// arguments: the statement, the commitments and `inputs` scalars of the proof, of `SCALAR_BYTES` each. On
+/// such a call, with no value, it reverts unless every node of `graph.nonzero` is nonzero, else writes `outputs`
+/// to a region of fresh memory, one word each, and ends as `ending` says. Any other call is one of
+/// `setIndexRoot(bytes32 root)`, if the circuit's commitment is in storage, or reverts: from the owner, with no
+/// value, it stores `root` in slot [`INDEX_ROOT_SLOT`] and returns nothing.
+pub fn compile(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, inputs: usize) -> Contract {
+    let compiled = program(graph, outputs, ending, entry, inputs, false);
+    let assembled = evm_link::assemble(&compiled.program, &options(entry));
     Contract {
-        code,
-        owner_at,
-        field_muls,
-        hashes,
-        memory_words: (returned + 32 * outputs.len()) / 32,
+        code: assembled.code,
+        owner_at: assembled.other_patch,
+        field_muls: compiled.field_muls,
+        hashes: compiled.hashes,
+        memory_words: assembled.memory_words,
+        parts: Vec::new(),
+        part_at: Vec::new(),
+    }
+}
+
+/// The same contract as contracts of at most `limit` bytes of code each ([`evm_link::link`]): the one [`compile`]
+/// makes if it fits, else a driver (the entry, `setIndexRoot`, and the program's start) and the parts it calls.
+pub fn compile_linked(
+    graph: &Graph,
+    outputs: &[Word],
+    ending: &Ending,
+    entry: &Entry,
+    inputs: usize,
+    limit: usize,
+) -> Contract {
+    let one = compile(graph, outputs, ending, entry, inputs);
+    if one.code.len() <= limit {
+        return one;
+    }
+    let compiled = program(graph, outputs, ending, entry, inputs, true);
+    let linked = evm_link::link(&compiled.program, &options(entry), limit);
+    Contract {
+        code: linked.driver.code.code.clone(),
+        owner_at: linked.driver.code.other_patch,
+        field_muls: compiled.field_muls,
+        hashes: compiled.hashes,
+        memory_words: linked.driver.code.memory_words,
+        parts: linked.parts.iter().map(|part| part.code.code.clone()).collect(),
+        part_at: linked.driver.code.chunk_patches.clone(),
     }
 }
 
@@ -630,6 +573,10 @@ pub fn compile(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, 
 /// ABI-encoded (64 bytes), and none otherwise. It reverts on value, or on arguments of another length; else it
 /// stores `indexRoot` in slot [`INDEX_ROOT_SLOT`], writes the `owner` word into the code, and returns the code.
 pub fn creation_code(contract: &Contract) -> Vec<u8> {
+    assert!(
+        contract.parts.is_empty(),
+        "a driver calling its parts at their addresses"
+    );
     let runtime = contract.code.len();
     let arguments = if contract.owner_at.is_some() { 64 } else { 0 };
     // The revert is the last 4 bytes of the `prefix` bytes before the code.
@@ -685,10 +632,19 @@ mod tests {
             field_muls: 0,
             hashes: 0,
             memory_words: 1,
+            parts: Vec::new(),
+            part_at: Vec::new(),
         };
         let mut chain = Chain::default();
         let address = chain.deploy(&creation_code(&contract)).0.expect("a deployment");
         let output = chain.call(address, &[], &PcsOpen::default()).output;
         assert_eq!(output, Some(root_word(&root).to_vec()));
+    }
+
+    /// The opcodes and `PCS_OPEN`'s address are the machine's.
+    #[test]
+    fn opcodes_are_the_machines() {
+        assert_eq!(FIELD_MUL, crate::machine::FIELD_MUL);
+        assert_eq!(evm_link::op::PCS_OPEN, crate::machine::PCS_OPEN.into_array());
     }
 }

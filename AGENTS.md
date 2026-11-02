@@ -39,6 +39,11 @@ from where.
   deployment are in `quotient.rs`: the circuit's commitment is a constructor argument kept in storage (read by one
   cold `SLOAD`), which a fixed owner may change (`setIndexRoot`). About 14,300 gas of execution at a claim price
   of 0, and 1.43 M gas to deploy.
+- `crates/evm_link`: the compilation and assembly the code generators share, and the linker that cuts a program too
+  big for EIP-170 into a driver and parts of at most 24,576 bytes it `DELEGATECALL`s, computing the same. The
+  membership contract fits and is assembled byte for byte as before (its tests also run on it linked into 2 KB
+  parts); leanVM's verifier (`crates/leanvm_flock_gas`, option A) is 5 contracts, 26,601 gas more (7.9%), its
+  transaction unchanged under EIP-7623.
 - Vendored from leanVM `c445e3d5`: `primitives`, `fiat_shamir`, `pcs`, `parallel`, `verifier`, `bench`.
 - `formal/`: the Lean 4 proofs, sorry-free, on the three standard axioms.
   [`formal/Statement`](formal/Statement/README.md) states the end theorems about its own transcription of the

@@ -169,3 +169,71 @@ fn contract_is_the_rust_verifier() {
         }
     });
 }
+
+/// The deployable build (contracts of at most 24,576 bytes, `crates/evm_link`) returns, word for word, what the Rust
+/// verifier computes, for the main line and the extensions.
+#[test]
+fn deployable_is_the_rust_verifier() {
+    deep(|| {
+        let shape = Shape::of(&leanvm_flock_gas::shapes::reference().shape);
+        for (blake2s, mode) in [
+            (Blake2s::Flock(FLOCK_MAIN), Claims::Point),
+            (Blake2s::Flock(FLOCK_BIT_SLICE), Claims::Weighted),
+        ] {
+            let recorded = record_verifier(&shape, blake2s, mode);
+            let stream = sample_stream(recorded.stream_len, 11);
+            let contracts = leanvm_univariate::contract::parity_deployable(
+                &shape,
+                &PROGRAM_IV,
+                &[0x42; 32],
+                &stream,
+                blake2s,
+                mode,
+                leanvm_flock_gas::evm::codegen::MAX_CODE,
+            );
+            assert!(contracts >= 1);
+        }
+    });
+}
+
+/// `cargo test --release -p leanvm_univariate --test gas -- --ignored --nocapture deployable_report`
+#[test]
+#[ignore]
+fn deployable_report() {
+    deep(|| {
+        let shape = Shape::of(&leanvm_flock_gas::shapes::reference().shape);
+        for (name, blake2s, mode) in [
+            ("ABI point claims, Flock (a')", Blake2s::Flock(FLOCK_MAIN), Claims::Point),
+            ("ABI point claims, Flock (a) [ext. B]", Blake2s::Flock(FLOCK_BIT_SLICE), Claims::Point),
+            ("weighted claims [ext. W], Flock (a')", Blake2s::Flock(FLOCK_MAIN), Claims::Weighted),
+            ("weighted claims [ext. W], Flock (a) [ext. B]", Blake2s::Flock(FLOCK_BIT_SLICE), Claims::Weighted),
+            ("ABI point claims, no BLAKE2s argument", Blake2s::Omitted, Claims::Point),
+            ("weighted claims [ext. W], no BLAKE2s argument", Blake2s::Omitted, Claims::Weighted),
+        ] {
+            let d = leanvm_univariate::contract::measure_deployable(
+                &shape,
+                &PROGRAM_IV,
+                blake2s,
+                mode,
+                leanvm_flock_gas::evm::codegen::MAX_CODE,
+            );
+            let sizes: Vec<String> = d.contracts.iter().map(|c| grouped(c.code_bytes as u64)).collect();
+            let deployment: u64 = d.contracts.iter().map(|c| c.deployment_tx).sum();
+            println!(
+                "| {name} | {} | {} | +{} | {} contracts: {} bytes | {} | {} / {} / {} / {} | {} / {} |",
+                grouped(d.straight),
+                grouped(d.report.execution),
+                grouped(d.report.execution - d.straight),
+                d.contracts.len(),
+                sizes.join(", "),
+                grouped(deployment),
+                grouped(d.report.transaction(0, 40)),
+                grouped(d.report.transaction(2_000, 40)),
+                grouped(d.report.transaction(5_000, 40)),
+                grouped(d.report.transaction(20_000, 40)),
+                grouped(d.report.transaction(0, 64)),
+                grouped(d.report.transaction(20_000, 64)),
+            );
+        }
+    });
+}

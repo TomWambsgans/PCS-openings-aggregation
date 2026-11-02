@@ -22,6 +22,7 @@ pcs = { path = "crates/pcs" }
 parallel = { path = "crates/parallel" }
 verifier = { path = "crates/verifier" }
 quotient = { path = "crates/quotient" }
+evm_link = { path = "crates/evm_link" }
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
 bincode = "1"

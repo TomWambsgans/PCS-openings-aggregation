@@ -1,0 +1,10 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+[package]
+name = "evm_link"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Straight-line EVM programs (a verifier's recorded graph compiled) assembled into one contract, or linked into deployable contracts of at most 24,576 bytes"
+
+[lints]
+workspace = true
