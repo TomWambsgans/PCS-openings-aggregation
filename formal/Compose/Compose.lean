@@ -19,3 +19,6 @@ import Compose.Decoder
 import Compose.DecoderCost
 import Compose.DecoderDeployed
 import Compose.DecoderAxioms
+import Compose.Reduce
+import Compose.Claims
+import Compose.ClaimsAxioms

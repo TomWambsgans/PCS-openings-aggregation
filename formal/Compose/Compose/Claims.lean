@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Compose.Reduce
+import Compose.WiringSetup
 import LeanVM.Protocol.Whir.Sound.Start
 import LeanVM.Protocol.Whir.Sound.Weights
 import LeanVM.Protocol.Whir.Complete.Tables
@@ -174,7 +175,6 @@ theorem deployD_clW (c : Consts) (r : ℕ) (π : RootProof E) (ch : Chals E) (x 
   refine toStmt_of _ _ (short_of_le (by simp)) ?_
   simp only [List.mem_singleton, forall_eq, witness_point_eq]
   simp [witnessLayout, Layout.hidden, cellVars]
-  omega
 
 /-- When `reduce` does not reject, the wiring opening is handed its wiring claim. -/
 theorem deployD_clσ (c : Consts) (r : ℕ) (π : RootProof E) (ch : Chals E) (x : Reduced)
@@ -196,14 +196,12 @@ theorem deployD_clQ (c : Consts) (r : ℕ) (π : RootProof E) (ch : Chals E) (x 
   rw [hx, claimsFrom_some]
   refine toStmt_of _ _ (short_of_le (by simp)) ?_
   intro cl hcl
-  simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false] at hcl
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hcl
   rcases hcl with rfl | rfl
   · rw [quotient_point_eq]
     simp [quotientLayout, Layout.hidden, cellVars]
-    omega
   · rw [sum_point_eq]
     simp [quotientLayout, Layout.hidden, cellVars, Reduce.sumPoint]
-    omega
 
 /-! ## The reads -/
 
@@ -234,6 +232,9 @@ theorem witnessClaims_deployD (c : Consts) (r : ℕ) (hr : 1 ≤ r) {P : Params 
   rw [tabEval_eq_mle (witnessLayout r) T _ hlen] at hev
   exact (witness_iff c r _ _ _ _ _ _ _ _ hr hnz (tabFn T)).mp hev
 
+/-- A wiring table's entries as F1 reads a table of the cells' `r + 2` variables. -/
+def wiringFn (r : ℕ) (T : Tab (wiringLayout r)) : (Fin (r + 2) → Bool) → E := tabFn T
+
 /-- **The wiring claim on a table** (for the wiring term): a wiring table satisfying the deployed
 wiring opening's claims has its polynomial (`tablePoly`) take the fifth value at `t`, and
 `reduce` did not reject. -/
@@ -241,12 +242,12 @@ theorem wiringClaim_deployD (c : Consts) (r : ℕ) (hr : 1 ≤ r) (π : RootProo
     (T : Tab (wiringLayout r))
     (h : ∀ cl ∈ ((deployD c r).clσ π ch).claims, tabEval (wiringLayout r) T cl.point = cl.value) :
     (denominators c (r + 2) ch.α ch.β ch.t π.v.1 π.v.2).prod ≠ 0 ∧
-      (tablePoly (tabFn T)).eval ch.t = π.v.2 := by
+      (tablePoly (wiringFn r T)).eval ch.t = π.v.2 := by
   obtain ⟨x, hx, hcl⟩ := holds_cases (wiringLayout r) T (reduceOf c r π ch) (fun x => [x.wiring]) h
   obtain ⟨hnz, rfl⟩ := reduce_eq_some hx
   obtain ⟨hlen, hev⟩ := hcl _ (List.mem_singleton_self _)
   rw [tabEval_eq_mle (wiringLayout r) T _ hlen] at hev
-  exact ⟨hnz, (wiring_iff c r _ _ _ _ _ _ _ _ hr hnz (tabFn T)).mp hev⟩
+  exact ⟨hnz, (wiring_iff c r _ _ _ _ _ _ _ _ hr hnz (wiringFn r T)).mp hev⟩
 
 /-- F1's instance's parameters, unfolded. -/
 theorem params_eq (I : Instance E) :
@@ -254,6 +255,11 @@ theorem params_eq (I : Instance E) :
       (pubProd (invSeq I.basis.β) (regionMu I.c) 11 (22 + 2))
       (membershipPub_hPub I.basis (invSeq I.basis.β) I.c le24 (invSeq_zero _)
         fun d hd _ => invSeq_sum I.basis.β I.basis.zero d hd) := rfl
+
+/-- F1's instance's wiring polynomial is its wiring table's (`wiringTable`). -/
+theorem sigmaPoly_params (I : Instance E) :
+    I.params.sigmaPoly = tablePoly (wiringTable I.basis le24 I.wiring) := by
+  simp only [Instance.params, membershipParams, Params.ofCantor]
 
 /-- **`QuotientClaims`, discharged** for F1's instance: when its basis is `beta()`'s words, its
 weights `coordinate_weight`'s, `tau` solves `row_vanishing`'s system, and the wire reads the
@@ -273,11 +279,12 @@ theorem quotientClaims_deployD (I : Instance E) (c : Consts)
   obtain ⟨hl2, h2⟩ := hcl _ (List.mem_cons_of_mem _ (List.mem_singleton_self _))
   rw [tabEval_eq_mle (quotientLayout 22) T _ hl1] at h1
   rw [tabEval_eq_mle (quotientLayout 22) T _ hl2] at h2
-  have htarget : I.params.target (W.decode π.stmt) ch.γ = target (stmtHalves π.stmt) ch.γ := by
+  have htarget : I.params.target (W.decode π.stmt) ch.γ =
+      Reduce.target (stmtHalves π.stmt) ch.γ := by
     rw [hdec]
     refine (membership_target I.basis le24 I.wiring (invSeq I.basis.β) I.c (invSeq_zero _)
       (fun d hd _ => invSeq_sum I.basis.β I.basis.zero d hd) (stmtHalves π.stmt) ch.γ).trans ?_
-    unfold target
+    unfold Reduce.target
     ring
   exact quotientClaims_of c 22 (stmtHalves π.stmt) ch.α ch.β ch.γ ch.t π.v.1 π.v.2 ch.ρ
     (by norm_num) I.params (matches_params I c hβ hc hτ) I.basis le24 (cantorCells I.basis le24)
@@ -309,33 +316,67 @@ noncomputable def witnessDecoder : TableCode I.bounds.Msg₁ :=
   tableCode (deployD c 22).Lw (deployD c 22).R
     (admissible_of_eq rfl rfl (layouts_ok 22 rows_ok.1 rows_ok.2).1) (readW I)
 
-/-- **Knowledge soundness of the deployed verifier, its claims `reduce`'s**: the reduction's
-chain, then `opening::verify` on the witness, wiring and quotient tables with the claims
-`quotient::protocol::reduce` computes (`deployD`), at `2^22` rows, over `F192`, against F1's
-instance `I`; the extractor (`adversaryExtractor`) decodes the witness root's word with the
-computable decoder and reads each table as its four row polynomials. If the instance's basis is
-`beta()`'s words (`hβ`), its weights `coordinate_weight`'s (`hc`), `tau` solves `row_vanishing`'s
-system (`hτ`) and the wire reads the statement as its halves then `1, 0, 0, 0` (`hdec`), the
-verifier accepts while the extracted list holds no witness with probability at most the openings'
-terms, the wiring term `εσ`, and `N (2^-128 + 5 N / 2^256)`, `N = QS + Q + 6 + 3 QO`.
-`WitnessClaims` and `QuotientClaims` are discharged (`witnessClaims_deployD`,
-`quotientClaims_deployD`); the wiring term `hσ` remains. -/
+/-- **`WiringClaims`, discharged** for F1's instance and a wiring stack `q₀` whose table's
+polynomial carries the instance's wiring on its cells (`hq₀`: the honest wiring table, the
+Rust's `Index::new`): a stack satisfying the deployed wiring opening's claim has F1's wiring claim
+(`Params.sigmaPoly` at `t` is the fifth value), the wiring polynomial being the table's
+(`CantorBasis.tablePoly_ext`). -/
+theorem wiringClaims_deployD (q₀ : Column (wiringLayout 22).logN)
+    (hq₀ : ∀ x, (tablePoly (wiringFn 22 (tabOf (wiringLayout 22) q₀))).eval (I.basis.point x) =
+      I.basis.point (I.wiring x)) :
+    WiringClaims (P := I.params) (deployD c 22) q₀ := by
+  intro π ch h
+  have h' : ∀ cl ∈ ((deployD c 22).clσ π ch).claims,
+      tabEval (wiringLayout 22) (tabOf (wiringLayout 22) q₀) cl.point = cl.value :=
+    fun cl hcl => (tabEval_tabOf _ _ _).trans (h cl hcl)
+  obtain ⟨-, hev⟩ := wiringClaim_deployD c 22 (by norm_num) π ch _ h'
+  have hs : tablePoly (wiringTable I.basis le24 I.wiring) =
+      tablePoly (wiringFn 22 (tabOf (wiringLayout 22) q₀)) :=
+    I.basis.tablePoly_ext le24 _ _ fun x => by rw [wiringTable_eval, hq₀]
+  rw [← hs] at hev
+  unfold wiringClaim
+  rw [sigmaPoly_params]
+  exact hev
+
+/-- The setup of the wiring stack makes `2^20` queries at `2^22` rows. -/
+theorem setupQueries_deployD : setupQueries (deployD c 22) = 2 ^ 20 := by
+  rw [setupQueries_eq (deployD c 22) 22 rfl rfl]
+  rfl
+
+/-- **Knowledge soundness of the deployed verifier, its claims `reduce`'s.** The setup commits to
+the wiring stack `q₀` with the oracle (`stackSetup`, `2^20` queries); the adversary (`Q` queries)
+outputs a statement, the two roots, the five values and the three openings' proofs; the verifier
+runs the reduction's Keccak-256 chain, then `opening::verify` on the witness, wiring and quotient
+tables with the claims `quotient::protocol::reduce` computes from the proof and the chain's
+challenges (`deployD`, `Reduce.lean`), at `2^22` rows over `F192`, against F1's instance `I`. The
+extractor (`adversaryExtractor`, reading the setup's and the adversary's queries) decodes the
+witness root's word with the computable decoder and reads each table as its four row polynomials
+(`readW`). If the instance's basis is `beta()`'s words (`hβ`), its weights `coordinate_weight`'s
+(`hc`), `tau` solves `row_vanishing`'s system (`hτ`), the wire reads the statement as its halves
+then `1, 0, 0, 0` (`hdec`), and `q₀`'s table carries the instance's wiring (`hq₀`), the verifier
+accepts while the extracted list holds no witness of the statement with probability at most the
+three openings' `ours_sound` terms and `N (2^-128 + 5 N / 2^256)`, `N = 2^20 + Q + 6 + 3 · 10122`.
+`knowledgeSoundness_wired_setup_bits` with `WitnessClaims`, `QuotientClaims` and `WiringClaims`
+discharged. -/
 theorem knowledgeSoundness_deployed_concrete
     (hβ : ∀ k < 22 + 2, I.basis.β k = ofK (c.beta k))
     (hc : ∀ k < 8, coordinateWeight k = some (I.c k)) (hτ : RowVanishing c 22)
     (W : Wire I.params I.bounds) (hdec : ∀ sb, W.decode sb = stmtWords sb)
-    (setup : OracleComp KeccakCalls Bytes32)
-    (A : Bytes32 → OracleComp KeccakCalls (RootProof E × OpenProofs)) (QS Q QO : ℕ)
-    (hS : IsTotalQueryBound setup QS) (hQ : ∀ ir, IsTotalQueryBound (A ir) Q)
-    (hO : ∀ (L : Layout) w, IsTotalQueryBound (ourVerifier L logInvRate w) QO) (εσ : ℝ≥0∞)
-    (hσ : Pr{let z ← (simulateQ randomOracle (deployedExp W (deployD c 22) (withSetup setup A))).run'
-      ∅}[WDd (P := I.params) z] ≤ εσ) :
-    Pr{let z ← (simulateQ randomOracle (deployedExp W (deployD c 22) (withSetup setup A))).run' ∅}[
-        BreaksD W (witnessDecoder I c) z] ≤
-      openingBound (QS + Q + 6) + εσ + openingBound (QS + Q + 6 + QO + QO) +
-        ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) * (((1 / 2 ^ 128 : ℝ≥0) : ℝ≥0∞) +
-          5 * ((QS + Q + 6 + QO + QO + QO : ℕ) : ℝ≥0∞) / 2 ^ 256) :=
-  knowledgeSoundness_deployed_decoded_bits W (deployD c 22) card_E
+    (q₀ : Column (wiringLayout 22).logN)
+    (hq₀ : ∀ x, (tablePoly (wiringFn 22 (tabOf (wiringLayout 22) q₀))).eval (I.basis.point x) =
+      I.basis.point (I.wiring x))
+    (A : Bytes32 → OracleComp KeccakCalls (RootProof E × OpenProofs)) (Q : ℕ)
+    (hQ : ∀ ir, IsTotalQueryBound (A ir) Q) :
+    Pr{let z ← (simulateQ randomOracle
+        (wiredExp W (deployD c 22) (withSetup (stackSetup (deployD c 22) q₀) A))).run' ∅}[
+        BreaksW W (witnessDecoder I c) z] ≤
+      openingBound (2 ^ 20 + Q + 6) + openingBound (2 ^ 20 + Q + 6 + 10122) +
+        openingBound (2 ^ 20 + Q + 6 + 10122 + 10122) +
+        ((2 ^ 20 + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) *
+          (((1 / 2 ^ 128 : ℝ≥0) : ℝ≥0∞) +
+          5 * ((2 ^ 20 + Q + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
+  rw [← setupQueries_deployD c]
+  exact knowledgeSoundness_wired_setup_bits W (deployD c 22) card_E
     (Params.ofCantor_nCells I.basis le24 I.wiring 8 _ _
       (membershipPub_hPub I.basis (invSeq I.basis.β) I.c le24 (invSeq_zero _)
         fun d hd _ => invSeq_sum I.basis.β I.basis.zero d hd))
@@ -344,10 +385,10 @@ theorem knowledgeSoundness_deployed_concrete
       (membershipPub_hPub I.basis (invSeq I.basis.β) I.c le24 (invSeq_zero _)
         fun d hd _ => invSeq_sum I.basis.β I.basis.zero d hd)
       (natDegree_membershipPub_le (invSeq I.basis.β) I.c))
-    22 rows_ok.1 rows_ok.2 rfl rfl rfl (readW I) (readQ I)
+    22 rows_ok.1 rows_ok.2 rfl rfl rfl rfl (readW I) (readQ I)
     (witnessClaims_deployD c 22 (by norm_num) I.bounds le_rfl)
     (quotientClaims_deployD I c hβ hc hτ W hdec le_rfl le_rfl)
-    setup A QS Q QO hS hQ hO εσ hσ
+    q₀ (wiringClaims_deployD I c q₀ hq₀) A Q hQ
 
 end Final
 
