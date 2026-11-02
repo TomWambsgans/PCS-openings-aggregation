@@ -12,6 +12,7 @@ import QuotientZk.Deployed.Skeleton
 import QuotientZk.Deployed.Bound
 import QuotientZk.Deployed.Main
 import QuotientZk.Check
+import QuotientZk.Deployed.Fresh
 
 /-!
 # Zero knowledge of the non-interactive proof (layer F3b)
@@ -25,6 +26,11 @@ import QuotientZk.Check
   operation count (`skel_queryBound`, `≤ 2^70` at `2^22` rows), the unopened rows' entropy for the
   redesigned (gadget) layout (`row_entropy`, `gadget_stackR_of_onFirst`) carried to the joint view
   (`Factors.bound`). **`zk_deployed`**, **`zk_deployed_bits`**: `εFS + εhv + 2^-2200`.
+* `Deployed/Fresh/`, `Deployed/Fresh.lean`: `FSFresh` proved for the deployed skeleton
+  (`fsFresh_deployed`: `εFS = Q · 6 (|c₀| + Q) / 2^256 + 2 (|c₀| + Q) · 3 εc + |c₀| δ₀`,
+  `fsFresh_deployed_bits`: `≤ 2^-54`), for a prover whose rows are long, whose witness table's first
+  row has min-entropy, and whose openings' claims read a challenge; **`zk_deployed_fs`**,
+  **`zk_deployed_fs_bits`**: `2^-54 + εhv + 2^-2200`.
 -/
 
 /-- info: 'QuotientZk.zk_rom' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -78,3 +84,31 @@ import QuotientZk.Check
 /-- info: 'QuotientZk.Deployed.hidden_hδ' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms QuotientZk.Deployed.hidden_hδ
+
+/-- info: 'QuotientZk.Deployed.Fresh.fsFresh_deployed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Deployed.Fresh.fsFresh_deployed
+
+/-- info: 'QuotientZk.Deployed.Fresh.fsFresh_deployed_bits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Deployed.Fresh.fsFresh_deployed_bits
+
+/-- info: 'QuotientZk.Deployed.Fresh.zk_deployed_fs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Deployed.Fresh.zk_deployed_fs
+
+/-- info: 'QuotientZk.Deployed.Fresh.zk_deployed_fs_bits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Deployed.Fresh.zk_deployed_fs_bits
+
+/-- info: 'QuotientZk.Deployed.Fresh.trip_skel' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Deployed.Fresh.trip_skel
+
+/-- info: 'QuotientZk.Deployed.Fresh.prEvent_bad_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Deployed.Fresh.prEvent_bad_le
+
+/-- info: 'QuotientZk.Deployed.Fresh.epsFS_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Deployed.Fresh.epsFS_le
