@@ -105,9 +105,11 @@ theorem zeroKnowledge_deployed_whir (rep : QuotientZk.Instance.Rep K E) (P₀ : 
     (hinK : ∀ e, inK e = true ↔ e ∈ Set.range (algebraMap K E))
     (hsig : ∀ t, sigmaAt t = P₀.sigmaPoly.eval t)
     (hTW : ∀ stmt w, Relation stmt w → ∀ c, good P₀ (gK stmt w) (van stmt w) c → ∀ m,
+      ClaimsND (K := K) P₀ (gK stmt w) (van stmt w) c m →
       (openW rep Y).claims (c, redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m) (TW stmt w m) =
         valsW c (redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m))
     (hTQ : ∀ stmt w, Relation stmt w → ∀ c, good P₀ (gK stmt w) (van stmt w) c → ∀ m,
+      ClaimsND (K := K) P₀ (gK stmt w) (van stmt w) c m →
       (openQ rep P₀ Y).claims (c, redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m)
           (TQ stmt w c.1.1.1 m) =
         valsQ P₀ (stmtE stmt) Y c (redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m))
