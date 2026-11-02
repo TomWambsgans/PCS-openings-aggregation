@@ -330,14 +330,14 @@ theorem stackWeight_cube {L : PcsQuotient.Layout} (hL : WeightShape L) (c : PcsQ
       Option.getD_some, Nat.shiftRight_eq_div_pow]
     by_cases hk0 : y / 2 ^ s = 0
     · simp [hk0]
-    · rw [if_neg hk0, if_neg hk0]
+    · rw [ite_eq_right hk0, ite_eq_right hk0]
       rcases hlane : L.lanes[l]? with _ | lane
       · have hne : L.overflowLane ≠ l := fun h ↦ by rw [h, hlane] at hov; cases hov
         simp [List.getElem?_map, hlane, hne, List.getD_eq_getElem?_getD]
       · rcases lane with b | _ | _
         · -- a block lane
           have hne : L.overflowLane ≠ l := fun h ↦ by rw [h, hlane] at hov; cases hov
-          simp only [List.getElem?_map, hlane, Option.map_some, laneTr, hne, if_false, mul_zero,
+          simp only [List.getElem?_map, hlane, Option.map_some, laneTr, hne, ite_false, mul_zero,
             add_zero, List.getD_eq_getElem?_getD, Option.getD_some]
           rw [← List.getD_eq_getElem?_getD, scales_fst_getD, hlane,
             eqKernelA_getD_take c.point (by omega) hy,
@@ -349,15 +349,15 @@ theorem stackWeight_cube {L : PcsQuotient.Layout} (hL : WeightShape L) (c : PcsQ
           have hlo : l = L.overflowLane :=
             hovu l (List.getElem?_eq_some_iff.1 hlane).1 hlane
           subst hlo
-          simp only [List.getElem?_map, hlane, Option.map_some, laneTr, if_true, mul_one,
+          simp only [List.getElem?_map, hlane, Option.map_some, laneTr, ite_true, mul_one,
             mul_zero, zero_add, List.getD_eq_getElem?_getD, Option.getD_some]
           rw [eqKernelA_getD_take c.point (by omega) (Nat.mod_lt _ (by positivity)), List.take_take,
             min_eq_left hsℓ.le, WhirBridge.eqZ_eq_eqEval,
             LeanVM.Protocol.Whir.Complete.eqEval_comm (c.point.take s)]
           by_cases hkp : 1 ≤ y / 2 ^ s ∧ y / 2 ^ s ≤ L.pieces.length
-          · rw [if_pos hkp, ← List.getD_eq_getElem?_getD]
+          · rw [ite_eq_left hkp, ← List.getD_eq_getElem?_getD]
             ring
-          · rw [if_neg hkp, ← List.getD_eq_getElem?_getD]
+          · rw [ite_eq_right hkp, ← List.getD_eq_getElem?_getD]
             have hge : (L.scales c.point).2.length ≤ y / 2 ^ s - 1 := by
               rw [hps]
               generalize y / 2 ^ s = k at hk0 hkp ⊢
@@ -405,9 +405,9 @@ theorem gadgetWeight_cube {L : PcsQuotient.Layout} (hL : WeightShape L) {s : ℕ
     by_cases h : t + 3 * g ≤ y ∧ y < t + 3 * g + 3
     · obtain ⟨i, hi, rfl⟩ : ∃ i, i < 3 ∧ y = t + 3 * g + i :=
         ⟨y - (t + 3 * g), by omega, by omega⟩
-      rw [if_pos h, Nat.add_sub_cancel_left]
+      rw [ite_eq_left h, Nat.add_sub_cancel_left]
       interval_cases i <;> simp
-    · rw [if_neg h, if_neg (by omega), if_neg (by omega), if_neg (by omega)]
+    · rw [ite_eq_right h, ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega)]
       simp
   -- each pattern's lanes: one if `l` is one of them
   have hA2 : ∀ a b : ℕ, a ≠ b →
@@ -428,46 +428,46 @@ theorem gadgetWeight_cube {L : PcsQuotient.Layout} (hL : WeightShape L) {s : ℕ
   by_cases hr : t ≤ y ∧ y < t + 9
   · rw [show y + 9 - (t + 9) = y - t by omega]
     rcases (show y < t + 3 ∨ (t + 3 ≤ y ∧ y < t + 6) ∨ t + 6 ≤ y by omega) with h | h | h
-    · rw [if_pos (show t + 3 * 0 ≤ y ∧ y < t + 3 * 0 + 3 by omega),
-        if_neg (show ¬ (t + 3 * 1 ≤ y ∧ y < t + 3 * 1 + 3) by omega),
-        if_neg (show ¬ (t + 3 * 2 ≤ y ∧ y < t + 3 * 2 + 3) by omega),
+    · rw [ite_eq_left (show t + 3 * 0 ≤ y ∧ y < t + 3 * 0 + 3 by omega),
+        ite_eq_right (show ¬ (t + 3 * 1 ≤ y ∧ y < t + 3 * 1 + 3) by omega),
+        ite_eq_right (show ¬ (t + 3 * 2 ≤ y ∧ y < t + 3 * 2 + 3) by omega),
         show (y - t) / 3 = 0 by omega, show (y - t) % 3 = y - (t + 3 * 0) by omega,
         show PcsQuotient.gadgetLanes 0 = [0, 31] from rfl]
       by_cases hl0 : l = 0 ∨ l = 31
-      · rw [if_pos hl0, if_pos (show t ≤ y ∧ y < t + 9 ∧ ([0, 31] : List ℕ).contains l = true from
+      · rw [ite_eq_left hl0, ite_eq_left (show t ≤ y ∧ y < t + 9 ∧ ([0, 31] : List ℕ).contains l = true from
           ⟨hr.1, hr.2, hc0.2 hl0⟩)]
         ring
-      · rw [if_neg hl0, if_neg (show ¬ (t ≤ y ∧ y < t + 9 ∧ ([0, 31] : List ℕ).contains l = true) from
+      · rw [ite_eq_right hl0, ite_eq_right (show ¬ (t ≤ y ∧ y < t + 9 ∧ ([0, 31] : List ℕ).contains l = true) from
           fun h' ↦ hl0 (hc0.1 h'.2.2))]
         ring
-    · rw [if_neg (show ¬ (t + 3 * 0 ≤ y ∧ y < t + 3 * 0 + 3) by omega),
-        if_pos (show t + 3 * 1 ≤ y ∧ y < t + 3 * 1 + 3 by omega),
-        if_neg (show ¬ (t + 3 * 2 ≤ y ∧ y < t + 3 * 2 + 3) by omega),
+    · rw [ite_eq_right (show ¬ (t + 3 * 0 ≤ y ∧ y < t + 3 * 0 + 3) by omega),
+        ite_eq_left (show t + 3 * 1 ≤ y ∧ y < t + 3 * 1 + 3 by omega),
+        ite_eq_right (show ¬ (t + 3 * 2 ≤ y ∧ y < t + 3 * 2 + 3) by omega),
         show (y - t) / 3 = 1 by omega, show (y - t) % 3 = y - (t + 3 * 1) by omega,
         show PcsQuotient.gadgetLanes 1 = [1, 30] from rfl]
       by_cases hl1 : l = 1 ∨ l = 30
-      · rw [if_pos hl1, if_pos (show t ≤ y ∧ y < t + 9 ∧ ([1, 30] : List ℕ).contains l = true from
+      · rw [ite_eq_left hl1, ite_eq_left (show t ≤ y ∧ y < t + 9 ∧ ([1, 30] : List ℕ).contains l = true from
           ⟨hr.1, hr.2, hc1.2 hl1⟩)]
         ring
-      · rw [if_neg hl1, if_neg (show ¬ (t ≤ y ∧ y < t + 9 ∧ ([1, 30] : List ℕ).contains l = true) from
+      · rw [ite_eq_right hl1, ite_eq_right (show ¬ (t ≤ y ∧ y < t + 9 ∧ ([1, 30] : List ℕ).contains l = true) from
           fun h' ↦ hl1 (hc1.1 h'.2.2))]
         ring
-    · rw [if_neg (show ¬ (t + 3 * 0 ≤ y ∧ y < t + 3 * 0 + 3) by omega),
-        if_neg (show ¬ (t + 3 * 1 ≤ y ∧ y < t + 3 * 1 + 3) by omega),
-        if_pos (show t + 3 * 2 ≤ y ∧ y < t + 3 * 2 + 3 by omega),
+    · rw [ite_eq_right (show ¬ (t + 3 * 0 ≤ y ∧ y < t + 3 * 0 + 3) by omega),
+        ite_eq_right (show ¬ (t + 3 * 1 ≤ y ∧ y < t + 3 * 1 + 3) by omega),
+        ite_eq_left (show t + 3 * 2 ≤ y ∧ y < t + 3 * 2 + 3 by omega),
         show (y - t) / 3 = 2 by omega, show (y - t) % 3 = y - (t + 3 * 2) by omega,
         show PcsQuotient.gadgetLanes 2 = [32] from rfl]
       by_cases hl2 : l = 32
-      · rw [if_pos hl2, if_pos (show t ≤ y ∧ y < t + 9 ∧ ([32] : List ℕ).contains l = true from
+      · rw [ite_eq_left hl2, ite_eq_left (show t ≤ y ∧ y < t + 9 ∧ ([32] : List ℕ).contains l = true from
           ⟨hr.1, hr.2, hc2.2 hl2⟩)]
         ring
-      · rw [if_neg hl2, if_neg (show ¬ (t ≤ y ∧ y < t + 9 ∧ ([32] : List ℕ).contains l = true) from
+      · rw [ite_eq_right hl2, ite_eq_right (show ¬ (t ≤ y ∧ y < t + 9 ∧ ([32] : List ℕ).contains l = true) from
           fun h' ↦ hl2 (hc2.1 h'.2.2))]
         ring
-  · rw [if_neg (show ¬ (t + 3 * 0 ≤ y ∧ y < t + 3 * 0 + 3) by omega),
-      if_neg (show ¬ (t + 3 * 1 ≤ y ∧ y < t + 3 * 1 + 3) by omega),
-      if_neg (show ¬ (t + 3 * 2 ≤ y ∧ y < t + 3 * 2 + 3) by omega),
-      if_neg (show ¬ (t ≤ y ∧ y < t + 9 ∧
+  · rw [ite_eq_right (show ¬ (t + 3 * 0 ≤ y ∧ y < t + 3 * 0 + 3) by omega),
+      ite_eq_right (show ¬ (t + 3 * 1 ≤ y ∧ y < t + 3 * 1 + 3) by omega),
+      ite_eq_right (show ¬ (t + 3 * 2 ≤ y ∧ y < t + 3 * 2 + 3) by omega),
+      ite_eq_right (show ¬ (t ≤ y ∧ y < t + 9 ∧
         (PcsQuotient.gadgetLanes ((y + 9 - (t + 9)) / 3)).contains l = true) from
           fun h' ↦ hr ⟨h'.1, h'.2.1⟩)]
     ring
@@ -748,6 +748,13 @@ theorem runWithHash_bind {m : Type → Type} [Monad m] [LawfulMonad m] (H : Byte
       congr 1; funext o
       split <;> simp [ih]
 
+/-- The opening's sponge starts with nothing pending (the only fact about the seed the proofs
+use). -/
+theorem openingSpongeWithH_eta (H : Bytes → Digest) (F : KeccakState → KeccakState)
+    (L : PcsQuotient.Layout) (claims : List PcsQuotient.Claim) :
+    (⟨(openingSpongeWithH (m := Id) H F L claims).state, []⟩ : Sponge) =
+      openingSpongeWithH (m := Id) H F L claims := rfl
+
 theorem id_bind_eq' {α β : Type} (x : Id α) (f : α → Id β) : x >>= f = f x := rfl
 
 theorem id_pure_eq' {α : Type} (a : α) : (pure a : Id α) = a := rfl
@@ -769,9 +776,7 @@ theorem openingWithH_eq_runProof (H : Bytes → Digest) (F : KeccakState → Kec
   rw [openingProgram_eq hw]
   simp only [openingWithH, runProofWithHash, runWithHash, hd, ne_eq, hne, not_false_eq_true, hall,
     and_self, ↓reduceIte, runWithHash_bind, List.nil_append, id_bind_eq', id_pure_eq',
-    show (⟨(openingSpongeWithH (m := Id) H F L claims).state, []⟩ : Sponge) =
-      openingSpongeWithH (m := Id) H F L claims from rfl,
-    show PcsQuotient.laneFold = 6 from rfl, show (2 : ℕ) ^ 6 = 64 from rfl]
+    openingSpongeWithH_eta, show PcsQuotient.laneFold = 6 from rfl, show (2 : ℕ) ^ 6 = 64 from rfl]
   split <;> rename_i h <;> simp [h]
 
 /-- **The Statement's opening check accepts the Statement's opening prover's proof**, at a pure
@@ -875,5 +880,67 @@ theorem openingWithH_proveOpeningWithH' (H : Bytes → Digest) (F : KeccakState 
     openingWithH (m := Id) H F L (commitWithH (m := Id) H L.logN stack).root claims π = true :=
   openingWithH_proveOpeningWithH H F fuel L hL hw stack claims hne hlen hholds
     (isMultilinearFn_stackClaims L hL claims) hπ
+
+/-! ## Axioms -/
+
+/--
+info: 'E2ECompleteness.weightShape_layouts' depends on axioms: [propext]
+-/
+#guard_msgs in #print axioms weightShape_layouts
+
+/--
+info: 'E2ECompleteness.admissible_layouts' depends on axioms: [propext]
+-/
+#guard_msgs in #print axioms admissible_layouts
+
+/--
+info: 'E2ECompleteness.stackWeight_cube' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms stackWeight_cube
+
+/--
+info: 'E2ECompleteness.gadgetWeight_cube' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms gadgetWeight_cube
+
+/--
+info: 'E2ECompleteness.weightTable_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms weightTable_eq
+
+/--
+info: 'E2ECompleteness.corr_openingScript' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms corr_openingScript
+
+/--
+info: 'E2ECompleteness.proveOpeningWithH_eq_prove' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms proveOpeningWithH_eq_prove
+
+/--
+info: 'E2ECompleteness.openingWithH_eq_runProof' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms openingWithH_eq_runProof
+
+/--
+info: 'E2ECompleteness.openingWithH_proveOpeningWithH' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms openingWithH_proveOpeningWithH
+
+/--
+info: 'E2ECompleteness.openingWithH_proveOpeningWithH'' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms openingWithH_proveOpeningWithH'
+
+/--
+info: 'E2ECompleteness.isMultilinearFn_stackClaims' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms isMultilinearFn_stackClaims
+
+/--
+info: 'E2ECompleteness.exists_failed_pow_opening' depends on axioms: [propext, Classical.choice, Quot.sound]
+-/
+#guard_msgs in #print axioms exists_failed_pow_opening
 
 end E2ECompleteness
