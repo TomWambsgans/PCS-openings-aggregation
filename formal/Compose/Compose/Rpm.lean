@@ -417,4 +417,358 @@ theorem cost_gameB (setup : OracleComp KeccakCalls Bytes32) (hS : HOnly setup) (
       (LeanVM.Rpm.isWeightBound_hfEmbed_toRHF (cost_verifyD W D QOπ hOπ _))
   exact h.mono (by omega)
 
+/-! ## The random-oracle side: the transcript's evaluations are the adversary's cache -/
+
+/-- The two calls as queries of the two random oracles with coins. -/
+def liftKC : QueryImpl KeccakCalls (OracleComp CSpec) := fun t => liftM (CSpec.query (.inr t))
+
+theorem run_liftKC {α : Type} (X : OracleComp KeccakCalls α) (c : KeccakCalls.QueryCache) :
+    (simulateQ KeccakCalls.romImpl (simulateQ liftKC X)).run c =
+      (simulateQ randomOracle X).run c := by
+  rw [← QueryImpl.simulateQ_compose]
+  congr 2
+  funext t
+  simp [liftKC, QueryImpl.apply_compose]
+
+/-- The setup on bytes, read back on lanes, is the setup. -/
+theorem ofRHF_hInF_toRH {α : Type} (X : OracleComp KeccakCalls α) (hX : HOnly X) :
+    simulateQ ofRHF (simulateQ (Common.hInF (E := Common.KRest) (C := Common.KCap))
+      (simulateQ toRH X)) = simulateQ liftKC X := by
+  induction X using OracleComp.inductionOn with
+  | pure a => simp
+  | query_bind t k ih =>
+    rw [LeanVM.Rpm.hOnly_query_bind] at hX
+    rcases t with m | s
+    · simp only [simulateQ_bind, simulateQ_query, OracleQuery.input_query,
+        OracleQuery.cont_query, id_map, toRH, bind_map_left]
+      simp only [Common.hInF, simulateQ_spec_query, ofRHF, liftKC, bind_map_left,
+        LeanVM.Rpm.digestOfRpm_toRpm]
+      exact bind_congr fun u => ih _ (hX _)
+    · exact hX.elim
+
+/-- Logging changes nothing of a computation. -/
+theorem fst_loggedKC_run {α : Type} (v : OracleComp KeccakCalls α) :
+    ∀ l : Transcript, Prod.fst <$> (simulateQ logImplKC v).run l = v := by
+  induction v using OracleComp.inductionOn with
+  | pure a => intro l; simp
+  | query_bind t k ih =>
+    intro l
+    rw [loggedKC_run_query_bind, map_bind]
+    exact bind_congr fun u => ih u _
+
+/-- **The adversary with the simulator, on lanes, with its transcript.** -/
+noncomputable def romAdvT (A : Bytes32 → OracleComp Common.RandomPermutationOracles
+    (RootProof F × OpenProofs)) (x : Bytes32 × Transcript) :
+    OracleComp CSpec ((RootProof F × OpenProofs) × PermutationTranscript) :=
+  simulateQ ofRHF (Common.advS2 Common.keccakPadding Common.KState.zero (advB A x))
+
+/-- **The random-oracle adversary of the transfer**: the adversary with the indifferentiability
+simulator (`Common.advS2`), with coins, its queries read on lanes. -/
+noncomputable def romAdvC (A : Bytes32 → OracleComp Common.RandomPermutationOracles
+    (RootProof F × OpenProofs)) (ir : Bytes32) : OracleComp CSpec (RootProof F × OpenProofs) :=
+  Prod.fst <$> romAdvT A (ir, [])
+
+/-- The verifier from the cache after the adversary, that cache kept. -/
+noncomputable def gL (p : (Bytes32 × (RootProof F × OpenProofs)) × KeccakCalls.QueryCache) :
+    ProbComp (((RootProof F × OpenProofs) × Verd F) × KeccakCalls.QueryCache) :=
+  (fun v => ((withIr p.1.1 p.1.2, v), p.2)) <$>
+    (simulateQ randomOracle (verifyD W D (withIr p.1.1 p.1.2))).run' p.2
+
+/-- **The event on the cache after the adversary**: the verifier accepts while, for every transcript
+recording that cache's Keccak-256 answers, the extractor's list holds no witness. -/
+def BreaksC (c₁ : TableCode B.Msg₁)
+    (z : ((RootProof F × OpenProofs) × Verd F) × KeccakCalls.QueryCache) : Prop :=
+  AcceptedV (P := P) z.1 ∧ ∀ tr, Consistent tr z.2 → ∀ g ∈ adversaryExtractor c₁ tr z.1.1.1,
+    ¬ P.Sat (W.decode z.1.1.1.stmt) (P.cells g.1)
+
+/-! ### The extractor reads the answers a transcript records -/
+
+theorem lookTr_eq_map (tr : Transcript) (x : List UInt8) :
+    lookTr tr x = ((tr.find? fun e => decide (e.1 = x)).map Prod.snd).map LeanVM.Digest.ofRpm := by
+  simp [lookTr, Option.map_map, Function.comp_def]
+
+theorem mem_histOfTr_iff (tr : Transcript) (x : List UInt8) :
+    x ∈ histOfTr tr ↔ ((tr.find? fun e => decide (e.1 = x)).map Prod.snd).isSome := by
+  simp only [histOfTr, List.mem_toFinset, List.mem_map, Option.isSome_map, List.find?_isSome,
+    decide_eq_true_eq]
+
+/-- **Two transcripts recording the same answers have the same extractor.** -/
+theorem adversaryExtractor_congr (c₁ : TableCode B.Msg₁) {tr tr' : Transcript}
+    (h : ∀ x, lookTr tr x = lookTr tr' x) (π : RootProof F) :
+    adversaryExtractor c₁ tr π = adversaryExtractor c₁ tr' π := by
+  have hs : ∀ x, (tr.find? fun e => decide (e.1 = x)).map Prod.snd =
+      (tr'.find? fun e => decide (e.1 = x)).map Prod.snd := fun x => by
+    have := h x
+    rw [lookTr_eq_map, lookTr_eq_map] at this
+    exact Option.map_injective (LeanVM.Rpm.digestEquiv.symm.injective) this
+  have hH : histOfTr tr = histOfTr tr' := by
+    ext x
+    rw [mem_histOfTr_iff, mem_histOfTr_iff, hs x]
+  have hT : tableOfTr tr = tableOfTr tr' := by
+    funext x
+    simp only [tableOfTr, hs x]
+  simp only [adversaryExtractor, hH, hT]
+
+theorem lookTr_append' (l₁ l₂ : Transcript) (x : List UInt8) :
+    lookTr (l₁ ++ l₂) x = match lookTr l₁ x with
+      | some d => some d
+      | none => lookTr l₂ x := by
+  unfold lookTr
+  rw [List.find?_append]
+  cases l₁.find? fun e => decide (e.1 = x) <;> rfl
+
+theorem lookTr_evalTr (T : PermutationTranscript) (x : List UInt8) :
+    lookTr (evalTr T) x = lookupEvaluation (keccakEvaluationsOfTranscript T) x := by
+  simp [lookTr, evalTr, lookupEvaluation, List.find?_map, Function.comp_def,
+    LeanVM.Rpm.digestOfRpm_toRpm]
+
+/-! ### The adversary's cache (mumbai's `Rpm/Extract.lean`, from a filled cache, with coins) -/
+
+/-- **The lane transcript is the byte log**, coins included (mumbai's `advImpl2_logRel`). -/
+theorem advImpl2_logRelC {α : Type} (B : OracleComp Common.RandomPermutationOracles α)
+    (T : PermutationTranscript) (σ : LeanVM.Rpm.KSim) :
+    (fun x ↦ (x.1.1, (x.2, x.1.2.map LeanVM.Rpm.entryToRpm))) <$>
+        (simulateQ (Common.advImpl2 Common.keccakPadding) ((simulateQ logRelC B).run T)).run σ =
+      (simulateQ (Common.advImplLog2 Common.keccakPadding) (simulateQ relPC B)).run
+        (σ, T.map LeanVM.Rpm.entryToRpm) := by
+  induction B using OracleComp.inductionOn generalizing T σ with
+  | pure a => simp
+  | query_bind t k ih =>
+    rcases t with n | q
+    · simp only [StateT.run_bind, OracleQuery.input_query, relPC, logRelC,
+        StateT.run_mk, bind_map_left, simulateQ_bind, simulateQ_query,
+        OracleQuery.cont_query, id_map, map_bind]
+      have h2 : (Common.advImplLog2 Common.keccakPadding (.inl n)).run
+          (σ, T.map LeanVM.Rpm.entryToRpm) = (fun z ↦ (z.1, (z.2, T.map LeanVM.Rpm.entryToRpm)))
+            <$> (Common.advImpl2 (Msg := Bytes) Common.keccakPadding (.inl n)).run σ := rfl
+      rw [h2, bind_map_left]
+      refine bind_congr fun z ↦ ?_
+      rw [← ih]
+    · simp only [StateT.run_bind, OracleQuery.input_query, relPC, relP, logRelC, logRel,
+        StateT.run_mk, bind_map_left, simulateQ_bind, simulateQ_query,
+        OracleQuery.cont_query, id_map, map_bind]
+      have h1 : (Common.advImpl2 Common.keccakPadding (.inr (.inr (permQueryToRpm q)))).run σ =
+          (Common.simulator2 (Msg := Bytes) Common.keccakPadding (permQueryToRpm q)).run σ := rfl
+      have h2 : (Common.advImplLog2 Common.keccakPadding (.inr (.inr (permQueryToRpm q)))).run
+          (σ, T.map LeanVM.Rpm.entryToRpm) = (fun z ↦ (z.1, (z.2, T.map LeanVM.Rpm.entryToRpm ++
+            [(permQueryToRpm q, z.1)]))) <$>
+              (Common.simulator2 (Msg := Bytes) Common.keccakPadding (permQueryToRpm q)).run σ :=
+        rfl
+      rw [h1, h2, bind_map_left]
+      refine bind_congr fun z ↦ ?_
+      have e : T.map LeanVM.Rpm.entryToRpm ++ [(permQueryToRpm q, z.1)] =
+          (T ++ [(q, LeanVM.Rpm.KState.ofRpm z.1)]).map LeanVM.Rpm.entryToRpm := by
+        simp [LeanVM.Rpm.entryToRpm, LeanVM.Rpm.toRpm_ofRpm]
+      rw [e, ← ih]
+
+/-- The transfer's adversary is the adversary with the simulator logging the byte queries, its
+log read on lanes. -/
+theorem advS2_advB (A : Bytes32 → OracleComp Common.RandomPermutationOracles
+    (RootProof F × OpenProofs)) (x : Bytes32 × Transcript) :
+    Common.advS2 Common.keccakPadding Common.KState.zero (advB A x) =
+      (fun y ↦ (y.1, y.2.2.map LeanVM.Rpm.entryOfRpm)) <$>
+        (simulateQ (Common.advImplLog2 Common.keccakPadding) (simulateQ relPC (A x.1))).run
+          (Common.SimState.init Common.KState.zero, []) := by
+  have h := advImpl2_logRelC (A x.1) [] (Common.SimState.init Common.KState.zero)
+  rw [List.map_nil] at h
+  rw [← h, Functor.map_map, Common.advS2, advB, StateT.run'_eq]
+  congr 1
+  funext y
+  simp only [List.map_map]
+  have e : LeanVM.Rpm.entryOfRpm ∘ LeanVM.Rpm.entryToRpm = id :=
+    funext LeanVM.Rpm.entryOfRpm_toRpm
+  rw [e, List.map_id]
+
+/-- **Every Keccak-256 answer in the cache was there at the start or is a rooted path's.** -/
+def CacheRel (c₀ : HFS.QueryCache) (σ : LeanVM.Rpm.KSim) (c : HFS.QueryCache) : Prop :=
+  ∀ m d, c (.inl m) = some d → c₀ (.inl m) = some d ∨
+    (m, d) ∈ Common.simPaths Common.keccakPadding σ
+
+/-- **One step of the simulator keeps the relation** (mumbai's `cacheInv_step`). -/
+theorem cacheRel_step (c₀ : HFS.QueryCache) (q : Common.PermutationQuery Common.KState)
+    (σ : LeanVM.Rpm.KSim) (c : HFS.QueryCache) (h : CacheRel c₀ σ c)
+    {v : (Common.KState × LeanVM.Rpm.KSim) × HFS.QueryCache}
+    (hv : v ∈ support ((simulateQ HFS.romImpl
+      ((Common.simulator2 (Msg := Bytes) Common.keccakPadding q).run σ)).run c)) :
+    CacheRel c₀ v.1.2 v.2 := by
+  cases q with
+  | inverse y =>
+    simp only [Common.simulator2, StateT.run_mk] at hv
+    split at hv
+    · simp at hv; subst hv; exact h
+    · simp only [simulateQ_bind, StateT.run_bind, simulateQ_romImpl_liftM_run, simulateQ_pure,
+        StateT.run_pure, bind_map_left, support_bind, support_pure, Set.mem_iUnion,
+        Set.mem_singleton_iff] at hv
+      obtain ⟨_, -, rfl⟩ := hv
+      exact h
+  | forward x =>
+    simp only [Common.simulator2, StateT.run_mk] at hv
+    split at hv
+    · simp at hv; subst hv; exact h
+    · split at hv
+      · next s β hch =>
+        simp only [simulateQ_bind, StateT.run_bind, simulateQ_pure, StateT.run_pure,
+          mem_support_bind_iff, support_pure, Set.mem_singleton_iff] at hv
+        obtain ⟨w, hw, rfl⟩ := hv
+        rcases hm : Common.keccakPadding.unpad (β ++ [Common.blockTo s x]) with _ | m
+        · rw [Common.rootedAnswer2_run_none _ hm] at hw
+          obtain ⟨-, -, hc⟩ := Common.roStep_support _ c hw
+          intro m' d hd
+          rw [hc _ (by simp)] at hd
+          exact (h m' d hd).imp_right LeanVM.Rpm.mem_simPaths_cons
+        · rw [Common.rootedAnswer2_run_some _ hm] at hw
+          simp only [mem_support_bind_iff, support_uniformSample, Set.mem_univ, true_and,
+            support_pure, Set.mem_singleton_iff] at hw
+          obtain ⟨w', hw', ec, rfl⟩ := hw
+          obtain ⟨-, hself, hc⟩ := Common.roStep_support _ c hw'
+          intro m' d hd
+          by_cases hmm : m' = m
+          · subst hmm
+            rw [hself, Option.some_inj] at hd
+            subst hd
+            exact Or.inr (by simp [Common.simPaths, hm])
+          · rw [hc _ (by simpa using hmm)] at hd
+            exact (h m' d hd).imp_right LeanVM.Rpm.mem_simPaths_cons
+      · simp only [simulateQ_bind, StateT.run_bind, simulateQ_pure, StateT.run_pure,
+          Common.fQuery_run, mem_support_bind_iff, support_pure, Set.mem_singleton_iff] at hv
+        obtain ⟨w, hw, rfl⟩ := hv
+        obtain ⟨-, -, hc⟩ := Common.roStep_support _ c hw
+        intro m' d hd
+        rw [hc _ (by simp)] at hd
+        exact h m' d hd
+
+/-- A coin of the adversary changes neither the simulator's state nor the cache. -/
+theorem foldRO_coin (n : ℕ)
+    (s : (LeanVM.Rpm.KSim × LeanVM.Rpm.RLog) × HFS.QueryCache)
+    {v : RSpec.Range (.inl n) × (LeanVM.Rpm.KSim × LeanVM.Rpm.RLog) × HFS.QueryCache}
+    (hv : v ∈ support ((Common.foldRO (Common.advImplLog2 (Msg := Bytes) Common.keccakPadding)
+      (.inl n)).run s)) : v.2 = s := by
+  rw [Common.foldRO_run] at hv
+  simp only [Common.advImplLog2, Common.advImpl2, StateT.run_mk, support_map,
+    Set.mem_image] at hv
+  obtain ⟨y, hy, rfl⟩ := hv
+  simp only [simulateQ_map, StateT.run_map, support_map, Set.mem_image] at hy
+  obtain ⟨y', hy', rfl⟩ := hy
+  simp only [StateT.run_monadLift, monadLift_self, simulateQ_bind, simulateQ_pure,
+    StateT.run_bind, StateT.run_pure, mem_support_bind_iff, support_pure,
+    Set.mem_singleton_iff] at hy'
+  obtain ⟨x, hx, rfl⟩ := hy'
+  rw [simulateQ_romImpl_liftM_run, support_map] at hx
+  obtain ⟨u, -, rfl⟩ := hx
+  rfl
+
+/-- **The relation along the adversary's run** (mumbai's `cacheInv_run`), coins included. -/
+theorem cacheRel_run {α : Type} (c₀ : HFS.QueryCache)
+    (B : OracleComp Common.RandomPermutationOracles α)
+    (s : (LeanVM.Rpm.KSim × LeanVM.Rpm.RLog) × HFS.QueryCache) (hs : CacheRel c₀ s.1.1 s.2) :
+    ∀ w ∈ support ((simulateQ (Common.foldRO
+        (Common.advImplLog2 (Msg := Bytes) Common.keccakPadding)) (simulateQ relPC B)).run s),
+      CacheRel c₀ w.2.1.1 w.2.2 := by
+  induction B using OracleComp.inductionOn generalizing s with
+  | pure a =>
+    intro w hw
+    simp only [simulateQ_pure, StateT.run_pure, support_pure, Set.mem_singleton_iff] at hw
+    subst hw
+    exact hs
+  | query_bind t k ih =>
+    intro w hw
+    rcases t with n | q
+    · simp only [simulateQ_bind, simulateQ_query, OracleQuery.input_query, OracleQuery.cont_query,
+        id_map, relPC, StateT.run_bind, mem_support_bind_iff] at hw
+      obtain ⟨v, hv, hw⟩ := hw
+      refine ih _ v.2 ?_ w hw
+      rw [foldRO_coin n s hv]
+      exact hs
+    · simp only [simulateQ_bind, simulateQ_query, OracleQuery.input_query, OracleQuery.cont_query,
+        id_map, relPC, relP, bind_map_left, StateT.run_bind, mem_support_bind_iff] at hw
+      obtain ⟨v, hv, hw⟩ := hw
+      refine ih _ v.2 ?_ w hw
+      rw [Common.foldRO_run] at hv
+      simp only [support_map, Set.mem_image] at hv
+      obtain ⟨y, hy, rfl⟩ := hv
+      have e : (Common.advImplLog2 (Msg := Bytes) Common.keccakPadding
+          (.inr (.inr (permQueryToRpm q)))).run s.1 =
+          (fun z ↦ (z.1, (z.2, s.1.2 ++ [(permQueryToRpm q, z.1)]))) <$>
+            (Common.simulator2 (Msg := Bytes) Common.keccakPadding (permQueryToRpm q)).run
+              s.1.1 := rfl
+      rw [e, simulateQ_map, StateT.run_map, support_map] at hy
+      obtain ⟨u, hu, rfl⟩ := hy
+      exact cacheRel_step c₀ _ _ _ hs hu
+
+/-- **The hash queries of the adversary's transcript are cached**, from any starting cache
+(`common`'s `pathsOf_ideal2`, from a filled cache). -/
+theorem pathsOf_ideal2C {α : Type} (X : OracleComp RSpec α) (c₀ : HFS.QueryCache) {z}
+    (hz : z ∈ support ((simulateQ (Common.foldRO (Common.advImplLog2 (Msg := Bytes)
+      Common.keccakPadding)) X).run ((Common.SimState.init Common.KState.zero, []), c₀))) :
+    ∀ md ∈ Common.pathsOf Common.keccakPadding Common.KState.zero z.2.1.2,
+      z.2.2 (.inl md.1) = some md.2 := by
+  have hRO := Common.inv_of_mem_support_run (spec' := unifSpec)
+    (Common.foldRO (Common.advImplLog2 (Msg := Bytes) Common.keccakPadding))
+    (fun s ↦ ∀ md ∈ Common.simPaths Common.keccakPadding s.1.1, s.2 (.inl md.1) = some md.2)
+    (fun t s hs w hw ↦ Common.roOK2_step Common.keccakPadding t s hs hw) X
+    (s := ((Common.SimState.init Common.KState.zero, []), c₀)) (by
+      simp only [Common.simPaths, Common.SimState.init, List.filterMap_cons, List.filterMap_nil]
+      rcases h : Common.keccakPadding.unpad [] with _ | a
+      · simp
+      · exact absurd ((Common.keccakPadding.unpad_eq_some_iff _ _).mp h)
+          (Common.keccakPadding.pad_ne_nil a))
+    z hz
+  have h1 := Common.run_simulateQ_foldRO (Common.advImplLog2 (Msg := Bytes) Common.keccakPadding)
+    X (Common.SimState.init Common.KState.zero, []) c₀
+  have hz' : ((z.1, z.2.1), z.2.2) ∈ support ((simulateQ HFS.romImpl
+      ((simulateQ (Common.advImplLog2 (Msg := Bytes) Common.keccakPadding) X).run
+        (Common.SimState.init Common.KState.zero, []))).run c₀) := by
+    rw [h1, support_map]
+    exact ⟨z, hz, rfl⟩
+  have hrep := Common.simulator2_state_eq_replay Common.keccakPadding Common.KState.zero X
+    (Common.fst_mem_support_of_mem_support_ro2 hz')
+  intro md hmd
+  rw [Common.pathsOf, ← hrep] at hmd
+  exact hRO md hmd
+
+/-- **The adversary's cache** after the adversary with the simulator, from a cache `c₀`: it extends
+`c₀`, holds every Keccak-256 evaluation of the adversary's transcript, and holds no other new
+Keccak-256 answer. -/
+theorem adv_cache (A : Bytes32 → OracleComp Common.RandomPermutationOracles
+    (RootProof F × OpenProofs)) (x : Bytes32 × Transcript) (c₀ : HFS.QueryCache) {z}
+    (hz : z ∈ support ((simulateQ HFS.romImpl
+      (Common.advS2 Common.keccakPadding Common.KState.zero (advB A x))).run c₀)) :
+    c₀ ≤ z.2 ∧ (∀ md ∈ LeanVM.Rpm.transcriptPathsB z.1.2, z.2 (.inl md.1) = some md.2) ∧
+      (∀ m d, z.2 (.inl m) = some d → c₀ (.inl m) = some d ∨
+        (m, d) ∈ LeanVM.Rpm.transcriptPathsB z.1.2) := by
+  refine ⟨Common.le_of_mem_support_run _ c₀ hz, ?_⟩
+  rw [advS2_advB, simulateQ_map, StateT.run_map, Common.run_simulateQ_foldRO, Functor.map_map,
+    support_map] at hz
+  obtain ⟨w, hw, rfl⟩ := hz
+  have eT : (w.2.1.2.map LeanVM.Rpm.entryOfRpm).map
+      (fun e ↦ (permQueryToRpm e.1, LeanVM.KState.toRpm e.2)) = w.2.1.2 := by
+    rw [List.map_map]
+    conv_rhs => rw [← List.map_id w.2.1.2]
+    exact List.map_congr_left fun e _ ↦ LeanVM.Rpm.entryToRpm_ofRpm e
+  have hpaths : LeanVM.Rpm.transcriptPathsB (w.2.1.2.map LeanVM.Rpm.entryOfRpm) =
+      Common.pathsOf Common.keccakPadding Common.KState.zero w.2.1.2 := by
+    rw [LeanVM.Rpm.transcriptPathsB, eT]
+  have hrep : w.2.1.1 = Common.replay Common.KState.zero w.2.1.2 := by
+    have h1 := Common.run_simulateQ_foldRO
+      (Common.advImplLog2 (Msg := Bytes) Common.keccakPadding) (simulateQ relPC (A x.1))
+      (Common.SimState.init Common.KState.zero, []) c₀
+    have hz' : ((w.1, w.2.1), w.2.2) ∈ support ((simulateQ HFS.romImpl
+        ((simulateQ (Common.advImplLog2 (Msg := Bytes) Common.keccakPadding)
+          (simulateQ relPC (A x.1))).run (Common.SimState.init Common.KState.zero, []))).run
+            c₀) := by
+      rw [h1, support_map]
+      exact ⟨w, hw, rfl⟩
+    exact Common.simulator2_state_eq_replay _ _ _
+      (Common.fst_mem_support_of_mem_support_ro2 hz')
+  have hrel := cacheRel_run c₀ (A x.1) ((Common.SimState.init Common.KState.zero, []), c₀)
+    (fun m d hd => Or.inl hd) w hw
+  refine ⟨?_, fun m d hd => ?_⟩
+  · simp only [hpaths]
+    exact pathsOf_ideal2C _ c₀ hw
+  · simp only [hpaths]
+    rcases hrel m d hd with h | h
+    · exact Or.inl h
+    · rw [hrep] at h
+      exact Or.inr h
+
 end Compose
