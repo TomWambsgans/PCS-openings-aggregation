@@ -15,6 +15,12 @@ import ZK.ProverBridgeDuplex
 import ZK.ProverBridgeMerkle
 import ZK.Final
 import ZK.Budget
+import ZK.CoreEnd
+import ZK.CoreTables
+import ZK.CoreView
+import ZK.CoreDrive
+import ZK.CoreFollows
+import ZK.CoreBudget
 import ZK.Axioms
 
 /-!
@@ -88,6 +94,17 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
   `fine_skelSetup`), so the prover makes at most `(2^24 + 2^70) · 12` calls of `π` (`cost_proverJ`).
   **`hprover_of_renderer`** (any renderer whose messages pass), **`hprover_whir`** (WHIR's honest
   prover: rows of at most `192` words), given the wiring codeword's rows of at most `1564` bytes.
+* `ZK/Core*.lean`: the prover bridge rendered by WHIR's honest prover. `CoreDefs`: `CoreWhir` is false at
+  degenerate `α, β` (the statement's quotient is not F1's there), so the core `CoreWhirG`/`CoreD` holds off
+  them and `badProb` (no proof, or degenerate `α, β`) bounds the rest (`proverBridge_of_detG`;
+  `hbad_deployed`, `CoreBad`: `≤ deltaNone < 2^-162`). **`zeroKnowledge_final`** (`CoreEnd`): the
+  Statement's `ZeroKnowledgeWith` at `zkBoundEnd ((2^24 + 2^70)·12) fmtBudget (· ↦ deltaNone)` for the
+  simulator with `whirRenderer` per statement, from `CoreD`. Proved parts of `CoreD`: the stacks and
+  leaves (`CoreTables*`: `stackW`, `stackQ`, `codeW`, `codeQ`, `pbRow_W`, `pbRow_Q`), the view's lane
+  rounds and `f¹` (`CoreView*`: `viewW`, `viewQ`), the verifier's program following the skeleton's
+  events (`CoreFollows`), `runFrom` on events (`CoreEv`), `fmt`'s production replaying the run
+  (`CoreFill`), the skeleton's opening on events (`CoreSkel`), the lockstep of the skeleton, the renderer
+  and the statement's run (`CoreDrive`: `drive`), `fmt` within its budget (`CoreBudget*`).
 * `ZK/Assembly.lean`: the same assembly for the package's own `simulator` given an ideal bridge
   (`zeroKnowledge_of_bridges`, `zeroKnowledge_deployed` on the constant-root skeleton); the joint
   model's data (`JointData`) and the bounds (`zkBound`).
