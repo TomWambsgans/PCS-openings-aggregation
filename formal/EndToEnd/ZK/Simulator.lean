@@ -145,6 +145,31 @@ theorem zeroKnowledge_of_rpmSimulator
   zeroKnowledge_of_bridges J skel fmt QP Qp Qfmt εFS εR (fun _ ↦ 0) hskel hfmt hvalid hFS hduplex
     hprover hreal fun stmt w hw ↦ idealBridge_rpm _ _ _ _ stmt s₀ (hI stmt w hw)
 
+/-- **Zero knowledge of the membership proof with `QuotientZk`'s simulator in the statement, on the
+deployed skeleton**: `zeroKnowledge_deployed` with the ideal bridge exact (`εI = 0`), for a statement
+whose ideal experiment is `rpmSimulator`'s at the joint model's public data (`hI`). -/
+theorem zeroKnowledge_deployed_rpmSimulator
+    (J : Statement → Secret → JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂)
+    (stmtD : Statement → QuotientZk.Deployed.Statement) (idW idσ idQ : QuotientRpm.Bytes32)
+    (rowsW : List (List UInt8)) (hrows : rowsW.length = 2 ^ 19)
+    (sh : Statement → QuotientZk.Deployed.Shape)
+    (hsh : ∀ stmt, sh stmt = QuotientZk.Deployed.deployedShape (stmtD stmt) idW idσ idQ rowsW)
+    (fmt : QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof))
+    (Qp Qfmt : ℕ) (εR : ℕ → ℝ≥0∞) (s₀ : RpmSimState)
+    (hfmt : ∀ pf, IsTotalQueryBound (fmt pf) Qfmt)
+    (hvalid : ∀ stmt w, Relation stmt w → (J stmt w).Valid)
+    (hprover : ∀ stmt w, Relation stmt w → ∀ s,
+      QueryCostAtMost (QuotientZk.DRpm.proverJ (J stmt w).P keccak256OverPermutation queryPermutation
+        (QuotientZk.DRpm.coinR KSt) (QuotientZk.DRpm.coinR DigestBytes) s
+        (QuotientZk.Deployed.skel (sh stmt))) permutationCallCost Qp)
+    (hreal : ∀ stmt w, Relation stmt w →
+      RealBridge stmt w (J stmt w).P (QuotientZk.Deployed.skel (sh stmt)) fmt εR)
+    (hI : ∀ stmt w, Relation stmt w → ∀ D, idealExperiment stmt D =
+      rpmIdeal (J stmt w).P (J stmt w).simV (QuotientZk.Deployed.skel (sh stmt)) fmt s₀ D) :
+    ZeroKnowledge (zkBoundDeployed Qp Qfmt εR fun _ ↦ 0) :=
+  zeroKnowledge_deployed J stmtD idW idσ idQ rowsW hrows sh hsh fmt Qp Qfmt εR (fun _ ↦ 0) hfmt hvalid
+    hprover hreal fun stmt w hw ↦ idealBridge_rpm _ _ _ _ stmt s₀ (hI stmt w hw)
+
 end Main
 
 end PcsQuotient.EndToEnd

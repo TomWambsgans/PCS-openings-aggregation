@@ -3,7 +3,7 @@
 -- (branch `mumbai`, commit 6175f1a0, MIT OR Apache-2.0: `Statement/RandomPermutation.lean`;
 -- `Common.QueryCostAtMost.bind` from its `common`).
 import ZK.Coins
-import QuotientZk.RpmJoint
+import QuotientZk.FreshJoint
 
 /-!
 # `PcsQuotient.ZeroKnowledge` from `formal/QuotientZk`
@@ -41,7 +41,7 @@ model) with the joint model's honest-verifier zero knowledge and factorizations
 -/
 
 open OracleComp OracleSpec Common Polynomial Module QuotientSecurity QuotientSecurity.Hiding
-open QuotientZk.Joint
+open QuotientZk.Joint QuotientZk.Deployed.Fresh
 open QuotientZk.Deployed (Inp Out Msg Tbl Pos KSt DSpec)
 open scoped ENNReal
 
@@ -62,7 +62,11 @@ structure JointData (K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ 
     [Algebra K E] [DecidableEq E] [CharP E 2] [Fintype E]
     [Fintype ι₁] [DecidableEq ι₁] [Fintype Y₁] [DecidableEq Y₁] [Fintype Q₁] [DecidableEq Q₁]
     [Fintype ι₂] [DecidableEq ι₂] [Fintype Y₂] [DecidableEq Y₂] [Fintype Q₂] [DecidableEq Q₂] where
-  P : Proto (Rand K ι₁ Y₁ ι₂ Y₂) Inp Out Msg Tbl Pos
+  /-- The prover of the skeleton model, its secret rows byte strings (`QuotientZk.DRpm.ofBytes`). -/
+  Pb : Proto (Rand K ι₁ Y₁ ι₂ Y₂) (List UInt8) Out Msg Tbl Pos
+  /-- The bytes the openings' claims are hashed from, as functions of a challenge (`fsFresh_deployed`'s
+  `cw`: the witness, wiring and quotient openings' claims). -/
+  cw : Fin 3 → QuotientRpm.Bytes32 → List UInt8
   P₀ : Params E
   stmtE : Fin P₀.words → E
   gK : Fin 4 → K[X]
@@ -78,7 +82,7 @@ structure JointData (K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ 
   cl₂ : Chal E Γ₁ Γ₂ Γw → (Fin 4 → E) × E → Fin S₂.m → E
   simT₁ : Chal E Γ₁ Γ₂ Γw → (Fin 4 → E) × E → ι₁ → Y₁ → K
   simT₂ : Chal E Γ₁ Γ₂ Γw → (Fin 4 → E) × E → ι₂ → Y₂ → K
-  lk : Link P P₀ gK van wir T₁ T₂ S₁ S₂
+  lk : Link (QuotientZk.DRpm.ofBytes Pb) P₀ gK van wir T₁ T₂ S₁ S₂
 
 section Joint
 
@@ -90,6 +94,11 @@ variable {K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂ : Type
   [SampleableType (ι₁ → Y₁ → K)] [SampleableType (ι₂ → Y₂ → K)]
   [SampleableType Γ₁] [Fintype Γ₁] [SampleableType Γ₂] [Fintype Γ₂] [SampleableType Γw]
 
+/-- The prover of the skeleton model, its rows read as Keccak-256's inputs. -/
+abbrev JointData.P (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂) :
+    Proto (Rand K ι₁ Y₁ ι₂ Y₂) Inp Out Msg Tbl Pos :=
+  QuotientZk.DRpm.ofBytes J.Pb
+
 /-- **The joint simulator's view** at the oracle's answers `σ`: `jointSim` at the challenges they give,
 read as the skeleton's view (`Link.out`). -/
 def JointData.simV (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂) :
@@ -100,7 +109,10 @@ def JointData.simV (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι�
 `hvan`, `hsat`: the witness satisfies the relation, `hvan0`), the sizes (`hq`, `hK`, `hN`, `hdeg`, `h40₁`,
 `h40₂`), the simulator's public functions (`hinK`, `hsig`), each secret opening's conditions (`hS₁`,
 `hS₂`: (Q), `WeightsFit`, the layout's lanes), the claims of the honest and simulated tables (`hT₁`,
-`hT₂`, `hsimT₁`, `hsimT₂`), the challenges uniform (`hch`), and the secret rows byte strings (`hrow`). -/
+`hT₂`, `hsimT₁`, `hsimT₂`), the challenges uniform (`hch`); and `fsFresh_deployed`'s conditions on the
+prover (`hcw`: the claims' bytes read a challenge through windows of min-entropy `2^-191`; `hrow₀`: the
+witness table's first row of min-entropy `2^-2368`; `hlong`: rows longer than `192` bytes; `hcK`: the
+witness table committed first; `hclW`, `hclσ`, `hclQ`: the openings' claims at their places; `hn`). -/
 structure JointData.Valid (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂) : Prop where
   h3 : finrank K E = 3
   hE : J.P₀.Exact
@@ -124,7 +136,14 @@ structure JointData.Valid (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O
   hsimT₁ : ∀ c, good J.P₀ J.gK J.van c → ∀ v, J.S₁.claims c (J.simT₁ c v) = J.cl₁ c v
   hsimT₂ : ∀ c, good J.P₀ J.gK J.van c → ∀ v, J.S₂.claims c (J.simT₂ c v) = J.cl₂ c v
   hch : J.lk.chOf <$> uniformList Out J.P.n =ᵈ ($ᵗ (Chal E Γ₁ Γ₂ Γw))
-  hrow : ∀ s h k x, ∃ m, J.P.rowFn s h k x = .inl m
+  hcw : ∀ j y, Pr{let u ← $ᵗ Out}[J.cw j u.1 = y] ≤ ((2 : ℝ≥0∞) ^ 191)⁻¹
+  hrow₀ : ∀ y, Pr{let s ← $ᵗ (Rand K ι₁ Y₁ ι₂ Y₂)}[J.P.rowFn s [] 0 0 = y] ≤ ((2 : ℝ≥0∞) ^ 2368)⁻¹
+  hlong : ∀ s h k x, 192 < (J.Pb.rowFn s h k x).length
+  hcK : J.Pb.cK 0 = 0
+  hclW : ClaimsAt J.P 5 4 (J.cw 0)
+  hclσ : ClaimsAt J.P 128 3 (J.cw 1)
+  hclQ : ClaimsAt J.P 242 3 (J.cw 2)
+  hn : 242 ≤ J.Pb.n
 
 end Joint
 
@@ -252,12 +271,77 @@ theorem zeroKnowledge_of_bridges
   have hmain := QuotientZk.DRpm.zk_rpm_skel Jw.P (skel stmt) Jw.simV _ εFS (1 / 2 ^ 165)
     ((2 : ℝ≥0∞) ^ 2368)⁻¹ ((2 : ℝ≥0∞) ^ 2368)⁻¹ QP (Qfmt + Q) (Qp + (Qfmt + Q)) (hskel stmt)
     (hFS stmt w hw) hHV.1 hHV.2 (fun σ k x hx v y ↦ (hfac σ k x hx y).some.bound v)
-    (fun σ k x k' x' hx hx' hne v ↦ (hfac₂ σ k x k' x' hx hx' hne).some.bound v) hv.hrow
+    (fun σ k x k' x' hx hx' hne v ↦ (hfac₂ σ k x k' x' hx hx' hne).some.bound v)
+    (QuotientZk.DRpm.rowFn_ofBytes Jw.Pb)
     (hduplex stmt w hw) D hD hQ
   rw [QuotientZk.Deployed.card_positions] at hmain
   have h := ((hreal stmt w hw D₀ Q hD₀).trans hmain).trans (hideal stmt w hw D₀ Q hD₀)
   refine h.mono (le_of_eq ?_)
   simp only [zkBound]
+
+/-- `epsFS` grows with the operations. -/
+theorem epsFS_mono (c : ℕ) {Q Q' : ℕ} (h : Q ≤ Q') (εc δ₀ : ℝ≥0∞) :
+    epsFS c Q εc δ₀ ≤ epsFS c Q' εc δ₀ := by
+  unfold epsFS
+  have h1 : (Q : ℝ≥0∞) ≤ Q' := by exact_mod_cast h
+  have h2 : ((c + Q : ℕ) : ℝ≥0∞) ≤ ((c + Q' : ℕ) : ℝ≥0∞) := by exact_mod_cast Nat.add_le_add_left h c
+  gcongr
+
+/-- **The Fiat–Shamir error of the deployed skeleton** (`fsFresh_deployed` with no query before the
+proof: the random-permutation game starts from no edge), at most `2^70` operations:
+`2^70 · 6 · 2^70 / 2^256 + 2 · 2^70 · 3 · 2^-191`, about `2^-113`. -/
+noncomputable def epsFSDeployed : ℝ≥0∞ :=
+  epsFS 0 (2 ^ 70) ((2 : ℝ≥0∞) ^ 191)⁻¹ ((2 : ℝ≥0∞) ^ 2368)⁻¹
+
+/-- **The zero-knowledge error of the deployed proof** (`zkBound` at the deployed skeleton's `2^70`
+operations and `epsFSDeployed`), a function of the distinguisher's calls `Q`. -/
+noncomputable def zkBoundDeployed (Qp Qfmt : ℕ) (εR εI : ℕ → ℝ≥0∞) : ℕ → ℝ≥0∞ :=
+  zkBound (2 ^ 70) Qp Qfmt epsFSDeployed εR εI
+
+/-- **Zero knowledge of the membership proof on the deployed skeleton**, `FSFresh` and the duplex
+discipline proved (`fsFresh_deployed`, `duplexDiscipline_skel`): `PcsQuotient.ZeroKnowledge` at
+`zkBoundDeployed`, for each statement and witness of the relation the prover being the joint model
+`J stmt w` (valid: `JointData.Valid`) on the deployed skeleton (`skel (sh stmt)`, `sh stmt` the deployed
+shape at `2^22` rows: the chain's public input `stmtD stmt`, the layouts' identifiers, the wiring
+codeword's rows), with at most `Qp`
+permutation calls (`hprover`), and the statement's experiments within `εR`, `εI` of `QuotientZk`'s
+games (`RealBridge`, `IdealBridge`; the proof formatted by `fmt` of at most `Qfmt` calls). -/
+theorem zeroKnowledge_deployed
+    (J : Statement → Secret → JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂)
+    (stmtD : Statement → QuotientZk.Deployed.Statement) (idW idσ idQ : QuotientRpm.Bytes32)
+    (rowsW : List (List UInt8)) (hrows : rowsW.length = 2 ^ 19)
+    (sh : Statement → QuotientZk.Deployed.Shape)
+    (hsh : ∀ stmt, sh stmt = QuotientZk.Deployed.deployedShape (stmtD stmt) idW idσ idQ rowsW)
+    (fmt : QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof))
+    (Qp Qfmt : ℕ) (εR εI : ℕ → ℝ≥0∞)
+    (hfmt : ∀ pf, IsTotalQueryBound (fmt pf) Qfmt)
+    (hvalid : ∀ stmt w, Relation stmt w → (J stmt w).Valid)
+    (hprover : ∀ stmt w, Relation stmt w → ∀ s,
+      QueryCostAtMost (QuotientZk.DRpm.proverJ (J stmt w).P keccak256OverPermutation queryPermutation
+        (QuotientZk.DRpm.coinR KSt) (QuotientZk.DRpm.coinR DigestBytes) s
+        (QuotientZk.Deployed.skel (sh stmt))) permutationCallCost Qp)
+    (hreal : ∀ stmt w, Relation stmt w →
+      RealBridge stmt w (J stmt w).P (QuotientZk.Deployed.skel (sh stmt)) fmt εR)
+    (hideal : ∀ stmt w, Relation stmt w →
+      IdealBridge stmt (J stmt w).P (J stmt w).simV (QuotientZk.Deployed.skel (sh stmt)) fmt
+        εI) :
+    ZeroKnowledge (zkBoundDeployed Qp Qfmt εR εI) := by
+  have hb : ∀ stmt, QuotientZk.Deployed.skelBound (sh stmt) ≤ 2 ^ 70 := fun stmt ↦ by
+    rw [hsh]; exact QuotientZk.Deployed.skelBound_deployed (stmtD stmt) idW idσ idQ rowsW hrows
+  refine zeroKnowledge_of_bridges J (fun stmt ↦ QuotientZk.Deployed.skel (sh stmt)) fmt (2 ^ 70) Qp
+    Qfmt epsFSDeployed εR εI
+    (fun stmt ↦ (QuotientZk.Deployed.skel_queryBound (sh stmt)).mono (hb stmt)) hfmt
+    hvalid (fun stmt w hw ↦ ?_) (fun stmt w hw ↦ ?_) hprover hreal hideal
+  · have hv := hvalid stmt w hw
+    have hfs : QuotientZk.Deployed.FSFresh (J stmt w).P (QuotientZk.Deployed.skel (sh stmt)) []
+        (epsFS 0 (QuotientZk.Deployed.skelBound (sh stmt)) ((2 : ℝ≥0∞) ^ 191)⁻¹
+          ((2 : ℝ≥0∞) ^ 2368)⁻¹) := by
+      rw [hsh]
+      exact fsFresh_deployed (stmtD stmt) idW idσ idQ rowsW (J stmt w).P [] (J stmt w).cw _ _
+        hv.hcw hv.hrow₀ (fun s h k x ↦ ⟨_, rfl, hv.hlong s h k x⟩) hv.hcK hv.hclW hv.hclσ hv.hclQ
+        hv.hn
+    exact le_trans hfs (epsFS_mono 0 (hb stmt) _ _)
+  · exact QuotientZk.DRpm.duplexDiscipline_skel _ (QuotientZk.DRpm.rowFn_ofBytes (J stmt w).Pb) _
 
 end Main
 
