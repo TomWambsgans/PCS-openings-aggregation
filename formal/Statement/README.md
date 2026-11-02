@@ -69,7 +69,8 @@ file names what it takes from leanerVM in its first lines.
 7. [`Circuit.lean`](PcsQuotient/Circuit.lean): **the circuit** (the gate `V = X + C + Y·C`, the builder,
    Keccak-f[1600] on wires, the membership statement `membership`, the public rows, the wiring `σ`), its
    cells from the inputs, and **its commitment** (`Circuit.indexRootWith`: the wiring table committed by
-   WHIR over `F`).
+   WHIR over `F`; its tree `Circuit.indexTreeWith`, and the tree's Keccak-256 evaluations
+   `Tree.evaluations`, which the extractor reads).
 8. [`Prover.lean`](PcsQuotient/Prover.lean): **the honest prover** (`proveWith`, `proverWith`):
    `protocol::prove` then `open`, its tables stacked in their hidden layouts with the padding it is given
    (`Layout.stackOf`), its WHIR openings by mumbai's WHIR prover pieces on this protocol's weight table
@@ -122,13 +123,14 @@ As written in [`Security.lean`](PcsQuotient/Security.lean) (`PcsQuotient` namesp
 ```lean
 noncomputable def soundnessExperiment (A : Adversary) : ProbComp Outcome :=
   runWithRandomPermutation do
-    let indexRoot ← setupWith queryPermutation
+    let tree ← setupTreeWith queryPermutation
     let (z, transcript) ← (simulateQ loggedOracles A).run []
-    let accepted ← verifier queryPermutation indexRoot z.1 z.2
-    return ((z, accepted), transcript)
+    let accepted ← verifier queryPermutation tree.root z.1 z.2
+    return ((z, accepted), Tree.evaluations tree, transcript)
 
 def BreaksKnowledgeSoundness (z : Outcome) : Prop :=
-  z.accepted ∧ ¬ ∃ w, extractor z.statement z.transcript z.proof = some w ∧ Relation z.statement w
+  z.accepted ∧ ¬ ∃ w, extractor z.statement z.setupEvaluations z.transcript z.proof = some w ∧
+    Relation z.statement w
 
 def KnowledgeSoundness (ε : ℕ → ℝ≥0∞) : Prop :=
   ∀ (A : Adversary) (Q : ℕ), QueryCostAtMost A permutationCallCost Q →
@@ -192,20 +194,26 @@ and (R) on the challenges).
 
 ## The extractor
 
-`extractor stmt T proof` (`Security.lean`) is `transcriptExtractorFor (membership logRows)`
-(`Extractor.lean`). **It reads** the statement, the proof's first two scalars (the witness table's root)
-and the adversary's transcript `T`, and nothing else: it neither queries `π`, nor sees the setup's or the
-verifier's queries, nor runs the adversary again. From `T`'s forward queries it replays the Keccak-256
+`extractor stmt setupEvals T proof` (`Security.lean`) is `transcriptExtractorFor (membership logRows)`
+(`Extractor.lean`). **The extractor reads the adversary's transcript and the public setup's tree**: the
+statement, the proof's first two scalars (the witness table's root), the adversary's transcript `T`, and
+the Keccak-256 evaluations of the circuit commitment's Merkle tree (`setupEvals = Tree.evaluations tree`,
+a pure function of the tree the setup computed: each leaf's bytes and each node's two children with
+their digests), and nothing else: it neither queries `π`, nor sees the verifier's queries, nor runs the
+adversary again. (The setup is public; reading its tree lets the extractor climb a witness tree that
+reuses the commitment's nodes, which the composed proof in `formal/Compose` needs: its extractor reads
+the setup's and the adversary's queries.) From `T`'s forward queries it replays the Keccak-256
 evaluations whose whole sponge path the adversary queried (mumbai's `keccakEvaluationsOfTranscript`),
-inverts the witness table's Merkle tree under the root through them (mumbai's `committedLeaves`: `2^20`
+and inverts the witness table's Merkle tree under the root through the setup's evaluations, then those
+(mumbai's `committedLeaves`: `2^20`
 leaves of `64` words), lists the candidate stacks within the Johnson radius of the word (mumbai's
 `fastStacks`, by interpolation for a word without errors, then, only if no fast candidate works,
 `decodeStacks`, CompPoly's Guruswami–Sudan list decoder over `K` with prefix pruning, at most `2^18`
 candidates), reads each candidate's table back through the hidden layout (`Layout.readEntry`), takes the
 cells' polynomial to the cells' values (`Domain.values`), reads the input rows' `V` cells as bits, and
 returns the first candidate's secret that satisfies the relation. **Its cost** (its loops; not proved):
-mumbai's transcript replay and Merkle inversion, quadratic in the transcript (`N` evaluations, then
-`2^21` scans of `N` pairs); `64` additive transforms of `2^20` on the fast path; the list decoder as
+mumbai's transcript replay and Merkle inversion, quadratic in the transcript (`N` evaluations, the
+setup's `2^20 − 1` among them, then `2^21` scans of `N` pairs); `64` additive transforms of `2^20` on the fast path; the list decoder as
 mumbai's cost table (infeasible at deployed sizes, as mumbai's own); per candidate the read-back of `2^24`
 entries (a scan of the layout's `≤ 64` lanes and `≤ 167` held pieces each), one transform of `2^24`, and
 `33` Keccak-256.

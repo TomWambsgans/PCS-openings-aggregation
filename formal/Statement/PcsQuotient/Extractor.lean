@@ -13,17 +13,19 @@ public import Statement.LeanVm
 # The knowledge extractor
 
 The fixed straight-line extractor of `KnowledgeSoundness` (`Security.lean`): from the statement, the
-proof and the adversary's transcript of queries to the random permutation, a secret. It reads nothing
-else: it neither queries the permutation, nor sees the verifier's or the setup's queries, nor runs the
-adversary again; it is deterministic and computable (every loop a traversal of an explicitly sized
+proof, the adversary's transcript of queries to the random permutation and **the public setup's tree**
+(the circuit commitment's Merkle tree, read as its Keccak-256 evaluations, `Tree.evaluations`), a
+secret. It reads nothing else: it neither queries the permutation, nor sees the verifier's queries,
+nor runs the adversary again; it is deterministic and computable (every loop a traversal of an explicitly sized
 list or array, or a recursion on an explicit number), and runs in time polynomial in the committed size
 and the transcript's length, not in the proof's.
 
 1. **The witness table's root** (`witnessRootOf`): the first two scalars of the reduction's proof,
    as the verifier reads them (no hash is needed: the root rides the stream as its halves).
 2. **The committed word** (mumbai's `committedLeaves`, `leafAt`): the Merkle tree under the root
-   inverted through the Keccak-256 evaluations the transcript holds (`keccakEvaluationsOfTranscript`,
-   the byte strings whose whole sponge path the adversary queried forward), top down, a node's
+   inverted through the setup's Keccak-256 evaluations (the public tree's leaves and nodes) and those
+   the transcript holds (`keccakEvaluationsOfTranscript`, the byte strings whose whole sponge path the
+   adversary queried forward), top down, a node's
    children the halves of its unique answered 64-byte preimage, a leaf the 64 words of its unique
    answered 512-byte preimage; zero leaves under an unanswered node. The witness table is committed
    at `μ = m + 1 = 25` variables and rate `1/2`: `2^20` leaves of `64` words.
@@ -41,10 +43,11 @@ and the transcript's length, not in the proof's.
    directions (`secretOfInputs`). The extractor returns the first candidate's secret that satisfies the
    relation (checked natively: `33` Keccak-256), `none` if no candidate's does.
 
-**Cost**, `N` the transcript's evaluations, `μ = 25`, `n = 2^20` columns, `L ≤ 2^18` the list size:
-the Merkle inversion `N` evaluations then `2^21` scans of `N` pairs; the fast path `64` inverse and
-forward additive transforms of `2^20`; the list decoder as mumbai's cost table (Lee–O'Sullivan on
-`n·m'(m'+1)/2` conditions, `m'` its multiplicity); per candidate one transform of `2^24` and `33` hashes.
+**Cost**, `N` the evaluations read (the setup's `2^20 − 1`, `2^19` leaves and `2^19 − 1` nodes, and the
+transcript's), `μ = 25`, `n = 2^20` columns, `L ≤ 2^18` the list size: the Merkle inversion `N`
+evaluations then `2^21` scans of `N` pairs; the fast path `64` inverse and forward additive transforms
+of `2^20`; the list decoder as mumbai's cost table (Lee–O'Sullivan on `n·m'(m'+1)/2` conditions, `m'`
+its multiplicity); per candidate one transform of `2^24` and `33` hashes.
 -/
 
 @[expose] public section
@@ -95,13 +98,15 @@ def extractFrom (circuit : Circuit) (stmt : Statement) (answers : Bytes → Opti
   (fastStacks μ logInvRate word).findSome? witnessOf <|>
     (decodeStacks μ logInvRate word).findSome? witnessOf
 
-/-- **The extractor in the random-permutation model**, for a circuit: `extractFrom` on the Keccak-256
-evaluations of the transcript's permutation queries (mumbai's `keccakEvaluationsOfTranscript`,
-`permutationQueries`, `lookupEvaluation`), computed once. `Security.lean`'s `extractor` is this at the
-membership circuit. -/
-def transcriptExtractorFor (circuit : Circuit) (stmt : Statement) (T : Common.OracleQueryLog)
-    (proof : Proof) : Option Secret :=
-  let paths := LeanVM.keccakEvaluationsOfTranscript (LeanVM.permutationQueries T)
+/-- **The extractor in the random-permutation model**, for a circuit: `extractFrom` on the public
+setup's Keccak-256 evaluations `setupEvals` (the circuit commitment's tree, `Tree.evaluations`), then
+the Keccak-256 evaluations of the transcript's permutation queries (mumbai's
+`keccakEvaluationsOfTranscript`, `permutationQueries`, `lookupEvaluation`), computed once.
+`Security.lean`'s `extractor` is this at the membership circuit. -/
+def transcriptExtractorFor (circuit : Circuit) (stmt : Statement)
+    (setupEvals : List (Bytes × Digest)) (T : Common.OracleQueryLog) (proof : Proof) :
+    Option Secret :=
+  let paths := setupEvals ++ LeanVM.keccakEvaluationsOfTranscript (LeanVM.permutationQueries T)
   extractFrom circuit stmt (LeanVM.lookupEvaluation paths) (paths.map (·.1)) proof
 
 end PcsQuotient
