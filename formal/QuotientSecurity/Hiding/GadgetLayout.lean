@@ -451,4 +451,120 @@ theorem combinedW_gent {m : ℕ} (pos : ι → (Fin 6 → Bool)) (hpos : Functio
 
 end GadgetLayout
 
+namespace GadgetLayout
+
+open OracleComp
+
+variable (L : GadgetLayout ι Y)
+
+theorem stackR_apply (r : ι → Y → K) (l : ι) (y : Y) :
+    L.stackR r l y = if L.randPos l y ∧ ¬ L.ZeroAt l y then r (L.copyOf y l) y else 0 := rfl
+
+theorem sum_pos_ite {pos : ι → (Fin 6 → Bool)} (hpos : Function.Injective pos) {a : ι}
+    {b : Fin 6 → Bool} (ha : pos a = b) (f : ι → E) :
+    ∑ l, (if pos l = b then f l else 0) = f a := by
+  simp_rw [pos_eq_iff hpos ha]
+  simp
+
+/-- **The randomness weighs nothing in the claims, nor in the gadget** (characteristic 2: a pair
+holds one value twice, the overflow lane zero). -/
+theorem claims_stackR {m : ℕ} (h2K : (2 : K) = 0) (pos : ι → (Fin 6 → Bool))
+    (hpos : Function.Injective pos)
+    (hA0 : pos (L.pairA 0) = lane 0) (hB0 : pos (L.pairB 0) = lane 31)
+    (hA1 : pos (L.pairA 1) = lane 1) (hB1 : pos (L.pairB 1) = lane 30) (hov : pos L.ov = lane 32)
+    (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc) (β : Fin 3 → E) (r : ι → Y → K) :
+    HiddenLayout.claimsMap (K := K) (withGadget Wc (L.gadgetW pos β)) (L.stackR r) = 0 := by
+  funext c
+  refine Fin.lastCases ?_ (fun c₀ => ?_) c
+  · show ∑ l, ∑ y, withGadget Wc (L.gadgetW pos β) (Fin.last m) l y *
+        algebraMap K E (L.stackR r l y) = 0
+    set x : ι → Y → E := fun l y => algebraMap K E (L.stackR r l y)
+    have hnz : ∀ (p : Fin 3) (i : Fin 3) l, p ≠ 2 → ¬ L.ZeroAt l (L.gent p i) :=
+      fun p i l hp h => hp (L.atPat_gent h.1).symm
+    have hR : ∀ (p : Fin 3) (i : Fin 3) l, p ≠ 2 →
+        (L.randPos l (L.gent p i) ∧ ¬ L.ZeroAt l (L.gent p i)) :=
+      fun p i l hp => ⟨Or.inr (Or.inl (L.atGadget_gent p i)), hnz p i l hp⟩
+    have key0 : ∀ i, ∑ l, patE (E := E) 0 (pos l) * x l (L.gent 0 i) = 0 := by
+      intro i
+      have h0 : ∀ l, patE (E := E) 0 (pos l) * x l (L.gent 0 i)
+          = (if pos l = lane 0 then x l (L.gent 0 i) else 0)
+            + (if pos l = lane 31 then x l (L.gent 0 i) else 0) := by
+        intro l
+        simp only [patE, pattern0, pairCol, unitCol, flipC_lane0, Pi.add_apply, Pi.smul_apply,
+          smul_eq_mul]
+        split_ifs <;> ring
+      rw [sum_congr rfl fun l _ => h0 l, sum_add_distrib, sum_pos_ite hpos hA0, sum_pos_ite hpos hB0]
+      simp only [x, stackR_apply, if_pos (hR 0 i (L.pairA 0) (by decide)),
+        if_pos (hR 0 i (L.pairB 0) (by decide))]
+      have h1n : ¬ L.AtPat 1 (L.gent 0 i) := fun h => absurd (L.atPat_gent h) (by decide)
+      have hA : L.copyOf (L.gent 0 i) (L.pairA 0) = L.pairA 0 := by
+        simp [copyOf, L.pairA_ne_pairB 0, h1n]
+      have hB : L.copyOf (L.gent 0 i) (L.pairB 0) = L.pairA 0 := by
+        simp [copyOf, show L.AtPat 0 (L.gent 0 i) from ⟨i, rfl⟩]
+      rw [hA, hB, ← map_add, ← two_mul, h2K, zero_mul, map_zero]
+    have key1 : ∀ i, ∑ l, patE (E := E) 1 (pos l) * x l (L.gent 1 i) = 0 := by
+      intro i
+      have h1 : ∀ l, patE (E := E) 1 (pos l) * x l (L.gent 1 i)
+          = (if pos l = lane 1 then x l (L.gent 1 i) else 0)
+            + (if pos l = lane 30 then x l (L.gent 1 i) else 0) := by
+        intro l
+        simp only [patE, pattern1, pairCol, unitCol, flipC_lane1, Pi.add_apply, Pi.smul_apply,
+          smul_eq_mul]
+        split_ifs <;> ring
+      rw [sum_congr rfl fun l _ => h1 l, sum_add_distrib, sum_pos_ite hpos hA1, sum_pos_ite hpos hB1]
+      simp only [x, stackR_apply, if_pos (hR 1 i (L.pairA 1) (by decide)),
+        if_pos (hR 1 i (L.pairB 1) (by decide))]
+      have h0n : ¬ L.AtPat 0 (L.gent 1 i) := fun h => absurd (L.atPat_gent h) (by decide)
+      have hA : L.copyOf (L.gent 1 i) (L.pairA 1) = L.pairA 1 := by
+        simp [copyOf, h0n, L.pairA_ne_pairB 1]
+      have hB : L.copyOf (L.gent 1 i) (L.pairB 1) = L.pairA 1 := by
+        simp [copyOf, h0n, show L.AtPat 1 (L.gent 1 i) from ⟨i, rfl⟩]
+      rw [hA, hB, ← map_add, ← two_mul, h2K, zero_mul, map_zero]
+    have key2 : ∀ i, ∑ l, patE (E := E) 2 (pos l) * x l (L.gent 2 i) = 0 := by
+      intro i
+      have h2 : ∀ l, patE (E := E) 2 (pos l) * x l (L.gent 2 i)
+          = (if pos l = lane 32 then x l (L.gent 2 i) else 0) := by
+        intro l
+        simp only [patE, pattern2, unitCol]
+        split_ifs <;> ring
+      have hz : ¬ (L.randPos L.ov (L.gent 2 i) ∧ ¬ L.ZeroAt L.ov (L.gent 2 i)) :=
+        fun h => h.2 ⟨⟨i, rfl⟩, rfl⟩
+      rw [sum_congr rfl fun l _ => h2 l, sum_pos_ite hpos hov]
+      simp only [x, stackR_apply, if_neg hz, map_zero]
+    have key : ∀ p i, ∑ l, patE (E := E) p (pos l) * x l (L.gent p i) = 0 := by
+      intro p i
+      fin_cases p
+      exacts [key0 i, key1 i, key2 i]
+    calc ∑ l, ∑ y, withGadget Wc (L.gadgetW pos β) (Fin.last m) l y * x l y
+        = ∑ l, ∑ p, ∑ i, β i * (patE p (pos l) * x l (L.gent p i)) := by
+          refine sum_congr rfl fun l _ => ?_
+          simp only [withGadget, Fin.snoc_last, gadgetW, sum_mul, ite_mul, zero_mul]
+          rw [sum_comm]
+          refine sum_congr rfl fun p _ => ?_
+          rw [sum_comm]
+          refine sum_congr rfl fun i _ => ?_
+          rw [sum_ite_eq]
+          simp only [mem_univ, ite_true]
+          ring
+      _ = ∑ p, ∑ i, β i * ∑ l, patE p (pos l) * x l (L.gent p i) := by
+          rw [sum_comm]
+          refine sum_congr rfl fun p _ => ?_
+          rw [sum_comm]
+          simp only [mul_sum]
+      _ = 0 := by simp [key]
+  · show ∑ l, ∑ y, withGadget Wc (L.gadgetW pos β) c₀.castSucc l y *
+        algebraMap K E (L.stackR r l y) = 0
+    refine sum_eq_zero fun l _ => sum_eq_zero fun y _ => ?_
+    simp only [withGadget, Fin.snoc_castSucc, stackR_apply]
+    split_ifs with h
+    · obtain ⟨hr, -⟩ := h
+      rcases hr with hy | hg | hl | ⟨rfl, hh⟩
+      · simp [hW.first _ _ _ hy]
+      · simp [hW.gadget _ _ _ hg]
+      · simp [hW.rand _ _ _ hl]
+      · simp [hW.off_held _ _ hh]
+    · simp
+
+end GadgetLayout
+
 end QuotientSecurity.Hiding
