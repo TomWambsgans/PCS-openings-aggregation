@@ -36,7 +36,7 @@ use primitives::test_rng::Rng;
 use quotient::circuit::{Builder, Circuit, Src, public_words};
 use quotient::opening::{self, Claim, LOG_INV_RATE, LOG_PIECE, Lane, Layout, PREFIX_LEN, Table, VERSION};
 use quotient::protocol::{
-    self, Index, MAX_LOG_ROWS, MIN_LOG_ROWS, Proved, Randomness, label, prove, prove_with_randomness, quotient_layout,
+    self, Index, MAX_LOG_ROWS, MIN_LOG_ROWS, Proved, Randomness, label, prove, prove_with_seed, quotient_layout,
     wiring_layout, witness_layout,
 };
 use quotient::statement::{Statement, pair};
@@ -371,13 +371,13 @@ fn prove_toy(toy: &Toy, x: &[u8; 32], seed: &[u8; 32]) -> (Proved, Randomness, S
     let cells = toy.circuit.cells(&toy_inputs(x));
     let randomness = Randomness::derive(seed, &toy.index_committed.root, &statement, &cells);
     let spec = spec_derive(seed, &toy.index_committed.root, &statement, &cells);
-    let proved = prove_with_randomness(
+    let proved = prove_with_seed(
         &toy.circuit,
         &toy.index,
         &toy.index_committed.root,
         &statement,
         &cells,
-        &randomness,
+        seed,
     );
     (proved, randomness, spec, cells)
 }
@@ -1060,9 +1060,12 @@ fn claim_lists_are_bound_exactly() {
     long[0].point.push(F192::ZERO);
     assert_eq!(verify(&long), Err(VerifierError::WhirShape));
 
-    // No claims: accepted, of a table it says nothing about.
+    // No claims: rejected (it would say nothing about the table), as `PCS_OPEN` rejects it.
     let empty = opening::wire_proof(&opening::open(&table, &committed, &[]));
-    assert_eq!(opening::verify(&layout, &root, &[], &empty), Ok(()));
+    assert_eq!(
+        opening::verify(&layout, &root, &[], &empty),
+        Err(VerifierError::WhirShape)
+    );
     assert!(opening::verify(&layout, &root, &claims[..1], &empty).is_err());
 }
 

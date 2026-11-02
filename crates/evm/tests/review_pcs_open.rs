@@ -21,7 +21,7 @@ use fiat_shamir::merkle::Hash;
 use primitives::field::F192;
 use quotient::circuit::{Builder, Circuit, Src, public_words};
 use quotient::opening::{self, Claim, Layout};
-use quotient::protocol::{self, Index, Randomness, prove_with_randomness};
+use quotient::protocol::{self, Index, prove_with_seed};
 use quotient::statement::{Statement, pair};
 use revm::primitives::{Address, U256};
 
@@ -88,8 +88,7 @@ fn pcs_open_inputs_are_what_opening_verify_reads() {
     };
     let inputs: Vec<bool> = (0..256).map(|i| (x[i / 8] >> (i % 8)) & 1 == 1).collect();
     let cells = circuit.cells(&inputs);
-    let randomness = Randomness::derive(&[0x33; 32], &index_root, &statement, &cells);
-    let proved = prove_with_randomness(&circuit, &index, &index_root, &statement, &cells, &randomness);
+    let proved = prove_with_seed(&circuit, &index, &index_root, &statement, &cells, &[0x33; 32]);
     let proof = proved.proof.clone();
     let (roots, claims) = (proved.roots, proved.claims.clone());
     let opened = protocol::open(proved.tables, &claims, &index, &index_committed);

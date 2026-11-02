@@ -33,7 +33,8 @@ use pcs::whir::{LaneTensor, commit_tree_in, config_for_rate, recursive_prover_wi
 use primitives::field::{F64, F192, powers};
 use primitives::hash::hash as keccak256;
 use primitives::multilinear::{eq_table, mle_eval, mle_eval_par};
-use rand::{RngCore, SeedableRng, rngs::StdRng};
+use rand::{RngCore, SeedableRng};
+use rand_chacha::ChaCha12Rng;
 
 const LABEL: &[u8] = b"pcs-quotient-opening";
 
@@ -354,12 +355,13 @@ pub struct Table {
     pub stack: Vec<F64>,
 }
 
-/// Lane `l`'s generator: ChaCha (`StdRng`) keyed by Keccak-256 of the table's seed and the lane.
-fn lane_rng(seed: &[u8; 32], l: usize) -> StdRng {
-    StdRng::from_seed(keccak256(&[&seed[..], &(l as u64).to_le_bytes()].concat()))
+/// Lane `l`'s generator: ChaCha12, named (not `rand`'s `StdRng`, whose algorithm may change between versions),
+/// keyed by Keccak-256 of the table's seed and the lane.
+fn lane_rng(seed: &[u8; 32], l: usize) -> ChaCha12Rng {
+    ChaCha12Rng::from_seed(keccak256(&[&seed[..], &(l as u64).to_le_bytes()].concat()))
 }
 
-fn fill_random(rng: &mut StdRng, out: &mut [F64]) {
+fn fill_random(rng: &mut ChaCha12Rng, out: &mut [F64]) {
     out.iter_mut().for_each(|w| *w = F64(rng.next_u64()));
 }
 
@@ -734,7 +736,8 @@ pub fn verify(
     use verifier::{Digest, E, Transcript};
     let one = E::new(1, 0, 0);
     let zero = E::new(0, 0, 0);
-    if claims.iter().any(|claim| claim.point.len() != layout.vars) {
+    // An opening of no claims proves nothing (its target and weight are zero), and `PCS_OPEN` takes at least one.
+    if claims.is_empty() || claims.iter().any(|claim| claim.point.len() != layout.vars) {
         return Err(verifier::VerifierError::WhirShape);
     }
     let mut transcript = Transcript::new(proof, Digest(iv(layout, claims)), Digest(PUBLIC_DIGEST), true);

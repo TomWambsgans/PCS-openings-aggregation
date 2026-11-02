@@ -152,7 +152,8 @@ pub(crate) fn table_seed(seed: &[u8; 32], table: &[u8]) -> [u8; 32] {
 /// four row polynomials, and the seed of both tables' padding. It must be uniform, secret, and **fresh per proof,
 /// never reused**: two proofs that share the padding's seed have the same random first pieces, and two that share
 /// the masks let the second proof's `a_j` be predicted from the first's for a guessed witness, so either confirms
-/// the guess (`review_hiding.rs`). [`prove`] draws its own; [`prove_with_randomness`] takes it.
+/// the guess (`review_hiding.rs`). [`prove`] draws its own seed, [`prove_with_seed`] takes one; both derive this
+/// from it ([`Randomness::derive`]).
 #[derive(Clone)]
 pub struct Randomness {
     /// `masks[j][i]`: coefficient `i` of row polynomial `j`'s mask.
@@ -397,14 +398,29 @@ pub struct Tables {
 /// of its own, fresh per proof and never reused: a 32-byte seed from the operating system ([`fresh_seed`]), from
 /// which [`Randomness::derive`] makes the masks and the tables' padding. Panics on a challenge the verifier rejects.
 pub fn prove(circuit: &Circuit, index: &Index, index_root: &Hash, statement: &Statement, cells: &[F64]) -> Proved {
-    let randomness = Randomness::derive(&fresh_seed(), index_root, statement, cells);
+    prove_with_seed(circuit, index, index_root, statement, cells, &fresh_seed())
+}
+
+/// [`prove`] with its 32-byte seed given, deterministic: for tests and reproducible benchmarks. The randomness is
+/// always [`Randomness::derive`]'s, bound to the statement and the witness, so a seed reused for another witness
+/// gives unrelated randomness; the proof hides the witness only if `seed` is secret and fresh per proof, as
+/// [`prove`]'s is. Panics on a challenge the verifier rejects.
+pub fn prove_with_seed(
+    circuit: &Circuit,
+    index: &Index,
+    index_root: &Hash,
+    statement: &Statement,
+    cells: &[F64],
+    seed: &[u8; 32],
+) -> Proved {
+    let randomness = Randomness::derive(seed, index_root, statement, cells);
     prove_with_randomness(circuit, index, index_root, statement, cells, &randomness)
 }
 
-/// [`prove`] with its randomness given, deterministic: for tests and reproducible benchmarks. The proof hides the
-/// witness only if `randomness` is uniform, secret, and **fresh per proof, never reused** ([`Randomness`]): from
-/// [`Randomness::derive`] of a fresh secret seed, as [`prove`] does. Panics on a challenge the verifier rejects.
-pub fn prove_with_randomness(
+/// [`prove`] with its randomness given. Crate-private: outside the crate, randomness reaches the prover only through
+/// [`Randomness::derive`] ([`prove`], [`prove_with_seed`]), so it cannot be reused across witnesses; the crate's
+/// tests use this to show what reuse would reveal (`review_hiding.rs`). Panics on a challenge the verifier rejects.
+pub(crate) fn prove_with_randomness(
     circuit: &Circuit,
     index: &Index,
     index_root: &Hash,

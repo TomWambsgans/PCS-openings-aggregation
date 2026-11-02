@@ -98,8 +98,9 @@ Rust: a hidden layout for which condition (R) holds for every challenge. (Done: 
 - End-to-end Lean theorem (F0–F5 of `formal/README.md`).
 - Condition (R) of the hiding layouts: a hypothesis in Lean, unbounded there (≈ 2^-53 estimated in `HIDING.md`, not
   proven; layout redesign in progress).
-- Zero knowledge is statistical for uniform prover randomness (what the Lean samples). As deployed, the masks and
-  padding come from ChaCha12 keyed by a Keccak-256 KDF of a 32-byte OS seed: zero knowledge against adversaries that
+- Zero knowledge is statistical for uniform prover randomness (what the Lean samples). As deployed, the masks are
+  Keccak-256 KDF outputs of a 32-byte OS seed, and the padding is ChaCha12 keyed by Keccak-256 of the KDF's padding
+  seed, per table and lane: zero knowledge against adversaries that
   cannot tell that generator from uniform (as for any implementation that does not draw every bit from a physical
   source).
 - `UPSTREAM.md`: issues in vendored leanVM code to report upstream (an aliasing UB, now fixed here; a planner
