@@ -46,3 +46,17 @@ TLDR: The PCS is relatively easy to upgrade, the only thing that cannot be upgra
 
 - We want a "ZKZK-friendly" PCS -> at a prover overhead of typically 2x or 4x, we can make it ZKZK without changing the verifier *at all* (WHIR is an example)
 - I don't think we need to put the Fiat-Shamir states (before + after) in the header (but this requires security analysis)
+
+## Key figures: one ZK proof of a Merkle path
+
+Statement `(y, root)`, witness `x` and a depth-32 path, Keccak-256: `y = H(x | 0x11..)`, path from `H(x | 0x22..)`
+to `root`. Measured on the implementation in `crates/` (details: [`AGENTS.md`](AGENTS.md), [`STATUS.md`](STATUS.md)).
+
+| | |
+|---|---|
+| Circuit | 34 Keccak-256 (χ gate on bits): 3,878,612 of 2^22 rows |
+| Prover | 2.2 s, 5.9 GiB peak (M4 Max, 16 cores) |
+| Calldata to the contract | 252 bytes (2 roots + 5 field elements + statement) |
+| PCS claims | 4, in 3 `PCS_OPEN` calls |
+| Gas, `PCS_OPEN` free | 14,289 execution; 18,309 transaction (without the 21,000 base) |
+| Contract deployment | 1.43 M gas |
