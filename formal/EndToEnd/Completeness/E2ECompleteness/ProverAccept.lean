@@ -75,7 +75,9 @@ structure TablesMatch : Prop where
   quotient : ∀ (f : (Fin (22 + 2) → Bool) → K) (cells : Array K), cells.size = 2 ^ 24 →
     (∀ b, cells.getD (Completeness.idx b) 0 = f b) → ∀ sigma : Array ℕ, sigma.size = 2 ^ 24 →
     (∀ b, point (sigma.getD (Completeness.idx b) 0) = deployedBasis.point (deployedSigma b)) →
-    ∀ (masks : Masks) (α β γ : E),
+    ∀ (masks : Masks),
+    (∀ y : Fin 22 → Bool, gate (ofK (f (cellBits (y, 0)))) (ofK (f (cellBits (y, 1))))
+      (ofK (f (cellBits (y, 2)))) (ofK (f (cellBits (y, 3)))) = 0) → ∀ (α β γ : E),
       ¬ Completeness.Reduction.BadAB I
         (witnessOfTable fun b ↦ algebraMap K E (Completeness.witnessTable deployedBasis f masks b))
         α β →
@@ -198,6 +200,22 @@ theorem verifyWithH_id (H : Bytes → Digest) (F : KeccakState → KeccakState) 
     verifyWithH (m := Id) H F lr ir stmt π = true := by
   simp only [verifyWithH, id_bind, id_pure, hred, h1, h2, h3]
   rfl
+
+/-- **The honest cells satisfy the gates** (the relation's first conjunct, `honest_relation`). -/
+theorem gate_honest (w : PcsQuotient.Secret) (y : Fin 22 → Bool) :
+    gate (ofK (Completeness.cellBitsK Completeness.deployedMembership (secretOf w) (cellBits (y, 0))))
+      (ofK (Completeness.cellBitsK Completeness.deployedMembership (secretOf w) (cellBits (y, 1))))
+      (ofK (Completeness.cellBitsK Completeness.deployedMembership (secretOf w) (cellBits (y, 2))))
+      (ofK (Completeness.cellBitsK Completeness.deployedMembership (secretOf w) (cellBits (y, 3)))) =
+      0 := by
+  have h := (Completeness.honest_relation Completeness.deployedMembership I
+    (x := Primitives.F192.G) (Y := Primitives.F192.Y) rfl Completeness.deployedSigma_keeps
+    (secretOf w)).1 y
+  have e : ∀ z, ofK (Completeness.cellBitsK Completeness.deployedMembership (secretOf w) z) =
+      Completeness.deployedMembership.C.cellsOfBits (Completeness.deployedMembership.assign (secretOf w))
+        z := fun z ↦ Completeness.algebraMap_bitF _
+  rw [e, e, e, e]
+  exact h
 
 /-! ## The honest tail, at a function -/
 
@@ -419,7 +437,7 @@ theorem accept_core (hO : OpeningAccepts) (F : KeccakState → KeccakState) (fue
       have hg := hgood
       simp only [badSet, Finset.mem_filter, Finset.mem_univ, true_and, not_or] at hg
       exact hg.1
-    have hQ := hT.quotient _ cells hcs hcells sigma hss hsig masks α β γ hab
+    have hQ := hT.quotient _ cells hcs hcells sigma hss hsig masks (gate_honest w) α β γ hab
     refine hO H F fuel _ (Or.inr (Or.inr rfl)) (qStackOf cells sigma masks qp α β γ)
       [cl.quotient, cl.sum] (List.cons_ne_nil _ _) (fun c hc ↦ (hq c hc).1) ?_
       (stackClaims_multilinear _ (Or.inr (Or.inr rfl)) _ fun c hc ↦ (hq c hc).1) πQ hoQ'
