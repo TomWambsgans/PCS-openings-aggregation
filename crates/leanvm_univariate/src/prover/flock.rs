@@ -70,16 +70,26 @@ impl FlockWitness {
     /// satisfies the R1CS alone, so the witness stays one.
     pub fn place(&mut self, to: &[usize]) {
         assert_eq!(to.len() << 8, self.z.len(), "one instance a row");
-        self.z = super::trace::permute_blocks(&self.z, to);
-        self.a = super::trace::permute_blocks(&self.a, to);
-        self.b = super::trace::permute_blocks(&self.b, to);
+        super::trace::permute_blocks(&mut self.z, to);
+        super::trace::permute_blocks(&mut self.a, to);
+        super::trace::permute_blocks(&mut self.b, to);
         // Stripe `g` byte `j` holds bit `j` of instances `8g..8g + 8`, bit `r` instance `8g + r`
-        // (`lv42_flock::lincheck`'s layout): an 8×8 bit transpose of the eight instances' byte `j / 8`.
+        // (`lv42_flock::lincheck`'s layout): an 8×8 bit transpose of the eight instances' byte `j / 8`. Only the
+        // stripes an instance moved into change.
         let block_words = 1usize << (BLAKE2S_R1CS_LOG_SIZE - 6);
         let stripe = 1usize << BLAKE2S_R1CS_LOG_SIZE;
         assert_eq!(self.z_lincheck.len(), (to.len() / 8) * stripe, "one stripe per eight instances");
+        let mut changed = vec![false; to.len() / 8];
+        for (i, &p) in to.iter().enumerate() {
+            if p != i {
+                changed[p / 8] = true;
+            }
+        }
         let z = &self.z;
         parallel::chunks_mut(&mut self.z_lincheck, stripe, |g, out| {
+            if !changed[g] {
+                return;
+            }
             for byte in 0..stripe / 8 {
                 let word = (0..8).fold(0u64, |w, r| {
                     let instance = &z[(8 * g + r) * block_words..(8 * g + r + 1) * block_words];
