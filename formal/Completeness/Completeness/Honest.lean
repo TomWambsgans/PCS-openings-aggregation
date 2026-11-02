@@ -369,4 +369,159 @@ theorem accepts_congr (P : Params F) {stmt : Fin P.words → F} {g : Params.Witn
   unfold Params.Accepts
   rw [hh, hq, hg, hj, ht]
 
+/-! ## The quotient table -/
+
+section Helpers
+
+variable {K' : Type} [Field K'] [CharP K' 2]
+
+open Classical in
+/-- A table of a polynomial of degree below `D ≤ 2^M` vanishing from `D` on
+(`exists_table_support`), or zero if there is none. -/
+noncomputable def tableSupp (M : ℕ) (pK : K'[X]) (D : ℕ) : (Fin M → Bool) → K' :=
+  if h : D ≤ 2 ^ M ∧ (pK = 0 ∨ pK.natDegree < D) then (exists_table_support M pK D h.1 h.2).choose
+  else fun _ => 0
+
+theorem tableSupp_spec {M D : ℕ} {pK : K'[X]} (hD : D ≤ 2 ^ M) (hp : pK = 0 ∨ pK.natDegree < D) :
+    tablePoly (tableSupp M pK D) = pK := by
+  unfold tableSupp
+  rw [dif_pos ⟨hD, hp⟩]
+  exact (exists_table_support M pK D hD hp).choose_spec.1
+
+theorem tableSupp_support {M D : ℕ} (pK : K'[X]) (b : Fin M → Bool) (hb : D ≤ idx b) :
+    tableSupp M pK D b = 0 := by
+  unfold tableSupp
+  split_ifs with h
+  · exact (exists_table_support M pK D h.1 h.2).choose_spec.2 b hb
+  · rfl
+
+/-- Four tables on `M` digits as one on `M + 2`, the two new digits last. -/
+def quad {M : ℕ} (f : Bool → Bool → (Fin M → Bool) → K') : (Fin (M + 1 + 1) → Bool) → K' :=
+  joinTable (joinTable (f false false) (f true false)) (joinTable (f false true) (f true true))
+
+theorem quad_snoc {M : ℕ} (f : Bool → Bool → (Fin M → Bool) → K') (b : Fin M → Bool)
+    (x y : Bool) : quad f (Fin.snoc (Fin.snoc b x) y) = f x y b := by
+  unfold quad
+  rw [joinTable_snoc]
+  cases y <;> simp only [Bool.false_eq_true, ↓reduceIte] <;> rw [joinTable_snoc] <;> cases x <;> rfl
+
+theorem idx_quad_snoc {M : ℕ} (b : Fin M → Bool) (x y : Bool) :
+    idx (Fin.snoc (Fin.snoc b x) y : Fin (M + 1 + 1) → Bool) =
+      idx b + 2 ^ M * ((if x then 1 else 0) + 2 * if y then 1 else 0) := by
+  rw [idx_snoc, idx_snoc, pow_succ]
+  split_ifs <;> ring
+
+theorem exists_snoc_snoc {M : ℕ} (b : Fin (M + 1 + 1) → Bool) :
+    ∃ (c : Fin M → Bool) (x y : Bool), b = Fin.snoc (Fin.snoc c x) y :=
+  ⟨Fin.init (Fin.init b), Fin.init b (Fin.last M), b (Fin.last (M + 1)), by
+    rw [Fin.snoc_init_self, Fin.snoc_init_self]⟩
+
+end Helpers
+
+variable (S : LimbSystem K F)
+
+/-- The four limbs of a polynomial over `F` (the fourth zero). -/
+noncomputable def limb4 (p : F[X]) (e : Fin 4) : K[X] :=
+  if h : (e : ℕ) < 3 then S.limbPoly p ⟨e, h⟩ else 0
+
+/-- **The degree each slot of the quotient table holds** (`quotient_chunks`, in entries of the
+slot's `2^26`): `h` one chunk, `q` three and `Q_SPILL = 9280`, the gate's quotient `(2 - 1/4)`
+chunks and `64`, the fourth slot nothing. -/
+def slotBound : Bool → Bool → ℕ
+  | false, false => 2 ^ 24
+  | true, false => 3 * 2 ^ 24 + 9280
+  | false, true => 7 * 2 ^ 22 + 64
+  | true, true => 0
+
+/-- The limbs a slot holds: `h` and `q` three, the gate's quotient (over `K`) one. -/
+def slotLive : Bool → Bool → Fin 4 → Bool
+  | false, false, e => decide ((e : ℕ) < 3)
+  | true, false, e => decide ((e : ℕ) < 3)
+  | false, true, e => decide ((e : ℕ) = 0)
+  | true, true, _ => false
+
+/-- The polynomials over `K` the slots' limbs hold. -/
+noncomputable def slotPolyK (R : Params.Quotients F) (qGateK : K[X]) :
+    Bool → Bool → Fin 4 → K[X]
+  | false, false, e => limb4 S R.h₀ e
+  | true, false, e => limb4 S R.q e
+  | false, true, _ => qGateK
+  | true, true, _ => 0
+
+/-- A slot's limb table, on `M` digits (`26` on the instance). -/
+noncomputable def slotTable (M : ℕ) (R : Params.Quotients F) (qGateK : K[X]) (κ τ : Bool)
+    (e : Fin 4) : (Fin M → Bool) → K :=
+  if slotLive κ τ e then tableSupp M (slotPolyK S R qGateK κ τ e) (slotBound κ τ) else fun _ => 0
+
+/-- The limb of two coordinates: `e₀ + 2 e₁`. -/
+def limbIdx (e₀ e₁ : Bool) : Fin 4 :=
+  ⟨(if e₀ then 1 else 0) + 2 * (if e₁ then 1 else 0), by split_ifs <;> norm_num⟩
+
+theorem limbIdx_ff : limbIdx false false = 0 := by decide
+theorem limbIdx_tf : limbIdx true false = 1 := by decide
+theorem limbIdx_ft : limbIdx false true = 2 := by decide
+theorem limbIdx_tt : limbIdx true true = 3 := by decide
+
+/-- **The quotient table** (`quotient_layout`, `M + 4 = 30` variables over `K` on the instance):
+coordinates below `M = 26` a slot's polynomial's coefficients, then two for the slot (`h`, `q`, the
+gate's quotient, nothing), then two for the limb. Stated for any `M`, so the proofs below never
+see the instance's sizes. -/
+noncomputable def quotientTable (M : ℕ) (R : Params.Quotients F) (qGateK : K[X]) :
+    (Fin (M + 1 + 1 + 1 + 1) → Bool) → K :=
+  quad fun e₀ e₁ => quad fun κ τ => slotTable S M R qGateK κ τ (limbIdx e₀ e₁)
+
+theorem subTable_quotientTable (M : ℕ) (R : Params.Quotients F) (qGateK : K[X])
+    (κ τ e₀ e₁ : Bool) :
+    subTable (fun b => S.ι (quotientTable S M R qGateK b)) κ τ e₀ e₁ =
+      fun b => S.ι (slotTable S M R qGateK κ τ (limbIdx e₀ e₁) b) := by
+  funext b
+  unfold subTable quotientTable
+  dsimp only
+  rw [quad_snoc, quad_snoc]
+
+theorem tablePoly_slotTable (M : ℕ) (R : Params.Quotients F) (qGateK : K[X]) (κ τ : Bool)
+    (e : Fin 4) (hdeg : (slotPolyK S R qGateK κ τ e).natDegree < slotBound κ τ)
+    (hB : slotBound κ τ ≤ 2 ^ M) :
+    tablePoly (fun b => S.ι (slotTable S M R qGateK κ τ e b)) =
+      if slotLive κ τ e then (slotPolyK S R qGateK κ τ e).map S.ι else 0 := by
+  unfold slotTable
+  split_ifs
+  · rw [tablePoly_map, tableSupp_spec hB (Or.inr hdeg)]
+  · simp only [map_zero]
+    exact tablePoly_zero
+
+/-- `slotPoly`, unfolded. -/
+theorem slotPoly_eq {R2 : Type*} [Field R2] {k : ℕ} (Y : R2)
+    (c : (Fin (k + 1 + 1 + 1 + 1) → Bool) → R2) (κ τ : Bool) :
+    slotPoly Y c κ τ = tablePoly (subTable c κ τ false false)
+      + C Y * tablePoly (subTable c κ τ true false)
+      + C (Y ^ 2) * tablePoly (subTable c κ τ false true)
+      + C (Y ^ 3) * tablePoly (subTable c κ τ true true) := rfl
+
+/-- The four limb terms of a slot. -/
+theorem slotPoly_quotientTable (M : ℕ) (R : Params.Quotients F) (qGateK : K[X]) (κ τ : Bool)
+    (hdeg : ∀ e, (slotPolyK S R qGateK κ τ e).natDegree < slotBound κ τ)
+    (hB : slotBound κ τ ≤ 2 ^ M) :
+    slotPoly S.Y (fun b => S.ι (quotientTable S M R qGateK b)) κ τ =
+      (if slotLive κ τ 0 then (slotPolyK S R qGateK κ τ 0).map S.ι else 0)
+        + C S.Y * (if slotLive κ τ 1 then (slotPolyK S R qGateK κ τ 1).map S.ι else 0)
+        + C (S.Y ^ 2) * (if slotLive κ τ 2 then (slotPolyK S R qGateK κ τ 2).map S.ι else 0)
+        + C (S.Y ^ 3) * (if slotLive κ τ 3 then (slotPolyK S R qGateK κ τ 3).map S.ι else 0) := by
+  rw [slotPoly_eq]
+  simp only [subTable_quotientTable, limbIdx_ff, limbIdx_tf, limbIdx_ft, limbIdx_tt]
+  rw [tablePoly_slotTable S M R qGateK κ τ _ (hdeg _) hB,
+    tablePoly_slotTable S M R qGateK κ τ _ (hdeg _) hB,
+    tablePoly_slotTable S M R qGateK κ τ _ (hdeg _) hB,
+    tablePoly_slotTable S M R qGateK κ τ _ (hdeg _) hB]
+
+/-- A slot holding a polynomial in three limbs holds it. -/
+theorem slotPoly_three (p : F[X]) :
+    (if (0 : ℕ) < 3 then (limb4 S p 0).map S.ι else 0)
+        + C S.Y * (if (1 : ℕ) < 3 then (limb4 S p 1).map S.ι else 0)
+        + C (S.Y ^ 2) * (if (2 : ℕ) < 3 then (limb4 S p 2).map S.ι else 0)
+        + C (S.Y ^ 3) * (if (3 : ℕ) < 3 then (limb4 S p 3).map S.ι else 0) = p := by
+  conv_rhs => rw [← S.sum_limbPoly p]
+  rw [Fin.sum_univ_three]
+  simp [limb4]
+
 end Completeness
