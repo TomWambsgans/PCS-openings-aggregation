@@ -20,16 +20,18 @@ the protocol is Keccak-256 over `π` (the transcript, the WHIR commitments and o
 commitments computed over `π` before the adversary runs.
 
 **The deployment** (`Deployment`): the program `prog` (leanISA with `BLAKE2S`, `2^logBytecode`
-instructions), the shape (its heights, one per contract, valid: REVIEW-M1 F5), leanVM's program IV.
-**The row counts are the proof's** (REVIEW-M1 F1): announced, absorbed in the seed (`rowsBytes`, provisional
-encoding). **The IV binds the setup** (REVIEW-M1 F2): `Deployment.ivWith`, the Keccak-256 of leanVM's program
-IV, the setup's roots and the shape (provisional encoding); each stack's layout is bound by the opening itself
-(the Statement's opening hashes the layout's identifier, which encodes the stack's size). **The relation** is
+instructions), the shape (its heights, one contract per shape class, valid: `Shape.validate` with Flock, F5),
+leanVM's program IV. **The row counts are the proof's** (iteration 2, F1): the stream's first 24 bytes
+(`UniProof.rows`, `rowsOf`), absorbed with `C1`'s root, each range-checked by the run (`c ≤ 2^h`). **The IV
+binds the setup** (iteration 2, F2): `Deployment.ivWith` is the contract's IV, the Keccak-256 of a tag, leanVM's
+program IV, the setup's roots, the shape's bytes and the five layout words (`contractIvWith`); each opening's
+stack size is its layout word's (`layoutWordVars`), and the Statement's opening hashes the plain layout's
+identifier, which encodes it. **The relation** is
 Lv42's, for leanVM 42422001's statement: `M3Holds (leanIsaInstance blake2sFlockSpec prog s) input q`
 (`= ConstraintsVanish ∧ Balanced ∧ CountsNonzero ∧ PublicLinesHold ∧ aux`, the last `FlockRegion.Holds` of
 `q_flock`), at the proof's sizes `s` (`sizesOf`: the shape's memory, the proof's row counts), the public
-input the calldata's 32 bytes (`publicInputOf`: big-endian words, as the contract reads them at `b948bfc`;
-REVIEW-M1 F7 moves them to leanVM's little-endian order, one change to `publicWordsOf`), `q` a stack of
+input the calldata's 32 bytes (`publicInputOf`: big-endian words, as the contract reads them at `ad49e74`,
+where REVIEW-M1 F7 is documented, not changed: a caller reverses leanVM's little-endian words), `q` a stack of
 Lv42's layout. Under `Sizes.Admissible`, Lv42 proves `M3Holds` equivalent to `SatisfiedBy prog input
 (witnessOf …)` (`satisfiedBy_witnessOf`) and, from a satisfying witness, `M3Honest` of its stack
 (`m3Honest_stackOf`).
@@ -48,9 +50,11 @@ each candidate read as Lv42's stack (`lv42Stack`: basis `B` to values, the corre
 (the heap, the quotients) and the setup are not part of the witness.
 
 **Completeness** is stated for a prover given as a parameter (`UniProver`): the univariate PIOP's honest
-prover is not transcribed (the Rust has none in `src/`; `tests/review_honest.rs` has the review's, for tiny
-runs without Flock). `UniCompletenessWith` asks that its proof of a statement with an `M3Honest` stack, at
-row counts that fit the shape, be rejected with probability at most `δ`.
+prover is not transcribed (the Rust's, `src/prover`, is being adapted to iteration 2 on
+`leanvm-univariate-prover2`; `tests/review_honest.rs` has the review's, for tiny runs without Flock).
+`UniCompletenessWith` asks that its proof of a statement with an `M3Honest` stack, at row counts that fit the
+shape (`Shape.RowsFit`: at least the fewest rows each height's quotients are sized for), be rejected with
+probability at most `δ`.
 -/
 
 @[expose] public section
@@ -75,8 +79,11 @@ structure Deployment where
 
 /-- The memory has at least two cells. -/
 theorem Deployment.logMemory_pos (D : Deployment) : 0 < D.shape.logMemory := by
-  have := D.valid.2.2.1
-  omega
+  have h := D.valid.2
+  unfold Shape.validate at h
+  by_contra hc
+  have hlt : D.shape.logMemory < 1 := by omega
+  simp [hlt] at h
 
 /-- A proof's sizes, as Lv42's: the shape's memory, the proof's row counts. -/
 def Deployment.sizes (D : Deployment) (rows : List ℕ) : Sizes := sizesOf D.shape D.logMemory_pos rows
@@ -126,11 +133,6 @@ def flockMatrixStack (left : Bool) : Array K :=
   let C := Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs
   matrixStack fun k j ↦ if left then C.A k j else C.B k j
 
-/-- The shape as the IV hashes it (**provisional**, REVIEW-M1 F2): the memory's and the bytecode's log-sizes,
-the six heights, the six capacities, each an 8-byte big-endian word (`rowsBytes`'s encoding). -/
-def shapeBytes (s : Shape) : List UInt8 :=
-  rowsBytes ([s.logMemory, s.logBytecode] ++ s.heights ++ s.capacityRows)
-
 section With
 
 variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
@@ -142,12 +144,11 @@ def setupTreesWith (D : Deployment) : m SetupTrees := do
   let b ← PcsQuotient.commitWith F matrixVars (flockMatrixStack false)
   return ⟨f, a, b⟩
 
-/-- **The transcript's IV** over `F` (REVIEW-M1 F2, **provisional** encoding): the Keccak-256 of leanVM's
-program IV, the setup's three roots and the shape. -/
-def Deployment.ivWith (D : Deployment) (roots : SetupRoots) : m (List UInt8) := do
-  let d ← keccak256With F (D.programIv ++ digestBytes roots.bytecode ++ digestBytes roots.a0 ++
-    digestBytes roots.b0 ++ shapeBytes D.shape)
-  return digestBytes d
+/-- **The transcript's IV** over `F` (iteration 2, F2: `contract::contract_iv`): the Keccak-256 of the tag,
+leanVM's program IV, the setup's three roots, the shape's bytes and the five layout words
+(`contractIvWith`). -/
+def Deployment.ivWith (D : Deployment) (roots : SetupRoots) : m (List UInt8) :=
+  contractIvWith F D.shape D.programIv roots
 
 /-- **The deployed verifier** over `F` on the setup's roots: its IV (`ivWith`), then `verifyWith` at the
 deployment's shape. -/
@@ -159,11 +160,12 @@ end With
 
 /-! ### The extractor -/
 
-/-- `C1`'s root as the stream names it: its first 32 bytes, two 16-byte halves (`next_root`). -/
+/-- `C1`'s root as the stream names it: its 32 bytes after the six row counts (iteration 2, F1: bytes
+`24..56`), two 16-byte halves (`next_root`). -/
 def c1RootOf (proof : UniProof) : Digest :=
   let b := proof.stream
   let half (o : ℕ) : E := eNew (beWordAt b (o + 8)) (beWordAt b o) 0
-  rootOf (half 0, half 16)
+  rootOf (half 24, half 40)
 
 /-- **`C1`'s committed word**: under the root the stream names, the leaves the unique preimages `pre`
 commit to (`Replay.leavesUnder`, mumbai's `committedLeaves`): `2^(μ − 6 + 1)` leaves of `64` words. -/
