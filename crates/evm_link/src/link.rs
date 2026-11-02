@@ -77,7 +77,6 @@ fn heights(items: &[(Item, crate::Tag)]) -> Vec<usize> {
     heights
 }
 
-
 /// A run of items, the frame of one contract once it is placed: where it reads values computed before it, and those it
 /// keeps for later.
 struct Run {
@@ -394,7 +393,10 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
     // A part laid out as if passed many values (offsets of the widest pushes).
     let fits = |run: &Run, end: End| {
         let values = (run.range.start > 0).then_some(1 << 11);
-        assemble_frame(&cutter.frame(run, values, end), program, &wide).code.len() <= limit
+        assemble_frame(&cutter.frame(run, values, end), program, &wide)
+            .code
+            .len()
+            <= limit
     };
     // The driver's calls are laid out for `reserve` parts (values and calldata at offsets of two bytes, each part's
     // calldata one range), until it has that many; `link_at` lays it out as it is.
@@ -442,10 +444,17 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
             if lo == 0 {
                 let first = candidates.first().map(|&b| {
                     let r = cutter.run(a..b, &region.position, region.stack_at, false);
-                    let code = assemble_frame(&cutter.frame(&r, (a > 0).then_some(1 << 11), end_of(&r)), program, &wide);
+                    let code = assemble_frame(
+                        &cutter.frame(&r, (a > 0).then_some(1 << 11), end_of(&r)),
+                        program,
+                        &wide,
+                    );
                     (b, code.code.len(), r.pinned.len(), r.imports.len(), r.stack_out)
                 });
-                panic!("no cut after item {a} gives a part of at most {limit} bytes: the first, (cut, bytes, kept, read, stack) {first:?}, of {} cuts", candidates.len());
+                panic!(
+                    "no cut after item {a} gives a part of at most {limit} bytes: the first, (cut, bytes, kept, read, stack) {first:?}, of {} cuts",
+                    candidates.len()
+                );
             }
             let b = cutter.cheapest(&candidates[..lo], limit);
             let run = cutter.run(a..b, &region.position, region.stack_at, false);
@@ -460,8 +469,15 @@ pub fn link(program: &Program, options: &Options, limit: usize) -> Linked {
         if fit {
             return linked;
         }
-        assert!(starts.len() != reserve || reserve < 1 << 10, "no driver fits {limit} bytes");
-        reserve = if starts.len() > reserve { starts.len() } else { reserve + 1 };
+        assert!(
+            starts.len() != reserve || reserve < 1 << 10,
+            "no driver fits {limit} bytes"
+        );
+        reserve = if starts.len() > reserve {
+            starts.len()
+        } else {
+            reserve + 1
+        };
     }
 }
 
@@ -499,9 +515,7 @@ pub fn link_at(program: &Program, options: &Options, starts: &[usize]) -> Linked
             let end = if k + 1 == count {
                 End::Program
             } else {
-                End::Return {
-                    stack_out: r.stack_out,
-                }
+                End::Return { stack_out: r.stack_out }
             };
             let values = region.blocks[k - 1].1;
             part(r, assemble_frame(&cutter.frame(r, Some(values), end), program, options))
@@ -520,16 +534,35 @@ pub fn creation_code(runtime: &[u8], slots: &[u8]) -> Vec<u8> {
     let arguments = 32 * slots.len();
     // The revert is the last 4 bytes of the `prefix` bytes before the code.
     let build = |prefix: usize| {
-        let length = [&[CODESIZE][..], &push_fixed(prefix + runtime.len() + arguments, 2), &[XOR, CALLVALUE, OR]];
+        let length = [
+            &[CODESIZE][..],
+            &push_fixed(prefix + runtime.len() + arguments, 2),
+            &[XOR, CALLVALUE, OR],
+        ];
         let mut code = [&length.concat()[..], &push_fixed(prefix - 4, 2), &[JUMPI]].concat();
         // The code and the arguments, to memory at 0.
-        let copy = [&push_fixed(runtime.len() + arguments, 2)[..], &push_fixed(prefix, 2), &[PUSH0, CODECOPY]];
+        let copy = [
+            &push_fixed(runtime.len() + arguments, 2)[..],
+            &push_fixed(prefix, 2),
+            &[PUSH0, CODECOPY],
+        ];
         code.extend(copy.concat());
         for (k, &slot) in slots.iter().enumerate() {
-            let store = [&push_fixed(runtime.len() + 32 * k, 2)[..], &[MLOAD], &push_usize(slot.into()), &[SSTORE]];
+            let store = [
+                &push_fixed(runtime.len() + 32 * k, 2)[..],
+                &[MLOAD],
+                &push_usize(slot.into()),
+                &[SSTORE],
+            ];
             code.extend(store.concat());
         }
-        code.extend([&push_fixed(runtime.len(), 2)[..], &[PUSH0, RETURN, JUMPDEST, PUSH0, PUSH0, REVERT]].concat());
+        code.extend(
+            [
+                &push_fixed(runtime.len(), 2)[..],
+                &[PUSH0, RETURN, JUMPDEST, PUSH0, PUSH0, REVERT],
+            ]
+            .concat(),
+        );
         code
     };
     let prefix = build(4).len();
@@ -596,15 +629,34 @@ mod tests {
         let limit = 1_000;
         let linked = link(&program, &options, limit);
         assert!(linked.parts.len() >= 3, "{} parts", linked.parts.len());
-        let sizes = std::iter::once(&linked.driver).chain(&linked.parts).map(|part| part.code.code.len());
-        assert!(sizes.clone().all(|size| size <= limit), "{:?}", sizes.collect::<Vec<_>>());
+        let sizes = std::iter::once(&linked.driver)
+            .chain(&linked.parts)
+            .map(|part| part.code.code.len());
+        assert!(
+            sizes.clone().all(|size| size <= limit),
+            "{:?}",
+            sizes.collect::<Vec<_>>()
+        );
         // Each part passes on at most two blocks' values (and the stack, empty at a seam here): words are reused.
-        let exported: usize = std::iter::once(&linked.driver).chain(&linked.parts).map(|part| part.exports).sum();
-        assert!(linked.values <= 2 * 8 && linked.values < exported, "{} words for {exported}", linked.values);
+        let exported: usize = std::iter::once(&linked.driver)
+            .chain(&linked.parts)
+            .map(|part| part.exports)
+            .sum();
+        assert!(
+            linked.values <= 2 * 8 && linked.values < exported,
+            "{} words for {exported}",
+            linked.values
+        );
         // Cut where it was cut, it is the same.
         let again = link_at(&program, &options, &linked.starts());
         assert_eq!(again.driver.code.code, linked.driver.code.code);
-        assert!(again.parts.iter().zip(&linked.parts).all(|(a, b)| a.code.code == b.code.code));
+        assert!(
+            again
+                .parts
+                .iter()
+                .zip(&linked.parts)
+                .all(|(a, b)| a.code.code == b.code.code)
+        );
     }
 
     /// The stack's height before every item: a seam may hold words on it, which a cut passes.

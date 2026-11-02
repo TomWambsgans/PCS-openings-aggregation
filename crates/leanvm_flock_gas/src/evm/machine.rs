@@ -194,7 +194,11 @@ impl GasByPc {
         let at = match self.gas.iter().position(|(address, _)| *address == code) {
             Some(at) => at,
             None => {
-                let size = self.sizes.iter().find(|(address, _)| *address == code).map_or(0, |s| s.1);
+                let size = self
+                    .sizes
+                    .iter()
+                    .find(|(address, _)| *address == code)
+                    .map_or(0, |s| s.1);
                 self.gas.push((code, vec![0; size + 1]));
                 self.gas.len() - 1
             }
@@ -346,7 +350,11 @@ impl Chain {
         let mut chain = self.clone();
         let mut inspector = GasByPc::default();
         for (address, account) in &chain.db.cache.accounts {
-            let size = account.info.code.as_ref().map_or(0, |code| code.original_byte_slice().len());
+            let size = account
+                .info
+                .code
+                .as_ref()
+                .map_or(0, |code| code.original_byte_slice().len());
             inspector.sizes.push((*address, size));
         }
         let mut calls = Vec::new();

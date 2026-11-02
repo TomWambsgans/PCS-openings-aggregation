@@ -71,7 +71,10 @@ pub fn push_usize(value: usize) -> Vec<u8> {
 /// `PUSH` of an address in the code in `width` bytes whatever the address, so that code can be laid out in two
 /// passes.
 pub fn push_fixed(at: usize, width: usize) -> Vec<u8> {
-    assert!((1..=4).contains(&width) && at < 1 << (8 * width), "an address of {width} bytes");
+    assert!(
+        (1..=4).contains(&width) && at < 1 << (8 * width),
+        "an address of {width} bytes"
+    );
     let mut code = vec![PUSH0 + width as u8];
     code.extend_from_slice(&at.to_be_bytes()[8 - width..]);
     code
@@ -93,8 +96,19 @@ pub fn arity(op: u8) -> (usize, usize) {
         0x01..=0x07 | 0x0a | 0x0b | FIELD_MUL | 0x10..=0x14 | AND | OR | XOR | 0x1a..=0x1d | KECCAK256 => (2, 1),
         0x08 | 0x09 => (3, 1),
         ISZERO | NOT | CALLDATALOAD | MLOAD | SLOAD | 0x31 | 0x3b | 0x3f | 0x40 => (1, 1),
-        0x30 | 0x32 | CALLER | CALLVALUE | CALLDATASIZE | CODESIZE | 0x3a | RETURNDATASIZE | 0x41..=0x48 | 0x58
-        | 0x59 | GAS | PUSH0..=PUSH32 => (0, 1),
+        0x30
+        | 0x32
+        | CALLER
+        | CALLVALUE
+        | CALLDATASIZE
+        | CODESIZE
+        | 0x3a
+        | RETURNDATASIZE
+        | 0x41..=0x48
+        | 0x58
+        | 0x59
+        | GAS
+        | PUSH0..=PUSH32 => (0, 1),
         CALLDATACOPY | CODECOPY | RETURNDATACOPY => (3, 0),
         0x3c => (4, 0),
         POP | 0x56 => (1, 0),
@@ -122,7 +136,11 @@ pub fn stack_effect(code: &[u8]) -> (isize, usize) {
         let (pops, pushes) = arity(op);
         deepest = deepest.min(height - pops as isize);
         height += pushes as isize - pops as isize;
-        pc += 1 + if (0x60..=0x7f).contains(&op) { (op - 0x5f) as usize } else { 0 };
+        pc += 1 + if (0x60..=0x7f).contains(&op) {
+            (op - 0x5f) as usize
+        } else {
+            0
+        };
     }
     (height, (-deepest) as usize)
 }

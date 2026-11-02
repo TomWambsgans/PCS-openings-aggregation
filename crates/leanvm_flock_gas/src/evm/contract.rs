@@ -591,9 +591,7 @@ pub fn install(deployable: &Deployable, roots: &[(u8, [u8; 32])]) -> Deployed {
     let addresses: Vec<[u8; 20]> = (0..linked.parts.len()).map(|k| part_address(k).into_array()).collect();
     let code = linked.driver_code(&addresses);
     chain.install(VERIFIER, &code);
-    roots
-        .iter()
-        .for_each(|&(slot, word)| chain.store(VERIFIER, slot, word));
+    roots.iter().for_each(|&(slot, word)| chain.store(VERIFIER, slot, word));
     contracts.push(DeployedContract {
         address: VERIFIER,
         code_bytes: code.len(),
@@ -766,7 +764,10 @@ pub fn parity_deployable(
         &compile_measuring_like(&recorded, iv, Mode::Return, &returning),
         &fixed_roots(),
     );
-    let output = installed.chain.call(installed.address, &data, &PcsOpen::default()).output;
+    let output = installed
+        .chain
+        .call(installed.address, &data, &PcsOpen::default())
+        .output;
     let expected = expected_words(shape, iv, public_input, stream, lincheck, &recorded);
     assert_words(&output.expect("a measuring build does not revert"), &expected);
 
@@ -778,12 +779,21 @@ pub fn parity_deployable(
         let seed = keccak_seed(&NAME, iv, &public_input_calldata(public_input));
         let mut channel = KeccakChannel::new(seed, stream, Checks::Enforce);
         let words = crate::public_words(public_input).map(|w| E::new(w, 0, 0));
-        reduce(shape, words, &mut channel, lincheck).and_then(|_| channel.finish()).is_ok()
+        reduce(shape, words, &mut channel, lincheck)
+            .and_then(|_| channel.finish())
+            .is_ok()
     };
-    assert_eq!(enforced.output.is_some(), accepts, "reverts exactly when the Rust verifier rejects");
+    assert_eq!(
+        enforced.output.is_some(),
+        accepts,
+        "reverts exactly when the Rust verifier rejects"
+    );
     let one = compile_verifier(&recorded, iv, Mode::Verify, true);
     let straight = call(&one.code, &fixed_roots(), &data, &attest);
-    let measuring = install(&compile_measuring_like(&recorded, iv, Mode::Verify, &verifying), &fixed_roots());
+    let measuring = install(
+        &compile_measuring_like(&recorded, iv, Mode::Verify, &verifying),
+        &fixed_roots(),
+    );
     let linked = measuring.chain.call(measuring.address, &data, &attest);
     assert_eq!(linked.output, straight.output);
     assert_eq!(linked.output.as_deref(), Some(&word([1, 0, 0])[..]));

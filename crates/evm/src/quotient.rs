@@ -572,7 +572,9 @@ mod tests {
     /// alike: the one the deployment stores, then the one `setIndexRoot` stores, from the owner only.
     #[test]
     fn contract_reads_the_index_root_from_storage() {
-        LIMITS.into_iter().for_each(contract_reads_the_index_root_from_storage_at);
+        LIMITS
+            .into_iter()
+            .for_each(contract_reads_the_index_root_from_storage_at);
     }
 
     fn contract_reads_the_index_root_from_storage_at(limit: usize) {
@@ -672,7 +674,6 @@ mod tests {
         );
         assert!(contract.code.len() <= 24_576, "EIP-170");
     }
-
 
     /// `n` with a comma every three digits.
     fn grouped(n: u64) -> String {

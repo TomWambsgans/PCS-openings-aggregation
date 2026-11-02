@@ -148,13 +148,23 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
             }
         };
         for &offset in &frame.stack_in {
-            put(&mut code, &mut tag_of, &[&push_usize(offset)[..], &[CALLDATALOAD]].concat(), tags.pass);
+            put(
+                &mut code,
+                &mut tag_of,
+                &[&push_usize(offset)[..], &[CALLDATALOAD]].concat(),
+                tags.pass,
+            );
         }
         for (item, tag) in frame.items {
             let tag = *tag;
             match *item {
                 Item::Code(ref bytes) => put(&mut code, &mut tag_of, bytes, tag),
-                Item::Store(id) => put(&mut code, &mut tag_of, &[&[DUP1][..], &push_usize(address(id)), &[MSTORE]].concat(), tag),
+                Item::Store(id) => put(
+                    &mut code,
+                    &mut tag_of,
+                    &[&[DUP1][..], &push_usize(address(id)), &[MSTORE]].concat(),
+                    tag,
+                ),
                 Item::Load(id) => {
                     let bytes = match frame.imports.get(&id) {
                         Some(&offset) => [&push_usize(offset)[..], &[CALLDATALOAD]].concat(),
@@ -162,7 +172,12 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                     };
                     put(&mut code, &mut tag_of, &bytes, tag);
                 }
-                Item::Output(k) => put(&mut code, &mut tag_of, &[&push_usize(returned + 32 * k)[..], &[MSTORE]].concat(), tag),
+                Item::Output(k) => put(
+                    &mut code,
+                    &mut tag_of,
+                    &[&push_usize(returned + 32 * k)[..], &[MSTORE]].concat(),
+                    tag,
+                ),
                 Item::Calldata { offset, len } => {
                     let at = match &frame.window {
                         None => offset,
@@ -206,7 +221,12 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                     check_at(&mut code, &mut tag_of, tag);
                 }
                 Item::FailIf => check_at(&mut code, &mut tag_of, tag),
-                Item::OtherIf => put(&mut code, &mut tag_of, &[&push_fixed(other, w)[..], &[JUMPI]].concat(), tag),
+                Item::OtherIf => put(
+                    &mut code,
+                    &mut tag_of,
+                    &[&push_fixed(other, w)[..], &[JUMPI]].concat(),
+                    tag,
+                ),
                 Item::Seam => {}
             }
         }
@@ -226,15 +246,30 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
             &End::Return { stack_out } => {
                 let n = frame.pinned.len();
                 for t in (0..stack_out).rev() {
-                    put(&mut code, &mut tag_of, &[&push_usize(pinned_at(n + t))[..], &[MSTORE]].concat(), tags.pass);
+                    put(
+                        &mut code,
+                        &mut tag_of,
+                        &[&push_usize(pinned_at(n + t))[..], &[MSTORE]].concat(),
+                        tags.pass,
+                    );
                 }
-                let tail = [&push_usize(32 * (n + stack_out))[..], &push_usize(layout.region), &[RETURN]].concat();
+                let tail = [
+                    &push_usize(32 * (n + stack_out))[..],
+                    &push_usize(layout.region),
+                    &[RETURN],
+                ]
+                .concat();
                 put(&mut code, &mut tag_of, &tail, tags.pass);
             }
             End::Drive { stack_out, calls } => {
                 let n = frame.pinned.len();
                 for t in (0..*stack_out).rev() {
-                    put(&mut code, &mut tag_of, &[&push_usize(pinned_at(n + t))[..], &[MSTORE]].concat(), tags.pass);
+                    put(
+                        &mut code,
+                        &mut tag_of,
+                        &[&push_usize(pinned_at(n + t))[..], &[MSTORE]].concat(),
+                        tags.pass,
+                    );
                 }
                 for call in calls {
                     // `CALLDATACOPY(after, lo, len)`: the calldata the part reads, after the values.
@@ -250,7 +285,13 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                         input += range.len();
                     }
                     // `DELEGATECALL(gas, part, values, input, 0, 0)`: the part runs on this contract's storage.
-                    let head = [&[PUSH0, PUSH0][..], &push_usize(input), &push_usize(values_at), &[PUSH20]].concat();
+                    let head = [
+                        &[PUSH0, PUSH0][..],
+                        &push_usize(input),
+                        &push_usize(values_at),
+                        &[PUSH20],
+                    ]
+                    .concat();
                     put(&mut code, &mut tag_of, &head, tags.call);
                     patches.push(code.len());
                     put(&mut code, &mut tag_of, &[0; 20], tags.call);
@@ -270,7 +311,15 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                 match program.ending {
                     // What the last part returned (the outputs), returned.
                     Ending::Return => {
-                        let forward = [RETURNDATASIZE, PUSH0, PUSH0, RETURNDATACOPY, RETURNDATASIZE, PUSH0, RETURN];
+                        let forward = [
+                            RETURNDATASIZE,
+                            PUSH0,
+                            PUSH0,
+                            RETURNDATACOPY,
+                            RETURNDATASIZE,
+                            PUSH0,
+                            RETURN,
+                        ];
                         put(&mut code, &mut tag_of, &forward, tags.ending);
                     }
                     // The word 1, if the last part returned exactly it (an account without code returns nothing,
@@ -286,7 +335,12 @@ pub(crate) fn assemble_frame(frame: &Frame, program: &Program, options: &Options
                         ];
                         put(&mut code, &mut tag_of, &check.concat(), tags.ending);
                         check_at(&mut code, &mut tag_of, tags.ending);
-                        put(&mut code, &mut tag_of, &[&push_usize(32)[..], &[PUSH0, RETURN]].concat(), tags.ending);
+                        put(
+                            &mut code,
+                            &mut tag_of,
+                            &[&push_usize(32)[..], &[PUSH0, RETURN]].concat(),
+                            tags.ending,
+                        );
                     }
                 }
             }

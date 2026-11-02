@@ -19,7 +19,10 @@ pub enum Piece {
     Code(Vec<u8>),
     /// Push the offset of bytes `offset..offset + len` of the call's calldata, which the code reads (`len`: 32 for a
     /// `CALLDATALOAD`, the length of a `CALLDATACOPY`).
-    Calldata { offset: usize, len: usize },
+    Calldata {
+        offset: usize,
+        len: usize,
+    },
 }
 
 /// Code of instructions only.

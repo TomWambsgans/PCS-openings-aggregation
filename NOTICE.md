@@ -42,6 +42,10 @@ option. Every file says where it comes from in its first lines.
   the Keccak-256 chain (after `crates/quotient/src/transcript.rs`), the stack's batching sumcheck, the matrices'
   reduction, the EVM recorder, code generator and machine (after `crates/evm`), and the `gas-dump` command it adds to
   a leanVM checkout (`dump/`). Each file says where it comes from in its first lines.
+- **`crates/evm_link`** (new here): the compilation of a recorded graph and the assembly, moved from
+  `crates/leanvm_flock_gas/src/evm/codegen.rs` and `crates/evm/src/codegen.rs` (the latter adapted from leanVM's
+  branch `PCS-openings-aggregation`, commit `651453c6`), and the linker into deployable contracts. Each file says so
+  in its first lines.
 - **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
   Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
   proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's

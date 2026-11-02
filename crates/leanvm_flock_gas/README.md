@@ -12,7 +12,9 @@ leanVM's.
 execution**, plus **27 KB of calldata**, which under EIP-7623 makes the transaction **1,077,470 gas** (without the
 21,000 base), whatever `c` up to about 77,000 a claim: the calldata floor binds. Four claims, in four `PCS_OPEN`
 calls. Verifying the lincheck in the contract the way leanVM's own verifier does instead (a walk of the BLAKE2s
-circuit) costs 2.45 M of execution.
+circuit) costs 2.45 M of execution. These are the gas of straight-line code of 117 KB; as **deployable** contracts
+(five of at most 24,576 bytes, "Deployable contracts") the execution is 362,228, and the transaction the same
+1,077,470.
 
 | 1,290 leanXMSS signatures | execution (`c` = 0) | claims / calls | tx EIP-7623, `c` = 0 / 2,000 / 5,000 / 20,000 | tx EIP-7976, `c` = 0 / 20,000 |
 |---|---:|---:|---|---|
@@ -79,8 +81,48 @@ stream of the right length with a build in which a failed check jumps to a `JUMP
 gas is computed from the calldata's bytes by the formula above (the zero bytes of a real stream: the announced sizes;
 the rest are taken pseudo-random, as a proof's are).
 
-**Modelled**: the Keccak-VM estimate below (measured parts assembled by hand), the alternatives in "Caveats", and
-everything about deployment (the code is installed in revm directly, not deployed; see Caveats).
+**Modelled**: the Keccak-VM estimate below (measured parts assembled by hand) and the alternatives in "Caveats". The
+straight-line contract is installed in revm directly (it passes EIP-170's limit); the deployable one (next section)
+is deployed, each contract by a transaction, and measured the same way.
+
+## Deployable contracts
+
+The straight-line contract is 116,951 bytes (A) or 1.13 MB (B), above EIP-170's 24,576. `crates/evm_link` links the
+same compiled program into contracts of at most 24,576 bytes each (`evm::codegen::compile_deployable`): a **driver**,
+the contract a verifying call is sent to, which runs the start of the program and `DELEGATECALL`s the **parts** in
+order; each part is passed, in its calldata, the values earlier parts computed that it reads (and the stack's words
+at its cut) and the ranges of the call's calldata it reads, returns those it computes for later parts, and runs on
+the driver's storage (the fixed commitments). The cuts are between two nodes' evaluations, each part as long as fits,
+but for a cut among the last twelfth of it where fewest values are live. The code computes exactly what the
+straight-line code computes: checked word for word against the Rust verifier, and its calls of `PCS_OPEN` byte for
+byte against the straight-line contract's (`deployable_is_the_rust_verifier`).
+
+**Measured** (revm; every contract deployed by a transaction, EIP-170 and EIP-3860 enforced; the execution measured
+on a build that cuts at the same places, a `JUMPDEST` after each check subtracted, as for the straight-line code):
+
+| signatures | variant | contracts | code bytes | execution, straight-line | execution, deployable | added | tx EIP-7623 (−21,000), straight / deployable | deployment, all contracts (EIP-7623) |
+|---:|---|---:|---:|---:|---:|---:|---|---:|
+| 32 | A | 5 | 101,269 | 294,260 | 315,470 | +21,210 (7.2%) | 860,240 / 860,240 | 22,110,482 |
+| 128 | A | 5 | 106,377 | 307,751 | 328,075 | +20,324 (6.6%) | 917,510 / 917,510 | 23,209,475 |
+| 400 | A | 5 | 113,638 | 326,874 | 350,208 | +23,334 (7.1%) | 1,020,080 / 1,020,080 | 24,784,755 |
+| **1,290** | **A** | **5** | 117,139 | **335,627** | **362,228** | **+26,601 (7.9%)** | **1,077,470 / 1,077,470** | 25,533,108 |
+| 1,290 | B | 47 | 1,140,640 | 2,454,077 | 2,990,687 | +536,610 (21.9%) | 2,875,129 / 3,411,739 | 247,981,810 |
+| 2,000 | A | 5 | 120,497 | 344,193 | 372,376 | +28,183 (8.2%) | 1,133,030 / 1,133,030 | 26,261,507 |
+
+In A, EIP-7623's floor still binds: the deployable verifier's transaction costs exactly the straight-line one's. At
+1,290 signatures the 26,601 are: four cold `DELEGATECALL`s and their checks (10,524), the copies (the calldata each
+part reads, 3 gas a word; the values returned, 3 a word) and the memory they take in the driver and the parts
+(14,949), and about 1,100 of memory expansion charged elsewhere (each part's memory is its own: the quadratic cost of
+the straight-line contract's 2,135 words is shared). The five contracts: the driver (24,426 bytes, items 0..9,998:
+the entry, the bus's GKR), then parts of 23,499, 23,837, 24,487 and 20,890 bytes; the values region holds at most
+1,476 words, mostly the 985 values part 3 (the ring switch's weight) computes for part 4 (the eq and selector weights at
+the batch's point). Deploying them all takes 25.5 M gas in five transactions (each under 5.4 M).
+
+B's walk keeps some 800 values live at every cut, and its 47 contracts cost 536,610 more (22%).
+
+Possible improvements, not made: a part calling the next itself when that one reads mostly its values (part 3 to 4
+here: about 3,000 gas); the cuts chosen together rather than one after the other; code made shorter to fit four
+contracts (one call less: 2,600).
 
 ## Breakdown (1,290 signatures, variant A)
 
@@ -177,11 +219,11 @@ evaluations) and the ring switch runs on 24 coordinates instead of 26 (a few tho
 
 ## Caveats
 
-- **Deployability.** The measured code is straight-line, 116,951 bytes (A) or 1.13 MB (B), above EIP-170's 24,576;
-  it is installed in revm directly. A deployable verifier needs loops or a split into ~5 contracts, which costs more
-  than straight-line code (cold `DELEGATECALL`s at 2,600 each, state passed between them, loop overhead); not
-  measured. Under EIP-7623 the floor leaves ~300,000 gas of slack in A, so moderate overheads would not change the
-  transaction's gas.
+- **Deployability.** The straight-line code, 116,951 bytes (A) or 1.13 MB (B), is above EIP-170's 24,576 and is
+  installed in revm directly; the deployable verifier ("Deployable contracts") is 5 contracts (A) for 26,601 gas more
+  at 1,290 signatures, which EIP-7623's floor absorbs. Loops instead of straight-line code would make the code
+  smaller but every iteration dearer (about 30 gas of counter, jump and addressing a round of a few instructions):
+  linking keeps the straight-line code's per-instruction cost and pays 2,600 gas a contract.
 - **One contract per shape.** Like `crates/evm`'s (one per circuit size), the contract is compiled for the announced
   sizes, which it checks. Proofs of other table heights need other code (or a dispatch, or runtime row counts in the
   padding weights, a few hundred gas).
@@ -212,6 +254,7 @@ evaluations) and the ring switch runs on 24 coordinates instead of 26 (a few tho
 ```sh
 cargo test --release -p leanvm_flock_gas --test evm -- --ignored --nocapture gas_report       # all tables above
 cargo test --release -p leanvm_flock_gas --test evm -- --ignored --nocapture keccak_estimate  # Flock vs Keccak GKR
+cargo test --release -p leanvm_flock_gas --test evm -- --ignored --nocapture deployable_report  # deployable contracts
 cargo test --release -p leanvm_flock_gas                      # parity contract == Rust, reductions, stream lengths
 LEANVM_DUMP=<dir> cargo test --release -p leanvm_flock_gas --test real_proofs -- --ignored --nocapture
 ```
@@ -230,7 +273,7 @@ at 1,290 signatures; the five proofs were made on h1, `/root/pcs-quotient-fv/lea
 | `src/transcript.rs` | leanVM's BLAKE2s transcript; the Keccak-256 chain | leanVM; `crates/quotient/src/transcript.rs` |
 | `src/scalar.rs`, `src/stack.rs`, `src/matrices.rs` | the scalar trait and phases; the stack's batching sumcheck; the matrices' reduction | new (`matrix_values` from leanVM's `deferred.rs`) |
 | `src/keccak_gkr.rs` | leanVM 4af2cddd's Keccak GKR verifier, generic, for the estimate | leanVM 4af2cddd `crates/verifier/src/keccak.rs` |
-| `src/evm/` | recorder, code generator, revm machine, contract and gas report | `crates/evm` |
+| `src/evm/` | recorder, the nodes' code for `crates/evm_link` (which compiles, assembles and links), revm machine (deploys, and gives each instruction's gas in every contract), contract, deployment and gas report | `crates/evm` |
 | `src/shapes.rs` | the five proofs' shapes and the program's IV | new |
 | `tests/real_proofs.rs`, `tests/evm.rs` | the port accepts leanVM's proofs; parity; gas | new |
 | `dump/` | the `gas-dump` command added to a leanVM checkout | new |

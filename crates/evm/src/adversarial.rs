@@ -24,7 +24,6 @@ use revm::interpreter::{CallInput, Gas, InputsImpl, InstructionContext, Instruct
 use revm::primitives::hardfork::SpecId;
 use revm::primitives::{Address, Bytes, TxKind, U256};
 
-
 use crate::codegen::INDEX_ROOT_SLOT;
 use crate::machine::{Chain, FIELD_MUL, FIELD_MUL_GAS, LOG_ROWS, Outcome, PCS_OPEN, PcsOpen, root_word};
 use crate::quotient::{
@@ -180,7 +179,10 @@ const LINKED: usize = 2_048;
 #[test]
 fn linked_builds_are_parts() {
     for log_rows in LOG_ROWS {
-        for contract in [claims_contract_linked(log_rows, LINKED), contract_linked(log_rows, LINKED)] {
+        for contract in [
+            claims_contract_linked(log_rows, LINKED),
+            contract_linked(log_rows, LINKED),
+        ] {
             assert!(contract.parts.len() >= 2, "{} parts", contract.parts.len());
             assert!(contract.code.len() <= LINKED && contract.parts.iter().all(|part| part.len() <= LINKED));
             let owner = contract.owner_at.expect("the driver holds setIndexRoot");
@@ -190,8 +192,15 @@ fn linked_builds_are_parts() {
                 let mut pc = 0;
                 while pc < part.len() {
                     let op = part[pc];
-                    assert!(![0x55, 0xf0, 0xf1, 0xf2, 0xf4, 0xf5, 0xff].contains(&op), "opcode {op:#04x} in a part");
-                    pc += 1 + if (0x60..=0x7f).contains(&op) { (op - 0x5f) as usize } else { 0 };
+                    assert!(
+                        ![0x55, 0xf0, 0xf1, 0xf2, 0xf4, 0xf5, 0xff].contains(&op),
+                        "opcode {op:#04x} in a part"
+                    );
+                    pc += 1 + if (0x60..=0x7f).contains(&op) {
+                        (op - 0x5f) as usize
+                    } else {
+                        0
+                    };
                 }
             }
             let deployed = deploy(&contract, &[7; 32]);
@@ -512,11 +521,15 @@ fn a_driver_without_its_parts_reverts() {
     let contract = contract_linked(22, LINKED);
     let count = contract.parts.len();
     assert!(count >= 2);
-    for missing in [vec![true; count], vec![false; count - 1].into_iter().chain([true]).collect(), {
-        let mut first = vec![false; count];
-        first[0] = true;
-        first
-    }] {
+    for missing in [
+        vec![true; count],
+        vec![false; count - 1].into_iter().chain([true]).collect(),
+        {
+            let mut first = vec![false; count];
+            first[0] = true;
+            first
+        },
+    ] {
         let mut chain = Chain::default();
         let addresses: Vec<[u8; 20]> = contract
             .parts
@@ -526,7 +539,11 @@ fn a_driver_without_its_parts_reverts() {
                 if missing {
                     [0x99; 20]
                 } else {
-                    chain.deploy(&evm_link::creation_code(part, &[])).0.expect("a part").into_array()
+                    chain
+                        .deploy(&evm_link::creation_code(part, &[]))
+                        .0
+                        .expect("a part")
+                        .into_array()
                 }
             })
             .collect();
@@ -538,10 +555,17 @@ fn a_driver_without_its_parts_reverts() {
             index_root,
         };
         let passes = missing.iter().all(|&m| !m);
-        assert_eq!(call_with(&deployed, &data, Reply::Attest).output.is_some(), passes, "{missing:?}");
+        assert_eq!(
+            call_with(&deployed, &data, Reply::Attest).output.is_some(),
+            passes,
+            "{missing:?}"
+        );
     }
     let deployed = deploy(&contract, &index_root);
-    assert_eq!(call_with(&deployed, &data, Reply::Attest).output, Some(VERIFIED.to_vec()));
+    assert_eq!(
+        call_with(&deployed, &data, Reply::Attest).output,
+        Some(VERIFIED.to_vec())
+    );
 }
 
 /// What linking costs the membership verifier, which fits one contract: linked into contracts of at most 8, 4 and 2
@@ -556,7 +580,9 @@ fn linked_gas_report() {
     let data = random_calldata(&mut rng);
     let log_rows = *LOG_ROWS.end();
     let straight = call_with(&deploy(&contract(log_rows), &index_root), &data, Reply::Attest).execution;
-    println!("| limit | contracts | code bytes (driver; parts) | execution | added | deployment gas (EIP-7623, without 21,000 a transaction) |");
+    println!(
+        "| limit | contracts | code bytes (driver; parts) | execution | added | deployment gas (EIP-7623, without 21,000 a transaction) |"
+    );
     println!("|---:|---:|---|---:|---:|---:|");
     for limit in [24_576, 8_192, 4_096, 2_048] {
         let contract = contract_linked(log_rows, limit);

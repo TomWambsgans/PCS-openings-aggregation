@@ -9,11 +9,11 @@
 //! ([`compile_deployable`]).
 
 use evm_link::front::{self, Check, Dag, Piece, Source};
-use evm_link::op::{
-    AND, CALLDATACOPY, CALLDATALOAD, CALLDATASIZE, CALLVALUE, FIELD_MUL, KECCAK256, MSTORE, OR, PUSH0, SHR, SLOAD,
-    XOR, push, push_usize,
-};
 pub use evm_link::op::word;
+use evm_link::op::{
+    AND, CALLDATACOPY, CALLDATALOAD, CALLDATASIZE, CALLVALUE, FIELD_MUL, KECCAK256, MSTORE, OR, PUSH0, SHR, SLOAD, XOR,
+    push, push_usize,
+};
 use evm_link::{Linked, Options, Program, Tags};
 
 use crate::evm::record::{Graph, Node};
@@ -206,7 +206,9 @@ fn program(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, link
                 ],
                 CALLS,
             ),
-            Word::Stored(slot) => front::Word::Code(front::code([&push_usize(slot.into())[..], &[SLOAD]].concat()), ROOTS),
+            Word::Stored(slot) => {
+                front::Word::Code(front::code([&push_usize(slot.into())[..], &[SLOAD]].concat()), ROOTS)
+            }
         })
         .collect();
     // Below the slots: the hashing scratch, a state and the longest run of the stream absorbed (and the seed's 80).
@@ -220,7 +222,9 @@ fn program(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, link
         dag: &Nodes { graph, entry },
         entry: selector.concat(),
         entry_tag: ENTRY,
-        checks: checks.chain(graph.nonzero.iter().map(|&(id, _)| (id, Check::Nonzero))).collect(),
+        checks: checks
+            .chain(graph.nonzero.iter().map(|&(id, _)| (id, Check::Nonzero)))
+            .collect(),
         outputs: words,
         calls: match ending {
             Ending::Return => None,

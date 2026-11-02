@@ -7,8 +7,8 @@
 
 use evm_link::op::{
     AND, CALLDATACOPY, CALLDATALOAD, CALLDATASIZE, CALLER, CALLVALUE, CODECOPY, CODESIZE, DUP1, DUP2, FIELD_MUL,
-    ISZERO, JUMPDEST, JUMPI, KECCAK256, MLOAD, MSTORE, OR, POP, PUSH0, PUSH32, RETURN, REVERT, SHL, SHR, SLOAD,
-    SSTORE, STOP, SWAP1, SWAP2, XOR, push, push_usize,
+    ISZERO, JUMPDEST, JUMPI, KECCAK256, MLOAD, MSTORE, OR, POP, PUSH0, PUSH32, RETURN, REVERT, SHL, SHR, SLOAD, SSTORE,
+    STOP, SWAP1, SWAP2, XOR, push, push_usize,
 };
 use evm_link::{Item, Options, Program};
 
@@ -573,7 +573,10 @@ pub fn compile_linked(
 /// ABI-encoded (64 bytes), and none otherwise. It reverts on value, or on arguments of another length; else it
 /// stores `indexRoot` in slot [`INDEX_ROOT_SLOT`], writes the `owner` word into the code, and returns the code.
 pub fn creation_code(contract: &Contract) -> Vec<u8> {
-    assert!(contract.parts.is_empty(), "a driver calling its parts at their addresses");
+    assert!(
+        contract.parts.is_empty(),
+        "a driver calling its parts at their addresses"
+    );
     let runtime = contract.code.len();
     let arguments = if contract.owner_at.is_some() { 64 } else { 0 };
     // The revert is the last 4 bytes of the `prefix` bytes before the code.
