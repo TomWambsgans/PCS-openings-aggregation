@@ -8,7 +8,7 @@
 -- and `common/Common/Transfer2.lean`'s `pathsOf_ideal2`, from a cache the setup filled, with
 -- coins); the transfer is `common`'s (`Common.keccak256_transfer2`), the derandomization
 -- `Rpm/Coins.lean`'s (`LeanVM.Rpm.exists_det`), the rerun `common/Common/Rerun.lean`'s idea.
-import Compose.Deployed
+import Compose.WiringSetup
 import LeanVM.Protocol.Rpm.Generic
 import LeanVM.Protocol.ExperimentBridge
 import Common.Rerun
@@ -924,5 +924,310 @@ theorem rom_le (c₁ : TableCode B.Msg₁) (setup : OracleComp KeccakCalls Bytes
     _ = _ := by
         rw [← bind_map_left]
         exact (EvalDistEq.bind_left hJ _).prEvent_eq _
+
+/-! ## Coins do not help: the deterministic adversary recomputes the public setup -/
+
+/-- The setup's queries, with the cache the random oracle holds after them. -/
+def cacheImpl : QueryImpl KeccakCalls (StateT KeccakCalls.QueryCache (OracleComp KeccakCalls)) :=
+  fun t => StateT.mk fun c =>
+    (fun u => (u, LeanVM.Rpm.stepCache c t u)) <$> (liftM (KeccakCalls.query t) : OracleComp _ _)
+
+theorem le_of_mem_support_runRO {α : Type} (X : OracleComp KeccakCalls α)
+    (c : KeccakCalls.QueryCache) {z : α × KeccakCalls.QueryCache}
+    (hz : z ∈ support ((simulateQ randomOracle X).run c)) : c ≤ z.2 := by
+  rw [← run_liftKC] at hz
+  exact Common.le_of_mem_support_run _ c hz
+
+theorem randomOracle_mem_support {t : KeccakCalls.Domain} {c : KeccakCalls.QueryCache}
+    {z : KeccakCalls.Range t × KeccakCalls.QueryCache}
+    (hz : z ∈ support ((randomOracle t).run c)) : z.2 t = some z.1 := by
+  rw [randomOracle.run_eq] at hz
+  rcases hct : c.toFn t with _ | u
+  · rw [hct] at hz
+    simp only [mem_support_bind_iff, support_pure, Set.mem_singleton_iff] at hz
+    obtain ⟨u, -, rfl⟩ := hz
+    exact QueryCache.cacheQuery_self _ _ _
+  · rw [hct] at hz
+    simp only [support_pure, Set.mem_singleton_iff] at hz
+    subst hz
+    exact hct
+
+/-- **Recomputing the setup** from any cache extending one it left: the same output, the cache it
+left, and no change to the random oracle's cache. -/
+theorem rerun_cacheImpl {α : Type} (S : OracleComp KeccakCalls α) :
+    ∀ (c : KeccakCalls.QueryCache) {z : α × KeccakCalls.QueryCache},
+      z ∈ support ((simulateQ randomOracle S).run c) → ∀ c', z.2 ≤ c' →
+        (simulateQ randomOracle ((simulateQ cacheImpl S).run c)).run c' = pure (z, c') := by
+  induction S using OracleComp.inductionOn with
+  | pure a =>
+    intro c z hz c' _
+    simp only [simulateQ_pure, StateT.run_pure, support_pure, Set.mem_singleton_iff] at hz ⊢
+    subst hz
+    rfl
+  | query_bind t k ih =>
+    intro c z hz c' hc'
+    simp only [simulateQ_bind, simulateQ_spec_query, StateT.run_bind, mem_support_bind_iff] at hz
+    obtain ⟨w, hw, hz⟩ := hz
+    have hw2 := LeanVM.Rpm.snd_eq_stepCache hw
+    have hwt := randomOracle_mem_support hw
+    have hle := le_of_mem_support_runRO (k w.1) w.2 hz
+    have hct' : c'.toFn t = some w.1 := hc' (hle hwt)
+    simp only [simulateQ_bind, simulateQ_spec_query, StateT.run_bind, cacheImpl, StateT.run_mk,
+      bind_map_left, randomOracle.run_eq, hct', pure_bind]
+    rw [← hw2]
+    exact ih w.1 w.2 hz c' hc'
+
+theorem isTotalQueryBound_cacheRun {α : Type} (S : OracleComp KeccakCalls α) :
+    ∀ (n : ℕ) (c : KeccakCalls.QueryCache), IsTotalQueryBound S n →
+      IsTotalQueryBound ((simulateQ cacheImpl S).run c) n := by
+  induction S using OracleComp.inductionOn with
+  | pure a => intro n c _; simp only [simulateQ_pure, StateT.run_pure]; trivial
+  | query_bind t k ih =>
+    intro n c hn
+    obtain ⟨hn1, hk⟩ := isTotalQueryBound_query_bind_iff.mp hn
+    simp only [simulateQ_bind, simulateQ_spec_query, StateT.run_bind, cacheImpl, StateT.run_mk,
+      bind_map_left]
+    exact isTotalQueryBound_query_bind_iff.mpr ⟨hn1, fun u => ih u (n - 1) _ (hk u)⟩
+
+/-- **Derandomization after a public setup** (mumbai's `exists_det`, at the cache the setup
+leaves): an adversary with coins, run after the setup, does no better than a deterministic one,
+which recomputes the setup to learn that cache (`QS` more queries). -/
+theorem exists_det_setup {σ₀ α γ : Type} (S : OracleComp KeccakCalls σ₀) (QS : ℕ)
+    (hS : IsTotalQueryBound S QS) (Y : σ₀ → OracleComp CSpec α) (Q : ℕ)
+    (hY : ∀ x, Common.QueryCostAtMost (Y x) LeanVM.Rpm.hashCalls Q)
+    (g : (σ₀ × α) × KeccakCalls.QueryCache → ProbComp γ) (E : γ → Prop) :
+    ∃ A' : σ₀ → OracleComp KeccakCalls α, (∀ x, IsTotalQueryBound (A' x) (QS + Q)) ∧
+      Pr{let y ← (simulateQ KeccakCalls.romImpl (simulateQ liftKC S >>= fun x =>
+          (x, ·) <$> Y x)).run ∅ >>= g}[E y] ≤
+        Pr{let y ← (simulateQ randomOracle (S >>= fun x => (x, ·) <$> A' x)).run ∅ >>= g}[E y] := by
+  choose A₀ hA₀ hle using fun (x : σ₀) (c : KeccakCalls.QueryCache) =>
+    LeanVM.Rpm.exists_det (fun p => g ((x, p.1), p.2)) E (Y x) Q (hY x) c
+  refine ⟨fun x => (simulateQ cacheImpl S).run ∅ >>= fun r => A₀ x r.2,
+    fun x => isTotalQueryBound_bind (isTotalQueryBound_cacheRun S QS ∅ hS) fun r => hA₀ x r.2, ?_⟩
+  rw [simulateQ_bind, StateT.run_bind, run_liftKC, simulateQ_bind, StateT.run_bind, bind_assoc,
+    bind_assoc]
+  refine prEvent_bind_mono_of_forall_le_of_support _ _ _ _ _ fun p hp => ?_
+  simp only [simulateQ_map, StateT.run_map, bind_map_left]
+  rw [simulateQ_bind, StateT.run_bind, rerun_cacheImpl S ∅ hp p.2 le_rfl, pure_bind]
+  exact hle p.1 p.2
+
+theorem cost_advB_wR (A : Bytes32 → OracleComp Common.RandomPermutationOracles
+    (RootProof F × OpenProofs)) (Q : ℕ)
+    (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q)
+    (x : Bytes32 × Transcript) : Common.QueryCostAtMost (advB A x) LeanVM.Rpm.wR Q := by
+  refine Common.isWeightBound_run_simulateQ logRelC Common.permutationCallCost LeanVM.Rpm.wR
+    (fun t T => ?_) (hA x.1) []
+  rcases t with n | q
+  · exact Common.isWeightBound_map _ (Common.isWeightBound_query LeanVM.Rpm.wR (.inl n))
+  · simp only [logRelC, logRel, StateT.run_mk, relP]
+    exact Common.isWeightBound_map _ (Common.isWeightBound_map _
+      (Common.isWeightBound_query LeanVM.Rpm.wR (.inr (.inr (permQueryToRpm q)))))
+
+/-- **The random-oracle adversary makes at most one oracle query per call of `π` or `π⁻¹` of the
+adversary** (mumbai's `isWeightBound_romAdvG`), coins free. -/
+theorem cost_romAdvC (A : Bytes32 → OracleComp Common.RandomPermutationOracles
+    (RootProof F × OpenProofs)) (Q : ℕ)
+    (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q) (ir : Bytes32) :
+    Common.QueryCostAtMost (romAdvC A ir) LeanVM.Rpm.hashCalls Q := by
+  refine Common.isWeightBound_map _ (LeanVM.Rpm.isWeightBound_simulateQ_ofRHF ?_)
+  rw [Common.advS2, StateT.run'_eq]
+  exact Common.isWeightBound_map _ (Common.isWeightBound_run_simulateQ _ LeanVM.Rpm.wR
+    LeanVM.Rpm.wHF LeanVM.Rpm.isWeightBound_advImpl2 (cost_advB_wR A Q hA (ir, [])) _)
+
+/-! ## The deterministic adversary's experiment is `wiredExp`'s -/
+
+attribute [local irreducible] LeanVM.Protocol.Compile.instFintypeDigest
+  LeanVM.Protocol.Compile.instFintypeKState
+
+theorem map_logged_fst {α β : Type} (v : OracleComp KeccakCalls α) (l : Transcript)
+    (f : α × Transcript → β) (g : α → β) (h : ∀ x, f x = g x.1) :
+    f <$> (simulateQ logImplKC v).run l = g <$> v := by
+  calc f <$> (simulateQ logImplKC v).run l =
+        (fun x => g x.1) <$> (simulateQ logImplKC v).run l := by
+        congr 1
+        funext x
+        exact h x
+    _ = g <$> (Prod.fst <$> (simulateQ logImplKC v).run l) := by rw [Functor.map_map]
+    _ = g <$> v := by rw [fst_loggedKC_run]
+
+theorem bind_logged_fst {α β : Type} (v : OracleComp KeccakCalls α) (l : Transcript)
+    (f : α × Transcript → OracleComp KeccakCalls β) (g : α → OracleComp KeccakCalls β)
+    (h : ∀ x, f x = g x.1) : (simulateQ logImplKC v).run l >>= f = v >>= g := by
+  calc (simulateQ logImplKC v).run l >>= f =
+        (simulateQ logImplKC v).run l >>= fun x => g x.1 := bind_congr h
+    _ = v >>= g := by rw [← bind_map_left Prod.fst _ g, fst_loggedKC_run]
+
+/-- What `BreaksW` reads of an outcome of `wiredExp`: the proof, the adversary's log, the
+verdicts. -/
+def projW (z : WOut F) : (RootProof F × OpenProofs) × Transcript × Verd F :=
+  ((z.1.1.1.1.1.1.π, z.1.1.1.1.1.1.o), z.1.1.1.1.1.1.tA,
+    (z.1.1.1.1.1.1.ch, z.1.1.1.1.1.2, z.1.1.1.2, z.1.2))
+
+/-- The event `BreaksW` on what it reads. -/
+def BreaksP (c₁ : TableCode B.Msg₁) (w : (RootProof F × OpenProofs) × Transcript × Verd F) :
+    Prop :=
+  AcceptedV (P := P) (w.1, w.2.2) ∧ ∀ g ∈ adversaryExtractor c₁ w.2.1 w.1.1,
+    ¬ P.Sat (W.decode w.1.1.stmt) (P.cells g.1)
+
+theorem breaksW_iff (c₁ : TableCode B.Msg₁) (z : WOut F) :
+    BreaksW W c₁ z ↔ BreaksP W c₁ (projW z) := Iff.rfl
+
+/-- **The stage logs of `wiredExp` past the adversary's are not read**: what `BreaksW` reads is
+the adversary's run, logged, then the deployed verifier. -/
+theorem map_wiredExp (A : OracleComp KeccakCalls (RootProof F × OpenProofs)) :
+    projW <$> wiredExp W D A =
+      loggedKC A >>= fun pt => (fun v => (pt.1, pt.2, v)) <$> verifyD W D pt.1 := by
+  rw [wiredExp, map_logged_fst _ _ projW (fun y => projW (y, [])) (fun _ => rfl), map_bind]
+  simp only [Functor.map_map]
+  rw [innerσ, bind_logged_fst _ _ _ (fun y₁ : ((S0 F × Bool) × Transcript) × Bool =>
+    (fun b => projW (((y₁, []), b), [])) <$> ourVerifier D.LQ D.R (qIn D y₁.1.1.1)) ?h1]
+  case h1 => intro x; rfl
+  simp only [bind_assoc, bind_map_left]
+  rw [innerW, bind_logged_fst _ _ _ (fun x₁ : S0 F × Bool =>
+    ourVerifier D.Lσ D.R (σIn D x₁.1) >>= fun bσ =>
+      (fun b => projW (((((x₁, []), bσ), []), b), [])) <$> ourVerifier D.LQ D.R (qIn D x₁.1))
+    ?h2]
+  case h2 => intro x; rfl
+  simp only [DA, verifyD, loggedKC, bind_assoc, pure_bind, map_bind, bind_map_left, map_pure]
+  simp only [map_eq_bind_pure_comp, Function.comp_def]
+  rfl
+
+/-- **The deterministic adversary's experiment, the event on its cache, is bounded by
+`wiredExp`'s**: the adversary's log records its cache (`consistent_run_loggedKC`). -/
+theorem le_wiredExp (c₁ : TableCode B.Msg₁) (setup : OracleComp KeccakCalls Bytes32)
+    (A' : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs)) :
+    Pr{let y ← (simulateQ randomOracle (setup >>= fun ir => (ir, ·) <$> A' ir)).run ∅ >>=
+        gL W D}[BreaksC W c₁ y] ≤
+      Pr{let z ← (simulateQ randomOracle (wiredExp W D (withSetup setup A'))).run' ∅}[
+        BreaksW W c₁ z] := by
+  have hAw : (fun p : Bytes32 × (RootProof F × OpenProofs) => withIr p.1 p.2) <$>
+      (setup >>= fun ir => (ir, ·) <$> A' ir) = withSetup setup A' := by
+    simp only [withSetup, map_bind, Functor.map_map]
+    rfl
+  have hL : (simulateQ randomOracle (setup >>= fun ir => (ir, ·) <$> A' ir)).run ∅ >>= gL W D =
+      (simulateQ randomOracle (withSetup setup A')).run ∅ >>= fun q =>
+        (fun v => ((q.1, v), q.2)) <$> (simulateQ randomOracle (verifyD W D q.1)).run' q.2 := by
+    rw [← hAw, simulateQ_map, StateT.run_map, bind_map_left]
+    rfl
+  have hR : Pr{let z ← (simulateQ randomOracle (wiredExp W D (withSetup setup A'))).run' ∅}[
+      BreaksW W c₁ z] =
+      Pr{let w ← (simulateQ randomOracle (loggedKC (withSetup setup A'))).run ∅ >>= fun q =>
+        (fun v => (q.1.1, q.1.2, v)) <$> (simulateQ randomOracle (verifyD W D q.1.1)).run' q.2}[
+          BreaksP W c₁ w] := by
+    have h : (simulateQ randomOracle (projW <$> wiredExp W D (withSetup setup A'))).run' ∅ =
+        projW <$> (simulateQ randomOracle (wiredExp W D (withSetup setup A'))).run' ∅ := by
+      rw [simulateQ_map, StateT.run'_eq, StateT.run_map, StateT.run'_eq, Functor.map_map,
+        Functor.map_map]
+    have e : Pr{let z ← (simulateQ randomOracle (wiredExp W D (withSetup setup A'))).run' ∅}[
+        BreaksW W c₁ z] = Pr{let w ← projW <$>
+          (simulateQ randomOracle (wiredExp W D (withSetup setup A'))).run' ∅}[BreaksP W c₁ w] := by
+      rw [prEvent_map]
+      rfl
+    rw [e, ← h, map_wiredExp, simulateQ_bind, StateT.run'_eq, StateT.run_bind,
+      map_bind]
+    simp only [simulateQ_map, StateT.run_map, Functor.map_map, StateT.run'_eq]
+  rw [hL, hR, ← map_run_loggedKC (withSetup setup A') [] ∅, bind_map_left]
+  refine prEvent_bind_mono_of_forall_le_of_support _ _ _ _ _ fun q hq => ?_
+  have hcons := consistent_run_loggedKC (withSetup setup A') [] ∅ consistent_nil q hq
+  rw [prEvent_map, prEvent_map]
+  exact prEvent_mono _ _ _ fun v hv => ⟨hv.1, fun g hg => hv.2 q.1.2 hcons g hg⟩
+
+/-! ## Knowledge soundness in the random-permutation model -/
+
+/-- **From the random-permutation model to mumbai's two-oracle model**: for an adversary with
+coins, `π` and `π⁻¹` (at most `Q` calls of `π`, `π⁻¹` given any commitment), after a setup of
+Keccak-256 calls only (at most `QS` calls, `QSπ` calls of `π`), with openings of at most `QOπ`
+calls of `π`: some deterministic adversary of the two random oracles, of at most `QS + Q` queries
+given any commitment, breaks the wired experiment at least as often, less
+`(QSπ + Q + 7 + 3 QOπ)² / 2^508`. -/
+theorem rpm_le_wired (c₁ : TableCode B.Msg₁) (setup : OracleComp KeccakCalls Bytes32)
+    (hSH : HOnly setup) (QS QSπ : ℕ) (hS : IsTotalQueryBound setup QS)
+    (hSπ : Common.QueryCostAtMost setup hashBlocks QSπ)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs))
+    (Q : ℕ) (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q) (QOπ : ℕ)
+    (hOπ : ∀ (L : Layout) w, Common.QueryCostAtMost (ourVerifier L D.R w) hashBlocks QOπ) :
+    ∃ A' : Bytes32 → OracleComp KeccakCalls (RootProof F × OpenProofs),
+      (∀ ir, IsTotalQueryBound (A' ir) (QS + Q)) ∧
+        Pr{let z ← Common.runWithRandomPermutation (rpmGame W D setup A)}[BreaksRpm W c₁ z] ≤
+          Pr{let z ← (simulateQ randomOracle (wiredExp W D (withSetup setup A'))).run' ∅}[
+            BreaksW W c₁ z] + ((QSπ + Q + 7 + 3 * QOπ : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 := by
+  obtain ⟨A', hA', hle⟩ := exists_det_setup setup QS hS (romAdvC A) Q (cost_romAdvC A Q hA)
+    (gL W D) (BreaksC W c₁)
+  refine ⟨A', hA', ?_⟩
+  rw [prEvent_rpmGame, (rpmThreaded_evalDistEq W D setup hSH A).prEvent_eq]
+  obtain ⟨ht, -⟩ := Common.keccak256_transfer2 (preB setup) (advB A) (postB W D)
+    (duplex_postB W D) (QSπ + Q + 7 + 3 * QOπ) (cost_gameB W D setup hSH QSπ hSπ A Q hA QOπ hOπ)
+    (BreaksT W c₁)
+  exact ht.trans (add_le_add ((rom_le W D c₁ setup hSH A).trans
+    (hle.trans (le_wiredExp W D c₁ setup A'))) le_rfl)
+
+/-- **Knowledge soundness of the deployed verifier in the random-permutation model** (the RPM
+form of `knowledgeSoundness_wired`). The setup computes the circuit's commitment with Keccak-256
+over `π` (Keccak-256 calls only, at most `QS` of them, `QSπ` calls of `π`); the adversary, with
+coins, `π` and `π⁻¹`, makes at most `Q` calls of `π`, `π⁻¹` given the commitment; each opening
+makes at most `QOπ` calls of `π`. The verifier (the chain and the three openings, Keccak-256 over
+`π`, Keccak-f `= π`) accepts while the list of the explicit extractor `rpmExtractor` (the setup's
+log and the Keccak-256 evaluations of the adversary's permutation transcript) holds no witness with
+probability at most `knowledgeSoundness_wired`'s bound at `QS + Q` adversary queries (`QS` more:
+the derandomized adversary recomputes the public setup) plus
+`(QSπ + Q + 7 + 3 QOπ)² / 2^508` (the two-oracle indifferentiability of Keccak-256). -/
+theorem knowledgeSoundness_wired_rpm (c₁ : TableCode B.Msg₁) (c₂ : TableCode B.Msg₂)
+    (mW : WitnessMatch D c₁) (mQ : QuotientMatch W D c₂)
+    (setup : OracleComp KeccakCalls Bytes32) (hSH : HOnly setup)
+    (wm : WiringMatch (P := P) D setup) (QS QSπ : ℕ) (hS : IsTotalQueryBound setup QS)
+    (hSπ : Common.QueryCostAtMost setup hashBlocks QSπ)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs))
+    (Q : ℕ) (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q) (QOπ : ℕ)
+    (hOπ : ∀ (L : Layout) w, Common.QueryCostAtMost (ourVerifier L D.R w) hashBlocks QOπ)
+    (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r) (h2 : r ≤ WhirBridge.maxLogRows)
+    (hLw : D.Lw = witnessLayout r) (hLσ : D.Lσ = wiringLayout r) (hLQ : D.LQ = quotientLayout r)
+    (hR : D.R = logInvRate) :
+    Pr{let z ← Common.runWithRandomPermutation (rpmGame W D setup A)}[BreaksRpm W c₁ z] ≤
+      openingBound (QS + (QS + Q) + 6) + openingBound (QS + (QS + Q) + 6 + 10122) +
+        openingBound (QS + (QS + Q) + 6 + 10122 + 10122) +
+        ((QS + (QS + Q) + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) *
+          ((listFactor c₁.commit.bound c₂.commit.bound : ℝ≥0∞) * (roundError P B : ℝ≥0∞) +
+          5 * ((QS + (QS + Q) + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) / 2 ^ 256) +
+        ((QSπ + Q + 7 + 3 * QOπ : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 := by
+  obtain ⟨A', hA', hle⟩ := rpm_le_wired W D c₁ setup hSH QS QSπ hS hSπ A Q hA QOπ hOπ
+  exact hle.trans (add_le_add (knowledgeSoundness_wired W D c₁ c₂ mW mQ setup A' wm QS (QS + Q)
+    hS hA' r h1 h2 hLw hLσ hLQ hR) le_rfl)
+
+theorem hOnly_stackSetup (q₀ : Column D.Lσ.logN) : HOnly (stackSetup D q₀) := by
+  unfold stackSetup wiringSetup
+  rw [map_eq_bind_pure_comp]
+  exact (LeanVM.Rpm.hOnly_buildTreeM _ _).bind fun _ => trivial
+
+/-- **The same with the setup of the wiring stack, at the sizes of `quotient::protocol`** (the RPM
+form of `knowledgeSoundness_wired_setup_bits`): the decoders `tableCode`, what remains of the
+two-oracle statement being `WitnessClaims`, `QuotientClaims`, `WiringClaims`, and the permutation
+calls of the setup (`QSπ`) and of one opening (`QOπ`). -/
+theorem knowledgeSoundness_wired_setup_rpm_bits (hq : Fintype.card F = 2 ^ 192)
+    (hN : P.nCells = 2 ^ 24) (hw : P.words = 8) (hd : B.identity ≤ 2 ^ 28)
+    (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r) (h2 : r ≤ WhirBridge.maxLogRows)
+    (hLw : D.Lw = witnessLayout r) (hLσ : D.Lσ = wiringLayout r)
+    (hLQ : D.LQ = quotientLayout r) (hR : D.R = logInvRate)
+    (read₁ : Tab D.Lw → B.Msg₁) (read₂ : Tab D.LQ → B.Msg₂)
+    (hcl₁ : WitnessClaims D read₁) (hcl₂ : QuotientClaims W D read₂)
+    (q₀ : Column D.Lσ.logN) (hclσ : WiringClaims (P := P) D q₀) (QSπ : ℕ)
+    (hSπ : Common.QueryCostAtMost (stackSetup D q₀) hashBlocks QSπ)
+    (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs))
+    (Q : ℕ) (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q) (QOπ : ℕ)
+    (hOπ : ∀ (L : Layout) w, Common.QueryCostAtMost (ourVerifier L D.R w) hashBlocks QOπ) :
+    Pr{let z ← Common.runWithRandomPermutation (rpmGame W D (stackSetup D q₀) A)}[
+        BreaksRpm W (tableCode D.Lw D.R
+          (admissible_of_eq hLw hR (layouts_ok r h1 h2).1) read₁) z] ≤
+      openingBound (setupQueries D + (setupQueries D + Q) + 6) +
+        openingBound (setupQueries D + (setupQueries D + Q) + 6 + 10122) +
+        openingBound (setupQueries D + (setupQueries D + Q) + 6 + 10122 + 10122) +
+        ((setupQueries D + (setupQueries D + Q) + 6 + 10122 + 10122 + 10122 : ℕ) : ℝ≥0∞) *
+          (((1 / 2 ^ 128 : ℝ≥0) : ℝ≥0∞) +
+          5 * ((setupQueries D + (setupQueries D + Q) + 6 + 10122 + 10122 + 10122 : ℕ) :
+            ℝ≥0∞) / 2 ^ 256) +
+        ((QSπ + Q + 7 + 3 * QOπ : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 := by
+  obtain ⟨A', hA', hle⟩ := rpm_le_wired W D _ (stackSetup D q₀) (hOnly_stackSetup D q₀)
+    (setupQueries D) QSπ (isTotalQueryBound_stackSetup D q₀) hSπ A Q hA QOπ hOπ
+  exact hle.trans (add_le_add (knowledgeSoundness_wired_setup_bits W D hq hN hw hd r h1 h2 hLw
+    hLσ hLQ hR read₁ read₂ hcl₁ hcl₂ q₀ hclσ A' (setupQueries D + Q) hA') le_rfl)
 
 end Compose
