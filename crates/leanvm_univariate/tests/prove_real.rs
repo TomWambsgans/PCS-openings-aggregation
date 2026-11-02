@@ -143,7 +143,7 @@ fn end_to_end(blake2s: Blake2s) {
 
     // The contract on the real calldata: its PCS_OPEN mock attests exactly the claims the openings prove (the setup's
     // root being the contract's constant) and Flock's A0, B0 claims, which are the matrices' values.
-    let mut pcs = PcsOpen::default();
+    let mut inputs: Vec<Vec<u8>> = Vec::new();
     for o in &proof.openings {
         let root = match o.commitment {
             Commitment::Setup => word([0x1111, 0x2222, 0x3333]),
@@ -155,7 +155,7 @@ fn end_to_end(blake2s: Blake2s) {
         for &x in o.point.iter().chain([&o.value]) {
             input.extend(element_word(to_v(x)));
         }
-        pcs.register(input);
+        inputs.push(input);
     }
     if let Some((point, a, b)) = &report.flock {
         for (k, (layout, value)) in [(0x5504u64, *a), (0x5505, *b)].into_iter().enumerate() {
@@ -165,25 +165,64 @@ fn end_to_end(blake2s: Blake2s) {
             for &x in point.iter().chain([&value]) {
                 input.extend(element_word(x));
             }
-            pcs.register(input);
+            inputs.push(input);
         }
     }
+    let attesting = |skip: Option<usize>| {
+        let mut pcs = PcsOpen::default();
+        for (k, input) in inputs.iter().enumerate() {
+            if Some(k) != skip {
+                pcs.register(input.clone());
+            }
+        }
+        pcs
+    };
+    let blocks: Vec<PcsOpen> = std::iter::once(attesting(None)).chain((0..inputs.len()).map(|k| attesting(Some(k)))).collect();
     let data = calldata(&public, &proof.stream);
-    let stream_len = proof.stream.len();
-    let (accepted, rejected, gas) = deep(move || {
+    let stream = proof.stream.clone();
+    let (accepted, rejected, gas, linked) = deep(move || {
         let recorded = record_verifier(&shape, blake2s, Claims::Point);
-        assert_eq!(recorded.stream_len, stream_len, "the contract's stream is the proof's");
+        assert_eq!(recorded.stream_len, stream.len(), "the contract's stream is the proof's");
+        // The measuring build, word for word against the Rust verifier, on this accepting stream.
+        leanvm_univariate::contract::parity(&shape, &PROGRAM_IV, &public, &stream, blake2s, Claims::Point);
         let contract = compile_verifier(&recorded, &PROGRAM_IV, false);
-        let ok = call(&contract.code, &[], &data, &pcs);
+        let one = word([1, 0, 0]);
+        let accepts = |data: &[u8], block: &PcsOpen| call(&contract.code, &[], data, block).output.as_deref() == Some(&one[..]);
+        let ok = call(&contract.code, &[], &data, &blocks[0]);
         let mut bad = data.clone();
         let last = bad.len() - 1;
         bad[last] ^= 1;
-        let no = call(&contract.code, &[], &bad, &pcs);
-        (ok.output.clone(), no.output.is_some(), ok.execution)
+        let mut rejected = accepts(&bad, &blocks[0]) as usize;
+        // Every call must be attested.
+        rejected += blocks[1..].iter().filter(|b| accepts(&data, b)).count();
+        // The deployable verifying build (crates/evm_link, contracts of at most 24,576 bytes), likewise.
+        use leanvm_flock_gas::evm::codegen::{Ending, Entry, compile_deployable};
+        let call_words = leanvm_univariate::contract::calls(&recorded);
+        let ending = Ending::PcsOpen(call_words.iter().map(Vec::len).collect());
+        let entry = Entry {
+            name: leanvm_univariate::contract::NAME,
+            iv: PROGRAM_IV,
+            stream_len: recorded.stream_len,
+            measure: false,
+        };
+        let real = compile_deployable(&recorded.graph, &call_words.concat(), &ending, &entry, 24_576);
+        let deployed = leanvm_flock_gas::evm::contract::deploy(&real, &[]);
+        let linked = |data: &[u8], block: &PcsOpen| {
+            deployed.chain.call(deployed.address, data, block).output.as_deref() == Some(&one[..])
+        };
+        let linked_ok = linked(&data, &blocks[0]) && !linked(&bad, &blocks[0]) && blocks[1..].iter().all(|b| !linked(&data, b));
+        (ok.output.clone(), rejected, ok.execution, (deployed.contracts.len(), linked_ok))
     });
-    println!("  the contract returns {:?} on the real proof, {gas} gas of execution", accepted.as_ref().map(|o| o[31]));
+    println!(
+        "  the contract returns {:?} on the real proof, {gas} gas of execution; parity with the Rust verifier; the \
+         deployable build ({} contracts) accepts it: {}",
+        accepted.as_ref().map(|o| o[31]),
+        linked.0,
+        linked.1
+    );
     assert_eq!(accepted.as_deref(), Some(&word([1, 0, 0])[..]), "the contract accepts the real proof");
-    assert!(!rejected, "the contract rejects a mutated proof");
+    assert_eq!(rejected, 0, "the contract rejects a mutated proof, and a proof with one call not attested");
+    assert!(linked.1, "the deployable build accepts the real proof, and rejects the mutations");
 
     // Flock's two setup claims, opened: A0 and B0 committed with WHIR (2^28 words each) and opened at the claim's point.
     if let Some((point, a, b)) = &report.flock {

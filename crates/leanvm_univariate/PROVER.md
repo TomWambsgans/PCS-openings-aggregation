@@ -208,7 +208,11 @@ takes 0.14 s.
   - `A0` and `B0` are built by one walk of the circuit per 64 columns, the weights bits of a word (the walk is
     additive): 0.2 s. A WHIR commit at `2^28` takes 1.2 s each, and an opening 1.7 s.
 - **End to end**: the Rust verifier, five WHIR openings, and the EVM contract on the calldata, with `PCS_OPEN`
-  registering exactly the proven claims.
+  registering exactly the proven claims. Review M1's F4 asked for this at the reference shape with Flock.
+  - The straight verifying contract and the deployable one (`evm_link`) both accept: 2 contracts without Flock, 5
+    with it.
+  - Both reject the real proof with one byte changed, and with any one of its five calls not attested.
+  - The measuring build agrees word for word with the Rust verifier on the accepting stream (`contract::parity`).
 - **The stacks' unused words**: past every block, inside the last committed lane, filled with pseudo-random words,
   the proof is accepted all the same. `StackLayout` places the blocks contiguously, so the only unused words are
   the tail. The weights are zero there, and the point claims are on the whole stack's multilinear, whatever the
