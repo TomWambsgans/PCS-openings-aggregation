@@ -1,0 +1,41 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+#
+# End-to-end completeness of the membership proof (`crates/quotient`): the honest prover's proof,
+# reduction and three WHIR openings, is accepted by the deployed verifier. It composes the
+# circuit's relation (F0a, `QuotientSecurity`), the reduction's completeness (F1), the deployed
+# Keccak-256 chain (F4a, `QuotientRpm`) and the openings (F2, `WhirBridge`, with leanerVM
+# `mumbai`'s completeness of the WHIR opening). It builds as `WhirBridge` and `Compose` do, against
+# a built checkout of leanerVM (https://github.com/Verified-zkEVM/leanerVM, commit
+# 6175f1a07f0dc33bd3d640de0063d1006143ee91) at `../leanervm`, sharing that checkout's `lean_vm`
+# packages, so nothing of them is fetched; the libraries of this repository are compiled from their
+# sources in `formal/` (`srcDir`). See the completeness section of `formal/README.md`.
+name = "pcs-quotient-completeness"
+version = "0.1.0"
+defaultTargets = ["Completeness"]
+packagesDir = "../leanervm/lean_vm/.lake/packages"
+
+[leanOptions]
+autoImplicit = false
+relaxedAutoImplicit = false
+
+[[require]]
+name = "lean-vm"
+path = "../leanervm/lean_vm"
+
+# The reduction (F1) and the circuit (F0a), from `formal/QuotientSecurity`.
+[[lean_lib]]
+name = "QuotientSecurity"
+srcDir = ".."
+
+# The reduction's Keccak-256 chain (F4a), from `formal/QuotientRpm`.
+[[lean_lib]]
+name = "QuotientRpm"
+srcDir = ".."
+
+# The WHIR openings (F2), from `formal/WhirBridge`.
+[[lean_lib]]
+name = "WhirBridge"
+srcDir = "../WhirBridge"
+
+[[lean_lib]]
+name = "Completeness"
