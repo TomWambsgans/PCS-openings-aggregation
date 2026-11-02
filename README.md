@@ -58,6 +58,5 @@ to `root`. Measured on the implementation in `crates/` (details: [`AGENTS.md`](A
 | Prover | 2.2 s, 5.9 GiB peak (M4 Max, 16 cores) |
 | Calldata to the contract | 252 bytes (2 roots + 5 field elements + statement) |
 | PCS claims | 4, in 3 `PCS_OPEN` calls |
-| Opening proofs (off-chain, aggregated) | 248 + 278 + 333 KiB (WHIR, rate 1/2) |
 | Gas, `PCS_OPEN` free | 14,289 execution; 18,309 transaction (without the 21,000 base) |
 | Contract deployment | 1.43 M gas |
