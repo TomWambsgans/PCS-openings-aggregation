@@ -31,6 +31,7 @@ import QuotientZk.Deployed.Fresh
 import QuotientZk.Deployed.Fresh.Setup
 import QuotientZk.FreshJoint
 import QuotientZk.Instance.Main
+import QuotientZk.Instance.Nondeg
 
 /-!
 # Zero knowledge of the non-interactive proof (layer F3b)

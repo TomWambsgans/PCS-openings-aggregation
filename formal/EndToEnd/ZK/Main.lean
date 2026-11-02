@@ -15,17 +15,20 @@ skeleton of the statement's prover `skelSetup` (`ZK/Setup.lean`: the circuit's c
 Fiat–Shamir freshness `2^-113`: `QuotientZk.Deployed.Fresh.fsFresh_setup_deployed_bits`).
 
 It is `zeroKnowledgeWith_of_core` with `QuotientZk`'s closeness of the real and simulated games proved
-from the joint model (`coreClose_of_joint`: `zk_rpm_skel`, `jointHVZK_of_link`, `factors_single`,
-`factors_pair`), and the real bridge split (`realBridge_of`: `CoinsMatch`, `ProverBridge`).
+from the joint model (`coreClose_of_joint`: `zk_rpm_skel_approx`, `jointHVZKε_of_linkV`,
+`factors_singleV`, `factors_pairV`), and the real bridge split (`realBridge_of`: `CoinsMatch`,
+`ProverBridge`).
 
-`ζ Q = εR Q + 2^-113 + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q) 2^-2368 + 2^48 2^-2368 +
-(Qp + Qfmt + Q)² / 2^508` (`zkBoundEnd`), at most `εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508`
-for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`).
+`ζ Q = εR Q + 2^-113 + epsHV + 2^24 (2^24 + 2^70 + Qfmt + Q) 2^-2368 + 2^48 2^-2368 +
+(Qp + Qfmt + Q)² / 2^508` (`zkBoundEnd`), `epsHV = 2^-165 + 2^-125 + 2/2^192` (the joint model's bad
+challenges, `goodT`: F1's and the openings' `2^-165`, the claims' scales and the row `2^-125`; its
+degenerate masks, `ClaimsND`, `2/2^192`), at most
+`εR Q + 2^-113 + epsHV + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`).
 -/
 
 open OracleComp OracleSpec Common Polynomial Module QuotientSecurity QuotientSecurity.Hiding
 open QuotientZk.Joint
-open QuotientZk.Instance (ChV LinkV jointSimV jointHVZK_of_linkV factors_singleV factors_pairV)
+open QuotientZk.Instance (ChV LinkV jointSimV jointHVZKε_of_linkV factors_singleV factors_pairV)
 open QuotientZk.Deployed (Inp Out Msg Tbl Pos KSt DSpec)
 open scoped ENNReal
 
@@ -40,10 +43,10 @@ noncomputable def zkBoundEnd (Qp Qfmt : ℕ) (εR : ℕ → ℝ≥0∞) : ℕ �
   zkBound (2 ^ 24 + 2 ^ 70) Qp Qfmt ((2 : ℝ≥0∞) ^ 113)⁻¹ εR fun _ ↦ 0
 
 /-- **The end theorem's error at our sizes**: for a distinguisher and a formatting of at most
-`2^127` calls together, `ζ Q ≤ εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508`. -/
+`2^127` calls together, `ζ Q ≤ εR Q + 2^-113 + epsHV + 2^-2200 + (Qp + Qfmt + Q)² / 2^508`. -/
 theorem zkBoundEnd_le (Qp Qfmt : ℕ) (εR : ℕ → ℝ≥0∞) (Q : ℕ) (hQ : Qfmt + Q ≤ 2 ^ 127) :
     zkBoundEnd Qp Qfmt εR Q ≤
-      εR Q + (((2 : ℝ≥0∞) ^ 113)⁻¹ + 1 / 2 ^ 165 + ((2 : ℝ≥0∞) ^ 2200)⁻¹ +
+      εR Q + (((2 : ℝ≥0∞) ^ 113)⁻¹ + epsHV + ((2 : ℝ≥0∞) ^ 2200)⁻¹ +
         ((Qp + (Qfmt + Q) : ℕ) ^ 2 : ℝ≥0∞) / 2 ^ 508) := by
   have h : 2 ^ 24 + 2 ^ 70 + (Qfmt + Q) ≤ 2 ^ 128 := by
     have : (2 : ℕ) ^ 24 + 2 ^ 70 + 2 ^ 127 ≤ 2 ^ 128 := by norm_num
@@ -60,7 +63,8 @@ variable {K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂ : Type
   [SampleableType Γ₁] [Fintype Γ₁] [SampleableType Γ₂] [Fintype Γ₂] [SampleableType Γw]
 
 /-- **`QuotientZk`'s closeness of the real and simulated games, from the joint model**:
-`zk_rpm_skel` with `jointHVZK_of_link` (`2^-165`) and `factors_single`, `factors_pair` (`2^-2368`),
+`zk_rpm_skel_approx` with `jointHVZKε_of_linkV` (`epsHV`) and `factors_singleV`, `factors_pairV`
+(`2^-2368`),
 for a valid joint model `J` on a skeleton of at most `QP` operations (`FSFresh` with `εFS`, the duplex
 discipline, at most `Qp` permutation calls of the prover), the proof formatted by `fmt` of at most
 `Qfmt` calls. -/
@@ -82,19 +86,20 @@ theorem coreClose_of_joint (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ 
   have hQ : ∀ s, QueryCostAtMost (QuotientZk.DRpm.zkGameRpmD J.P skel D s)
       permutationCallCost (Qp + (Qfmt + Q)) := fun s ↦
     Common.QueryCostAtMost.bind (hprover s) fun pf ↦ queryCost_liftPerm _ _ (hD pf)
-  have hHV := jointHVZK_of_linkV J.P hv.h3 J.P₀ hv.hE J.stmtE J.gK J.van hv.hvan hv.hsat
+  have hHV := jointHVZKε_of_linkV J.P hv.h3 J.P₀ hv.hE J.stmtE J.gK J.van hv.hvan hv.hsat
     hv.hvan0 hv.hq hv.hK hv.hN hv.hdeg J.inK hv.hinK J.sigmaAt hv.hsig J.wir J.S₁ J.S₂ hv.hS₁
     hv.hS₂ J.T₁ J.T₂ J.cl₁ J.cl₂ hv.hT₁ hv.hT₂ J.simT₁ J.simT₂ hv.hsimT₁ hv.hsimT₂ J.lk hv.hch
   have hfac := factors_singleV hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ J.lk
   have hfac₂ := factors_pairV hv.hS₁ hv.hS₂ hv.h3 hv.hK hv.h40₁ hv.h40₂ J.lk
-  have hmain := QuotientZk.DRpm.zk_rpm_skel J.P skel J.simV _ εFS (1 / 2 ^ 165)
+  have hmain := QuotientZk.DRpm.zk_rpm_skel_approx J.P skel J.simV _ εFS
+    (1 / 2 ^ 165 + 1 / 2 ^ 125) (2 / 2 ^ 192)
     ((2 : ℝ≥0∞) ^ 2368)⁻¹ ((2 : ℝ≥0∞) ^ 2368)⁻¹ QP (Qfmt + Q) (Qp + (Qfmt + Q)) hskel hFS hHV.1 hHV.2
     (fun σ k x hx v y ↦ (hfac σ k x hx y).some.bound v)
     (fun σ k x k' x' hx hx' hne v ↦ (hfac₂ σ k x k' x' hx hx' hne).some.bound v)
     (QuotientZk.DRpm.rowFn_ofBytes J.Pb) hduplex D hD hQ
   rw [QuotientZk.Deployed.card_positions] at hmain
   refine hmain.mono (le_of_eq ?_)
-  simp only [zkBound, zero_add, add_zero]
+  simp only [zkBound, epsHV, zero_add, add_zero]
 
 /-- **Zero knowledge of the membership proof for the simulator in the statement**,
 `PcsQuotient.ZeroKnowledgeWith s₀ (zkSimulator pp simV skelOf fmt) rpmSimOracle (zkBoundEnd …)`, the
