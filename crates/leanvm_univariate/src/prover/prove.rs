@@ -149,6 +149,9 @@ pub struct Config {
     /// Fill every stack's words past its blocks with pseudo-random words instead of zeros (a test that the verifier
     /// relies on nothing there).
     pub garbage: bool,
+    /// Send these root halves for `C1` and `C2` instead of the commitments' (no opening can then verify): a
+    /// byte-for-byte cross-check of the stream against a prover that commits nothing (`tests/prove_tiny.rs`).
+    pub stand_in_roots: Option<[[E; 2]; 2]>,
 }
 
 /// Prove `trace`'s execution for the contract of `iv`; with Flock, from leanVM's Flock inputs `flock`.
@@ -188,7 +191,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     report.stacks.push((Commitment::C1, stack1.placed(), stack1.layout.vars));
     report.stacks.push((Commitment::Setup, stack_f.placed(), stack_f.layout.vars));
     clock.lap(&mut report, "C1 and setup: WHIR commits");
-    writer.send_root(halves(&committed1.root));
+    writer.send_root(config.stand_in_roots.map_or_else(|| halves(&committed1.root), |r| r[0]));
 
     // 2. The bus's and the constraints' challenges.
     let alphas: Vec<F192> = (0..4).map(|_| from_v(writer.sample())).collect();
@@ -295,7 +298,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     let committed2 = opening::commit(&stack2.words, stack2.layout.vars, stack2.placed());
     report.stacks.push((Commitment::C2, stack2.placed(), stack2.layout.vars));
     clock.lap(&mut report, "C2: WHIR commit");
-    writer.send_root(halves(&committed2.root));
+    writer.send_root(config.stand_in_roots.map_or_else(|| halves(&committed2.root), |r| r[1]));
 
     // 7. The point and the values at it, in the verifier's order.
     let t = from_v(writer.sample());

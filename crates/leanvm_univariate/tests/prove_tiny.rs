@@ -295,6 +295,7 @@ fn tiny_executions_are_proven_and_verified() {
             claims: Claims::Point,
             check: true,
             garbage: false,
+            stand_in_roots: None,
         };
         let (proof, report) = prove(&trace, None, &[0x77; 32], config).expect("a proof");
         assert!(report.checks.iter().all(|(_, ok)| *ok), "{:?}", report.checks);
@@ -302,11 +303,35 @@ fn tiny_executions_are_proven_and_verified() {
             assert!(*degree < *count as i64, "{name}");
         }
         verify(&trace.shape(), &[0x77; 32], &trace.public_input(), &proof, Blake2s::Omitted).expect("accepted");
+        // The review's honest prover sends these stand-in roots (it commits nothing): with them, the stream is the
+        // one it writes for the same execution, byte for byte, if the two provers agree on every value.
+        let stand_in = Config {
+            stand_in_roots: Some([
+                [E::new(0x1111, 0x2222, 0), E::new(0x3333, 0x4444, 0)],
+                [E::new(0x5555, 0x6666, 0), E::new(0x7777, 0x8888, 0)],
+            ]),
+            ..config
+        };
+        let (cross, _) = prove(&trace, None, &[0x77; 32], stand_in).expect("a proof");
+        // The review's prover's streams for these executions (`honest_proofs_at_other_sizes`, point claims, at
+        // leanvm-univariate b948bfc), their Keccak-256's first bytes: the same, byte for byte. A protocol change
+        // re-records them.
+        let review: Option<[u8; 8]> = match (memory, bytecode) {
+            (5, 4) => Some([0x46, 0xf7, 0x32, 0xab, 0xb5, 0x70, 0x15, 0x64]),
+            (4, 5) => Some([0x64, 0xe3, 0x78, 0x10, 0xcc, 0xf4, 0x3b, 0xf0]),
+            (5, 5) => Some([0xfe, 0x6d, 0xc4, 0x8f, 0xc5, 0xe4, 0x5b, 0xb0]),
+            _ => None,
+        };
+        if let Some(review) = review {
+            assert_eq!(&leanvm_flock_gas::transcript::keccak256(&cross.stream)[..8], &review, "the review's stream");
+        }
         println!(
-            "lm {memory} lb {bytecode}: rows {:?}, heights {:?}, stream {} bytes, accepted",
+            "lm {memory} lb {bytecode}: rows {:?}, heights {:?}, stream {} bytes, accepted; with the review's stand-in \
+             roots, stream keccak {:02x?}",
             trace.rows,
             trace.heights,
-            proof.stream.len()
+            proof.stream.len(),
+            &leanvm_flock_gas::transcript::keccak256(&cross.stream)[..8]
         );
     }
 }

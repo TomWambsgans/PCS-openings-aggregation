@@ -111,6 +111,7 @@ fn end_to_end(blake2s: Blake2s) {
         claims: Claims::Point,
         check: true,
         garbage: false,
+        stand_in_roots: None,
     };
     let started = std::time::Instant::now();
     let (proof, report) = prove(&trace, flock.as_ref(), &PROGRAM_IV, config).expect("a proof");
@@ -272,6 +273,7 @@ fn unused_words_are_not_relied_on() {
         claims: Claims::Point,
         check: true,
         garbage: true,
+        stand_in_roots: None,
     };
     let (proof, report) = prove(&trace, None, &PROGRAM_IV, config).expect("a proof");
     for (c, placed, vars) in &report.stacks {
