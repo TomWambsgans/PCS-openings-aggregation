@@ -20,7 +20,12 @@ Flock's verifier (`UniStatement.Flock`) computes with `List`s, `Array`s and fold
   reduction's claim is `rlc + known` (`pending_claim`) and its terminal the product of extensions
   (`pending_terminal`);
 * **the matrices** (item 4): the stacks' extension is `matMle` (`mleArr_flockMatrixStack`), so
-  `PendingHolds` is the product-sum claim (`pendingHolds_iff`).
+  `PendingHolds`' sum is the product sum (`pending_sum`, `pendingHolds_iff`);
+* **the main line** (`k = l = 3`, points as `List.ofFn`): `tx_fixedChallenges_getD`, `tx_interp`,
+  `tx_claim`, `tx_sum`, the forms `Catch.lean` consumes.
+
+The skip's lemmas hold for any `k ≤ 6`, the pending reduction's for any `k + l = 6` (`k = 0` included:
+its one Lagrange weight is `1`, `tx_lag_zero`).
 -/
 
 namespace FlockSound.Uni
@@ -555,6 +560,12 @@ theorem pending_fields {k l : ℕ} (hkl : k + l = 6) (z α rLc : E) (rowLow chiI
   simp only [Flock.Pending.new, Flock.rowLowWeights, Flock.Pending.rounds, Flock.packing, hpk,
     and_self]
 
+/-- Without a skip (`k = 0`), the one Lagrange weight is `1`. -/
+theorem tx_lag_zero (hk : 0 ≤ 6) (b : Cube 0) (z : E) : (lag (skipNodes 0 hk) b).eval z = 1 := by
+  have h0 : ((cubeFin 0 b : Fin (2 ^ 0)) : ℕ) = 0 := by simpa using (cubeFin 0 b).isLt
+  rw [← lagrangeWeights_skip 0 hk, lagrangeWeights_getD (cubeFin 0 b).isLt, h0]
+  simp
+
 /-- The skip's weights' extension at a point of `k` coordinates (`1` without a skip). -/
 theorem tx_skipAt {k : ℕ} (hk : k ≤ 6) (z : E) (rho : List E) (hrho : rho.length = k) :
     (if k > 0 then multilinearEval (Flock.lagrangeWeights (2 ^ k) z) rho else 1) =
@@ -564,13 +575,7 @@ theorem tx_skipAt {k : ℕ} (hk : k ≤ 6) (z : E) (rho : List E) (hrho : rho.le
     simp only [lagrangeWeights_skip k hk]
   · obtain rfl : k = 0 := by omega
     rw [mle, Fintype.sum_unique, eqP, Finset.univ_eq_empty, Finset.prod_empty, mul_one,
-      ← lagrangeWeights_skip 0 hk]
-    have h1 : ∀ b : Cube 0, (Flock.lagrangeWeights (2 ^ 0) z).getD (cubeFin 0 b) 0 = 1 := by
-      intro b
-      have h0 : ((cubeFin 0 b : Fin (2 ^ 0)) : ℕ) = 0 := by simpa using (cubeFin 0 b).isLt
-      rw [lagrangeWeights_getD (cubeFin 0 b).isLt, h0]
-      simp
-    rw [h1]
+      tx_lag_zero hk]
 
 /-- **The pending reduction's terminal** at the batch's point: `(a + α b) L̂(ρ) ŝ(σ)`, `ρ` the point's first
 `k` coordinates and `σ` the next six. -/
@@ -677,4 +682,219 @@ theorem mleArr_matrixStack (M : Fin (2 ^ 14) → Fin (2 ^ 14) → Bool) {k l : �
   rw [tx_matrixStack_getD M _ _ hw, cubeMat]
   ring
 
+/-- **The stacks of `A0` and `B0`** (`flockMatrixStack`): their extension at `(x, r_l, r_h, y, χ')` is
+`matMle` of the BLAKE2s R1CS's matrix on the cube. -/
+theorem mleArr_flockMatrixStack (left : Bool) {k l : ℕ} (hkl : k + l = 6) (x rl rh y χ' : List E)
+    (hx : x.length = k) (hrl : rl.length = l) (hrh : rh.length = 8) (hy : y.length = k + l) :
+    mleArr (flockMatrixStack left) matrixVars (x ++ rl ++ rh ++ y ++ χ') =
+      matMle (ptOf rl l) (ptOf rh 8) (ptOf χ' 8)
+        (cubeMat hkl (if left then Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A
+          else Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B)) (ptOf x k) (ptOf y (k + l)) := by
+  simp only [flockMatrixStack]
+  rw [mleArr_matrixStack _ hkl x rl rh y χ' hx hrl hrh hy]
+  cases left <;> rfl
+
+theorem tx_ptOf_bitsE {n : ℕ} (b : Cube n) : ptOf (bitsE (cubeFin n b) n) n = cube b := by
+  funext i
+  simp only [ptOf, bitsE, cube, bit]
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range i.isLt, Option.map_some,
+    Option.getD_some, testBit_cubeFin]
+
+theorem tx_bitsE_length (u n : ℕ) : (bitsE u n).length = n := by simp [bitsE]
+
+theorem tx_matMle_cube {k l m : ℕ} (rl : Fin l → E) (rh χ' : Fin m → E)
+    (M' : Pos k l m → Pos k l m → Bool) (b : Cube (k + (k + l))) :
+    matMle rl rh χ' M' (cube (lowPart b)) (cube (highPart b)) = matTab rl rh χ' M' b := by
+  rw [matMle, ← cube_append, append_lowPart_highPart, mle_cube]
+
+/-- **The pending reduction's sum** (`PendingHolds`' right side) is the product sum
+`Σ_cy matPart(cy) ŝ(cy)` of the soundness proof. -/
+theorem pending_sum {k l : ℕ} (hkl : k + l = 6) (hk : k ≤ 6) (z α rLc : E)
+    (rowLow chiIn chiInPrime s : List E) (hl : rowLow.length = l) (h8 : chiIn.length = 8) :
+    ∑ u ∈ range (2 ^ (Flock.Pending.new (some z) rowLow chiIn chiInPrime α rLc (some s)).rounds),
+        Pending.G (Flock.Pending.new (some z) rowLow chiIn chiInPrime α rLc (some s)) u *
+          Pending.L (Flock.Pending.new (some z) rowLow chiIn chiInPrime α rLc (some s)) u =
+      ∑ cy, matPart (cubeMat hkl Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A)
+        (cubeMat hkl Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B) (skipNodes k hk) z
+        (ptOf rowLow l) (ptOf chiIn 8) (ptOf chiInPrime 8) α cy * sliceOf s cy := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8'⟩ :=
+    pending_fields hkl z α rLc rowLow chiIn chiInPrime (some s) hl
+  rw [← cubeSum_matFun]
+  simp only [cubeSum, eqW_none, one_mul, matFun, mle_cube]
+  rw [h2, show k + 6 = k + (k + l) by omega, sum_range_eq_sum_cube]
+  refine Finset.sum_congr rfl fun b _ ↦ ?_
+  have hu := tx_cubeFin_split b
+  have hmod : (cubeFin (k + (k + l)) b : ℕ) % 2 ^ k = cubeFin k (lowPart b) := by
+    rw [hu, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt (cubeFin k _).isLt]
+  have hdiv : (cubeFin (k + (k + l)) b : ℕ) / 2 ^ k = cubeFin (k + l) (highPart b) := by
+    rw [hu, Nat.add_mul_div_left _ _ (by positivity), Nat.div_eq_of_lt (cubeFin k _).isLt, zero_add]
+  have hL : (if k > 0 then (Flock.lagrangeWeights (2 ^ k) z).getD (cubeFin k (lowPart b)) 0 else 1) =
+      (lag (skipNodes k hk) (lowPart b)).eval z := by
+    split_ifs with hk0
+    · exact lagrangeWeights_skip k hk z _
+    · obtain rfl : k = 0 := by omega
+      rw [tx_lag_zero hk]
+  have hp : Flock.packing = k + l := by simp [Flock.packing, hkl]
+  simp only [Pending.G, Pending.L, h1, h3, h4, h5, h6, h7, h8', hmod, hdiv, Option.getD_some, hp, hL]
+  rw [mleArr_flockMatrixStack true hkl _ _ _ _ _ (tx_bitsE_length _ _) hl h8 (tx_bitsE_length _ _),
+    mleArr_flockMatrixStack false hkl _ _ _ _ _ (tx_bitsE_length _ _) hl h8 (tx_bitsE_length _ _),
+    tx_ptOf_bitsE, tx_ptOf_bitsE]
+  simp only [↓reduceIte, Bool.false_eq_true]
+  rw [tx_matMle_cube, tx_matMle_cube, lsTab, gTab]
+  unfold sliceOf
+  ring
+
+/-- **`PendingHolds` is the product-sum claim** of the soundness proof (`flock_front`'s
+`matClaim = Σ_cy matPart(cy) ŝ(cy)`, with `pending_claim` for its left side). -/
+theorem pendingHolds_iff {k l : ℕ} (hkl : k + l = 6) (hk : k ≤ 6) (z α rLc : E)
+    (rowLow chiIn chiInPrime s : List E) (hl : rowLow.length = l) (h8 : chiIn.length = 8) :
+    PendingHolds (Flock.Pending.new (some z) rowLow chiIn chiInPrime α rLc (some s)) ↔
+      (Flock.Pending.new (some z) rowLow chiIn chiInPrime α rLc (some s)).claim =
+        ∑ cy, matPart (cubeMat hkl Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A)
+          (cubeMat hkl Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B) (skipNodes k hk) z
+          (ptOf rowLow l) (ptOf chiIn 8) (ptOf chiInPrime 8) α cy * sliceOf s cy := by
+  rw [PendingHolds, pending_sum hkl hk z α rLc rowLow chiIn chiInPrime s hl h8]
+
+/-! ## The main line's forms (`k = l = 3`, the points as `List.ofFn`) -/
+
+theorem tx_ptOf_ofFn {n : ℕ} (f : Fin n → E) : ptOf (List.ofFn f) n = f := by
+  funext i
+  simp [ptOf, List.getD_eq_getElem?_getD, List.getElem?_ofFn]
+
+theorem tx_getD_ofFn {n : ℕ} (f : Fin n → E) {i : ℕ} (hi : i < n) :
+    (List.ofFn f).getD i 0 = f ⟨i, hi⟩ := by
+  simp [List.getD_eq_getElem?_getD, List.getElem?_ofFn, hi]
+
+theorem tx_sliceOf_ofFn (s : Cube (3 + 3) → E) :
+    sliceOf (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)) = s := by
+  funext cy
+  rw [sliceOf, tx_getD_ofFn _ (cubeFin (3 + 3) cy).isLt]
+  show s ((cubeFin (3 + 3)).symm (cubeFin (3 + 3) cy)) = s cy
+  rw [Equiv.symm_apply_apply]
+
+/-- `fixedChallenges` entry by entry. -/
+theorem tx_fixedChallenges_getD : ∀ i : Fin 7, Flock.fixedChallenges.getD i 0 = fixedPt i := by
+  intro i
+  rw [fixedChallenges_eq, tx_getD_ofFn _ i.isLt]
+
+/-- The zerocheck's starting claim at the main line's skip (`k = 3`). -/
+theorem tx_interp : ∀ (cv : Cube 3 → E) (z : E),
+    Flock.lagrangeInterpolate 16 (List.replicate 8 0 ++ List.ofFn fun i : Fin 8 ↦ cv ((cubeFin 3).symm i)) z =
+      (FlockSound.interp (skipNodes 3 (by decide)) cv).eval z := by
+  intro cv z
+  have h := lagrangeInterpolate_skip 3 (by decide) (List.ofFn fun i : Fin 8 ↦ cv ((cubeFin 3).symm i)) z
+  have hcv : (fun b : Cube 3 ↦
+      (List.ofFn fun i : Fin 8 ↦ cv ((cubeFin 3).symm i)).getD (cubeFin 3 b) 0) = cv := by
+    funext b
+    rw [tx_getD_ofFn _ (cubeFin 3 b).isLt]
+    show cv ((cubeFin 3).symm (cubeFin 3 b)) = cv b
+    rw [Equiv.symm_apply_apply]
+  rw [hcv] at h
+  exact h
+
+/-- The pending reduction's claim at the main line (`k = l = 3`). -/
+theorem tx_claim : ∀ (z α rLc : E) (rl : Fin 3 → E) (rh χ' : Fin 8 → E) (s : Cube (3 + 3) → E),
+    (Flock.Pending.new (some z) (List.ofFn rl) (List.ofFn rh) (List.ofFn χ') α rLc
+        (some (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)))).claim =
+      rLc + (α ^ 2 * FlockSound.eqEval rh χ' * ∑ cy, lowW (skipNodes 3 (by decide)) z rl cy * s cy +
+        α ^ 3 * eqP χ' ((posFin (k := 3) (l := 3) rfl).symm Lv42.Parameters.Flock.constPos).2 *
+          s ((posFin (k := 3) (l := 3) rfl).symm Lv42.Parameters.Flock.constPos).1) := by
+  intro z α rLc rl rh χ' s
+  rw [pending_claim (k := 3) (l := 3) rfl (by decide) z α rLc _ _ _ _ List.length_ofFn
+    List.length_ofFn List.length_ofFn, tx_ptOf_ofFn, tx_ptOf_ofFn, tx_ptOf_ofFn, tx_sliceOf_ofFn]
+
+/-- The pending reduction's sum at the main line (`k = l = 3`): the product sum. -/
+theorem tx_sum : ∀ (z α rLc : E) (rl : Fin 3 → E) (rh χ' : Fin 8 → E) (s : Cube (3 + 3) → E),
+    ∑ u ∈ range (2 ^ (Flock.Pending.new (some z) (List.ofFn rl) (List.ofFn rh) (List.ofFn χ') α rLc
+        (some (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)))).rounds),
+      Pending.G (Flock.Pending.new (some z) (List.ofFn rl) (List.ofFn rh) (List.ofFn χ') α rLc
+          (some (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)))) u *
+        Pending.L (Flock.Pending.new (some z) (List.ofFn rl) (List.ofFn rh) (List.ofFn χ') α rLc
+          (some (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)))) u =
+      ∑ cy, matPart (cubeMat (k := 3) (l := 3) rfl Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A)
+        (cubeMat (k := 3) (l := 3) rfl Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B)
+        (skipNodes 3 (by decide)) z rl rh χ' α cy * s cy := by
+  intro z α rLc rl rh χ' s
+  rw [pending_sum (k := 3) (l := 3) rfl (by decide) z α rLc _ _ _ _ List.length_ofFn List.length_ofFn,
+    tx_ptOf_ofFn, tx_ptOf_ofFn, tx_ptOf_ofFn, tx_sliceOf_ofFn]
+
 end FlockSound.Uni
+
+/-! The guards below fail the build if a lemma's axioms grow beyond Lean's three. -/
+
+/-- info: 'FlockSound.Uni.phi_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.phi_eq
+/-- info: 'FlockSound.Uni.fixedChallenges_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.fixedChallenges_eq
+/-- info: 'FlockSound.Uni.phi_xor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.phi_xor
+/-- info: 'FlockSound.Uni.phi_add_mem' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.phi_add_mem
+/-- info: 'FlockSound.Uni.windowDenominator_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.windowDenominator_eq
+/-- info: 'FlockSound.Uni.lagrangeWeights_getD' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.lagrangeWeights_getD
+/-- info: 'FlockSound.Uni.lagrangeWeights_skip' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.lagrangeWeights_skip
+/-- info: 'FlockSound.Uni.lagrangeInterpolate_skip' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.lagrangeInterpolate_skip
+/-- info: 'FlockSound.Uni.ptOf_fixed_append' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.ptOf_fixed_append
+/-- info: 'FlockSound.Uni.eqKernel_getD' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.eqKernel_getD
+/-- info: 'FlockSound.Uni.eqKernel_cube' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.eqKernel_cube
+/-- info: 'FlockSound.Uni.multilinearEval_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.multilinearEval_eq
+/-- info: 'FlockSound.Uni.eqEval_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.eqEval_eq
+/-- info: 'FlockSound.Uni.knownWeights_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.knownWeights_eq
+/-- info: 'FlockSound.Uni.pending_claim' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.pending_claim
+/-- info: 'FlockSound.Uni.pending_fields' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.pending_fields
+/-- info: 'FlockSound.Uni.pending_terminal' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.pending_terminal
+/-- info: 'FlockSound.Uni.mleArr_matrixStack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.mleArr_matrixStack
+/-- info: 'FlockSound.Uni.mleArr_flockMatrixStack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.mleArr_flockMatrixStack
+/-- info: 'FlockSound.Uni.pending_sum' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.pending_sum
+/-- info: 'FlockSound.Uni.pendingHolds_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.pendingHolds_iff
+/-- info: 'FlockSound.Uni.tx_fixedChallenges_getD' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.tx_fixedChallenges_getD
+/-- info: 'FlockSound.Uni.tx_interp' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.tx_interp
+/-- info: 'FlockSound.Uni.tx_claim' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.tx_claim
+/-- info: 'FlockSound.Uni.tx_sum' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.tx_sum
+
