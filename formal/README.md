@@ -7,7 +7,7 @@ format, the verifier (computable, differential-tested against the Rust), the hon
 the simulator, and `KnowledgeSoundness`, `Completeness`, `ZeroKnowledge(With)` in the random-permutation model.
 The extractor is an explicit, computable definition in the statements, so that a reviewer can check what it
 reads and that it is efficient; the simulator the zero-knowledge theorem covers is named in its statement: an
-explicit simulator; its computable form is in progress. Lean has no running-time theorem; the convention is
+explicit simulator, compiled in `zeroKnowledge_closed_computable`. Lean has no running-time theorem; the convention is
 leanerVM's: a fixed straight-line extractor, its cost read off its loops. Here the extractor reads the
 statement, the proof, the adversary's transcript and the public setup tree (the circuit commitment's Merkle
 tree). **The proofs** of the statements are in [`EndToEnd/`](#end-to-end-theorems), from the layers F0–F5 below.
@@ -17,6 +17,11 @@ Toolchain and dependency revisions are leanerVM `mumbai`'s (Lean `v4.34.1`, Math
 starting point is leanVM's `formal/quotient` (branch `PCS-openings-aggregation`), whose README is kept as
 [`README.upstream.md`](README.upstream.md): sorry-free proofs of the reduction for the BLAKE2s/full-adder
 circuit, with ideal commitments.
+
+**The univariate PIOP for leanVM 42422001** (`crates/leanvm_univariate`, milestone 4): its verifier transcribed
+and differential-tested, with its end statements `UniKnowledgeSoundness` and `UniCompleteness` against
+[`Lv42/`](Lv42)'s relation `M3Holds`, stated and not yet proved, is [`UniStatement/`](UniStatement/README.md), a
+library of `EndToEnd/`.
 
 ## End-to-end theorems
 
@@ -56,8 +61,8 @@ Statement's own definitions. Every theorem below is sorry-free and depends only 
   every distinguisher of at most `Q` calls of π and π⁻¹ fixed after them, its verdicts on the honest proof and on
   the simulator's proof (the permutation programmable) differ in probability by at most `ζ Q ≈ 2^-113` for
   `Q ≤ 2^126`. The simulator is named in the statement (`zkSimulator`, `rpmSimOracle`) and reads no witness: an
-  explicit simulator; its computable form is in progress (its tables are computed,
-  `QuotientZk/Instance/Builder.lean`). **Scope: single-proof zero knowledge.** `realExperiment` starts from an
+  explicit simulator; `zeroKnowledge_closed_computable` restates the theorem with a compiled simulator (no axiom and no `noncomputable` constant in its closure) (its tables by Gaussian
+  elimination, `QuotientZk/Instance/Builder.lean`). **Scope: single-proof zero knowledge.** `realExperiment` starts from an
   empty permutation, the prover goes first, and the distinguisher queries `π`, `π⁻¹` only after the proof; not
   covered are oracle queries before the proof (precomputation, auxiliary input depending on `π`) and several
   proofs under one `π` (a pre-proof phase is planned).
@@ -179,7 +184,7 @@ pinned in `lakefile.toml`) lifts the reduction's knowledge soundness from an abs
 statistical zero knowledge of the proof the Rust prover outputs (calldata and the three openings: roots,
 multiproofs and opened rows, the stream, grinding nonces) in the random-oracle model, with the simulator an
 explicit definition in the statement (`sim` is compiled for any compiled view simulator, `Check.lean` runs it;
-the deployed simulator's computable form is in progress). The prover's randomness is uniform (the deployed
+the deployed simulator is compiled in `zeroKnowledge_closed_computable`). The prover's randomness is uniform (the deployed
 masks and padding come from ChaCha12 keyed by a Keccak KDF of a 32-byte OS seed: the deployed statement is
 computational in that PRG).
 
@@ -310,8 +315,8 @@ with an empty cache before the proof (`c₀ = []`, `fsFresh_setup_deployed_bits`
 `|c₀| · 2^-191` term is `0` here; a pre-proof phase is planned, which will make it nonzero.
 
 **The simulator** (`zkSimulator`, `ZK/With.lean`; `rpmSimulator`, `rpmSimOracle`, `ZK/Simulator.lean`; an
-explicit simulator; its computable form is in progress: the generic definitions are compiled, the deployed
-view simulator `deployedSimV` and wiring value `sigmaAtD` are still `noncomputable`). It reads the statement
+explicit simulator; as stated, `deployedSimV` and `sigmaAtD` are `noncomputable`, and
+`zeroKnowledge_closed_computable` restates the theorem with a compiled simulator (no axiom and no `noncomputable` constant in its closure), proven equal). It reads the statement
 and public data, never the witness: `pp stmt`, the skeleton model's public part (the number `n` of
 Fiat–Shamir challenges, when each secret table is committed, which positions are opened: functions of the
 challenges), `simV stmt`, the joint honest-verifier simulator (`jointSim`: the four values
@@ -337,7 +342,8 @@ Keccak-256 and of the permutation.
    forward query by the cache's permutation answer, a fresh inverse query by a uniform state.
 
 **Its cost**: no call of a real `π`; step 1, `n` uniform draws and `jointSim` (four samples, two table builds,
-two WHIR openings with fresh paddings, the wiring opening: the honest prover's opening work); step 2, the
+two WHIR openings with fresh paddings, the wiring opening: the honest prover's opening work; counted below,
+"The simulator compiled"); step 2, the
 skeleton's at most `2^24 + 2^70` operations (`skelSetup_queryBound`; worst-case grinding counted, `2^17`
 expected tries a grind), each a cache lookup, a programmed answer or a uniform digest; step 3, `fmt`'s calls;
 step 4, per query one step of `S₂` (lookups in its edges and rooted states, the unpadding of one path, at most
@@ -383,7 +389,7 @@ F1's completeness passed to the tables, `ZK/FactsClaims.lean`: `hTWD`, `hTQD`) a
 (`hprover`: the skeleton hashes the renderer's rows, so it depends on `R`), `ProverBridge` at
 `decodeCoins ∘ eD`. The simulator's tables `simTW`, `simTQ` are computed (`QuotientZk/Instance/Builder.lean`'s
 Gaussian elimination in `deployedRep`'s coordinates); its wiring value (`sigmaAtD`, `P₀D.sigmaPoly.eval`) and
-`deployedSimV` are still `noncomputable` (being made computable).
+`deployedSimV` are `noncomputable` as stated; the compiled simulator (`zeroKnowledge_closed_computable`) is below.
 
 **The prover bridge's parts and the bound** (`ZK/ProverBridge*.lean`, `ZK/Budget.lean`, `ZK/CoreBad.lean`).
 With WHIR's honest prover as the renderer (`whirRenderer`), `ProverBridge` follows from a deterministic core at
@@ -416,6 +422,58 @@ skeleton's events at the three ladders (`ZK/CoreFollows.lean`), `runFrom` and `f
 claims and seeds (`ZK/CoreRed*.lean`), the renderer's messages, the honest script's drive of the Statement's
 level-0 word (`ZK/CoreRender*.lean`), an opening end to end (`ZK/CoreOpen.lean`), and the assembly
 (`ZK/CoreMain*.lean`).
+
+**The simulator compiled** (`ZK/ComputableClosed.lean`, `ZK/Computable.lean`, `ZK/ComputableFacts.lean`,
+`QuotientZk/Instance/Compiled.lean`). **`zeroKnowledge_closed_computable (s₀)`**: `ZeroKnowledgeWith s₀
+zkSimulatorClosed rpmSimOracle (zkBoundEnd ((2^24 + 2^70)·12) fmtBudget (· ↦ deltaNone))`, no hypothesis, for
+**`zkSimulatorClosed`**, a `def` (compiled), **equal as a function to `zeroKnowledge_closed`'s simulator**
+(`zkSimulatorClosed_eq`; its samplers `formal/Field`'s `instSampleableTypeF64`, `instSampleableTypeF192`, as
+there). The definition chain: `zkSimulatorClosed = zkSimulatorC stmtBytesD idWD idσD idQD rowsWDc`;
+`zkSimulatorC = zkSimulator (· ↦ deployedPub deployedRep) (stmt ↦ deployedSimVc (whirRendererC deployedRep
+stmt) stmt) (stmt ↦ skelSetup …) fmt` (`zkSimulatorC_eq`); `deployedSimVc R stmt σ = outP … R σ <$>
+jointSimVm deployedRep peD (tgtD stmt) F192.Y inKD sigmaAtC (chOf deployedRep.limbs σ)` (`deployedSimVc_eq`:
+`= deployedSimV deployedRep P₀D (stmtWD stmt) F192.Y R inKD sigmaAtD`). What replaces each `noncomputable`
+part, proved equal:
+
+* the parameters `P₀D` by their **public evaluations** `peD` (`peD_matches`): `θ = β₁`, `v_cells(t) = S^24(t)`,
+  `v_rows(t) = Π_{r < 2^22} (t − x_r)` (`rowsAtC`), `pub(γ)(t)` by its product formula (`pubAtC`), the target
+  `Σ_J γ^J w_J` (`tgtD`); the verifier's formulas on them (`claimDenP`, `claimValueP`, `pointQP`, `valsQP`,
+  `claimMsgP`, `outP`);
+* **`σ(t)`** (`sigmaAtC`, `sigmaAtC_eq`): the wiring polynomial is the Lagrange interpolant on the `2^24`
+  cells; on the span of a Cantor basis the nodal polynomial is `S^24`, of derivative `1`, so every barycentric
+  weight is `1` and `σ(t) = Σ_p r_p Π_{q ≠ p} (t − v_q)`, accumulated in one pass (`lagAcc`): `3·2^24`
+  products, no inversion;
+* the openings' **novel basis at the opened positions** (`encOf`, `encTab`, `subRoots`; `encOf_eq`): the
+  normalizers `W_k(v_k)` (`O(ℓ²)`), per opened position the `ℓ` values `Ŵ_k(K(p))`, an entry `X_y` the
+  product of its bits'; the claims' points compiled (`pointWc`, `pointQP`, `pointSc`);
+* the tables as data (`solW`, `solQ`: `Builder.lean`'s elimination, `sparse_solW`, `sparse_solQ`) and the
+  level-0 views **stored in arrays once** (`viewW`, `viewQ`, `memoL0`; `viewW_eq`, `viewQ_eq`), so the
+  renderer reads the view at each step without recomputing it (`jointSimVm`, `jointSimVm_eq`);
+* WHIR's honest renderer (`whirRendererC`, `whirRendererC_eq`) and the wiring codeword's rows (`rowsWDc`,
+  `rowsWDc_eq`): the same programs, compiled.
+
+**The audit** (`#computational_axioms`, after `Compose/DecoderAxioms.lean`): every constant
+`zkSimulatorClosed` reaches outside proofs and types, followed through its definition: **no axiom**
+(`Classical.choice` only in proofs, `#print axioms` lists it from the fields' instances' proofs), no
+`noncomputable`, `implemented_by`, `extern` or `opaque` constant outside Lean's core (`#guard_msgs`, also for
+`zkSimulatorDeployed` and `whirRendererC`). **Runs** (`EndToEnd/Review/ZkSimulatorEval.lean`, `#eval`): the
+recurrence `W_k` is the subspace product (`k ≤ 8`) and vanishes on its subspace; an encoding entry is its
+bits' product; `lagAcc` interpolates on the cube of `6` bits (at a cell and off the cells); `θ`, `v_cells`,
+`pub` and the witness claim's bytes (`624`) at a sample challenge; and **`σ` at a cell is its successor's point**
+(`sigmaAtC (nodeE 5) = succE 5`, the deployed `2^24`-cell accumulation, about an hour interpreted:
+`0.25` ms a cell). The whole simulator is not run: its view alone is up to about `2·10^14` operations.
+
+**Its cost** (operations of `K = GF(2^64)`, `E = GF(2^192)`; `ZK/Computable.lean`'s module doc): `394`
+challenge draws; the view once: `σ(t)` (`3·2^24` products in `E`, `2·24·2^24` additions in `K`), the four
+values, the paddings (`40·2^19 + 63·2^22` words), the two eliminations (`O(k(4·10^3 m + r² + r 2^r))` for `k`
+scanned entries, `k = 6, 9` at a generic challenge; `v_rows(t)`, `2^22` products), the encodings (`ℓ²` per
+opened position), the six lane rounds (at most `21` message evaluations, each at most `2^(ℓ+7)` reads of the
+batched weight, `≈ 8·10^3`, `2·10^4` operations a read), the folded tables, the opened rows (`|Q|·|ι|·2^ℓ`
+reads of at most `ℓ` products): **at most about `1.2·10^13` (witness) and `2.3·10^14` (quotient)
+operations, dominated by the lane rounds' claim weights**; per message one
+run of WHIR's honest prover up to the step on the stored view (at most one opening of `2^25`, `2^24` or `2^28`
+words); the skeleton's `2^24 + 2^70` worst-case operations (grinding; `2^17` expected tries a grind); `fmt`'s
+`2^23` calls of `S₂`; per distinguisher query one step of `S₂`.
 
 ## End-to-end completeness (`Completeness/`)
 
