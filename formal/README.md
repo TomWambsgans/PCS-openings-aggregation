@@ -185,16 +185,16 @@ expected tries a grind), each a cache lookup, a programmed answer or a uniform d
 step 4, per query one step of `S₂` (lookups in its edges and rooted states, the unpadding of one path, at most
 one cache lookup or uniform answer and one uniform state).
 
-**The theorem** (`zeroKnowledge_end`): `ζ Q = εR Q + εFS + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q) 2^-2368 +
+**The theorem** (`zeroKnowledge_end`): `ζ Q = εR Q + 2^-113 + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q) 2^-2368 +
 2^48 2^-2368 + (Qp + Qfmt + Q)² / 2^508` for a distinguisher of `Q` calls of `π` and `π⁻¹` (coins free), at most
-`εR Q + εFS + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`). Proved: the
+`εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`). Proved: the
 distinguisher's coins removed (`ZK/Coins.lean`, a tape drawn first), the ideal experiment of `zkSimulator`
 equal to `QuotientZk`'s simulated game (`rpmIdeal_eq`), `QuotientZk`'s closeness from the joint model
 (`coreClose_of_joint`: `zk_rpm_skel`, `jointHVZK_of_link`, `factors_single`, `factors_pair`), `skelSetup`'s
-operations and duplex discipline, the real experiment's coins drawn outside the model (`realExperiment_coins`).
+operations, duplex discipline and Fiat–Shamir freshness (`fsFresh_setup_deployed_bits`, `2^-113`), the real
+experiment's coins drawn outside the model (`realExperiment_coins`).
 **Named**: the joint model's instance (`JointData.Valid`, its public part `pp`, its view simulator `simV`);
-`skelSetup`'s Fiat–Shamir freshness (`εFS`, expected `≈ 2^-113` from `fsFresh_deployed` with the setup's tree
-as `c₀`); the prover's and `fmt`'s permutation budgets `Qp`, `Qfmt`; `CoinsMatch` (the Statement's coins are
+the prover's and `fmt`'s permutation budgets `Qp`, `Qfmt`; `CoinsMatch` (the Statement's coins are
 the skeleton model's uniform randomness); `ProverBridge` (`εR`: the Statement's prover at fixed coins against the
 skeleton's, then `fmt`: the proof-of-work fuel, the replayed chain, the order of public queries, the proof's
 format).

@@ -1,25 +1,26 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import ZK.With
 import ZK.Setup
+import QuotientZk.Deployed.Fresh.Setup
 
 /-!
 # Zero knowledge of the membership proof: the end theorem
 
 **`zeroKnowledge_end`**: `PcsQuotient.ZeroKnowledgeWith s₀ (zkSimulator pp simV skelOf fmt) rpmSimOracle
-(zkBoundEnd Qp Qfmt εFS εR)`: zero knowledge **for the simulator named in the statement**,
+(zkBoundEnd Qp Qfmt εR)`: zero knowledge **for the simulator named in the statement**,
 `zkSimulator` (`ZK/With.lean`: `QuotientZk`'s random-permutation simulator in the statement's shape,
 compiled, at the public part `pp stmt` of the prover and the joint view simulator `simV stmt`), on the
 skeleton of the statement's prover `skelSetup` (`ZK/Setup.lean`: the circuit's commitment computed over
-`π` first, then the deployed skeleton; at most `2^24 + 2^70` operations, its duplex discipline proved).
+`π` first, then the deployed skeleton; at most `2^24 + 2^70` operations, its duplex discipline proved, its
+Fiat–Shamir freshness `2^-113`: `QuotientZk.Deployed.Fresh.fsFresh_setup_deployed_bits`).
 
 It is `zeroKnowledgeWith_of_core` with `QuotientZk`'s closeness of the real and simulated games proved
 from the joint model (`coreClose_of_joint`: `zk_rpm_skel`, `jointHVZK_of_link`, `factors_single`,
 `factors_pair`), and the real bridge split (`realBridge_of`: `CoinsMatch`, `ProverBridge`).
 
-`ζ Q = εR Q + εFS + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q) 2^-2368 + 2^48 2^-2368 +
-(Qp + Qfmt + Q)² / 2^508` (`zkBoundEnd`), at most `εR Q + εFS + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508`
-for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`). `εFS` is `skelSetup`'s Fiat–Shamir freshness (`hFS`), expected
-`epsFS (2^24) (2^70) 2^-191 2^-2368`, about `2^-113`.
+`ζ Q = εR Q + 2^-113 + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q) 2^-2368 + 2^48 2^-2368 +
+(Qp + Qfmt + Q)² / 2^508` (`zkBoundEnd`), at most `εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508`
+for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`).
 -/
 
 open OracleComp OracleSpec Common Polynomial Module QuotientSecurity QuotientSecurity.Hiding
@@ -31,22 +32,22 @@ namespace PcsQuotient.EndToEnd
 
 open QuotientZk (Close Proto View)
 
-/-- **The end theorem's error**: `zkBound` at the skeleton's `2^24 + 2^70` operations, the ideal bridge
-exact. A function of the distinguisher's calls `Q` of `π` and `π⁻¹`. -/
-noncomputable def zkBoundEnd (Qp Qfmt : ℕ) (εFS : ℝ≥0∞) (εR : ℕ → ℝ≥0∞) : ℕ → ℝ≥0∞ :=
-  zkBound (2 ^ 24 + 2 ^ 70) Qp Qfmt εFS εR fun _ ↦ 0
+/-- **The end theorem's error**: `zkBound` at the skeleton's `2^24 + 2^70` operations, its Fiat–Shamir
+freshness `2^-113`, the ideal bridge exact. A function of the distinguisher's calls `Q` of `π` and
+`π⁻¹`. -/
+noncomputable def zkBoundEnd (Qp Qfmt : ℕ) (εR : ℕ → ℝ≥0∞) : ℕ → ℝ≥0∞ :=
+  zkBound (2 ^ 24 + 2 ^ 70) Qp Qfmt ((2 : ℝ≥0∞) ^ 113)⁻¹ εR fun _ ↦ 0
 
 /-- **The end theorem's error at our sizes**: for a distinguisher and a formatting of at most
-`2^127` calls together, `ζ Q ≤ εR Q + εFS + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508`. -/
-theorem zkBoundEnd_le (Qp Qfmt : ℕ) (εFS : ℝ≥0∞) (εR : ℕ → ℝ≥0∞) (Q : ℕ)
-    (hQ : Qfmt + Q ≤ 2 ^ 127) :
-    zkBoundEnd Qp Qfmt εFS εR Q ≤
-      εR Q + (εFS + 1 / 2 ^ 165 + ((2 : ℝ≥0∞) ^ 2200)⁻¹ +
+`2^127` calls together, `ζ Q ≤ εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508`. -/
+theorem zkBoundEnd_le (Qp Qfmt : ℕ) (εR : ℕ → ℝ≥0∞) (Q : ℕ) (hQ : Qfmt + Q ≤ 2 ^ 127) :
+    zkBoundEnd Qp Qfmt εR Q ≤
+      εR Q + (((2 : ℝ≥0∞) ^ 113)⁻¹ + 1 / 2 ^ 165 + ((2 : ℝ≥0∞) ^ 2200)⁻¹ +
         ((Qp + (Qfmt + Q) : ℕ) ^ 2 : ℝ≥0∞) / 2 ^ 508) := by
   have h : 2 ^ 24 + 2 ^ 70 + (Qfmt + Q) ≤ 2 ^ 128 := by
     have : (2 : ℕ) ^ 24 + 2 ^ 70 + 2 ^ 127 ≤ 2 ^ 128 := by norm_num
     omega
-  have h2 := zkBound_le (2 ^ 24 + 2 ^ 70) Qp Qfmt εFS εR (fun _ ↦ 0) Q h
+  have h2 := zkBound_le (2 ^ 24 + 2 ^ 70) Qp Qfmt ((2 : ℝ≥0∞) ^ 113)⁻¹ εR (fun _ ↦ 0) Q h
   simpa [zkBoundEnd] using h2
 
 variable {K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂ : Type} [Field K] [Field E] [Algebra K E]
@@ -99,7 +100,7 @@ theorem coreClose_of_joint (J : JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ 
 skeleton `skelOf stmt = skelSetup (stmtBytes stmt) idW idσ idQ rowsW`. Named hypotheses, for each
 statement and witness of the relation: the joint model of the deployed prover (`J stmt w`,
 `JointData.Valid`), whose prover's public part is `pp stmt` (`hpub`) and whose view simulator is
-`simV stmt` (`hsimV`); `skelSetup`'s Fiat–Shamir freshness (`hFS`); the prover's permutation budget
+`simV stmt` (`hsimV`); the prover's permutation budget
 (`hprover`); the formatting's (`hfmt`); the coins (`hcoins`); the statement's prover at fixed coins
 (`hbridge`). -/
 theorem zeroKnowledge_end
@@ -109,13 +110,11 @@ theorem zeroKnowledge_end
     (rowsW : List (List UInt8)) (hrows : rowsW.length = 2 ^ 19)
     (fmt : QuotientZk.Deployed.Proof → OracleComp PermSpec (Option Proof))
     (coinsOf : Rand K ι₁ Y₁ ι₂ Y₂ → Masks × Padding × Padding)
-    (Qp Qfmt : ℕ) (εFS : ℝ≥0∞) (εR : ℕ → ℝ≥0∞) (s₀ : RpmSimState)
+    (Qp Qfmt : ℕ) (εR : ℕ → ℝ≥0∞) (s₀ : RpmSimState)
     (hfmt : ∀ pf, IsTotalQueryBound (fmt pf) Qfmt)
     (hvalid : ∀ stmt w, Relation stmt w → (J stmt w).Valid)
     (hpub : ∀ stmt w, Relation stmt w → PubProto.of (J stmt w).P = pp stmt)
     (hsimV : ∀ stmt w, Relation stmt w → (J stmt w).simV = simV stmt)
-    (hFS : ∀ stmt w, Relation stmt w →
-      QuotientZk.Deployed.FSFresh (J stmt w).P (skelSetup (stmtBytes stmt) idW idσ idQ rowsW) [] εFS)
     (hprover : ∀ stmt w, Relation stmt w → ∀ s,
       QueryCostAtMost (QuotientZk.DRpm.proverJ (J stmt w).P keccak256OverPermutation queryPermutation
         (QuotientZk.DRpm.coinR KSt) (QuotientZk.DRpm.coinR DigestBytes) s
@@ -126,19 +125,26 @@ theorem zeroKnowledge_end
         εR) :
     ZeroKnowledgeWith s₀
       (zkSimulator pp simV (fun stmt ↦ skelSetup (stmtBytes stmt) idW idσ idQ rowsW) fmt)
-      rpmSimOracle (zkBoundEnd Qp Qfmt εFS εR) := by
+      rpmSimOracle (zkBoundEnd Qp Qfmt εR) := by
+  have hFS : ∀ stmt w, Relation stmt w → QuotientZk.Deployed.FSFresh (J stmt w).P
+      (skelSetup (stmtBytes stmt) idW idσ idQ rowsW) [] ((2 : ℝ≥0∞) ^ 113)⁻¹ := fun stmt w hw ↦ by
+    have hv := hvalid stmt w hw
+    exact QuotientZk.Deployed.Fresh.fsFresh_setup_deployed_bits (stmtBytes stmt) idW idσ idQ rowsW
+      hrows (J stmt w).P (J stmt w).cw hv.hcw hv.hrow₀ (fun s h k x ↦ ⟨_, rfl, hv.hlong s h k x⟩)
+      hv.hcK hv.hclW hv.hclσ hv.hclQ hv.hn
   have h := zeroKnowledgeWith_of_core (fun stmt w ↦ (J stmt w).P) pp simV
     (fun stmt ↦ skelSetup (stmtBytes stmt) idW idσ idQ rowsW) fmt s₀ εR
-    (fun Q ↦ zkBound (2 ^ 24 + 2 ^ 70) Qp Qfmt εFS (fun _ ↦ 0) (fun _ ↦ 0) Q) hpub
+    (fun Q ↦ zkBound (2 ^ 24 + 2 ^ 70) Qp Qfmt ((2 : ℝ≥0∞) ^ 113)⁻¹ (fun _ ↦ 0) (fun _ ↦ 0) Q) hpub
     (fun stmt w hw ↦ realBridge_of stmt w _ _ fmt coinsOf εR hcoins (hbridge stmt w hw))
     (fun stmt w hw ↦ by
       rw [← hsimV stmt w hw]
-      exact coreClose_of_joint (J stmt w) (hvalid stmt w hw) _ fmt (2 ^ 24 + 2 ^ 70) Qp Qfmt εFS
+      exact coreClose_of_joint (J stmt w) (hvalid stmt w hw) _ fmt (2 ^ 24 + 2 ^ 70) Qp Qfmt
+        ((2 : ℝ≥0∞) ^ 113)⁻¹
         (skelSetup_queryBound (stmtBytes stmt) idW idσ idQ rowsW hrows) hfmt (hFS stmt w hw)
         (duplexDiscipline_skelSetup _ (QuotientZk.DRpm.rowFn_ofBytes (J stmt w).Pb) _ _ _ _ _)
         (hprover stmt w hw))
-  have he : (fun Q ↦ εR Q + zkBound (2 ^ 24 + 2 ^ 70) Qp Qfmt εFS (fun _ ↦ 0) (fun _ ↦ 0) Q) =
-      zkBoundEnd Qp Qfmt εFS εR := by
+  have he : (fun Q ↦ εR Q + zkBound (2 ^ 24 + 2 ^ 70) Qp Qfmt ((2 : ℝ≥0∞) ^ 113)⁻¹ (fun _ ↦ 0)
+      (fun _ ↦ 0) Q) = zkBoundEnd Qp Qfmt εR := by
     funext Q
     simp only [zkBoundEnd, zkBound, zero_add, add_zero]
   rw [he] at h

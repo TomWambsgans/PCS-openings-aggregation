@@ -35,11 +35,12 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
   (the statement's prover computes it so; `Deployed.skel` reads it as a constant). At most
   `2^24 + 2^70` operations; its duplex discipline proved.
 * `ZK/Main.lean`: **`zeroKnowledge_end`**: `ZeroKnowledgeWith s₀ (zkSimulator pp simV skelSetup fmt)
-  rpmSimOracle (zkBoundEnd Qp Qfmt εFS εR)`, `ζ Q = εR Q + εFS + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q)
+  rpmSimOracle (zkBoundEnd Qp Qfmt εR)`, `ζ Q = εR Q + 2^-113 + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q)
   2^-2368 + 2^48 2^-2368 + (Qp + Qfmt + Q)² / 2^508`, at most
-  `εR Q + εFS + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`);
+  `εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`);
   `QuotientZk`'s closeness from the joint model (`coreClose_of_joint`). Named: the joint model
-  (`JointData.Valid`, its public part `pp`, its view simulator `simV`), `skelSetup`'s `FSFresh` (`εFS`),
+  (`JointData.Valid`, its public part `pp`, its view simulator `simV`; `skelSetup`'s `FSFresh` is
+  `fsFresh_setup_deployed_bits` from its conditions),
   the budgets `Qp`, `Qfmt`, `CoinsMatch`, `ProverBridge` (`εR`).
 * `ZK/Assembly.lean`: the same assembly for the package's own `simulator` given an ideal bridge
   (`zeroKnowledge_of_bridges`, `zeroKnowledge_deployed` on the constant-root skeleton); the joint
