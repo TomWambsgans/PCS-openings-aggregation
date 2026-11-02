@@ -14,8 +14,9 @@ the Cantor basis `β₀ … β_{m−1}` (`betaAt`), one butterfly stage per basi
   transforms are inverse, at any offset, with no hypothesis on the basis (each stage is undone by its
   inverse stage, in characteristic two);
 * `values_getD_K`: entry `p < 2^m` of `values m offset c` is `Σ_j c_j X_j(offset + B(p))`, the
-  novel-basis polynomial of `c` (`X_j = ∏_{bit t of j} w_t`, `w_t = S^t`), given that `betaAt` is a
-  Cantor basis (`IsCantorBasis`, the statement's own decidable property) and `m ≤ 28`; and that is
+  novel-basis polynomial of `c` (`X_j = ∏_{bit t of j} w_t`, `w_t = S^t`), given that the first `m`
+  vectors of `betaAt` are a Cantor basis (`CantorUpTo m`: Compose's `IsCantor` at `m = 24`; it follows
+  from the statement's own decidable `IsCantorBasis`) and `m ≤ 28`; and that is
   F1's `tablePoly` of the table `b ↦ c[idx b]` at the point (`values_getD_tablePoly`), the point
   being F1's `CantorBasis.point` of the bits of `p` for the basis `cantorOf hB` (`point_eq_cantor`);
 * `tablePoly_coefficients`: so the table `coefficients m offset v` holds the polynomial taking the
@@ -778,3 +779,53 @@ theorem tablePoly_coefficients_cantor {m : ℕ} (hB : CantorUpTo m) (hm : m ≤ 
 end Ntt
 
 end Bridge
+
+/-! ## Axioms -/
+
+/-- info: 'Bridge.Ntt.values_coefficients_K' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.values_coefficients_K
+
+/-- info: 'Bridge.Ntt.coefficients_values_K' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.coefficients_values_K
+
+/-- info: 'Bridge.Ntt.values_coefficients_E' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.values_coefficients_E
+
+/-- info: 'Bridge.Ntt.coefficients_values_E' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.coefficients_values_E
+
+/-- info: 'Bridge.Ntt.valuesF_eval' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.valuesF_eval
+
+/-- info: 'Bridge.Ntt.values_getD_K' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.values_getD_K
+
+/-- info: 'Bridge.Ntt.values_getD_E' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.values_getD_E
+
+/-- info: 'Bridge.Ntt.values_getD_tablePoly' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.values_getD_tablePoly
+
+/-- info: 'Bridge.Ntt.point_eq_cantor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.point_eq_cantor
+
+/-- info: 'Bridge.Ntt.tablePoly_coefficients' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.tablePoly_coefficients
+
+/-- info: 'Bridge.Ntt.tablePoly_coefficients_cantor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.tablePoly_coefficients_cantor
+
+/-- info: 'Bridge.Ntt.iterate_point' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Bridge.Ntt.iterate_point
