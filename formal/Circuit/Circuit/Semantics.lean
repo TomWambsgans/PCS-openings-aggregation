@@ -380,7 +380,7 @@ theorem addInput_wf {b : Builder} (hb : WF b) : WF b.addInput := by
 
 /-- **Free bits** (`freeBits n`, `n` calls of `Builder::input`): rows `s, …, s + n - 1` from the
 current size `s`, each an input, appended to the inputs in order; every valuation satisfies them. -/
-theorem spec_freeBits_list (l : List Unit) (b : Builder) (hb : WF b) :
+theorem spec_freeBits_list {β : Type} (l : List β) (b : Builder) (hb : WF b) :
     let r := runB (l.mapM fun _ => input) b
     RowsExt b r.2 ∧ r.2.rows.size = b.rows.size + l.length ∧ WF r.2 ∧
     r.2.inputs = b.inputs ++ ((List.range l.length).map (b.rows.size + ·)).toArray ∧
