@@ -1,0 +1,771 @@
+-- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+-- Generalises `formal/Compose/Compose/ListChain.lean` of this repository (two roots, three
+-- challenge groups, hard-wired) to any number of rounds and roots: the structure (bad fresh queries
+-- parsed from the history, each round union-bounded over the candidates of the roots before it, the
+-- trace of a winning run) is that file's, which follows `formal/QuotientRpm/ChainRom.lean`; the
+-- lemmas `Coll`, `prob_coll`, `Refers`, `ListCommit`, `prEvent_exists_mem_le` are reused as they are.
+import Compose.ListChain
+
+/-!
+# The list chain, `k` rounds over any roots
+
+`ListChain.lean`'s chain is `quotient::protocol`'s: the label, a root and three challenges, a
+root and one challenge, five values and one challenge, its bad events written out round by round.
+Here the chain is any chain of `crates/quotient/src/transcript.rs`'s form, given by its rounds
+(`RoundSpec`): in round `j` the prover sends a root (two scalars, `rootWords`) if the round has
+one, then `nv` values (one scalar each, `scalarWord`); the verifier draws `ns + 1` challenges,
+the first the low 192 bits of the hash of the state and the round's scalars, each next the hash
+of the state alone (`absorbs`: one step per challenge, the round's first step absorbing its
+message). The label (`ChainSpec.label`, the statement's bytes) is hashed first.
+
+**The protocol's soundness is a parameter** (`Piop`): the round-by-round knowledge soundness of
+the PIOP the chain makes non-interactive. A round's *opened* message is its root's candidate (a
+table the root may stand for) and its values; `pre s p m` is the state before round `p.length`'s
+challenges, after the opened rounds `p` and the opened message `m`; `post s p m c` after its
+challenges `c` (`pre_post`: the next round's state implies it). `err j` bounds the probability, over
+`ns + 1` independent uniform challenges (`draws`), that round `j` turns `pre` false into `post`
+true, for every prefix and message.
+
+**Each round is union-bounded over the product of the candidate lists of the roots before it**:
+a root's candidates are a `ListCommit` (`C j` for round `j`'s root, at most `(C j).bound`), read
+off the inputs asked so far, so round `j`'s error is multiplied by `facL C 0 (rounds.take (j+1))`,
+the product of the bounds of the roots of rounds `0..j` (`1` for a round without a root). A fresh
+query is bad (`listBadK`) when its answer collides (`Coll`, as in `ListChain.lean`), or when it
+is a round's first input (the chain before it asked, without collision, `ParseK`), the round's
+other inputs are fresh, and its challenges turn, for **some** tuple of candidates of the roots of
+the rounds so far, `pre` false into `post` true (`RoundBadK`). The parse is unique given the
+history (`parseK_unique`: an input determines the input before it through the history's injective
+answers, the label's length, `≢ 0 mod 32`, ends the walk, and the rounds' sizes fix the
+messages), so each fresh query is bad with probability at most
+`(4 |H| + 3) / 2^256 + max_j facL_j · err j` (`prob_listBadK`). A run whose candidates, read off
+the inputs asked, are lost at the start (`¬ pre s [] m₀`) and won at the end (`post` of the last
+round) asks a bad fresh query (`trace_coreK`), by the round-by-round argument (`LostWon`).
+
+`ListChainKAdv.lean` runs it in mumbai's two-oracle model with the adversary's log, and
+`ListChainKInstance.lean` derives `ListChain.lean`'s and `AdversaryLog.lean`'s statements from it.
+-/
+
+set_option linter.unusedSectionVars false
+
+open OracleSpec OracleComp NNReal
+open scoped ENNReal
+
+namespace Compose
+
+open QuotientRpm
+
+/-! ## The rounds -/
+
+/-- **A round of the chain**: the prover sends a root (two scalars) if `root`, then `nv` values
+(one scalar each); the verifier then draws `ns + 1` challenges. -/
+structure RoundSpec where
+  root : Bool
+  nv : ℕ
+  ns : ℕ
+
+/-- A round's message as the proof carries it: the root, if the round has one, and the values. -/
+abbrev RMsg (F : Type) := Option Bytes32 × List F
+
+variable {F : Type}
+
+/-- A message fits its round: a root exactly when the round has one, and `nv` values. -/
+def RMsg.Fits (s : RoundSpec) (m : RMsg F) : Prop := m.1.isSome = s.root ∧ m.2.length = s.nv
+
+/-- The messages fit the rounds, one each. -/
+def FitsAll : List RoundSpec → List (RMsg F) → Prop
+  | [], [] => True
+  | s :: rs, m :: ms => m.Fits s ∧ FitsAll rs ms
+  | _, _ => False
+
+theorem FitsAll.length_eq : ∀ {rs : List RoundSpec} {ms : List (RMsg F)}, FitsAll rs ms →
+    ms.length = rs.length
+  | [], [], _ => rfl
+  | _ :: _, _ :: _, h => by simp [h.2.length_eq]
+  | [], _ :: _, h => h.elim
+  | _ :: _, [], h => h.elim
+
+theorem fitsAll_append : ∀ {rs₁ rs₂ : List RoundSpec} {ms₁ ms₂ : List (RMsg F)},
+    FitsAll rs₁ ms₁ → FitsAll rs₂ ms₂ → FitsAll (rs₁ ++ rs₂) (ms₁ ++ ms₂)
+  | [], _, [], _, _, h => h
+  | _ :: _, _, _ :: _, _, h, h' => ⟨h.1, fitsAll_append h.2 h'⟩
+  | [], _, _ :: _, _, h, _ => h.elim
+  | _ :: _, _, [], _, h, _ => h.elim
+
+/-- The values as the chain hashes them, one word each. -/
+def scalarsOf (lim : F ≃ Limbs) (l : List F) : List UInt8 :=
+  (l.map fun x => scalarWord (lim x)).flatten
+
+/-- **A round's message as the chain hashes it**: the root's two words, then the values'. -/
+def encM (lim : F ≃ Limbs) (m : RMsg F) : List UInt8 :=
+  (match m.1 with
+    | some r => rootWords r
+    | none => []) ++ scalarsOf lim m.2
+
+/-- A step's input: the state, then the bytes the step absorbs. -/
+def stepIn (st : Bytes32) (e : List UInt8) : List UInt8 := st.toList ++ e
+
+@[simp] theorem stepIn_nil (st : Bytes32) : stepIn st [] = st.toList := List.append_nil _
+
+/-- **The bytes each step absorbs**, round by round: a round's first step its message, its other
+`ns` steps nothing. -/
+def absorbs (lim : F ≃ Limbs) : List RoundSpec → List (RMsg F) → List (List UInt8)
+  | [], _ => []
+  | s :: rs, ms => encM lim (ms.headD (none, [])) ::
+      (List.replicate s.ns [] ++ absorbs lim rs ms.tail)
+
+/-- The number of steps: one per challenge. -/
+def nSteps : List RoundSpec → ℕ
+  | [] => 0
+  | s :: rs => s.ns + 1 + nSteps rs
+
+/-- The challenges, one list per round. -/
+def groupK {α : Type} : List RoundSpec → List α → List (List α)
+  | [], _ => []
+  | s :: rs, l => l.take (s.ns + 1) :: groupK rs (l.drop (s.ns + 1))
+
+/-! ### Encodings -/
+
+section Encoding
+
+variable (lim : F ≃ Limbs)
+
+theorem length_scalarsOf (l : List F) : (scalarsOf lim l).length = 32 * l.length := by
+  induction l with
+  | nil => rfl
+  | cons a l ih =>
+    simp only [scalarsOf, List.map_cons, List.flatten_cons, List.length_append,
+      length_scalarWord, List.length_cons] at ih ⊢
+    rw [ih]
+    ring
+
+theorem scalarsOf_inj : ∀ {l l' : List F}, l.length = l'.length →
+    scalarsOf lim l = scalarsOf lim l' → l = l'
+  | [], [], _, _ => rfl
+  | a :: l, a' :: l', hl, h => by
+    simp only [scalarsOf, List.map_cons, List.flatten_cons] at h
+    obtain ⟨h1, h2⟩ := List.append_inj h (by simp)
+    have e1 : a = a' := lim.injective (scalarWord_injective h1)
+    have e2 : l = l' := scalarsOf_inj (by simpa using hl) h2
+    rw [e1, e2]
+  | [], _ :: _, hl, _ => by simp at hl
+  | _ :: _, [], hl, _ => by simp at hl
+
+theorem dvd_length_encM (m : RMsg F) : 32 ∣ (encM lim m).length := by
+  obtain ⟨r, l⟩ := m
+  cases r <;> simp [encM, length_scalarsOf, Nat.dvd_add, Nat.dvd_mul_right] <;> omega
+
+/-- **A message is determined by its bytes**, among the messages of a round. -/
+theorem encM_inj {s : RoundSpec} {m m' : RMsg F} (h : m.Fits s) (h' : m'.Fits s)
+    (he : encM lim m = encM lim m') : m = m' := by
+  obtain ⟨r, l⟩ := m
+  obtain ⟨r', l'⟩ := m'
+  obtain ⟨hr, hl⟩ := h
+  obtain ⟨hr', hl'⟩ := h'
+  simp only at hr hl hr' hl'
+  have hll : l.length = l'.length := hl.trans hl'.symm
+  cases r with
+  | none =>
+    cases r' with
+    | none =>
+      simp only [encM, List.nil_append] at he
+      rw [scalarsOf_inj lim hll he]
+    | some _ => exact absurd (hr.trans hr'.symm) (by simp)
+  | some a =>
+    cases r' with
+    | none => exact absurd (hr.trans hr'.symm) (by simp)
+    | some a' =>
+      simp only [encM] at he
+      obtain ⟨h1, h2⟩ := List.append_inj he (by simp)
+      rw [rootWords_injective h1, scalarsOf_inj lim hll h2]
+
+theorem length_absorbs : ∀ (rs : List RoundSpec) (ms : List (RMsg F)),
+    (absorbs lim rs ms).length = nSteps rs
+  | [], _ => rfl
+  | s :: rs, ms => by
+    simp only [absorbs, nSteps, List.length_cons, List.length_append, List.length_replicate,
+      length_absorbs rs ms.tail]
+    omega
+
+theorem dvd_of_mem_absorbs : ∀ (rs : List RoundSpec) (ms : List (RMsg F)) (e : List UInt8),
+    e ∈ absorbs lim rs ms → 32 ∣ e.length
+  | [], _, e, h => by simp [absorbs] at h
+  | s :: rs, ms, e, h => by
+    simp only [absorbs, List.mem_cons, List.mem_append, List.mem_replicate] at h
+    rcases h with rfl | ⟨-, rfl⟩ | h
+    · exact dvd_length_encM lim _
+    · simp
+    · exact dvd_of_mem_absorbs rs ms.tail e h
+
+/-- **The messages are determined by the bytes the steps absorb**, given the rounds. -/
+theorem absorbs_inj : ∀ {rs : List RoundSpec} {ms ms' : List (RMsg F)}, FitsAll rs ms →
+    FitsAll rs ms' → absorbs lim rs ms = absorbs lim rs ms' → ms = ms'
+  | [], [], [], _, _, _ => rfl
+  | s :: rs, m :: ms, m' :: ms', h, h', he => by
+    simp only [absorbs, List.headD_cons, List.tail_cons, List.cons.injEq] at he
+    obtain ⟨h1, h2⟩ := he
+    rw [encM_inj lim h.1 h'.1 h1, absorbs_inj h.2 h'.2 (List.append_cancel_left h2)]
+  | [], _ :: _, _, h, _, _ => h.elim
+  | [], [], _ :: _, _, h', _ => h'.elim
+  | _ :: _, [], _, h, _, _ => h.elim
+  | _ :: _, _ :: _, [], _, h', _ => h'.elim
+
+theorem absorbs_append : ∀ (rs₁ rs₂ : List RoundSpec) (ms₁ ms₂ : List (RMsg F)),
+    ms₁.length = rs₁.length →
+      absorbs lim (rs₁ ++ rs₂) (ms₁ ++ ms₂) = absorbs lim rs₁ ms₁ ++ absorbs lim rs₂ ms₂
+  | [], _, [], _, _ => rfl
+  | s :: rs₁, rs₂, m :: ms₁, ms₂, h => by
+    simp only [List.cons_append, absorbs, List.headD_cons, List.tail_cons, List.append_assoc,
+      absorbs_append rs₁ rs₂ ms₁ ms₂ (by simpa using h)]
+  | [], _, _ :: _, _, h => by simp at h
+  | _ :: _, _, [], _, h => by simp at h
+
+theorem absorbs_single (s : RoundSpec) (m : RMsg F) :
+    absorbs lim [s] [m] = encM lim m :: List.replicate s.ns [] := by
+  simp [absorbs]
+
+theorem nSteps_take_succ : ∀ (rs : List RoundSpec) (j : ℕ) (h : j < rs.length),
+    nSteps (rs.take (j + 1)) = nSteps (rs.take j) + (rs[j]'h).ns + 1
+  | s :: rs, 0, _ => by simp [nSteps]
+  | s :: rs, j + 1, h => by
+    simp only [List.take_succ_cons, nSteps, List.getElem_cons_succ]
+    rw [nSteps_take_succ rs j (by simpa using h)]
+    omega
+
+/-- **The number of steps before a round determines the round.** -/
+theorem nSteps_take_inj : ∀ (rs : List RoundSpec) (j j' : ℕ), j ≤ rs.length → j' ≤ rs.length →
+    nSteps (rs.take j) = nSteps (rs.take j') → j = j'
+  | _, 0, 0, _, _, _ => rfl
+  | [], _ + 1, _, h, _, _ => by simp at h
+  | [], _, _ + 1, _, h, _ => by simp at h
+  | s :: rs, 0, j' + 1, _, _, h => by simp only [List.take_succ_cons, List.take_zero, nSteps] at h; omega
+  | s :: rs, j + 1, 0, _, _, h => by simp only [List.take_succ_cons, List.take_zero, nSteps] at h; omega
+  | s :: rs, j + 1, j' + 1, h₁, h₂, h => by
+    simp only [List.take_succ_cons, nSteps] at h
+    rw [nSteps_take_inj rs j j' (by simpa using h₁) (by simpa using h₂) (by omega)]
+
+theorem length_groupK {α : Type} : ∀ (rs : List RoundSpec) (l : List α),
+    (groupK rs l).length = rs.length
+  | [], _ => rfl
+  | s :: rs, l => by simp [groupK, length_groupK rs]
+
+theorem groupK_append {α : Type} : ∀ (rs₁ rs₂ : List RoundSpec) (l₁ l₂ : List α),
+    l₁.length = nSteps rs₁ → groupK (rs₁ ++ rs₂) (l₁ ++ l₂) = groupK rs₁ l₁ ++ groupK rs₂ l₂
+  | [], _, [], _, _ => rfl
+  | [], _, _ :: _, _, h => by simp [nSteps] at h
+  | s :: rs₁, rs₂, l₁, l₂, h => by
+    simp only [nSteps] at h
+    simp only [List.cons_append, groupK, List.cons.injEq]
+    refine ⟨List.take_append_of_le_length (by omega), ?_⟩
+    rw [List.drop_append_of_le_length (by omega)]
+    exact groupK_append rs₁ rs₂ _ l₂ (by simp only [List.length_drop]; omega)
+
+theorem groupK_single {α : Type} (s : RoundSpec) (l : List α) (h : l.length = s.ns + 1) :
+    groupK [s] l = [l] := by
+  simp [groupK, List.take_of_length_le (le_of_eq h)]
+
+end Encoding
+
+/-! ## The chain on a table -/
+
+section Table
+
+/-- The chain's inputs before its last, from the input `y`: each step's input the state (the
+answer to the input before) and the step's bytes. -/
+def prevIn (T : Table) : List UInt8 → List (List UInt8) → List (List UInt8)
+  | _, [] => []
+  | y, e :: es => y :: prevIn T (stepIn (T y) e) es
+
+/-- The chain's last input, from the input `y`. -/
+def lastIn (T : Table) : List UInt8 → List (List UInt8) → List UInt8
+  | y, [] => y
+  | y, e :: es => lastIn T (stepIn (T y) e) es
+
+/-- **The chain's inputs**, from the input `y` (the label), one per step after it. -/
+def allIn (T : Table) : List UInt8 → List (List UInt8) → List (List UInt8)
+  | y, [] => [y]
+  | y, e :: es => y :: allIn T (stepIn (T y) e) es
+
+variable (T : Table)
+
+theorem allIn_eq : ∀ (y : List UInt8) (es : List (List UInt8)),
+    allIn T y es = prevIn T y es ++ [lastIn T y es]
+  | _, [] => rfl
+  | y, e :: es => by simp [allIn, prevIn, lastIn, allIn_eq _ es]
+
+theorem lastIn_append : ∀ (y : List UInt8) (es₁ es₂ : List (List UInt8)),
+    lastIn T y (es₁ ++ es₂) = lastIn T (lastIn T y es₁) es₂
+  | _, [], _ => rfl
+  | y, e :: es₁, es₂ => lastIn_append _ es₁ es₂
+
+theorem prevIn_append : ∀ (y : List UInt8) (es₁ es₂ : List (List UInt8)),
+    prevIn T y (es₁ ++ es₂) = prevIn T y es₁ ++ prevIn T (lastIn T y es₁) es₂
+  | _, [], _ => rfl
+  | y, e :: es₁, es₂ => by simp [prevIn, lastIn, prevIn_append _ es₁ es₂]
+
+theorem lastIn_concat (y : List UInt8) (es : List (List UInt8)) (e : List UInt8) :
+    lastIn T y (es ++ [e]) = stepIn (T (lastIn T y es)) e := by
+  rw [lastIn_append]
+  rfl
+
+theorem prevIn_concat (y : List UInt8) (es : List (List UInt8)) (e : List UInt8) :
+    prevIn T y (es ++ [e]) = allIn T y es := by
+  rw [prevIn_append, allIn_eq]
+  rfl
+
+theorem allIn_append (y : List UInt8) (es₁ es₂ : List (List UInt8)) :
+    allIn T y (es₁ ++ es₂) = prevIn T y es₁ ++ allIn T (lastIn T y es₁) es₂ := by
+  rw [allIn_eq, allIn_eq, prevIn_append, lastIn_append, List.append_assoc]
+
+theorem head_mem_allIn (y : List UInt8) (es : List (List UInt8)) : y ∈ allIn T y es := by
+  cases es <;> simp [allIn]
+
+theorem length_stepIn (st : Bytes32) (e : List UInt8) : (stepIn st e).length = 32 + e.length := by
+  simp [stepIn]
+
+theorem take_stepIn (st : Bytes32) (e : List UInt8) : (stepIn st e).take 32 = st.toList := by
+  simp [stepIn, List.take_append]
+
+theorem stepIn_inj {st st' : Bytes32} {e e' : List UInt8} (h : stepIn st e = stepIn st' e') :
+    st = st' ∧ e = e' := by
+  obtain ⟨h1, h2⟩ := List.append_inj h (by simp)
+  exact ⟨Vector.toList_inj.mp h1, h2⟩
+
+/-- The chain reads the table only at its inputs before the last. -/
+theorem chain_congr {T T' : Table} : ∀ (y : List UInt8) (es : List (List UInt8)),
+    (∀ z ∈ prevIn T y es, T z = T' z) →
+      prevIn T' y es = prevIn T y es ∧ lastIn T' y es = lastIn T y es
+  | _, [], _ => ⟨rfl, rfl⟩
+  | y, e :: es, h => by
+    have hy : T y = T' y := h y (by simp [prevIn])
+    have ih := chain_congr (stepIn (T y) e) es fun z hz => h z (by simp [prevIn, hz])
+    simp only [prevIn, lastIn, ← hy, ih.1, ih.2, and_self]
+
+/-- **The chain before an input is determined by the input**, through injective answers: two
+chains asked without collision ending at the same input start at the same label and absorb the
+same bytes, when every step's bytes are whole words and the labels are not. -/
+theorem chain_unique {H : Hist} (hi : Set.InjOn T ↑H) :
+    ∀ (es es' : List (List UInt8)) (y y' : List UInt8),
+      (∀ e ∈ es, 32 ∣ e.length) → (∀ e ∈ es', 32 ∣ e.length) → ¬ 32 ∣ y.length →
+      ¬ 32 ∣ y'.length → (∀ z ∈ prevIn T y es, z ∈ H) → (∀ z ∈ prevIn T y' es', z ∈ H) →
+      lastIn T y es = lastIn T y' es' → y = y' ∧ es = es' := by
+  intro es
+  induction es using List.reverseRecOn with
+  | nil =>
+    intro es' y y' _ hd' hy hy' _ _ h
+    rcases List.eq_nil_or_concat es' with rfl | ⟨L, b, rfl⟩
+    · exact ⟨h, rfl⟩
+    · simp only [List.concat_eq_append] at *
+      exfalso
+      rw [lastIn_concat] at h
+      have hl : y.length = 32 + b.length := (congrArg List.length h).trans (length_stepIn _ _)
+      exact hy (by rw [hl]; exact Nat.dvd_add (by norm_num) (hd' b (by simp)))
+  | append_singleton es₀ e ih =>
+    intro es' y y' hd hd' hy hy' hH hH' h
+    rcases List.eq_nil_or_concat es' with rfl | ⟨L, b, rfl⟩
+    · exfalso
+      rw [lastIn_concat] at h
+      have hl : y'.length = 32 + e.length := (congrArg List.length h).symm.trans (length_stepIn _ _)
+      exact hy' (by rw [hl]; exact Nat.dvd_add (by norm_num) (hd e (by simp)))
+    · simp only [List.concat_eq_append] at *
+      rw [lastIn_concat, lastIn_concat] at h
+      obtain ⟨hT, heb⟩ := stepIn_inj h
+      have ha : lastIn T y es₀ ∈ H := hH _ (by
+        rw [prevIn_concat, allIn_eq]
+        simp)
+      have ha' : lastIn T y' L ∈ H := hH' _ (by
+        rw [prevIn_concat, allIn_eq]
+        simp)
+      have hsub : ∀ z ∈ prevIn T y es₀, z ∈ H := fun z hz => hH z (by
+        rw [prevIn_concat, allIn_eq]
+        exact List.mem_append_left _ hz)
+      have hsub' : ∀ z ∈ prevIn T y' L, z ∈ H := fun z hz => hH' z (by
+        rw [prevIn_concat, allIn_eq]
+        exact List.mem_append_left _ hz)
+      obtain ⟨rfl, rfl⟩ := ih L y y' (fun e' he' => hd e' (by simp [he']))
+        (fun e' he' => hd' e' (by simp [he'])) hy hy' hsub hsub' (hi ha ha' hT)
+      exact ⟨rfl, by rw [heb]⟩
+
+end Table
+
+/-! ## The chain's specification, its challenges -/
+
+/-- **What the chain is given**: how a field element is written (its three limbs), the label of a
+statement (`¬ 32 ∣` its length: the label is not a step's input), and the rounds. -/
+structure ChainSpec (F St : Type) where
+  lim : F ≃ Limbs
+  label : St → List UInt8
+  label_injective : Function.Injective label
+  label_len : ∀ s, ¬ 32 ∣ (label s).length
+  rounds : List RoundSpec
+
+/-- **A challenge**: the low 192 bits of a state, as a field element (`Wire.chal`). -/
+def chalL (lim : F ≃ Limbs) (st : Bytes32) : F := lim.symm (stateLimbs st)
+
+/-- **The challenges of a chain on a table**, one list per round: the states after each step,
+read as field elements. -/
+def chalsT (lim : F ≃ Limbs) (T : Table) (lab : List UInt8) (rs : List RoundSpec)
+    (ms : List (RMsg F)) : List (List F) :=
+  groupK rs (((allIn T lab (absorbs lim rs ms)).tail.map T).map (chalL lim))
+
+/-- **The chain over a hash `H` in any monad**, from the input `y`: every answer, the first the
+seed. -/
+def runM {m : Type → Type} [Monad m] (H : List UInt8 → m Bytes32) :
+    List UInt8 → List (List UInt8) → m (List Bytes32)
+  | y, [] => H y >>= fun st => pure [st]
+  | y, e :: es => H y >>= fun st => runM H (stepIn st e) es >>= fun rest => pure (st :: rest)
+
+namespace ChainSpec
+
+variable {St : Type} (K : ChainSpec F St)
+
+/-- Round `j`'s specification. -/
+def spec (j : ℕ) : RoundSpec := K.rounds.getD j ⟨false, 0, 0⟩
+
+/-- The challenges, one list per round, from the chain's answers. -/
+def chalsOf (sts : List Bytes32) : List (List F) := groupK K.rounds (sts.tail.map (chalL K.lim))
+
+/-- **The chain** of a statement and its messages, over a hash `H`. -/
+def chain {m : Type → Type} [Monad m] (H : List UInt8 → m Bytes32) (s : St)
+    (ms : List (RMsg F)) : m (List (List F)) :=
+  K.chalsOf <$> runM H (K.label s) (absorbs K.lim K.rounds ms)
+
+/-- The chain's number of queries: the label and one per step. -/
+def nQ : ℕ := nSteps K.rounds + 1
+
+theorem spec_eq (j : ℕ) (h : j < K.rounds.length) : K.spec j = K.rounds[j] := by
+  simp [spec, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h]
+
+end ChainSpec
+
+/-! ## Uniform challenges -/
+
+/-- **`n` independent uniform draws.** -/
+def draws (α : Type) [SampleableType α] : ℕ → ProbComp (List α)
+  | 0 => pure []
+  | n + 1 => ($ᵗ α : ProbComp α) >>= fun a => draws α n >>= fun l => pure (a :: l)
+
+section Chal
+
+variable [Fintype F] [DecidableEq F] [SampleableType F]
+
+theorem chalL_fiber (lim : F ≃ Limbs) (x : F) :
+    (Finset.univ.filter fun st : Bytes32 => chalL lim st = x).card =
+      (Finset.univ : Finset (Vector UInt8 8)).card := by
+  have h : (Finset.univ.filter fun st : Bytes32 => chalL lim st = x) =
+      Finset.univ.filter fun st : Bytes32 => stateLimbs st = lim x :=
+    Finset.filter_congr fun st _ => by simp only [chalL, Equiv.symm_apply_eq]
+  rw [h]
+  exact stateLimbs_fiber (lim x)
+
+/-- **The low 192 bits of a uniform state are uniform** (`prEvent_chal`, for any limbs). -/
+theorem prEvent_chalL (lim : F ≃ Limbs) (p : F → Prop) :
+    Pr{let st ← $ᵗ Bytes32}[p (chalL lim st)] = Pr{let x ← $ᵗ F}[p x] := by
+  classical
+  exact prEvent_uniform_balanced (chalL lim) _ (chalL_fiber lim) p
+
+theorem chalL_evalDistEq (lim : F ≃ Limbs) :
+    (chalL lim <$> ($ᵗ Bytes32 : ProbComp Bytes32)) =ᵈ ($ᵗ F : ProbComp F) := fun p => by
+  rw [prEvent_map]
+  exact prEvent_chalL lim p
+
+/-- **`n` uniform states read as challenges are `n` uniform challenges.** -/
+theorem draws_chalL_evalDistEq (lim : F ≃ Limbs) : ∀ n : ℕ,
+    ((fun l => l.map (chalL lim)) <$> draws Bytes32 n) =ᵈ draws F n
+  | 0 => by simp only [draws, map_pure, List.map_nil]; exact EvalDistEq.rfl
+  | n + 1 => by
+    have e1 : ((fun l => l.map (chalL lim)) <$> draws Bytes32 (n + 1)) =
+        (chalL lim <$> ($ᵗ Bytes32 : ProbComp Bytes32)) >>= fun x =>
+          (fun l => x :: l) <$> ((fun l => l.map (chalL lim)) <$> draws Bytes32 n) := by
+      simp only [draws, map_bind, map_pure, List.map_cons, bind_map_left, Functor.map_map]
+      simp only [map_eq_bind_pure_comp, Function.comp_def]
+    have e2 : draws F (n + 1) = ($ᵗ F : ProbComp F) >>= fun x => (fun l => x :: l) <$> draws F n := by
+      simp only [draws, map_eq_bind_pure_comp, Function.comp_def]
+    rw [e1, e2]
+    exact EvalDistEq.bind (chalL_evalDistEq lim) fun x => (draws_chalL_evalDistEq lim n).map _
+
+theorem prEvent_draws_chalL (lim : F ≃ Limbs) (n : ℕ) (Q : List F → Prop) :
+    Pr{let l ← draws Bytes32 n}[Q (l.map (chalL lim))] = Pr{let l ← draws F n}[Q l] := by
+  rw [← prEvent_map]
+  exact (draws_chalL_evalDistEq lim n).prEvent_eq Q
+
+end Chal
+
+/-! ## Cells along a path of a uniform table -/
+
+section Path
+
+variable {D Rg : Type} [DecidableEq D] [Fintype D] [SampleableType Rg] [SampleableType (D → Rg)]
+
+/-- The cells of a path: `t`, then the cell `f` names from its answer, `n` of them. -/
+def pathCells (g : D → Rg) (f : Rg → D) : D → ℕ → List D
+  | _, 0 => []
+  | t, n + 1 => t :: pathCells g f (f (g t)) n
+
+/-- The answers along a path. -/
+def pathAns (g : D → Rg) (f : Rg → D) : D → ℕ → List Rg
+  | _, 0 => []
+  | t, n + 1 => g t :: pathAns g f (f (g t)) n
+
+theorem path_update (g : D → Rg) (f : Rg → D) (t : D) (a : Rg) : ∀ (n : ℕ) (y : D),
+    t ∉ pathCells (Function.update g t a) f y n →
+      pathCells (Function.update g t a) f y n = pathCells g f y n ∧
+        pathAns (Function.update g t a) f y n = pathAns g f y n
+  | 0, _, _ => ⟨rfl, rfl⟩
+  | n + 1, y, h => by
+    simp only [pathCells, List.mem_cons, not_or] at h
+    have hu : Function.update g t a y = g y := Function.update_of_ne (Ne.symm h.1) _ _
+    have ih := path_update g f t a n (f (Function.update g t a y)) h.2
+    rw [hu] at ih
+    simp only [pathCells, pathAns, hu, ih.1, ih.2, and_self]
+
+/-- **`n` distinct cells along a path are `n` uniform draws** (`prEvent_three_cells`, for any
+`n`). -/
+theorem prEvent_path (f : Rg → D) : ∀ (n : ℕ) (t : D) (Q : List Rg → Prop),
+    Pr{let g ← $ᵗ (D → Rg)}[(pathCells g f t n).Nodup ∧ Q (pathAns g f t n)] ≤
+      Pr{let l ← draws Rg n}[Q l]
+  | 0, t, Q => by
+    classical
+    simp only [pathCells, pathAns, List.nodup_nil, true_and, draws]
+    by_cases hq : Q []
+    · rw [prEvent_pure [] Q]
+      simp only [hq, ite_true]
+      exact prEvent_le_one _
+    · rw [prEvent_const_of_not _ hq]
+      exact bot_le
+  | n + 1, t, Q => by
+    rw [prEvent_uniformTable_update (R := fun _ => Rg) t]
+    calc _ ≤ prEvent (($ᵗ Rg : ProbComp Rg) >>= fun a =>
+          (fun l => Q (a :: l)) <$> draws Rg n) := by
+          refine prEvent_bind_mono' _ _ _ fun a => ?_
+          refine (prEvent_mono _ _ (fun g => (pathCells g f (f a) n).Nodup ∧
+            Q (a :: pathAns g f (f a) n)) fun g h => ?_).trans
+            (prEvent_path f n (f a) fun l => Q (a :: l))
+          simp only [pathCells, pathAns, Function.update_self, List.nodup_cons] at h
+          obtain ⟨⟨hn, hd⟩, hq⟩ := h
+          obtain ⟨e1, e2⟩ := path_update g f t a n (f a) hn
+          rw [e1] at hd
+          rw [e2] at hq
+          exact ⟨hd, hq⟩
+      _ = Pr{let l ← draws Rg (n + 1)}[Q l] := by
+          simp only [draws, map_bind, map_pure]
+          simp only [map_eq_bind_pure_comp, Function.comp_def]
+
+end Path
+
+section CachePath
+
+variable {S : Finset (List UInt8)}
+
+/-- **A round's squeezes on a cache's completion are a path of the table**: its first input
+fresh, the inputs after it not asked, the answers are the table's along the path. -/
+theorem allIn_tableOf (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (g : ↥S → Bytes32) :
+    ∀ (n : ℕ) (t : ↥S), c t = none →
+      (∀ y ∈ (allIn (tableOf c g) t.1 (List.replicate n [])).tail, y ∉ histOf c) →
+        allIn (tableOf c g) t.1 (List.replicate n []) =
+            (pathCells g (fun u => ⟨u.toList, hS₀ u⟩) t (n + 1)).map Subtype.val ∧
+          (allIn (tableOf c g) t.1 (List.replicate n [])).map (tableOf c g) =
+            pathAns g (fun u => ⟨u.toList, hS₀ u⟩) t (n + 1)
+  | 0, t, ht, _ => by
+    simp [allIn, pathCells, pathAns, tableOf_fresh c ht g]
+  | n + 1, t, ht, h => by
+    have e : tableOf c g t.1 = g t := tableOf_fresh c ht g
+    have hstep : stepIn (tableOf c g t.1) [] = (g t).toList := by rw [stepIn_nil, e]
+    have hall : allIn (tableOf c g) t.1 (List.replicate (n + 1) []) =
+        t.1 :: allIn (tableOf c g) (g t).toList (List.replicate n []) := by
+      rw [List.replicate_succ, allIn, hstep]
+    rw [hall] at h ⊢
+    have hmem : (g t).toList ∉ histOf c := h _ (head_mem_allIn _ _ _)
+    have ht' : c ⟨(g t).toList, hS₀ _⟩ = none := by
+      by_contra hne
+      exact hmem (mem_histOf.mpr ⟨hS₀ _, hne⟩)
+    have ih := allIn_tableOf hS₀ c g n ⟨(g t).toList, hS₀ _⟩ ht'
+      (fun y hy => h y (List.mem_of_mem_tail hy))
+    simp only at ih
+    refine ⟨?_, ?_⟩
+    · rw [ih.1]
+      rfl
+    · rw [List.map_cons, ih.2, e]
+      rfl
+
+/-- **A round's challenges, its squeezes fresh and distinct, are uniform draws.** -/
+theorem prEvent_round (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (t : ↥S)
+    (ht : c t = none) (n : ℕ) (Q : List Bytes32 → Prop) :
+    Pr{let g ← $ᵗ (↥S → Bytes32)}[
+      (∀ y ∈ (allIn (tableOf c g) t.1 (List.replicate n [])).tail, y ∉ histOf c) ∧
+        (allIn (tableOf c g) t.1 (List.replicate n [])).Nodup ∧
+          Q ((allIn (tableOf c g) t.1 (List.replicate n [])).map (tableOf c g))] ≤
+      Pr{let l ← draws Bytes32 (n + 1)}[Q l] := by
+  refine (prEvent_mono _ _ (fun g => (pathCells g (fun u => ⟨u.toList, hS₀ u⟩) t (n + 1)).Nodup ∧
+    Q (pathAns g (fun u => ⟨u.toList, hS₀ u⟩) t (n + 1))) fun g h => ?_).trans
+      (prEvent_path _ (n + 1) t Q)
+  obtain ⟨h1, h2, h3⟩ := h
+  obtain ⟨e1, e2⟩ := allIn_tableOf hS₀ c g n t ht h1
+  rw [e1] at h2
+  rw [e2] at h3
+  exact ⟨(List.nodup_map_iff Subtype.val_injective).mp h2, h3⟩
+
+end CachePath
+
+/-! ## The protocol's round-by-round soundness -/
+
+/-- **An opened transcript**: each round's opened message (its root's candidate, if it has a
+root, and its values) and its challenges. -/
+abbrev Opened (M F : Type) := List ((Option M × List F) × List F)
+
+/-- **The protocol's round-by-round knowledge soundness**, a parameter: the state `pre s p m`
+before round `p.length`'s challenges (after the opened rounds `p` and its opened message `m`), the
+state `post s p m c` after them, the next round's state implying this round's after
+(`pre_post`), and each round's error `err j`: over `ns + 1` uniform challenges, the probability
+that the round turns its state from lost to won, for every prefix and message. -/
+structure Piop {St : Type} [SampleableType F] (K : ChainSpec F St) (M : Type) where
+  pre : St → Opened M F → Option M × List F → Prop
+  post : St → Opened M F → Option M × List F → List F → Prop
+  pre_post : ∀ s p m c m', pre s (p ++ [(m, c)]) m' → post s p m c
+  err : ℕ → ℝ≥0∞
+  sound : ∀ (j : ℕ) (s : St) (p : Opened M F) (m : Option M × List F), j < K.rounds.length →
+    p.length = j → Pr{let c ← draws F ((K.spec j).ns + 1)}[¬ pre s p m ∧ post s p m c] ≤ err j
+
+/-- **A transcript is lost at the start and won at the end**: the first round's state before its
+challenges is lost, the last round's after its challenges won. -/
+def Piop.LostWon {St M : Type} [SampleableType F] {K : ChainSpec F St} (R : Piop K M) (s : St) :
+    Opened M F → Prop
+  | [] => False
+  | (m, c) :: rest => ¬ R.pre s [] m ∧
+      ∃ p m' c', (m, c) :: rest = p ++ [(m', c')] ∧ R.post s p m' c'
+
+/-- **The round-by-round argument**: a transcript lost at the start and won at the end has a
+round that turns its state from lost to won. -/
+theorem Piop.exists_bad {St M : Type} [SampleableType F] {K : ChainSpec F St} (R : Piop K M)
+    (s : St) : ∀ (rest : Opened M F) (p : Opened M F) (m : Option M × List F) (c : List F),
+      ¬ R.pre s p m → (∃ q m' c', p ++ (m, c) :: rest = q ++ [(m', c')] ∧ R.post s q m' c') →
+        ∃ p' m' c' rest', p ++ (m, c) :: rest = p' ++ (m', c') :: rest' ∧ ¬ R.pre s p' m' ∧
+          R.post s p' m' c'
+  | [], p, m, c, hpre, ⟨q, m', c', he, hpost⟩ => by
+    obtain ⟨rfl, he'⟩ := List.append_inj' he rfl
+    simp only [List.cons.injEq, Prod.mk.injEq, and_true] at he'
+    rcases he' with ⟨rfl, rfl⟩
+    exact ⟨_, _, _, [], rfl, hpre, hpost⟩
+  | (m₂, c₂) :: rest, p, m, c, hpre, hwin => by
+    by_cases hpost : R.post s p m c
+    · exact ⟨p, m, c, (m₂, c₂) :: rest, rfl, hpre, hpost⟩
+    · have hpre₂ : ¬ R.pre s (p ++ [(m, c)]) m₂ := fun h => hpost (R.pre_post s p m c m₂ h)
+      have e : p ++ (m, c) :: (m₂, c₂) :: rest = (p ++ [(m, c)]) ++ (m₂, c₂) :: rest := by simp
+      rw [e] at hwin ⊢
+      exact Piop.exists_bad R s rest (p ++ [(m, c)]) m₂ c₂ hpre₂ hwin
+
+theorem Piop.exists_bad_of_lostWon {St M : Type} [SampleableType F] {K : ChainSpec F St}
+    (R : Piop K M) (s : St) (full : Opened M F) (h : R.LostWon s full) :
+    ∃ p m c rest, full = p ++ (m, c) :: rest ∧ ¬ R.pre s p m ∧ R.post s p m c := by
+  match full, h with
+  | (m, c) :: rest, ⟨hpre, hwin⟩ =>
+    exact R.exists_bad s rest [] m c hpre (by simpa using hwin)
+
+/-! ## The candidates -/
+
+/-- A round's candidates: its root's, as `some`, or `none` for a round without a root. -/
+def optC {M : Type} (C : ListCommit M) (H : Hist) (T : Table) (m : RMsg F) : List (Option M) :=
+  match m.1 with
+  | some r => (C.cands H T r).map some
+  | none => [none]
+
+/-- The candidate lists of the rounds from round `i` on. -/
+def candLists {M : Type} (C : ℕ → ListCommit M) (H : Hist) (T : Table) :
+    ℕ → List (RMsg F) → List (List (Option M))
+  | _, [] => []
+  | i, m :: ms => optC (C i) H T m :: candLists C H T (i + 1) ms
+
+/-- **The union bound's factor**: the product of the list bounds of the rounds' roots, from round
+`i` on (`1` for a round without a root). -/
+def facL {M : Type} (C : ℕ → ListCommit M) : ℕ → List RoundSpec → ℕ
+  | _, [] => 1
+  | i, s :: rs => (if s.root then (C i).bound else 1) * facL C (i + 1) rs
+
+/-- The opened transcript of candidates, messages and challenges. -/
+def opened {M : Type} : List (Option M) → List (RMsg F) → List (List F) → Opened M F
+  | c :: cs, m :: ms, ch :: chs => ((c, m.2), ch) :: opened cs ms chs
+  | _, _, _ => []
+
+section Cands
+
+variable {M : Type}
+
+theorem length_optC_le (C : ListCommit M) (H : Hist) (T : Table) {s : RoundSpec} {m : RMsg F}
+    (h : m.Fits s) : (optC C H T m).length ≤ if s.root then C.bound else 1 := by
+  obtain ⟨r, l⟩ := m
+  obtain ⟨hr, -⟩ := h
+  cases r with
+  | none =>
+    simp only at hr
+    simp [optC, ← hr]
+  | some r =>
+    simp only [Option.isSome_some] at hr
+    simp only [optC, List.length_map, ← hr, ite_true]
+    exact C.length_le H T r
+
+theorem prod_candLists_le (C : ℕ → ListCommit M) (H : Hist) (T : Table) :
+    ∀ (i : ℕ) (rs : List RoundSpec) (ms : List (RMsg F)), FitsAll rs ms →
+      ((candLists C H T i ms).map List.length).prod ≤ facL C i rs
+  | _, [], [], _ => by simp [candLists, facL]
+  | i, s :: rs, m :: ms, h => by
+    simp only [candLists, facL, List.map_cons, List.prod_cons]
+    exact Nat.mul_le_mul (length_optC_le (C i) H T h.1) (prod_candLists_le C H T (i + 1) rs ms h.2)
+  | _, [], _ :: _, h => h.elim
+  | _, _ :: _, [], h => h.elim
+
+theorem facL_append (C : ℕ → ListCommit M) : ∀ (i : ℕ) (rs₁ rs₂ : List RoundSpec),
+    facL C i (rs₁ ++ rs₂) = facL C i rs₁ * facL C (i + rs₁.length) rs₂
+  | i, [], rs₂ => by simp [facL]
+  | i, s :: rs₁, rs₂ => by
+    simp only [List.cons_append, facL, facL_append C (i + 1) rs₁ rs₂, List.length_cons]
+    rw [mul_assoc, show i + 1 + rs₁.length = i + (rs₁.length + 1) by omega]
+
+theorem candLists_congr (C : ℕ → ListCommit M) {H : Hist} {T T' : Table}
+    (h : ∀ d ∈ H, T d = T' d) : ∀ (i : ℕ) (ms : List (RMsg F)),
+      candLists C H T i ms = candLists C H T' i ms
+  | _, [] => rfl
+  | i, m :: ms => by
+    simp only [candLists, candLists_congr C h (i + 1) ms, List.cons.injEq, and_true]
+    unfold optC
+    split <;> simp [(C i).congr H T T' _ h]
+
+theorem optC_congr (C : ListCommit M) {H : Hist} {T T' : Table} (h : ∀ d ∈ H, T d = T' d)
+    (m : RMsg F) : optC C H T m = optC C H T' m := by
+  unfold optC
+  split <;> simp [C.congr H T T' _ h]
+
+theorem length_opened : ∀ (cs : List (Option M)) (ms : List (RMsg F)) (chs : List (List F)),
+    cs.length = ms.length → chs.length = ms.length → (opened cs ms chs).length = ms.length
+  | [], [], [], _, _ => rfl
+  | _ :: cs, _ :: ms, _ :: chs, h1, h2 => by
+    simp only [opened, List.length_cons] at h1 h2 ⊢
+    rw [length_opened cs ms chs (by omega) (by omega)]
+  | [], _ :: _, _, h, _ => by simp at h
+  | _ :: _, [], _, h, _ => by simp at h
+  | _, [], _ :: _, _, h => by simp at h
+  | _, _ :: _, [], _, h => by simp at h
+
+/-- **The union bound over a product of lists**: if each tuple's event has probability at most
+`ε`, some tuple of the lists' members has probability at most the product of the lengths times
+`ε`. -/
+theorem prEvent_forall₂_le {α β : Type} (mx : ProbComp α) (E : List β → α → Prop) (ε : ℝ≥0∞) :
+    ∀ Ls : List (List β), (∀ cs, Pr{let a ← mx}[E cs a] ≤ ε) →
+      Pr{let a ← mx}[∃ cs, List.Forall₂ (· ∈ ·) cs Ls ∧ E cs a] ≤ ((Ls.map List.length).prod : ℕ) * ε
+  | [], h => by
+    refine (prEvent_mono _ _ (fun a => E [] a) fun a ha => ?_).trans ?_
+    · obtain ⟨cs, hcs, he⟩ := ha
+      rw [List.forall₂_nil_right_iff] at hcs
+      rwa [hcs] at he
+    · simpa using h []
+  | l :: Ls, h => by
+    have hl := fun b => prEvent_forall₂_le mx (fun cs a => E (b :: cs) a) ε Ls fun cs => h (b :: cs)
+    refine (prEvent_mono _ _ (fun a => ∃ b ∈ l, ∃ cs, List.Forall₂ (· ∈ ·) cs Ls ∧ E (b :: cs) a)
+      fun a ha => ?_).trans ?_
+    · obtain ⟨cs, hcs, he⟩ := ha
+      cases hcs with
+      | cons hb hcs' => exact ⟨_, hb, _, hcs', he⟩
+    · refine (prEvent_exists_mem_le mx _ _ l fun b _ => hl b).trans (le_of_eq ?_)
+      simp only [List.map_cons, List.prod_cons, Nat.cast_mul, mul_assoc]
+
+end Cands
+
+end Compose
