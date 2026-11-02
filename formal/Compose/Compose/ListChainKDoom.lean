@@ -102,7 +102,8 @@ structure WhirShape where
 /-- **The deployed layouts** (witness, wiring, quotient at `17 ≤ log_rows ≤ 22`): F2's
 `ours_sound`, at the uniform `10122` queries. -/
 @[reducible] noncomputable def WhirShape.small (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r)
-    (h2 : r ≤ WhirBridge.maxLogRows) (L : Layout) (hL : L = witnessLayout r ∨ L = wiringLayout r ∨ L = quotientLayout r) : WhirShape where
+    (h2 : r ≤ WhirBridge.maxLogRows) (L : Layout)
+    (hL : L = witnessLayout r ∨ L = wiringLayout r ∨ L = quotientLayout r) : WhirShape where
   L := L
   R := logInvRate
   QO := 10122
@@ -409,7 +410,8 @@ theorem prEvent_stageK_le (o : WhirOp Pf F M) (k : ℕ) (X : OracleComp KeccakCa
   have h := prEvent_loggedPrefix X
     (fun x => ourVerifier o.S.L o.S.R (WhirOp.input view o x.1.1 x.1.2.1))
     (fun x b c => b = true ∧ OpeningDoomed o.S.L o.S.R (WhirOp.input view o x.1.1 x.1.2.1) c)
-    (readsInl_openingDoomed o.S.L o.S.R fun x : PreK Pf F × Stg => WhirOp.input view o x.1.1 x.1.2.1)
+    (readsInl_openingDoomed o.S.L o.S.R fun x : PreK Pf F × Stg =>
+      WhirOp.input view o x.1.1 x.1.2.1)
   have hs := o.S.sound ((fun x : PreK Pf F × Stg => WhirOp.input view o x.1.1 x.1.2.1) <$> X) QX
     ((isQueryBound_map_iff _ _ _ _ _).mpr hX)
   rw [romExperiment_map, prEvent_map] at hs
@@ -506,7 +508,8 @@ theorem stagesK_at (T : KTable) : ∀ (ops : List (WhirOp Pf F M)) (k : ℕ)
     (o : WhirOp Pf F M), ops[m] = o →
     (evalWithAnswerFn (QueryImpl.ofFn T) (stagesK view ops k X)).2 (k + m) =
       (evalWithAnswerFn (QueryImpl.ofFn T) (ourVerifier o.S.L o.S.R (WhirOp.input view o
-          (evalWithAnswerFn (QueryImpl.ofFn T) X).1.1 (evalWithAnswerFn (QueryImpl.ofFn T) X).1.2.1)),
+          (evalWithAnswerFn (QueryImpl.ofFn T) X).1.1
+          (evalWithAnswerFn (QueryImpl.ofFn T) X).1.2.1)),
         (tableQueryLog X T ++ tableQueryLog (opsRun view (ops.take (m + 1))
           (evalWithAnswerFn (QueryImpl.ofFn T) X).1.1
           (evalWithAnswerFn (QueryImpl.ofFn T) X).1.2.1) T).filterMap inlEntry)
@@ -570,7 +573,8 @@ theorem withSetupG_run {σ : Type} (setup : OracleComp KeccakCalls σ) (fix : σ
         tableQueryLog (A₀ (evalWithAnswerFn (QueryImpl.ofFn T) setup)) T ∧
       evalWithAnswerFn (QueryImpl.ofFn T) (withSetupG setup fix A₀) =
         fix (evalWithAnswerFn (QueryImpl.ofFn T) setup)
-          (evalWithAnswerFn (QueryImpl.ofFn T) (A₀ (evalWithAnswerFn (QueryImpl.ofFn T) setup))) := by
+          (evalWithAnswerFn (QueryImpl.ofFn T)
+            (A₀ (evalWithAnswerFn (QueryImpl.ofFn T) setup))) := by
   constructor
   · rw [withSetupG, tableQueryLog_bind, tableQueryLog_map]
   · rw [withSetupG, evalWithAnswerFn_bind, evalWithAnswerFn_map]
@@ -1133,7 +1137,8 @@ theorem knowledgeSoundness_listChainK_closed_rpm (ops : List (WhirOp Pf F M))
             5 * ((QS + (QS + Q) + K.nQ + (ops.map fun o => o.S.QO).sum : ℕ) : ℝ≥0∞) / 2 ^ 256) +
         ((QSπ + Q + QVπ : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 := by
   obtain ⟨A', hA', hle⟩ := rpm_le_kcG setup hSH QS QSπ hSq hSπ fix A Q hA
-    (verK K view (opsRun view ops)) (duplexVm_verK K view _ fun π ch => duplexVm_opsRun view ops π ch)
+    (verK K view (opsRun view ops))
+    (duplexVm_verK K view _ fun π ch => duplexVm_opsRun view ops π ch)
     QVπ hVπ
     (fun z tr => BreaksOK K (fun i => (tc i).commit) R view check
       (fun bs => ∀ k < ops.length, bs.getD k false = true) (z, tr))
