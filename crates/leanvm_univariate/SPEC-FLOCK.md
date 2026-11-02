@@ -15,7 +15,7 @@ Flock's semantics and its soundness.
 | the slices left to one **bit-slice combination claim** (lever a) | 160 | 3,840 B | 34,666 |
 | that, plus a smaller univariate skip (lever c, `k = 0`–`4`) | 96 to 112 | 2,304 to 2,688 B | 20,000 to 23,000 |
 
-**The floor.** Any Flock with a sumcheck in the contract costs at least `2 (log_n + 14) + 4 = 96` scalars. That is
+**The floor.** Flock's two sumchecks (a zerocheck of `log_n` variables, a lincheck of 14, degree-2 rounds) cost at least `2 (log_n + 14) + 4 = 96` scalars. That is
 2.3 KB, or 92,000 gas at EIP-7623's floor. So the whole PIOP cannot get below 100,000 gas while BLAKE2s is proved
 in the contract at this size.
 

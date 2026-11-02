@@ -189,7 +189,7 @@ What Flock reads and leaves (`crates/leanvm_flock_gas/src/flock_min.rs`, measure
   `T = Σ_i g^i Φ(s_i)`, which costs 66,288. The weight `Φ(eq(P, ·))` goes as 64 twisted terms, as first written
   here: 168 scalars at `k = 3`, 87,516 of execution.
 
-**Floor.** Any sumcheck Flock reads at least `2 (log_n + 14) + 4 = 96` scalars, 2.3 KB, about 92,000 gas at
+**Floor.** Flock's two sumchecks (a zerocheck of `log_n` variables, a lincheck of 14, degree-2 rounds) read at least `2 (log_n + 14) + 4 = 96` scalars, 2.3 KB, about 92,000 gas at
 EIP-7623's floor. The < 100K target for the whole PIOP therefore needs BLAKE2s out of the contract. Option B (no
 sumcheck) cannot do it: it does not fit WHIR, `SPEC-B.md`. What could is an R1CS-validity claim type that the
 block's builder proves.
