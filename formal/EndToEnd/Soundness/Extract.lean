@@ -26,8 +26,10 @@ transcript's):
 
 set_option linter.unusedSectionVars false
 
--- The membership circuit is a closed term of `2^22` rows: never unfold its builder's run.
-attribute [local irreducible] PcsQuotient.membershipBuilder
+-- The membership circuit is a closed term of `2^22` rows, and its cells an additive transform of
+-- `2^24` entries: never evaluate them (no simprocs here, which would try to decide the relation).
+attribute [local irreducible] PcsQuotient.membershipBuilder PcsQuotient.secretOfStack
+set_option simprocs false
 
 namespace Soundness
 
@@ -117,13 +119,17 @@ theorem extractFrom_spec (n : ℕ) (circuit : PcsQuotient.Circuit) (hlog : circu
     ∃ w, PcsQuotient.extractFrom circuit stmt answers keys proof = some w ∧
       PcsQuotient.Relation stmt w := by
   unfold PcsQuotient.extractFrom
-  rw [hlog, hw]
-  simp only [Option.bind_eq_bind, Option.bind_some]
+  rw [hlog, hw, Option.bind_eq_bind, Option.bind_some]
   refine findSome_orElse _ _ _ (PcsQuotient.Relation stmt) (fun a b hab => ?_) ⟨st, hst, ?_⟩
-  · split_ifs at hab with hr
-    cases hab
-    exact hr
-  · rw [if_pos hrel]
+  · by_cases hr : PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit a)
+    · rw [if_pos hr] at hab
+      cases hab
+      exact hr
+    · rw [if_neg hr] at hab
+      cases hab
+  · show (if PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit st) then
+      some (PcsQuotient.secretOfStack circuit st) else none).isSome = true
+    rw [if_pos hrel]
     rfl
 
 /-- **If Compose's list holds a witness, the Statement's extractor finds a secret.** For a proof
