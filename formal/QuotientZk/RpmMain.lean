@@ -11,16 +11,52 @@ import Common.PiOnly
 /-!
 # Zero knowledge in the random-permutation model
 
-## The random-oracle game with a distinguisher of the permutation
+leanerVM's model (`Statement/RandomPermutation.lean`): one uniformly random permutation `π` of the
+Keccak-f[1600] state, queried forward and inverse; Keccak-256 is the sponge over `π`
+(`Common.keccak256OverPermutation`).
 
-In the random-permutation model the distinguisher queries `π` and `π⁻¹`, not a hash. Read in the
-random-oracle model through the indifferentiability simulator `S` (`Common.simulator`), its
-permutation queries are answered by `S` from the random oracle's cache (`runS`). The real game
-(`realGameS`: honest proof, then `D` through `S` from the prover's cache) and the simulated game
-(`simGameS`: `sim`'s proof, then `D` through `S` from `sim`'s programmed cache) are `zk_rom`'s
-games for the distinguisher `D` through `S`; `S` has coins, which `simulator_tape` draws first,
-so that for each tape it is a coin-free distinguisher of the random oracle with at most as many
-queries as `D` (`zk_rom_perm`).
+**The games.** The real game (`realGameRpm`): uniform randomness `s`; the prover of `zk_rom` (the
+skeleton `skel` with the honest messages and rows), every hash Keccak-256 over `π` (`proverWith`
+with `keccak256OverPermutation`); then the distinguisher `D`, which sees the proof and queries `π`
+and `π⁻¹` (`zkGameRpm`, run with `Common.runWithRandomPermutation`). The simulated game
+(`simGameRpm`): the simulator, without `s`, runs `zk_rom`'s `sim` (the challenges programmed into
+the random oracle, the simulated view, fresh private digests at the unopened leaves), which gives
+the proof and the programmed cache; then it answers `D`'s queries of `π` and `π⁻¹` itself, with
+the indifferentiability simulator `S` of Bertoni, Daemen, Peeters and Van Assche
+(`Common.simulator`, through the lanes-to-bytes bijection: `simPerm`), whose Keccak-256 queries
+are answered by the random oracle from the programmed cache. A forward query that ends a sponge
+path padding a message `m` gets `H m` (programmed or fresh) completed by uniform bits; any other
+fresh query a uniform state.
+
+**The simulator's cost.** No query of the real `π` (it emulates `π`, as `sim` programs the random
+oracle); `sim`'s cost (`n` uniform challenges, `simV`, the skeleton's `QP` operations, each a
+cache lookup or a uniform digest); and per query of `D` one step of `S`: lookups in at most `QD`
+edges and `QD + 1` rooted states, the unpadding of one path, at most one random-oracle lookup or
+uniform digest and one uniform state.
+
+**The theorem** (`zk_rpm`). The two games output `true` with probabilities within
+`εFS + εhv + N (QP + QD) δ + N² δ₂ + Q² / 2^509`: `zk_rom`'s bound (empty cache before the
+proof; `D` through `S` asks the random oracle at most `QD` times) plus `common`'s
+indifferentiability term for the `Q` permutation calls of the real game.
+
+**The proof.** ZK is a single-stage game: the real game, prover and distinguisher together, is one
+distinguisher of the indifferentiability game (the prover's hashes are its queries of `H`, `D`'s
+queries are its queries of `π`), so `common`'s transfer (`Common.keccak256_transfer`, after the
+statement's model is read with a Keccak-256 oracle, `Common.runK_expand`, and on bytes,
+`Common.runK_relabel`) moves it to the random-oracle model with `D`'s queries answered by `S`
+(`realGameRpm_close`). There it is `zk_rom`'s real game for the distinguisher `D` through `S`
+(`realGameS`; the prover asking the random oracle is `implReal`, `romImpl_proverWith`), and the
+simulated game is `zk_rom`'s simulated game for the same distinguisher (`simGameS`), equal to
+`simGameRpm` by definition: the indifferentiability term is paid once, on the real side. `S` has
+coins and `zk_rom`'s distinguisher has none: `simulator_tape` draws `S`'s `QD` uniform states
+first, and for each tape `D` through `S` is a coin-free distinguisher of the random oracle with
+at most `QD` queries (`zk_rom_perm`), the bound averaged over the tape.
+
+**Scope.** Every hash of the prover is Keccak-256 over `π` (the Merkle nodes and leaves, the chain
+of `transcript.rs`): the openings' duplex over Keccak-f[1600] (`fiat_shamir`), which calls `π`
+directly, is not covered (with it, `S` must also know the simulator's programmed duplex edges;
+see the end of this file). `D` has no coins (statistical zero knowledge: a distinguisher with coins
+is an average of coin-free ones over its coin tape).
 -/
 
 open OracleComp OracleSpec Common
@@ -38,7 +74,14 @@ theorem Close.bind_const {T : Type} (τ : ProbComp T) (R Sm : T → ProbComp Boo
   refine (Close.bind τ R Sm (fun _ ↦ ε) h).mono (le_of_eq ?_)
   rw [ENNReal.tsum_mul_right, tsum_prEvent_eq_one, one_mul]
 
-/-! ## The random-oracle game with a distinguisher of the permutation -/
+/-! ## The random-oracle game with a distinguisher of the permutation
+
+In the random-permutation model the distinguisher queries `π` and `π⁻¹`, not a hash. Read in the
+random-oracle model through `S`, its permutation queries are answered by `S` from the random
+oracle's cache (`runS`). The real game (`realGameS`: honest proof, then `D` through `S` from the
+prover's cache) and the simulated game (`simGameS`: `sim`'s proof, then `D` through `S` from
+`sim`'s programmed cache) are `zk_rom`'s games for the distinguisher `D` through `S`, once `S`'s
+coins are drawn first (`zk_rom_perm`). -/
 
 section PermRom
 
@@ -350,5 +393,22 @@ theorem zk_rpm [Fintype (K × X)] (skel : OracleComp (OpSpec (List UInt8) Digest
   rw [add_comm]
 
 end Keccak
+
+/-! ## The openings' duplex (not covered)
+
+The openings' Fiat–Shamir duplex (`crates/fiat_shamir`) calls Keccak-f[1600] directly: `π` on a
+state that overwrites the rate of the previous output and keeps its capacity. Its challenges are
+the first three lanes of `π`'s outputs, and the verifier, hence `D`, recomputes the duplex from the
+proof: a simulator that programs these challenges must answer `D`'s queries of `π` on the duplex
+states with the programmed outputs. The route, with `common`'s two-oracle model (`H` and a random
+function `F` for the direct calls, `Common.Indiff2`): (1) the chain of `Common.transfer2`
+(`indifferentiability` of the unfolded game, `ideal1_evalDistEq_ideal1F`, `ideal1F_le_shadow`,
+`prEvent_disagree_le`) holds for any game whose direct calls follow the duplex discipline
+(`Common.DuplexOK`), the prover's coming first, at `indiffBound2` (`Q² / 2^508` for Keccak); (2) in
+its shadow world the prover's direct calls are recorded in `S`'s state, so the distinguisher is
+`S` (`Common.simulator2`) from the replay of the prover's direct calls with their answers: the
+simulator replays its programmed ones; (3) `zk_rom` with `I` the Keccak-256 inputs and the duplex
+states, `O` a state, for a skeleton that also outputs its direct calls with their answers, and a
+prover whose Keccak-256 answers are read through the digest. -/
 
 end QuotientZk
