@@ -114,8 +114,8 @@ heap, which doubles the heap (`2^24`) for no fewer values.
 cell1.c1)`, the K-limbs of memory cells 0 and 1. leanVM's statement reads its 32-byte digest as little-endian words
 (`Digest::words`), so a caller passes each of the digest's four 8-byte words byte-reversed. Accepting the digest
 unchanged would cost the contract a byte swap of the four words, about 110 gas (three mask-shift-or steps on the
-256-bit word, then the four extractions; modelled), more than the few gas this convention costs nothing, so the
-convention is kept and documented here and in `contract.rs`.
+256-bit word, then the four extractions; modelled), which is more than a few gas, while the convention costs nothing.
+So the convention is kept, and documented here and in `contract.rs`.
 
 The transcript is a Keccak-256 chain (`leanvm_flock_gas::transcript::KeccakChannel`). A challenge is one Keccak-256
 of the state and the calldata bytes read since the last one. A scalar is 24 bytes, a root half 16. The seed is the
