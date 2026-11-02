@@ -270,4 +270,71 @@ theorem card_powComb_le (a : List E) (h : ∃ x ∈ a, x ≠ 0) :
   rw [eval_powPoly]
   exact hρ
 
+/-! ## Two challenges, a combination of combinations -/
+
+/-- Pairs of challenges counted along the first: at most `Σ_ρ f ρ` when each `ρ` has at most
+`f ρ` partners. -/
+theorem card_fin_two_le (Q : E → E → Prop) [∀ a b, Decidable (Q a b)] (f : E → ℕ)
+    (h : ∀ ρ, (univ.filter (Q ρ)).card ≤ f ρ) :
+    (univ.filter fun v : Fin 2 → E => Q (v 0) (v 1)).card ≤ ∑ ρ : E, f ρ := by
+  rw [Finset.card_eq_sum_card_fiberwise (f := fun v : Fin 2 → E => v 0) (t := univ)
+    (fun _ _ => mem_univ _)]
+  refine Finset.sum_le_sum fun ρ _ => (le_of_eq ?_).trans (h ρ)
+  refine Finset.card_bij (fun v _ => v 1) (fun v hv => ?_) (fun v hv w hw hvw => ?_)
+    (fun l hl => ?_)
+  · simp only [mem_filter, mem_univ, true_and] at hv ⊢
+    rw [← hv.2]
+    exact hv.1
+  · simp only [mem_filter, mem_univ, true_and] at hv hw
+    funext i
+    fin_cases i
+    · exact hv.2.trans hw.2.symm
+    · exact hvw
+  · refine ⟨![ρ, l], ?_, rfl⟩
+    simp only [mem_filter, mem_univ, true_and] at hl ⊢
+    exact ⟨hl, rfl⟩
+
+/-- **A combination by `λ` of combinations by `ρ`** of vectors one of which is nonzero (the
+batch's start: `λ` over the commitments, `ρ` over each one's relations) vanishes at at most
+`(n − 1 + m − 1) / |E|` of the pairs `(ρ, λ)`, `n` bounding the vectors' lengths and `m` their
+number. -/
+theorem prEvent_twoLevel_le (ds : List (List E)) (n m : ℕ) (hn : ∀ d ∈ ds, d.length ≤ n)
+    (hm : ds.length ≤ m) (hbad : ∃ d ∈ ds, ∃ x ∈ d, x ≠ 0) :
+    Pr{let c ← Compose.draws E 2}[
+        powComb (ds.map fun d => powComb d (c.headD 0)) (c.getD 1 0) = 0] ≤
+      (((n - 1) + (m - 1) : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
+  classical
+  obtain ⟨d₀, hd₀, hbad₀⟩ := hbad
+  refine prEvent_draws_le_of_card 1 _ _ ?_
+  rw [pow_one]
+  have hc := card_fin_two_le (fun ρ l => powComb (ds.map fun d => powComb d ρ) l = 0)
+    (fun ρ => if powComb d₀ ρ = 0 then Fintype.card E else m - 1) (fun ρ => by
+      split_ifs with h0
+      · exact card_le_univ _
+      · refine (card_powComb_le _ ⟨powComb d₀ ρ,
+          List.mem_map_of_mem (f := fun d => powComb d ρ) hd₀, h0⟩).trans ?_
+        simp only [List.length_map]
+        omega)
+  have hcard : (univ.filter fun v : Fin (1 + 1) → E =>
+      powComb (ds.map fun d => powComb d ((List.ofFn v).headD 0)) ((List.ofFn v).getD 1 0) = 0).card
+        = (univ.filter fun v : Fin 2 → E =>
+          powComb (ds.map fun d => powComb d (v 0)) (v 1) = 0).card := by
+    congr 1
+  rw [hcard]
+  refine hc.trans ?_
+  have hsplit : ∑ ρ : E, (if powComb d₀ ρ = 0 then Fintype.card E else m - 1) ≤
+      (univ.filter fun ρ : E => powComb d₀ ρ = 0).card * Fintype.card E +
+        Fintype.card E * (m - 1) := by
+    rw [Finset.sum_ite, Finset.sum_const, Finset.sum_const, smul_eq_mul, smul_eq_mul]
+    refine add_le_add le_rfl (Nat.mul_le_mul_right _ (card_le_univ _))
+  refine hsplit.trans ?_
+  have h0 := card_powComb_le d₀ hbad₀
+  have h1 : (univ.filter fun ρ : E => powComb d₀ ρ = 0).card ≤ n - 1 :=
+    h0.trans (by have := hn d₀ hd₀; omega)
+  calc (univ.filter fun ρ : E => powComb d₀ ρ = 0).card * Fintype.card E +
+        Fintype.card E * (m - 1)
+      ≤ (n - 1) * Fintype.card E + Fintype.card E * (m - 1) :=
+        add_le_add (Nat.mul_le_mul_right _ h1) le_rfl
+    _ = ((n - 1) + (m - 1)) * Fintype.card E := by ring
+
 end UniSound
