@@ -1,10 +1,8 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. The writer is `leanvm_flock_gas::transcript::KeccakWriter`
 -- (crates/leanvm_flock_gas, the prover's side of `KeccakChannel`); the polynomials are CompPoly's computable
 -- `CPolynomial` (the `lean_vm` package set's).
-module
-
-public import UniStatement.Security
-public import CompPoly.Univariate.Basic
+import UniStatement.Security
+import CompPoly.Univariate.Basic
 
 /-!
 # The honest prover's channel and its polynomials
@@ -20,8 +18,6 @@ public import CompPoly.Univariate.Basic
 Nothing here is an FFT: the prover is mathematical (`toNovel` divides by `w_l`, the quotients are exact divisions),
 fast enough only at the review's tiny shapes.
 -/
-
-@[expose] public section
 
 namespace UniComplete
 
@@ -51,7 +47,7 @@ def integerWire (n bytes : ℕ) : List UInt8 := (List.range bytes).map fun k ↦
 
 section With
 
-variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
+variable {m : Type → Type} [Monad m] (H : List UInt8 → m Digest)
 
 /-- Append bytes to the stream. -/
 def sendBytes (b : List UInt8) : WrM m Unit := modify fun c ↦ { c with stream := c.stream ++ b.toArray }
@@ -68,12 +64,12 @@ def sendInteger (n bytes : ℕ) : WrM m Unit := sendBytes (integerWire n bytes)
 /-- `send_root(halves)`: the two halves, as `next_root` reads them (`rootWord`). -/
 def sendRoot (halves : E × E) : WrM m Unit := sendBytes (rootWord halves)
 
-/-- **`sample`**: the Keccak-256 over `F` of the state and of the bytes written since the last challenge; its
-low 192 bits the challenge (the verifier's `sample`, on the prover's side). -/
+/-- **`sample`**: Keccak-256 (`H`; over the permutation, `keccak256With F`) of the state and of the bytes written
+since the last challenge; its low 192 bits the challenge (the verifier's `sample`, on the prover's side). -/
 def sampleW : WrM m E := do
   let c ← get
   let input := digestBytes c.state ++ (c.stream.extract c.absorbed c.stream.size).toList
-  let state ← (StateT.lift (keccak256With F input) : WrM m Digest)
+  let state ← (StateT.lift (H input) : WrM m Digest)
   let x := PcsQuotient.Transcript.challengeOf state
   set { c with absorbed := c.stream.size, state := state, challenges := c.challenges.push x }
   return x
@@ -82,7 +78,7 @@ def sampleW : WrM m E := do
 def samplesW : ℕ → WrM m (List E)
   | 0 => pure []
   | n + 1 => do
-    let x ← sampleW F
+    let x ← sampleW H
     let rest ← samplesW n
     return x :: rest
 
@@ -154,5 +150,3 @@ def bOfNovelE (r : ℕ) (d : Array E) : Array E := subsetSumsE r d
 def evalB (b : Array E) (r : ℕ) (w : List E) : E := multilinearEval b.toList (w.take r)
 
 end UniComplete
-
-end
