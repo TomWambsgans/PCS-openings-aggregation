@@ -360,5 +360,6 @@ What remains for the deployed end-to-end statement: (Q) for WHIR's novel basis a
 (`Interp.lean` proves (Q) for a degree-graded basis), and the instantiation with the deployed layouts (a concrete
 `GadgetLayout` and `pos` per table and size, its lane facts by `decide`, `WeightsFit` for the deployed claims);
 both are being done in parallel (`Deployed*.lean`). The F2 mirror of the layouts (`formal/WhirBridge`:
-`Layout.hidden`, `readHidden`, `HiddenOK`, `Layouts.lean`, the weight closure, the layout id's encoding) transcribes
-the share design and must follow the gadget layout; that too is in progress elsewhere.
+`Layout.hidden`, `readHidden`, `HiddenOK`, `Layouts.lean`, the weight closure with the gadget's term, the layout id's
+encoding) follows the gadget layout (`gadget_holds_iff`; `Test/Check.lean` accepts real proofs of both hidden openings
+and rejects the honest proof checked without the gadget's term).
