@@ -289,4 +289,100 @@ theorem roundsReached {m : ℕ} (h2K : (2 : K) = 0) (pos : ι → (Fin 6 → Boo
 
 end GadgetLayout
 
+/-! ### The randomness, the claims, and `HIDING.md`'s theorem for the gadget layouts -/
+
+namespace GadgetLayout
+
+open OracleComp
+
+variable (L : GadgetLayout ι Y)
+
+theorem not_atPat_of_first {p : Fin 3} {y : Y} (hy : y ∈ L.first) : ¬ L.AtPat p y := by
+  rintro ⟨i, rfl⟩
+  exact L.gent_first p i hy
+
+/-- The randomness covers every stack that is zero but on the first pieces. -/
+theorem onFirst_mem_range (T : ι → Y → K) (hT : OnFirst L.first T) :
+    T ∈ LinearMap.range (L.stackR (K := K)) := by
+  refine ⟨T, ?_⟩
+  funext l y
+  show (if L.randPos l y ∧ ¬ L.ZeroAt l y then T (L.copyOf y l) y else 0) = T l y
+  by_cases hy : y ∈ L.first
+  · have hz : ¬ L.ZeroAt l y := fun h => L.not_atPat_of_first hy h.1
+    have hc : L.copyOf y l = l := by
+      simp [copyOf, L.not_atPat_of_first hy]
+    rw [if_pos ⟨Or.inl hy, hz⟩, hc]
+  · rw [hT l y hy]
+    split_ifs
+    · exact hT _ y hy
+    · rfl
+
+/-- A change at one entry on random lanes is a change of the randomness. -/
+theorem column_mem_range (hA : ∀ p, ¬ L.isRand (L.pairA p)) (y : Y) (k : ι → K)
+    (hk : ∀ l, k l ≠ 0 → L.isRand l) :
+    (fun l y' => if y' = y then k l else 0) ∈ LinearMap.range (L.stackR (K := K)) := by
+  refine ⟨fun l y' => if y' = y then k l else 0, ?_⟩
+  funext l y'
+  show (if L.randPos l y' ∧ ¬ L.ZeroAt l y' then
+      (if y' = y then k (L.copyOf y' l) else 0) else 0) = if y' = y then k l else 0
+  by_cases hy : y' = y
+  · simp only [hy, ite_true]
+    by_cases hkl : k l = 0
+    · rw [hkl]
+      split_ifs
+      · unfold copyOf
+        split_ifs with h0 h1
+        · by_contra hne; exact hA 0 (hk _ hne)
+        · by_contra hne; exact hA 1 (hk _ hne)
+        · exact hkl
+      · rfl
+    · have hr := hk l hkl
+      have hz : ¬ L.ZeroAt l y := fun h => L.not_rand_ov (h.2 ▸ hr)
+      have hc : L.copyOf y l = l := by
+        unfold copyOf
+        have h0 : l ≠ L.pairB 0 := fun h => L.not_rand_pairB 0 (h ▸ hr)
+        have h1 : l ≠ L.pairB 1 := fun h => L.not_rand_pairB 1 (h ▸ hr)
+        simp [h0, h1]
+      rw [if_pos ⟨Or.inr (Or.inr (Or.inl hr)), hz⟩, hc]
+  · simp [hy]
+
+/-- **Condition (S)** for a layout with the gadget: random lanes whose fold weights span `E`. -/
+def FoldSpans (pos : ι → (Fin 6 → Bool)) (φ : Fin 6 → E) : Prop :=
+  ∃ (p : ℕ) (r : Fin p → ι), (∀ i, L.isRand (r i)) ∧
+    Submodule.span K (Set.range fun i => HiddenLayout.foldW pos φ (r i)) = ⊤
+
+/-- (S) lets the randomness at any entry past the first piece move `f¹` anywhere. -/
+theorem foldSpans_moves (hA : ∀ p, ¬ L.isRand (L.pairA p)) (pos : ι → (Fin 6 → Bool))
+    (φ : Fin 6 → E) (hS : L.FoldSpans (K := K) pos φ) :
+    ∀ y ∉ L.first, ∀ e : E, ∃ ρ ∈ LinearMap.range (L.stackR (K := K)),
+      OnColumn y ρ ∧ foldMap (HiddenLayout.foldW pos φ) ρ y = e := by
+  classical
+  obtain ⟨p, r, hr, htop⟩ := hS
+  intro y _ e
+  have he : e ∈ Submodule.span K (Set.range fun i => HiddenLayout.foldW pos φ (r i)) :=
+    htop ▸ Submodule.mem_top
+  obtain ⟨c, hc⟩ := (Submodule.mem_span_range_iff_exists_fun K).mp he
+  set kv : ι → K := fun l => ∑ i, if r i = l then c i else 0
+  have hk : ∀ l, kv l ≠ 0 → L.isRand l := by
+    intro l hl
+    by_contra hno
+    apply hl
+    refine sum_eq_zero fun i _ => ?_
+    have : r i ≠ l := fun h => hno (h ▸ hr i)
+    simp [this]
+  refine ⟨_, L.column_mem_range hA y kv hk, ?_, ?_⟩
+  · intro l y' hy'
+    simp [hy']
+  · show ∑ l, HiddenLayout.foldW pos φ l * algebraMap K E (if y = y then kv l else 0) = e
+    simp only [ite_true, kv, map_sum, mul_sum]
+    rw [sum_comm, ← hc]
+    refine sum_congr rfl fun i _ => ?_
+    rw [sum_eq_single (r i)]
+    · simp [Algebra.smul_def, mul_comm]
+    · intro l _ hl
+      simp [Ne.symm hl]
+    · simp
+
+end GadgetLayout
+
 end QuotientSecurity.Hiding
