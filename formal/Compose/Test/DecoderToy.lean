@@ -11,8 +11,8 @@ pruning), at a toy shape: a stack of `2^8` words (lanes of `k = 4` coefficients)
 (`n = 8` columns), agreement `A = 6` (`(k − 1)·n = 24 < 36 = A²`), on the encoding of a stack
 with two columns corrupted on every lane. It returns that stack, and nothing at `A = 7`.
 
-Not part of the library build (about five minutes in the interpreter, mostly the root finding over
-`GF(2^64)`); run it with `lake env lean Test/DecoderToy.lean` from `formal/Compose`.
+Not part of the library build (about two and a half minutes in the interpreter, mostly the root
+finding over `GF(2^64)`); run it with `lake env lean Test/DecoderToy.lean` from `formal/Compose`.
 -/
 
 open LeanVM.Parameters LeanVM.Extraction

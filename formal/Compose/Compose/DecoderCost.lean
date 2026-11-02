@@ -99,7 +99,8 @@ columns form an interleaved codeword of `iList` at `A`. -/
 theorem encodings_mem_iList {μ R A U : ℕ} (hμ : laneBits ≤ μ) (h : μ - laneBits + R ≤ 64)
     (cs : Fin U → Array K) (hc : ∀ u, (cs u).size = 2 ^ (μ - laneBits))
     (O : Fin U → Fin (2 ^ (μ - laneBits + R)) → E) (S : Finset (Fin (2 ^ (μ - laneBits + R))))
-    (hS : A ≤ S.card) (hag : ∀ u, ∀ v ∈ S, O u v = ofK ((novelFwd (μ - laneBits) R (cs u)).getD v 0)) :
+    (hS : A ≤ S.card)
+    (hag : ∀ u, ∀ v ∈ S, O u v = ofK ((novelFwd (μ - laneBits) R (cs u)).getD v 0)) :
     (fun u (v : Fin (2 ^ (μ - laneBits + R))) ↦ ofK ((novelFwd (μ - laneBits) R (cs u)).getD v 0)) ∈
       iList (ReedSolomon.code (Whir.domain (μ - laneBits) R h) (2 ^ (μ - laneBits))) A O := by
   rw [mem_iList]
@@ -201,8 +202,8 @@ theorem length_laneListAt_le_of (P₀ : LevelCode) {μ R A : ℕ} (hκ : P₀.κ
     obtain ⟨cp, hcp, rfl⟩ := List.mem_map.mp (List.mem_dedup.mp hc)
     obtain ⟨hdeg, hagree⟩ := LaneProofs.gsLaneAt_sound (κ := μ - laneBits) (R := R') hκ1' h64
       hAn hcap W u hcp
-    refine encodings_mem_iList (by simp only [laneBits]; omega) h64 (fun _ ↦ toNovel (μ - laneBits) cp)
-      (fun _ ↦ hsize) O
+    refine encodings_mem_iList (by simp only [laneBits]; omega) h64
+      (fun _ ↦ toNovel (μ - laneBits) cp) (fun _ ↦ hsize) O
       (Finset.univ.filter fun v : Fin (2 ^ (μ - laneBits + R')) ↦
         cp.toPoly.eval (K.ofBits v.val) = laneSymbol W u v.val) ?_ ?_
     · rw [LaneProofs.card_filter_fin _ (fun v ↦ cp.toPoly.eval (K.ofBits v) = laneSymbol W u v)]

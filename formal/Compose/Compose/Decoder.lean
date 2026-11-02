@@ -185,7 +185,8 @@ def tabEval (L : WhirBridge.Layout) (T : Tab L) (p : List E) : E :=
 theorem tabEval_tabOf (L : WhirBridge.Layout) (q : Column L.logN) (p : List E) :
     tabEval L (tabOf L q) p = L.tableEval q p := by
   rw [tabEval, WhirBridge.Layout.tableEval,
-    ← Fin.sum_univ_eq_sum_range (fun t ↦ ofK (L.table q t) * Verifier.eqEval (boolPoint L.vars t) p)]
+    ← Fin.sum_univ_eq_sum_range
+      (fun t ↦ ofK (L.table q t) * Verifier.eqEval (boolPoint L.vars t) p)]
   refine Finset.sum_congr rfl fun t _ ↦ ?_
   simp only [tabOf, Fin.getElem_fin, Vector.getElem_ofFn]
 
