@@ -5,7 +5,8 @@
 //! - [`trace`]: the trace leanVM wrote;
 //! - [`poly`]: the Cantor subspaces' transforms (vectorized in `quotient::ntt`), basis `B`, the extension cosets;
 //! - [`columns`]: `C1`'s and the setup's polynomials;
-//! - [`fingerprint`], [`bus`]: the bus's fingerprints, leaves and product heap;
+//! - [`fingerprint`], [`prints`], [`bus`]: the bus's fingerprints (one point at a time, and eight), leaves and
+//!   product heap;
 //! - [`quotients`]: the tree, leaf and constraint quotients;
 //! - [`stack`]: the three stacks, as the verifier's layouts place the columns;
 //! - [`batch`]: the batching sumcheck (point-claim ABI);
@@ -22,6 +23,7 @@ pub mod flock;
 pub mod matrices;
 pub mod opening;
 pub mod poly;
+pub mod prints;
 pub mod prove;
 pub mod quotients;
 pub mod replay;

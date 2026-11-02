@@ -6,6 +6,10 @@ use leanvm_univariate::prover::poly::{novel_from_extension, on_coset, subset_sum
 use primitives::field::{F64, F192};
 use quotient::ntt::{self, K8};
 
+/// leanVM's CLI allocator, as its reference timings are taken with.
+#[global_allocator]
+static ALLOCATOR: bench::Jemalloc = bench::Jemalloc;
+
 fn time<R>(name: &str, reps: usize, mut f: impl FnMut() -> R) -> R {
     let started = std::time::Instant::now();
     let mut out = None;
@@ -62,8 +66,22 @@ fn kernels() {
             let batch: Vec<K8> = (0..1 << r).map(|_| K8(std::array::from_fn(|_| F64(next())))).collect();
             let mut out = vec![K8::ZERO; 1 << r];
             time(&format!("8 K NTTs, 2^{r} (ntt, a batch)"), 8, || {
+                ntt::values_batch_from(&batch, &mut out, offset, false)
+            });
+            time(&format!("8 K NTTs, 2^{r} (ntt, a batch, runs transposed)"), 8, || {
                 ntt::values_batch_from(&batch, &mut out, offset, true)
             });
+            let five: Vec<Vec<K8>> = (0..5).map(|_| batch.clone()).collect();
+            let mut outs: Vec<Vec<K8>> = (0..5).map(|_| vec![K8::ZERO; 1 << r]).collect();
+            time(
+                &format!("5 x 8 K NTTs, 2^{r} (ntt, five batches in turn, runs transposed)"),
+                4,
+                || {
+                    for (src, dst) in five.iter().zip(outs.iter_mut()) {
+                        ntt::values_batch_from(src, dst, offset, true);
+                    }
+                },
+            );
             let mut quarter = vec![K8::ZERO; 1 << (r - 2)];
             time(&format!("8 K folds 2^{r} -> 2^{} (ntt, a batch)", r - 2), 8, || {
                 ntt::fold_batch(&batch, 1 << 25, &mut quarter)

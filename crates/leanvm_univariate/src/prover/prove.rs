@@ -19,7 +19,7 @@ use super::columns::{c1_polys, setup_polys};
 use super::flock::{FlockWitness, Matrices};
 use super::replay::Replay;
 use super::opening::{self, Committed};
-use super::poly::{copy, eval_k, eval_limbs, from_v, novel_limbs, subset_sums, to_v};
+use super::poly::{eval_k, eval_limbs, from_v, novel_limbs, to_v};
 use super::quotients::{self, Quotient};
 use super::stack::{Stack, c1_columns, c2_columns};
 use super::trace::Trace;
@@ -345,9 +345,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     let leaf_sizes: Vec<(usize, Vec<usize>)> = leaf_quotients.iter().map(|(b, q)| (*b, chunks(q.count))).collect();
     let mut stack2 = Stack::new(StackLayout::new(&c2_columns(layout.h, &constraint_sizes, &leaf_sizes)));
     for (limb, novel) in heap_novel.iter().enumerate() {
-        let block = stack2.limb_mut(Column::Heap, limb);
-        copy(block, novel);
-        subset_sums(block);
+        quotient::ntt::subset_sums_from(novel, stack2.limb_mut(Column::Heap, limb));
     }
     drop(heap_novel);
     let mut put = |q: &Quotient, sizes: &[usize], column: &dyn Fn(usize) -> Column| {

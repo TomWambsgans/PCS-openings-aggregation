@@ -16,7 +16,8 @@ use primitives::field::{F64, F192};
 use super::bus::Bus;
 use super::columns::{C1Polys, SetupPolys};
 use super::fingerprint::Fingerprint;
-use super::poly::{copy, omega};
+use super::poly::omega;
+use super::prints::{Print, product};
 use super::trace::Trace;
 use crate::verifier::degree;
 use quotient::ntt::{self, ESplat, Ex8, K8, Kx8, MixedSum};
@@ -95,15 +96,13 @@ impl Quotient {
         let end: usize = at + (1 << sizes[chunk]);
         assert_eq!(out.len(), 1 << sizes[chunk]);
         let have = end.min(novel.len()).saturating_sub(at);
-        copy(&mut out[..have], &novel[at..at + have]);
-        parallel::chunks_mut(&mut out[have..], 1 << 15, |_, z| z.fill(F64::ZERO));
         if chunk + 1 == sizes.len() {
             assert!(
                 novel[end.min(novel.len())..].iter().all(|x| x.is_zero()),
                 "the chunks hold the whole quotient"
             );
         }
-        ntt::subset_sums(out);
+        ntt::subset_sums_from(&novel[at..at + have], out);
     }
 
     /// Whether its numerator vanished on its domain (its degree is then below its points' count).
@@ -220,105 +219,42 @@ fn prefix_quotient<D: Sync>(
     Quotient::new(limbs, count, holds)
 }
 
-/// A vanishing polynomial `Π (w_b + ω_a)` of disjoint cosets in `V_r`, as the quotients read it: a column of novel
-/// coefficients, or (when the cosets cover `V_r`, degree `2^r`) `w_r` itself, constant on every piece.
-enum Vanishing {
-    Column(Vec<F64>),
-    Whole,
+/// A vanishing polynomial `Π (w_b + ω_a)` over its factors `(b, a)`, on eight points at once: at
+/// `x = ω_(first + 8 j + p)`, `w_b(x) = ω_((first + 8 j) >> b) + ω_(p >> b)` (`8 | first`).
+struct Vanishing {
+    factors: Vec<(usize, F64)>,
+    lanes: [Kx8; 4],
 }
 
 impl Vanishing {
-    fn new(factors: &[(usize, u64)], r: usize) -> Self {
-        let degree: u64 = factors.iter().map(|&(b, _)| 1u64 << b).sum();
-        if degree == 1 << r {
-            return Self::Whole;
-        }
-        let constants: Vec<(usize, F64)> = factors.iter().map(|&(b, a)| (b, omega(a as usize))).collect();
-        let mut values: Vec<F64> = parallel::map_collect(1 << r, |i| {
-            constants
-                .iter()
-                .fold(F64::ONE, |acc, &(b, c)| acc * (c + omega(i >> b)))
-        });
-        ntt::coefficients(&mut values, F64::ZERO);
-        Self::Column(values)
-    }
-
-    /// Its column appended to `columns`, and its slot (none for `w_r`).
-    fn push<'a>(&'a self, columns: &mut Vec<&'a [F64]>) -> Option<Slot> {
-        match self {
-            Self::Column(c) => {
-                columns.push(c);
-                Some(slot(columns.len() - 1))
-            }
-            Self::Whole => None,
-        }
-    }
-}
-
-/// A fingerprint's coefficients in every lane, its columns as slots.
-struct Print {
-    constant: Ex8,
-    linear: Vec<(Slot, ESplat)>,
-    quadratic: Vec<(Slot, Slot, ESplat)>,
-}
-
-impl Print {
-    /// `f`, its column `c` at `slots(c)`.
-    fn new(f: &Fingerprint, slots: impl Fn(usize) -> Slot) -> Self {
+    fn new(factors: &[(usize, u64)]) -> Self {
         Self {
-            constant: Ex8::splat(f.constant),
-            linear: f.linear.iter().map(|&(c, k)| (slots(c), ESplat::new(k))).collect(),
-            quadratic: f
-                .quadratic
-                .iter()
-                .map(|&(c, d, k)| (slots(c), slots(d), ESplat::new(k)))
-                .collect(),
+            factors: factors.iter().map(|&(b, a)| (b, omega(a as usize))).collect(),
+            lanes: std::array::from_fn(|b| Kx8::new(std::array::from_fn(|p| omega(p >> b)))),
         }
     }
 
-    /// A linear form `constant + Σ c x`.
-    fn linear(constant: F192, terms: impl IntoIterator<Item = (Slot, F192)>) -> Self {
-        Self {
-            constant: Ex8::splat(constant),
-            linear: terms.into_iter().map(|(s, c)| (s, ESplat::new(c))).collect(),
-            quadratic: Vec::new(),
-        }
-    }
-
-    /// Its values at the run `j`: the products unreduced, one reduction.
     #[inline(always)]
-    fn at(&self, v: &Points, j: usize) -> Ex8 {
-        let mut sum = MixedSum::default();
-        for (s, c) in &self.linear {
-            sum.add(c, v.at(*s, j));
+    fn at(&self, first: usize, j: usize) -> Kx8 {
+        let base = first + 8 * j;
+        let mut acc = Kx8::splat(F64::ONE);
+        for &(b, c) in &self.factors {
+            acc = acc * (Kx8::splat(c + omega(base >> b)) + self.lanes[b.min(3)]);
         }
-        for (s, t, c) in &self.quadratic {
-            sum.add(c, v.at(*s, j) * v.at(*t, j));
-        }
-        sum.reduce() + self.constant
+        acc
     }
 }
 
-/// The product of `prints` at the run `j`.
-#[inline(always)]
-fn product(prints: &[Print], v: &Points, j: usize) -> Ex8 {
-    match prints.split_first() {
-        Some((first, rest)) => rest.iter().fold(first.at(v, j), |acc, f| acc * f.at(v, j)),
-        None => Ex8::splat(F192::ONE),
-    }
-}
-
-/// What a piece of a quotient over `w_r` needs: `w_r` there, and its inverse.
+/// What a piece of a quotient over `w_r` needs: its first point, and `1 / w_r` there.
 struct Piece {
-    w_r: F64,
+    first: usize,
     w_r_inv: F64,
 }
 
 fn piece_of(first: usize, r: usize) -> Piece {
-    let w_r = omega(first >> r);
     Piece {
-        w_r,
-        w_r_inv: w_r.inv(),
+        first,
+        w_r_inv: omega(first >> r).inv(),
     }
 }
 
@@ -336,7 +272,7 @@ pub fn table_leaf(trace: &Trace, t: usize, c1: &C1Polys, bus: &Bus, r_novel: &[V
     used.sort_unstable();
     used.dedup();
     let (act, pad) = vanishing_factors(trace, t);
-    let (z_act, z_pad) = (Vanishing::new(&act, r), Vanishing::new(&pad, r));
+    let (z_act, z_pad) = (Vanishing::new(&act), Vanishing::new(&pad));
     let mut columns: Vec<&[F64]> = used.iter().map(|&c| &c1.tables[t][c].novel[..]).collect();
     let mut slots = vec![(0, 0); c1.tables[t].len()];
     for (k, &c) in used.iter().enumerate() {
@@ -344,8 +280,8 @@ pub fn table_leaf(trace: &Trace, t: usize, c1: &C1Polys, bus: &Bus, r_novel: &[V
     }
     let heap: [Slot; 3] = std::array::from_fn(|k| slot(columns.len() + k));
     columns.extend(r_novel.iter().map(|l| &l[..]));
-    let (act_slot, pad_slot) = (z_act.push(&mut columns), z_pad.push(&mut columns));
-    let prints = |list: &[Fingerprint]| -> Vec<Print> { list.iter().map(|f| Print::new(f, |c| slots[c])).collect() };
+    let prints =
+        |list: &[Fingerprint]| -> Vec<Print<Slot>> { list.iter().map(|f| Print::new(f, |c| slots[c])).collect() };
     let (pull, push) = (prints(&bus.pull[t]), prints(&bus.push[t]));
     prefix_quotient(
         r,
@@ -353,9 +289,10 @@ pub fn table_leaf(trace: &Trace, t: usize, c1: &C1Polys, bus: &Bus, r_novel: &[V
         &columns,
         |first, _| piece_of(first, r),
         |d, v, j| {
-            let (p, p2) = (product(&pull, v, j), product(&push, v, j));
-            let za = Ex8::from_k(act_slot.map_or(Kx8::splat(d.w_r), |s| v.at(s, j)));
-            let zp = pad_slot.map_or(Kx8::splat(d.w_r), |s| v.at(s, j));
+            let col = |s: Slot| v.at(s, j);
+            let (p, p2) = (product(&pull, col), product(&push, col));
+            let za = Ex8::from_k(z_act.at(d.first, j));
+            let zp = z_pad.at(d.first, j);
             let numerator = v.e(heap, j) * (p.mul_k(zp) + za) + p2.mul_k(zp) + za;
             numerator.mul_k(Kx8::splat(d.w_r_inv))
         },
@@ -391,7 +328,7 @@ pub fn memory_leaf(
         count,
         &columns,
         |first, _| piece_of(first, r),
-        |d, v, j| (v.e(heap, j) * fin.at(v, j) + init.at(v, j)).mul_k(Kx8::splat(d.w_r_inv)),
+        |d, v, j| (v.e(heap, j) * fin.at(|s| v.at(s, j)) + init.at(|s| v.at(s, j))).mul_k(Kx8::splat(d.w_r_inv)),
     )
 }
 
@@ -421,7 +358,7 @@ pub fn bytecode_leaf(
         count,
         &columns,
         |first, _| piece_of(first, r),
-        |d, v, j| (v.e(heap, j) * fin.at(v, j) + init.at(v, j)).mul_k(Kx8::splat(d.w_r_inv)),
+        |d, v, j| (v.e(heap, j) * fin.at(|s| v.at(s, j)) + init.at(|s| v.at(s, j))).mul_k(Kx8::splat(d.w_r_inv)),
     )
 }
 
@@ -440,11 +377,24 @@ pub fn tree(heap_novel: &[Vec<F64>; 3]) -> Quotient {
             .iter()
             .map(|l| ntt::on_coset_prefix(l, first >> 1, e - 1))
             .collect();
-        let w_h_inv = F192::from(omega(first >> h).inv());
-        let t = |v: &[Vec<F64>], i: usize| F192::new(v[0][i].0, v[1][i].0, v[2][i].0);
-        ntt::fill_limbs(out, 1 << 10, |i| {
-            let w1 = omega((first + i) >> 1);
-            (t(&at_s, i >> 1) + t(&at, i) * t(&at, i ^ 1)).mul_base(w1) * w_h_inv
+        let w_h_inv = Kx8::splat(omega(first >> h).inv());
+        if e < 3 {
+            let t = |v: &[Vec<F64>], i: usize| F192::new(v[0][i].0, v[1][i].0, v[2][i].0);
+            return ntt::fill_limbs(out, 1 << 10, |i| {
+                let w1 = omega((first + i) >> 1);
+                (t(&at_s, i >> 1) + t(&at, i) * t(&at, i ^ 1))
+                    .mul_base(w1)
+                    .mul_base(w_h_inv.to_row().0[0])
+            });
+        }
+        // Eight points a run: `x + 1` is the neighbour lane, `s(x)` the run's four points of `T(s(x))` twice, and
+        // `w_1(x) = ω_((first + 8 j) >> 1) + ω_(p >> 1)`.
+        let lanes = Kx8::new(std::array::from_fn(|p| omega(p >> 1)));
+        ntt::fill_limbs8(out, |j| {
+            let t = Ex8::from_limbs([0, 1, 2].map(|k| Kx8::load(&at[k][8 * j..])));
+            let ts = Ex8::from_limbs([0, 1, 2].map(|k| Kx8::new(std::array::from_fn(|p| at_s[k][4 * j + p / 2]))));
+            let w1 = Kx8::splat(omega((first + 8 * j) >> 1)) + lanes;
+            (ts + t * t.swap_pairs()).mul_k(w1).mul_k(w_h_inv)
         });
     };
     let mut limbs: [Vec<F64>; 3] = std::array::from_fn(|_| vec![F64::ZERO; total]);

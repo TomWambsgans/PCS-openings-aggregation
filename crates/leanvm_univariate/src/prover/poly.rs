@@ -18,12 +18,12 @@ pub fn novel_from_values<M: Module>(data: &mut [M]) {
 }
 
 /// Novel to `B` coefficients (or back), in place: `b_k = Σ_{j ⊆ k} a_j` ([`quotient::ntt::subset_sums`]).
-pub fn subset_sums<M: Module>(data: &mut [M]) {
+pub fn subset_sums<M: Module + Default>(data: &mut [M]) {
     quotient::ntt::subset_sums(data);
 }
 
 /// The `B` coefficients of the polynomial whose values on `V_r` are `values` (`2^r` of them).
-pub fn b_from_values<M: Module>(mut data: Vec<M>) -> Vec<M> {
+pub fn b_from_values<M: Module + Default>(mut data: Vec<M>) -> Vec<M> {
     novel_from_values(&mut data);
     subset_sums(&mut data);
     data

@@ -12,6 +12,10 @@ use leanvm_univariate::prover::trace::Trace;
 use leanvm_univariate::verifier::chunks;
 use primitives::field::{F64, F192};
 
+/// leanVM's CLI allocator, as its reference timings are taken with.
+#[global_allocator]
+static ALLOCATOR: bench::Jemalloc = bench::Jemalloc;
+
 fn timed<R>(name: &str, f: impl FnOnce() -> R) -> R {
     let started = std::time::Instant::now();
     let out = f();

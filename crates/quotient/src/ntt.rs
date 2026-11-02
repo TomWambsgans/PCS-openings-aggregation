@@ -273,9 +273,19 @@ trait Kind: Sync {
     const DOWN: bool;
     /// The twiddle of position layer `k`'s block `block` (a position `>> (k + 1)`).
     fn twiddle(&self, k: usize, block: usize) -> F64;
+    /// `twiddle(k, b + j) - twiddle(k, b)` for `b` a multiple of a power of two above `j`.
+    fn step(&self, j: usize) -> F64;
     fn butterfly(a: V, b: V, t: V) -> (V, V);
     /// Layers 0..3 of row `row`, eight consecutive positions of one column.
     fn lanes(&self, row: usize, x: V) -> V;
+}
+
+/// `ω_(2 j)`, from a table below a leaf's blocks.
+#[inline(always)]
+fn evens(j: usize) -> F64 {
+    static TABLE: std::sync::OnceLock<Vec<F64>> = std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| (0..LEAF_ROWS).map(|j| point(2 * j)).collect());
+    table.get(j).copied().unwrap_or_else(|| point(2 * j))
 }
 
 /// The additive transform's twiddles: `w_k` of the offset, and a row's lane twiddles' constant parts.
@@ -317,6 +327,10 @@ impl Kind for Forward {
         self.0.offsets[k] + point(2 * block)
     }
     #[inline(always)]
+    fn step(&self, j: usize) -> F64 {
+        evens(j)
+    }
+    #[inline(always)]
     fn butterfly(a: V, b: V, t: V) -> (V, V) {
         let a = xor(a, mul(b, t));
         (a, xor(b, a))
@@ -341,6 +355,10 @@ impl Kind for Inverse {
     #[inline(always)]
     fn twiddle(&self, k: usize, block: usize) -> F64 {
         self.0.offsets[k] + point(2 * block)
+    }
+    #[inline(always)]
+    fn step(&self, j: usize) -> F64 {
+        evens(j)
     }
     #[inline(always)]
     fn butterfly(a: V, b: V, t: V) -> (V, V) {
@@ -370,6 +388,10 @@ impl Kind for Cube {
     #[inline(always)]
     fn twiddle(&self, k: usize, _: usize) -> F64 {
         self.delta[k]
+    }
+    #[inline(always)]
+    fn step(&self, _: usize) -> F64 {
+        F64::ZERO
     }
     #[inline(always)]
     fn butterfly(a: V, b: V, t: V) -> (V, V) {
@@ -467,9 +489,11 @@ fn leaves<T: Kind>(
             }
             let layer = |k: usize| {
                 let half = 1usize << k;
+                // The blocks' twiddles: the first's, plus `step(j)` (the block indices' bits are disjoint).
+                let t0 = kind.twiddle(k + shift, first >> (k + 1));
                 for j in 0..size >> (k + 1) {
                     let row = first + 2 * half * j;
-                    let t = splat(kind.twiddle(k + shift, row >> (k + 1)).0);
+                    let t = splat((t0 + kind.step(j)).0);
                     pairs::<T>(data.add(8 * row), data.add(8 * (row + half)), half, t);
                 }
             };
@@ -712,6 +736,19 @@ impl Ex8 {
     #[inline(always)]
     pub fn limbs(self) -> [Kx8; 3] {
         self.0.map(Kx8)
+    }
+
+    /// The eight elements.
+    #[inline(always)]
+    pub fn to_array(self) -> [F192; 8] {
+        let [a, b, c] = self.0.map(|l| Kx8(l).to_row());
+        std::array::from_fn(|p| F192::new(a.0[p].0, b.0[p].0, c.0[p].0))
+    }
+
+    /// Lane `i` is lane `i ^ 1`'s.
+    #[inline(always)]
+    pub fn swap_pairs(self) -> Self {
+        Self(self.0.map(swap::<1>))
     }
 
     /// Lane `i` times `k_i` in K.
@@ -1069,12 +1106,28 @@ pub fn interpolate_prefix(data: &mut [F64], sizes: &[usize], base: usize) {
 
 /// Novel to `B` coefficients (or back), in place: `b_k = Σ_(j ⊆ k) a_j`. The low variables on blocks of 256 KiB
 /// one worker holds, then the rest a few at a time on tiles. The variables' maps commute.
-pub fn subset_sums<M: Copy + Send + Sync + Add<Output = M>>(data: &mut [M]) {
+pub fn subset_sums<M: Copy + Send + Sync + Add<Output = M> + Default>(data: &mut [M]) {
+    subset_sums_of(data, None);
+}
+
+/// [`subset_sums`] of `src` (zero past its end, `src.len() ≤ dst.len()`), written to `dst`.
+pub fn subset_sums_from<M: Copy + Send + Sync + Add<Output = M> + Default>(src: &[M], dst: &mut [M]) {
+    assert!(src.len() <= dst.len());
+    subset_sums_of(dst, Some(src));
+}
+
+fn subset_sums_of<M: Copy + Send + Sync + Add<Output = M> + Default>(data: &mut [M], src: Option<&[M]>) {
     let n = data.len();
     assert!(n.is_power_of_two());
     let m = n.trailing_zeros() as usize;
     let leaf = m.min(((1usize << 18) / std::mem::size_of::<M>()).max(2).ilog2() as usize);
-    parallel::chunks_mut(data, 1 << leaf, |_, block| {
+    parallel::chunks_mut(data, 1 << leaf, |b, block| {
+        if let Some(src) = src {
+            let at = (b << leaf).min(src.len());
+            let have = (src.len() - at).min(block.len());
+            block[..have].copy_from_slice(&src[at..at + have]);
+            block[have..].fill(M::default());
+        }
         let mut half = 1;
         while half < block.len() {
             for pair in block.chunks_exact_mut(2 * half) {
@@ -1227,6 +1280,13 @@ mod tests {
                 }
                 half *= 2;
             }
+            let mut from = vec![F64(next()); data.len()];
+            let cut = data.len() - data.len() / 3;
+            subset_sums_from(&data[..cut], &mut from);
+            let mut padded = data.clone();
+            padded[cut..].fill(F64::ZERO);
+            subset_sums(&mut padded);
+            assert_eq!(from, padded, "subset sums from a shorter source, 2^{m}");
             let mut got = data;
             subset_sums(&mut got);
             assert_eq!(got, want, "subset sums, 2^{m}");
@@ -1260,6 +1320,7 @@ mod tests {
         let want: [F192; 8] = std::array::from_fn(|p| c.mul_base(kr.0[p]) + a[3].mul_base(kr.0[p] * kr.0[p]));
         assert_eq!(back(sum.reduce() + Ex8::splat(F192::ZERO)), want);
         assert_eq!(back(Ex8::from_k(k)), std::array::from_fn(|p| F192::from(kr.0[p])));
+        assert_eq!(back(va.swap_pairs()), std::array::from_fn(|p| a[p ^ 1]));
         let mut rows: Vec<K8> = (0..16).map(|_| K8(std::array::from_fn(|_| F64(next())))).collect();
         let before = rows.clone();
         transpose_runs(&mut rows);

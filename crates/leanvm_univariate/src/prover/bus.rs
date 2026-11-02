@@ -6,8 +6,10 @@
 use leanvm_flock_gas::N_TABLES;
 use leanvm_flock_gas::layout::{SEP_BYTECODE, SEP_MEM, SEP_STATE, gpow, tables};
 use primitives::field::{F64, F192, g_powers};
+use quotient::ntt::Kx8;
 
 use super::fingerprint::Fingerprint;
+use super::prints::{Print, product};
 use super::poly::{batch_invert, from_v};
 use super::trace::Trace;
 use crate::domain::is_active;
@@ -75,19 +77,40 @@ pub fn table_leaves(trace: &Trace, t: usize, bus: &Bus) -> Result<Vec<F192>, usi
     let rows = trace.rows[t];
     let active = |i: usize| is_active(i as u64, rows, r);
     let (pull, push) = (&bus.pull[t], &bus.push[t]);
-    let mut den: Vec<F192> = parallel::map_collect(n, |i| {
-        if !active(i) {
-            return F192::ONE;
+    // The pull and push products, eight rows at a time (one at a time below eight rows).
+    let mut den = vec![F192::ONE; n];
+    let mut num = vec![F192::ONE; n];
+    if n >= 8 {
+        let prints = |list: &[Fingerprint]| -> Vec<Print<usize>> { list.iter().map(|f| Print::new(f, |c| c)).collect() };
+        let (pull, push) = (prints(pull), prints(push));
+        parallel::chunks_mut2(&mut den, &mut num, 1 << 10, |b, den, num| {
+            for (k, (d, m)) in den.chunks_exact_mut(8).zip(num.chunks_exact_mut(8)).enumerate() {
+                let at = (b << 10) + 8 * k;
+                let col = |c: usize| Kx8::load(&columns[c][at..]);
+                d.copy_from_slice(&product(&pull, col).to_array());
+                m.copy_from_slice(&product(&push, col).to_array());
+            }
+        });
+    } else {
+        for i in 0..n {
+            den[i] = pull.iter().fold(F192::ONE, |acc, f| acc * f.at(|c| columns[c][i]));
+            num[i] = push.iter().fold(F192::ONE, |acc, f| acc * f.at(|c| columns[c][i]));
         }
-        pull.iter().fold(F192::ONE, |acc, f| acc * f.at(|c| columns[c][i]))
+    }
+    parallel::for_each_mut(&mut den, |i, d| {
+        if !active(i) {
+            *d = F192::ONE;
+        }
     });
     if let Some(i) = den.iter().position(|d| d.is_zero()) {
         return Err(i);
     }
     batch_invert(&mut den);
-    parallel::for_each_mut(&mut den, |i, slot| {
-        if active(i) {
-            *slot *= push.iter().fold(F192::ONE, |acc, f| acc * f.at(|c| columns[c][i]));
+    parallel::chunks_mut_zip(&mut den, &num, 1 << 12, |b, den, num| {
+        for (k, (d, &m)) in den.iter_mut().zip(num).enumerate() {
+            if active((b << 12) + k) {
+                *d *= m;
+            }
         }
     });
     Ok(den)
