@@ -536,4 +536,307 @@ theorem prob_listBad (hS₀ : ∀ v : Bytes32, v.toList ∈ S) (c : SCache S) (t
 
 end Probability
 
+/-! ## The transcript of a run -/
+
+section Log
+
+/-- Every entry of a run's log against a table holds the table's answer. -/
+theorem tableQueryLog_snd {α : Type} (T : Table) (oa : OracleComp HashSpec α) :
+    ∀ q ∈ tableQueryLog oa T, q.2 = T q.1 := by
+  induction oa using OracleComp.inductionOn with
+  | pure a => simp
+  | query_bind t k ih =>
+    intro q hq
+    rw [tableQueryLog_query_bind] at hq
+    rcases List.mem_cons.mp hq with rfl | hq
+    · rfl
+    · exact ih _ q hq
+
+theorem logged_run_pure {α : Type} (a : α) (l : Transcript) :
+    (simulateQ logImpl (pure a : OracleComp HashSpec α)).run l = pure (a, l) := by
+  simp
+
+theorem logged_run_query_bind {α : Type} (t : List UInt8) (k : Bytes32 → OracleComp HashSpec α)
+    (l : Transcript) :
+    (simulateQ logImpl (liftM (HashSpec.query t) >>= k)).run l =
+      hashQuery t >>= fun u => (simulateQ logImpl (k u)).run (l ++ [(t, u)]) := by
+  rw [simulateQ_bind, simulateQ_spec_query, StateT.run_bind]
+  change ((fun u => (u, l ++ [(t, u)])) <$> hashQuery t) >>= _ = _
+  rw [bind_map_left]
+
+/-- **What the logged run computes**: the run's result, and its log appended. -/
+theorem eval_logged_run {α : Type} (T : Table) (oa : OracleComp HashSpec α) :
+    ∀ l : Transcript, evalWithAnswerFn (QueryImpl.ofFn T) ((simulateQ logImpl oa).run l) =
+      (evalWithAnswerFn (QueryImpl.ofFn T) oa,
+        l ++ (tableQueryLog oa T).map fun q => (q.1, q.2)) := by
+  induction oa using OracleComp.inductionOn with
+  | pure a => intro l; simp
+  | query_bind t k ih =>
+    intro l
+    rw [logged_run_query_bind, hashQuery, evalWithAnswerFn_bind, evalWithAnswerFn_liftM_query,
+      ih, evalWithAnswerFn_bind, evalWithAnswerFn_liftM_query, tableQueryLog_query_bind]
+    simp
+
+/-- The logged run asks what the run asks. -/
+theorem log_logged_run {α : Type} (T : Table) (oa : OracleComp HashSpec α) :
+    ∀ l : Transcript, tableQueryLog ((simulateQ logImpl oa).run l) T = tableQueryLog oa T := by
+  induction oa using OracleComp.inductionOn with
+  | pure a => intro l; simp
+  | query_bind t k ih =>
+    intro l
+    rw [logged_run_query_bind, hashQuery, tableQueryLog_query_bind, tableQueryLog_query_bind, ih]
+
+theorem isTotalQueryBound_logged_run {α : Type} (oa : OracleComp HashSpec α) :
+    ∀ (n : ℕ) (l : Transcript), IsTotalQueryBound oa n →
+      IsTotalQueryBound ((simulateQ logImpl oa).run l) n := by
+  induction oa using OracleComp.inductionOn with
+  | pure a => intro n l _; rw [logged_run_pure]; trivial
+  | query_bind t k ih =>
+    intro n l hn
+    obtain ⟨hn1, hk⟩ := isTotalQueryBound_query_bind_iff.mp hn
+    rw [logged_run_query_bind, hashQuery]
+    exact isTotalQueryBound_query_bind_iff.mpr ⟨hn1, fun u => ih u (n - 1) _ (hk u)⟩
+
+/-- A transcript's table answers as the table that answered it, on the inputs it asks. -/
+theorem tableOfTr_eq (T : Table) : ∀ tr : Transcript, (∀ e ∈ tr, e.2 = T e.1) →
+    ∀ x ∈ tr.map Prod.fst, tableOfTr tr x = T x
+  | [], _, x, hx => by simp at hx
+  | e :: tr, h, x, hx => by
+    by_cases hex : e.1 = x
+    · have hp : decide (e.1 = x) = true := decide_eq_true hex
+      have hf : (e :: tr).find? (fun e' => decide (e'.1 = x)) = some e :=
+        List.find?_cons_of_pos (p := fun e' : List UInt8 × Bytes32 => decide (e'.1 = x)) (l := tr) hp
+      show (((e :: tr).find? fun e' => decide (e'.1 = x)).map Prod.snd).getD _ = T x
+      rw [hf, Option.map_some, Option.getD_some, h e List.mem_cons_self, hex]
+    · have hx' : x ∈ tr.map Prod.fst := by
+        rcases List.mem_cons.mp hx with h' | h'
+        · exact absurd h'.symm hex
+        · exact h'
+      have hp : ¬ decide (e.1 = x) = true := fun h' => hex (of_decide_eq_true h')
+      have hf : (e :: tr).find? (fun e' => decide (e'.1 = x)) =
+          tr.find? (fun e' => decide (e'.1 = x)) :=
+        List.find?_cons_of_neg (p := fun e' : List UInt8 × Bytes32 => decide (e'.1 = x)) (l := tr) hp
+      have := tableOfTr_eq T tr (fun e' he' => h e' (List.mem_cons_of_mem _ he')) x hx'
+      show (((e :: tr).find? fun e' => decide (e'.1 = x)).map Prod.snd).getD _ = T x
+      rw [hf]
+      exact this
+
+end Log
+
+/-! ## An accepted run of a false statement makes a fresh query bad -/
+
+section Trace
+
+theorem chain_queryBound (π : RootProof F) : IsTotalQueryBound (chainWith W hashQuery π) 6 := by
+  simp only [chainWith, hashQuery]
+  repeat' (first | trivial | refine isTotalQueryBound_query_bind_iff.mpr ⟨by norm_num, fun _ => ?_⟩)
+
+/-- The run before logging: the adversary, then the chain. -/
+def rootRun (A : OracleComp HashSpec (RootProof F)) :
+    OracleComp HashSpec (RootProof F × Chals F) :=
+  A >>= fun π => chainWith W hashQuery π >>= fun ch => pure (π, ch)
+
+theorem rootRun_queryBound (A : OracleComp HashSpec (RootProof F)) (Q : ℕ)
+    (hQ : IsTotalQueryBound A Q) : IsTotalQueryBound (rootRun W A) (Q + 6) := by
+  have h : ∀ π, IsTotalQueryBound (chainWith W hashQuery π >>= fun ch =>
+      (pure (π, ch) : OracleComp HashSpec (RootProof F × Chals F))) (6 + 0) :=
+    fun π => isTotalQueryBound_bind (chain_queryBound W π) fun ch =>
+      (trivial : IsTotalQueryBound (pure (π, ch) : OracleComp HashSpec (RootProof F × Chals F)) 0)
+  have := isTotalQueryBound_bind hQ h
+  rwa [Nat.add_zero] at this
+
+theorem rootExperiment_queryBound (A : OracleComp HashSpec (RootProof F)) (Q : ℕ)
+    (hQ : IsTotalQueryBound A Q) : IsTotalQueryBound (rootExperiment W A) (Q + 6) :=
+  isTotalQueryBound_logged_run _ _ _ (rootRun_queryBound W A Q hQ)
+
+/-- The run against a table: the adversary's proof, the chain's challenges, and the chain's six
+inputs after the adversary's queries. -/
+theorem rootRun_run (A : OracleComp HashSpec (RootProof F)) (T : Table) :
+    let π := evalWithAnswerFn (QueryImpl.ofFn T) A
+    let x₀ := W.label π.stmt
+    let x₁ := Wire.afterRoot (T x₀) π.r₁
+    let x₂ := (T x₁).toList
+    let x₃ := (T x₂).toList
+    let x₄ := Wire.afterRoot (T x₃) π.r₂
+    let x₅ := W.afterValues (T x₄) π.v
+    (tableQueryLog (rootRun W A) T).map Sigma.fst =
+        (tableQueryLog A T).map Sigma.fst ++ [x₀, x₁, x₂, x₃, x₄, x₅] ∧
+      evalWithAnswerFn (QueryImpl.ofFn T) (rootRun W A) =
+        (π, ⟨W.chal (T x₁), W.chal (T x₂), W.chal (T x₃), W.chal (T x₄), W.chal (T x₅)⟩) := by
+  intro π x₀ x₁ x₂ x₃ x₄ x₅
+  constructor
+  · simp only [rootRun, chainWith, hashQuery, tableQueryLog_bind, tableQueryLog_pure,
+      List.map_append, List.map_nil, evalWithAnswerFn_bind, evalWithAnswerFn_liftM_query,
+      evalWithAnswerFn_pure]
+    rfl
+  · simp only [rootRun, chainWith, hashQuery, evalWithAnswerFn_bind,
+      evalWithAnswerFn_liftM_query, evalWithAnswerFn_pure]
+    rfl
+
+/-- The experiment against a table: the run's result and its transcript. -/
+theorem rootExperiment_run (A : OracleComp HashSpec (RootProof F)) (T : Table) :
+    tableQueryLog (rootExperiment W A) T = tableQueryLog (rootRun W A) T ∧
+      evalWithAnswerFn (QueryImpl.ofFn T) (rootExperiment W A) =
+        (evalWithAnswerFn (QueryImpl.ofFn T) (rootRun W A),
+          (tableQueryLog (rootRun W A) T).map fun q => (q.1, q.2)) := by
+  refine ⟨log_logged_run T _ [], ?_⟩
+  have := eval_logged_run T (rootRun W A) []
+  rw [List.nil_append] at this
+  exact this
+
+open Classical in
+/-- **The trace**: on every table, a winning run asks a bad fresh query. -/
+theorem trace_listBad (A : OracleComp HashSpec (RootProof F)) (T : Table)
+    (hwin : ListWins W C₁ C₂ (evalWithAnswerFn (QueryImpl.ofFn T) (rootExperiment W A))) :
+    FreshBad (listBad W C₁ C₂) T ∅ ((tableQueryLog (rootExperiment W A) T).map Sigma.fst) := by
+  obtain ⟨hlogE, hevalE⟩ := rootExperiment_run W A T
+  obtain ⟨hL, heval⟩ := rootRun_run W A T
+  set π := evalWithAnswerFn (QueryImpl.ofFn T) A
+  set x₀ := W.label π.stmt
+  set x₁ := Wire.afterRoot (T x₀) π.r₁
+  set x₂ := (T x₁).toList
+  set x₃ := (T x₂).toList
+  set x₄ := Wire.afterRoot (T x₃) π.r₂
+  set x₅ := W.afterValues (T x₄) π.v
+  set L := (tableQueryLog (rootRun W A) T).map Sigma.fst
+  rw [hlogE]
+  rw [hevalE, heval] at hwin
+  -- The transcript's candidates are the table's on the inputs asked.
+  set tr : Transcript := (tableQueryLog (rootRun W A) T).map fun q => (q.1, q.2)
+  have htrH : histOfTr tr = L.toFinset := by
+    simp only [histOfTr, tr, L, List.map_map]
+    rfl
+  have htrT : ∀ d ∈ histOfTr tr, tableOfTr tr d = T d := by
+    intro d hd
+    refine tableOfTr_eq T tr (fun e he => ?_) d (by simpa [histOfTr] using hd)
+    obtain ⟨q, hq, rfl⟩ := List.mem_map.mp he
+    exact tableQueryLog_snd T _ q hq
+  obtain ⟨g, hg, R, hR, hacc, hsat⟩ := hwin
+  simp only at hg hR hacc hsat
+  rw [C₁.congr _ _ _ _ htrT, htrH] at hg
+  rw [C₂.congr _ _ _ _ htrT, htrH] at hR
+  by_contra hnb
+  have nb : ∀ y ∈ L, ¬ listBad W C₁ C₂ (before L y) y T := fun y hy => by
+    simpa using not_bad_before (listBad W C₁ C₂) T ∅ L hnb y hy (Finset.notMem_empty _)
+  -- No collision: the answers to distinct inputs differ, and an input's answer is referred to
+  -- by another only if it was asked first.
+  have hinj : ∀ y ∈ L, ∀ z ∈ L, T y = T z → y = z := by
+    intro y hy z hz hyz
+    by_contra hne
+    rcases before_trichotomy L y z hy hz hne with h | h
+    · exact nb z hz (Or.inl (Or.inl ⟨y, h, hyz⟩))
+    · exact nb y hy (Or.inl (Or.inl ⟨z, h, hyz.symm⟩))
+  have hord : ∀ y ∈ L, ∀ z ∈ L, Refers z (T y) → y ∈ before L z := by
+    intro y hy z hz h
+    by_contra hb
+    by_cases hyz : y = z
+    · subst hyz
+      exact nb y hy (Or.inl (Or.inr ⟨y, Finset.mem_insert_self _ _, h⟩))
+    · rcases before_trichotomy L y z hy hz hyz with h' | h'
+      · exact hb h'
+      · exact nb y hy (Or.inl (Or.inr ⟨z, Finset.mem_insert_of_mem h', h⟩))
+  have injB : ∀ y, Set.InjOn T ↑(before L y) := fun y a ha b hb hab =>
+    hinj a (mem_of_mem_before L a y ha) b (mem_of_mem_before L b y hb) hab
+  have mem : ∀ y ∈ [x₀, x₁, x₂, x₃, x₄, x₅], y ∈ L := fun y hy => by
+    rw [hL]
+    exact List.mem_append_right _ hy
+  have m0 := mem x₀ (by simp)
+  have m1 := mem x₁ (by simp)
+  have m2 := mem x₂ (by simp)
+  have m3 := mem x₃ (by simp)
+  have m4 := mem x₄ (by simp)
+  have m5 := mem x₅ (by simp)
+  have take32 : ∀ st : Bytes32, st.toList.take 32 = st.toList := fun st =>
+    List.take_of_length_le (by simp)
+  -- The chain's inputs come in their order.
+  have b01 : x₀ ∈ before L x₁ := hord x₀ m0 x₁ m1 (Or.inl (Wire.take_afterRoot _ _).symm)
+  have b12 : x₁ ∈ before L x₂ := hord x₁ m1 x₂ m2 (Or.inl (take32 _).symm)
+  have b23 : x₂ ∈ before L x₃ := hord x₂ m2 x₃ m3 (Or.inl (take32 _).symm)
+  have b34 : x₃ ∈ before L x₄ := hord x₃ m3 x₄ m4 (Or.inl (Wire.take_afterRoot _ _).symm)
+  have b45 : x₄ ∈ before L x₅ := hord x₄ m4 x₅ m5 (Or.inl (W.take_afterValues _ _).symm)
+  have s12 := before_subset_of_mem L x₁ x₂ b12
+  have s23 := before_subset_of_mem L x₂ x₃ b23
+  have s34 := before_subset_of_mem L x₃ x₄ b34
+  have s45 := before_subset_of_mem L x₄ x₅ b45
+  have c04 : x₀ ∈ before L x₄ := s34 (s23 (s12 b01))
+  have c14 : x₁ ∈ before L x₄ := s34 (s23 b12)
+  have c24 : x₂ ∈ before L x₄ := s34 b23
+  -- After a root is absorbed, its candidates are the ones the history already fixed.
+  have stab : ∀ {M : Type} (C : ListCommit M) (r : Bytes32) (y z : List UInt8), y ∈ L →
+      Refers y r → (y = z ∨ y ∈ before L z) → C.cands L.toFinset T r = C.cands (before L z) T r := by
+    intro M C r y z hy hry hyz
+    have hsub : ∀ w, w ∈ before L y → w ∈ before L z := by
+      rcases hyz with rfl | h
+      · exact fun w hw => hw
+      · exact fun w hw => before_subset_of_mem L y z h hw
+    refine C.stable (before L z) L.toFinset T r (fun w hw => List.mem_toFinset.mpr
+      (mem_of_mem_before L w z hw)) (fun w hw hwr => ?_) (fun y' hy' w hw h => ?_)
+    · rw [← hwr] at hry
+      exact hsub w (hord w (List.mem_toFinset.mp hw) y hy hry)
+    · exact before_subset_of_mem L y' z hy' (hord w (List.mem_toFinset.mp hw) y'
+        (mem_of_mem_before L y' z hy') h)
+  have hr₁ : Refers x₁ π.r₁ := Or.inr (Or.inr (Wire.rootPart_afterRoot _ _).symm)
+  have hr₂ : Refers x₄ π.r₂ := Or.inr (Or.inr (Wire.rootPart_afterRoot _ _).symm)
+  have g1 : g ∈ C₁.cands (before L x₁) T π.r₁ := by
+    rwa [stab C₁ π.r₁ x₁ x₁ m1 hr₁ (Or.inl rfl)] at hg
+  have g4 : g ∈ C₁.cands (before L x₄) T π.r₁ := by
+    rwa [stab C₁ π.r₁ x₁ x₄ m1 hr₁ (Or.inr c14)] at hg
+  have g5 : g ∈ C₁.cands (before L x₅) T π.r₁ := by
+    rwa [stab C₁ π.r₁ x₁ x₅ m1 hr₁ (Or.inr (s45 c14))] at hg
+  have R4 : R ∈ C₂.cands (before L x₄) T π.r₂ := by
+    rwa [stab C₂ π.r₂ x₄ x₄ m4 hr₂ (Or.inl rfl)] at hR
+  have R5 : R ∈ C₂.cands (before L x₅) T π.r₂ := by
+    rwa [stab C₂ π.r₂ x₄ x₅ m4 hr₂ (Or.inr b45)] at hR
+  -- The round that the existing proof's trace names.
+  let π' : Proof P B := ⟨W.decode π.stmt, g, R, π.v⟩
+  let tbl : ∀ k, Answer P B k := fun k => match k with
+    | .first .. => (W.chal (T x₁), W.chal (T x₂), W.chal (T x₃))
+    | .second .. => W.chal (T x₄)
+    | .third .. => W.chal (T x₅)
+  rcases bad_of_accepts π' tbl hacc hsat with hb | hb | hb
+  · obtain ⟨h1, h2⟩ := hb
+    refine nb x₁ m1 (Or.inr (Or.inl ⟨π.stmt, π.r₁, ⟨T x₀, ⟨b01, rfl⟩, rfl, injB x₁⟩,
+      ⟨fun h => not_mem_before_of_mem_before b12 h, fun h => ?_, fun h => ?_, g, g1, h1, h2⟩⟩))
+    · exact not_mem_before_of_mem_before (s23 b12) h
+    · have e : x₃ = x₂ := h
+      rw [e] at b23
+      exact not_mem_before_self L x₂ b23
+  · obtain ⟨h1, h2⟩ := hb
+    exact nb x₄ m4 (Or.inr (Or.inr (Or.inl ⟨π.stmt, π.r₁, π.r₂, _, ⟨T x₀, T x₁, T x₂, T x₃,
+      ⟨c04, rfl⟩, ⟨c14, rfl⟩, ⟨c24, rfl⟩, ⟨b34, rfl⟩, rfl, rfl, injB x₄⟩, g, g4, R, R4, h1, h2⟩)))
+  · obtain ⟨h1, h2⟩ := hb
+    exact nb x₅ m5 (Or.inr (Or.inr (Or.inr ⟨π.stmt, π.r₁, π.r₂, _, _, π.v,
+      ⟨T x₀, T x₁, T x₂, T x₃, T x₄, ⟨s45 c04, rfl⟩, ⟨s45 c14, rfl⟩, ⟨s45 c24, rfl⟩,
+        ⟨s45 b34, rfl⟩, ⟨b45, rfl⟩, rfl, rfl, rfl, injB x₅⟩, g, g5, R, R5, h1, h2⟩)))
+
+end Trace
+
+/-! ## Knowledge soundness with real roots -/
+
+/-- **The reduction's knowledge soundness with real roots, union-bounded over the lists, in the
+random-oracle model.** For every adversary making at most `Q` queries of the random oracle
+`H : bytes → 32 bytes` that outputs a statement, two roots and five values, the probability that
+some candidate of the first root and some candidate of the second (read off the transcript of
+every query, by any list commitment) satisfy the verifier's claims at the chain's challenges while
+the first's cells fail the relation is at most
+`(Q + 6) (max L₁ (L₁ L₂) · roundError + 4 (Q + 6) / 2^256)`. -/
+theorem knowledgeSoundness_list (A : OracleComp HashSpec (RootProof F)) (Q : ℕ)
+    (hQ : IsTotalQueryBound A Q) :
+    Pr{let z ← (simulateQ randomOracle (rootExperiment W A)).run' ∅}[ListWins W C₁ C₂ z] ≤
+      ((Q + 6 : ℕ) : ℝ≥0∞) * ((listFactor C₁.bound C₂.bound : ℝ≥0∞) * (roundError P B : ℝ≥0∞) +
+        4 * ((Q + 6 : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
+  refine prEvent_randomOracle_le_of_freshBad (rootExperiment W A) (Q + 6)
+    (rootExperiment_queryBound W A Q hQ) (Set.range fun v : Bytes32 => v.toList)
+    (Set.finite_range _) (ListWins W C₁ C₂) (listBad W C₁ C₂) _ (fun S hS c t ht hcard => ?_)
+    (fun T h => trace_listBad W C₁ C₂ A T h)
+  have hS' : ∀ v : Bytes32, v.toList ∈ S := fun v => hS _ ⟨v, rfl⟩
+  refine (prob_listBad W C₁ C₂ hS' c t ht).trans ?_
+  have hcard' : (histOf c).card < Q + 6 := by
+    simpa [histOf, Finset.card_map] using hcard
+  rw [add_comm]
+  gcongr
+  have : 4 * (histOf c).card + 3 ≤ 4 * (Q + 6) := by omega
+  calc ((4 * (histOf c).card + 3 : ℕ) : ℝ≥0∞) ≤ ((4 * (Q + 6) : ℕ) : ℝ≥0∞) := by exact_mod_cast this
+    _ = 4 * ((Q + 6 : ℕ) : ℝ≥0∞) := by push_cast; ring
+
 end Compose
