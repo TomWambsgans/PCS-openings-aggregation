@@ -129,7 +129,9 @@ pub(crate) struct Recorded {
     pub(crate) inputs: usize,
 }
 
-/// What [`contract`] is compiled from (`formal/Implementation` is about this graph).
+/// What [`contract`] is compiled from (`formal/Implementation` is about this graph). Used by the test that emits
+/// it as Lean (`lean.rs`).
+#[cfg(test)]
 pub(crate) fn deployed(log_rows: usize) -> Recorded {
     recorded(log_rows, &entry(true, None), true)
 }
