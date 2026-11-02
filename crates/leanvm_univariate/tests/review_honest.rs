@@ -19,7 +19,7 @@ use leanvm_flock_gas::layout::{
 use leanvm_flock_gas::multilinear::{eq_kernel, multilinear_eval};
 use leanvm_flock_gas::transcript::{Checks, KeccakChannel, KeccakWriter, keccak_seed};
 use leanvm_univariate::claims::{Column, Combined, Commitment};
-use leanvm_univariate::contract::{NAME, calldata, compile_verifier, record_verifier};
+use leanvm_univariate::contract::{NAME, SetupRoots, calldata, compile_verifier, contract_iv, record_verifier};
 use leanvm_univariate::domain::{coordinate_functionals, point_e};
 use leanvm_univariate::heap::Leaves;
 use leanvm_univariate::stacks::{StackLayout, limb_basis};
@@ -311,7 +311,7 @@ fn row_of(table: &Table, step: u64, cells: &[u64], memory: &[[E; 3]]) -> Vec<E> 
 }
 
 /// What the prover holds: every table's rows (padding included), the memory image and its final counts, the
-/// bytecode and its final counts, the counter inverses, and `q_flock`.
+/// bytecode and its final counts, and `q_flock` (the counter inverses are computed from the rows when proving).
 #[derive(Clone)]
 struct Witness {
     rows: Vec<Vec<Vec<E>>>,
@@ -320,7 +320,6 @@ struct Witness {
     memory_final: Vec<E>,
     bytecode: Vec<[E; 16]>,
     bytecode_final: Vec<E>,
-    inverse: Vec<Vec<E>>,
     qflock: Vec<E>,
     public: [u64; 4],
 }
@@ -421,14 +420,9 @@ fn execution(rng: &mut Rng) -> Witness {
     let shape = shape_of(counts);
     let heights = shape.heights();
     let mut rows = Vec::new();
-    let mut inverse = Vec::new();
     for table in &tables {
         let n = 1usize << heights[table.opcode];
         let mut all = active[table.opcode].clone();
-        let mut z: Vec<E> = all
-            .iter()
-            .map(|row| table.count_columns().fold(ONE, |acc, c| acc * row[c]).inv())
-            .collect();
         while all.len() < n {
             // Padding rows are free, but the counters' constraint holds on every row (SPEC.md §13): nonzero
             // counters, here 1.
@@ -437,10 +431,8 @@ fn execution(rng: &mut Rng) -> Witness {
                 row[c] = ONE;
             }
             all.push(row);
-            z.push(ONE);
         }
         rows.push(all);
-        inverse.push(z);
     }
     // q_flock: instance i's slots are BLAKE2S row i's limbs (padding rows included); the other words random.
     let h_b = heights[OP_BLAKE2S];
@@ -460,7 +452,6 @@ fn execution(rng: &mut Rng) -> Witness {
         memory_final: memory_count,
         bytecode,
         bytecode_final: bytecode_count,
-        inverse,
         qflock,
         public,
     }
@@ -662,7 +653,7 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
         }
         b
     };
-    let seed = keccak_seed(&NAME, &IV, &public);
+    let seed = keccak_seed(&NAME, &contract_iv(&shape, &IV, &SetupRoots::REFERENCE), &public);
     let mut writer = KeccakWriter::new(seed);
 
     // C1 and the setup.
@@ -1040,7 +1031,7 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
 /// The verifier on a proof, and what `PCS_OPEN` would answer: every claim checked against what was committed.
 fn verify(witness: &Witness, proof: &Proof, mode: Claims) -> Result<bool, leanvm_flock_gas::VerifierError> {
     let shape = shape_of(witness.active);
-    let seed = keccak_seed(&NAME, &IV, &proof.public);
+    let seed = keccak_seed(&NAME, &contract_iv(&shape, &IV, &SetupRoots::REFERENCE), &proof.public);
     let mut channel = KeccakChannel::new(seed, &proof.stream, Checks::Enforce);
     let words = witness.public.map(|v| E::new(v, 0, 0));
     let reduced = reduce(&shape, words, &mut channel, Blake2s::Omitted, mode)?;
@@ -1271,7 +1262,8 @@ fn verifying_contract_accepts_the_honest_proof_and_rejects_mutations() {
         // The calls are true point claims on C1, C2 and the setup.
         for input in &outcome.pcs_calls {
             let words: Vec<&[u8]> = input.chunks(32).collect();
-            let layout_id = u64::from_be_bytes(words[1][24..].try_into().unwrap());
+            // The layout word: the shape's bytes, the opening's code (bytes 22..24), its variables and placed words.
+            let layout_id = u16::from_be_bytes(words[1][22..24].try_into().unwrap());
             let (commitment, committed) = match layout_id {
                 0x5501 => (Commitment::C1, &proof.c1),
                 0x5502 => (Commitment::C2, &proof.c2),
@@ -1329,7 +1321,7 @@ fn verifying_contract_accepts_the_honest_proof_and_rejects_mutations() {
         let ending = Ending::PcsOpen(call_words.iter().map(Vec::len).collect());
         let entry = Entry {
             name: NAME,
-            iv: IV,
+            iv: contract_iv(&shape, &IV, &recorded.roots),
             stream_len: recorded.stream_len,
             measure: false,
         };

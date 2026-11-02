@@ -287,6 +287,8 @@ pub struct Reduced<S> {
     /// The relations combined, and each commitment's stack variables.
     pub relations: usize,
     pub stack_vars: Vec<(Commitment, usize)>,
+    /// The three stacks' layouts (a function of the shape alone: [`layouts`]).
+    pub layouts: Vec<(Commitment, StackLayout)>,
 }
 
 /// What a commitment's one `PCS_OPEN` call carries.
@@ -710,7 +712,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
             .collect()
     };
     let bit_slice = bit_slice.combine(Commitment::C1, S::one());
-    let layouts = layouts(shape, &c2_columns);
+    let layouts = stack_layouts(shape, &c2_columns);
     let stack_vars = layouts.iter().map(|(c, l)| (*c, l.vars)).collect();
     let openings = match mode {
         Claims::Weighted => {
@@ -744,11 +746,40 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
         matrices,
         relations: relations.list.len(),
         stack_vars,
+        layouts,
     })
 }
 
-/// The three stacks' layouts (SPEC.md §3).
-fn layouts(shape: &Shape, c2_columns: &[(Column, usize, bool)]) -> Vec<(Commitment, StackLayout)> {
+/// The three stacks' layouts of `shape` (SPEC.md §3): `C1`'s, `C2`'s and the setup's. They depend on the shape
+/// alone; `C2`'s columns are the ones [`reduce`] states (its quotients' chunks), read off a run of it.
+pub fn layouts(shape: &Shape) -> Vec<(Commitment, StackLayout)> {
+    struct Null;
+    impl Channel<E> for Null {
+        fn next_scalar(&mut self) -> Result<E, VerifierError> {
+            Ok(E::default())
+        }
+        fn next_root(&mut self) -> Result<[E; 2], VerifierError> {
+            Ok([E::default(); 2])
+        }
+        fn sample(&mut self) -> E {
+            leanvm_flock_gas::field::GEN
+        }
+        fn require_zero(&mut self, _: E, _: VerifierError) -> Result<(), VerifierError> {
+            Ok(())
+        }
+        fn require_nonzero(&mut self, _: E, _: VerifierError) -> Result<(), VerifierError> {
+            Ok(())
+        }
+        fn next_integer(&mut self, _: usize) -> Result<E, VerifierError> {
+            Ok(E::default())
+        }
+    }
+    let words = [E::default(); 4];
+    reduce(shape, words, &mut Null, Blake2s::Omitted, Claims::Weighted).expect("a valid shape").layouts
+}
+
+/// The stacks' layouts, `C2`'s from its column list.
+pub fn stack_layouts(shape: &Shape, c2_columns: &[(Column, usize, bool)]) -> Vec<(Commitment, StackLayout)> {
     let heights = shape.heights();
     let mut c1: Vec<(Column, usize, bool)> = vec![(Column::Qflock, heights[OP_BLAKE2S] + 8, false)];
     for table in tables() {

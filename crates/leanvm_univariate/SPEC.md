@@ -484,3 +484,18 @@ Each entry says what changed, why, and what the prover must change (none if the 
    height wraps (the review's panicking shapes are recorded now, `review_honest::small_heights_are_recorded`).
    `Shape::validate` rejects only a memory of one cell, a height of 32 or more, and with Flock a BLAKE2S height
    below 7 (`VerifierError::InvalidShape`). Prover: nothing.
+8. **F2 (review M1) and the prover's requests: the IV, the layout words, the setup roots.**
+   - `contract::SetupRoots`: the setup roots are code constants, `REFERENCE` being the reference shape's real ones
+     (`F` 9b5a0f9b…, `A0` 93cd9a03…, `B0` c0755650…, from `prover::setup::roots`, PROVER.md). The gas reports use them
+     for every shape (the gas does not depend on them); a deployment for another shape takes its own `F`.
+   - `PCS_OPEN`'s layout word (`contract::layout_word`) is a 32-byte constant: the shape's 8 bytes (`log_memory`,
+     `log_bytecode`, the six heights), the opening's code (`0x5501` `C1`, `0x5502` `C2`, `0x5503` the setup,
+     `0x5504` `A0`, `0x5505` `B0`, bytes 22..24), the stack's `vars` (byte 24) and `placed` (bytes 25..32, the
+     words the blocks fill; `2^28` for `A0`, `B0`). Each shape's stacks have their own words, and WHIR's verifier
+     reads `vars` and `placed` from it.
+   - `verifier::layouts(shape)` is public (and `Reduced::layouts`): the stacks depend on the shape alone.
+   - The contract's IV is `keccak("leanVM-univar-iv" ‖ program IV ‖ F ‖ A0 ‖ B0 ‖ shape bytes ‖ the five layout
+     words)` (`contract::contract_iv`); the seed is `keccak(name ‖ IV ‖ public input)` as before. Every function of
+     `contract` that takes an IV takes the program's and derives this one.
+   Measured: no gas (constants), code +60 bytes.
+   Prover: seed the transcript with `contract_iv(shape, PROGRAM_IV, roots)`; call `PCS_OPEN` with the layout words.
