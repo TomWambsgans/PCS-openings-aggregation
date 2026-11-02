@@ -79,6 +79,17 @@ name = "PcsQuotient"
 srcDir = "../Statement"
 globs = ["PcsQuotient", "PcsQuotient.+"]
 
+# leanVM 42422001's VM (leanISA with `BLAKE2S`), its arithmetization (Clean's six tables), the
+# abstract M3 instance with its Flock region, and the leanISA adaptor, ported from leanerVM
+# `mumbai` at f0393df4 into the namespace `Lv42` (`formal/Lv42`): the statement the univariate
+# PIOP for that leanVM proves against. It compiles against the same `lean_vm` package set
+# (f0393df4 and 6175f1a0 pin the same Lean, Mathlib, CompPoly, Clean, ArkLib and VCVio).
+[[lean_lib]]
+name = "Lv42"
+srcDir = "../Lv42"
+globs = ["Lv42", "Lv42.+"]
+leanOptions = { warningAsError = true }
+
 # ---- The end-to-end libraries ----
 
 # `PcsQuotient.KnowledgeSoundness` from `Compose`'s random-permutation theorem (`Soundness.lean`,
