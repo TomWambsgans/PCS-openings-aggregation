@@ -21,7 +21,11 @@ fn limbs(v: F192) -> [u64; 3] {
 }
 
 const PRODUCTS: [Product; 13] = [
-    ([u64::MAX; 3], [u64::MAX; 3], [0x5555555555555513, 0x5555555555555513, 0]),
+    (
+        [u64::MAX; 3],
+        [u64::MAX; 3],
+        [0x5555555555555513, 0x5555555555555513, 0],
+    ),
     ([1 << 63; 3], [1 << 63; 3], [0xc00000000000005a, 0xc00000000000005a, 0]),
     ([u64::MAX; 3], [1 << 63; 3], [0x65, 0x65, 0]),
     (
@@ -68,10 +72,16 @@ fn products() {
 
 #[test]
 fn inverses_and_frobenius() {
-    assert_eq!(limbs(A.inv()), [0x54585269244a53bf, 0xe61abf3f20ceabe4, 0x8eb77d6b827e0877]);
+    assert_eq!(
+        limbs(A.inv()),
+        [0x54585269244a53bf, 0xe61abf3f20ceabe4, 0x8eb77d6b827e0877]
+    );
     assert_eq!(limbs(X.inv()), [0x800000000000000d, 0, 0]);
     assert_eq!(limbs(F192::Y.inv()), [1, 0, 1]);
-    assert_eq!(limbs(A.frobenius()), [0x950e87d7f5606615, 0x1f00bca0042db923, 0x33619bfc9a46d5db]);
+    assert_eq!(
+        limbs(A.frobenius()),
+        [0x950e87d7f5606615, 0x1f00bca0042db923, 0x33619bfc9a46d5db]
+    );
     assert_eq!(A * A.inv(), F192::ONE);
     assert_eq!(A * B, B * A);
 }
