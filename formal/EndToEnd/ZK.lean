@@ -21,6 +21,7 @@ import ZK.CoreView
 import ZK.CoreDrive
 import ZK.CoreFollows
 import ZK.CoreBudget
+import ZK.CoreDeployed
 import ZK.Axioms
 
 /-!
