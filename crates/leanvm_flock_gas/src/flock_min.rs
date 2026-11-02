@@ -84,7 +84,9 @@ pub struct Reduced<S> {
 #[derive(Clone, Debug)]
 pub enum End<S> {
     /// The ring switch's claim `Σ_u W(u) q_flock(u) = target`, `W = Φ(eq(point, ·))`, `Φ` drawn by `map`; with
-    /// [`Slices::InContract`], also `W` at a point and its coefficients.
+    /// [`Slices::InContract`], also `W` at a point and its coefficients. `weight` is for measuring that variant
+    /// (`tests/flock_levers.rs` outputs it, so that its cost is counted); `crates/leanvm_univariate` never uses
+    /// `InContract`.
     Ring { map: Vec<S>, target: S, weight: Option<S> },
     /// `Σ_i weights_i ẑ(i, point) = value`.
     Combination { weights: Vec<S>, value: S },

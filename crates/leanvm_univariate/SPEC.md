@@ -266,6 +266,13 @@ With Flock (a), `C1`'s call also carries the bit-slice claim, so 6 claims in 5 c
 The alternative, route (i), sends every evaluation as its own point claim. That is about 177 values plus (a′)'s 64
 twisted points: about 5.7 KB of values and some 240 claims against (ii)'s 1.4 KB and 5 claims. It is not built.
 
+**What the contract itself checks.** The verifier is linearised: every relation it states is a claim handed to
+`PCS_OPEN`, and each identity it does check (the batching sumcheck's terminal, Flock's) is affine in the last scalar
+read before it. In the weighted mode with Flock (a), or with no BLAKE2s argument, the contract checks nothing but the
+row counts' range (§13): every identity is a claim. So with the openings mocked, a contract accepts random streams;
+that is expected, not a bug. Its verdict means something only together with the openings (the Lean transcription's
+finding 5).
+
 **Extension W: weighted claims.** A call is `root, layout, k`, then per claim its points (each a column's low
 coordinates), its terms (`column | point << 32 | twist << 48`, then the coefficient) and its value. The precompile
 evaluates the weight, as leanVM's own WHIR verifier does. No batching sumcheck. Price `c` a claim; the precompile's
@@ -565,3 +572,16 @@ Each entry says what changed, why, and what the prover must change (none if the 
     check, made by the opening. Measured (ABI × (a), 1,000 signatures): calldata 6,196 → 5,716 B (−20 scalars, skip
     4); straight 92,309 → 90,996; tx (EIP-7623, `c = 0`) 247,120 → 228,010; EIP-7976 396,544 → 365,824.
     Prover (extension B): as entry 5, with the bit-slice claim's weights and value from the batch's end.
+13. **The Lean transcription's findings** (UniStatement, 101/101 differential vectors at b948bfc; documentation and
+    one fix):
+    - `weight_at` keys `q_flock`'s slot rows by their point (entry 4), not by the slot;
+    - `Relations::combine` merges the 0-variable `TreeQuotient(1)` term into the first longest `C2` point: harmless
+      (documented in `claims.rs`);
+    - `End::Ring`'s weight is computed only for `Slices::InContract`, a measuring variant (`flock_levers`); the
+      univariate verifier never uses it;
+    - `flock_min`'s `log_n ≥ 21` is `Shape::validate`'s BLAKE2S height of at least 7 with Flock (entry 7);
+    - §8: what the contract checks itself, and why random streams pass with mocked openings.
+    The Lean side (a998edd) is merged; `tests/lean_vectors.rs` compiles, and `review_honest::lean_honest_vectors`
+    seeds with the contract's IV. The vectors and the transcription follow milestone 1's protocol until updated to
+    this list. The merge brings the prover too (a6e2190, inside a998edd), unchanged: its `tests/prove_tiny.rs` writes
+    milestone 1's stream and fails here (`StreamExhausted`) until prover2 adapts it to this list. Prover: nothing.

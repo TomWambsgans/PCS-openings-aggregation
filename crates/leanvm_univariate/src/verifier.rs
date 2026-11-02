@@ -849,7 +849,9 @@ fn weight_at<S: Scalar>(
     };
     // Σ coefficient · part, by row: (point, length, twist).
     let mut rows: Vec<((usize, usize, u8), S)> = Vec::new();
-    // q_flock's slots, by point: Σ coefficient · eq(slot bits, r_(<8)).
+    // q_flock's slots, by point: Σ coefficient · eq(slot bits, r_(<8)). Keyed by the point, not by the slot (the
+    // Lean transcription's finding 1 on milestone 1's `EqCache`, which keyed a slot's row by its slot and was right
+    // only because every slot term sits at the one point y(t)).
     let mut slots: Vec<(usize, S)> = Vec::new();
     for &(column, p, twist, coefficient) in &claim.terms {
         if let Column::QflockSlot(j) = column {

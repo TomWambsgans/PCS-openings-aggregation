@@ -1,0 +1,23 @@
+# Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, crates/primitives, renamed (the
+# workspace's `primitives` is leanVM c445e3d5's) for crates/lv42_flock. MIT OR Apache-2.0. See NOTICE.md.
+[package]
+name = "lv42_primitives"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+# leanVM's own tests and benches are not vendored.
+test = false
+doctest = false
+
+[dependencies]
+parallel = { package = "lv42_parallel", path = "../lv42_parallel" }
+rand = { workspace = true, optional = true }
+serde.workspace = true
+
+[features]
+test-util = ["dep:rand"]
+
+[lints]
+workspace = true

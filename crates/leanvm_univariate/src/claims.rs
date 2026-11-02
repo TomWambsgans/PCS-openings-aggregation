@@ -179,7 +179,9 @@ impl<S: Scalar + PartialEq> Relations<S> {
             scale *= rho;
         }
         // A point that is a prefix of a longer one is that one: a column reads as many of a point's coordinates as
-        // it has variables, which its layout says.
+        // it has variables, which its layout says. The empty point (`TreeQuotient(1)`, a column of 0 variables) is a
+        // prefix of every point, so it merges into the first longest one; harmless, since that column reads none of
+        // its coordinates (found by the Lean transcription, UniStatement).
         let longest: Vec<usize> = (0..points.len())
             .map(|p| {
                 (0..points.len())

@@ -1343,3 +1343,88 @@ fn verifying_contract_accepts_the_honest_proof_and_rejects_mutations() {
         }
     });
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The honest proofs as vectors for the Lean transcription (`formal/UniStatement`'s runner).
+
+#[allow(dead_code)]
+mod lean_format;
+
+/// The words of a stack as the vectors carry them: `<key> <n> <hex>…` (each a `K` word).
+fn words_line(key: &str, words: &[E]) -> String {
+    let mut line = format!("{key} {}", words.len());
+    for w in words {
+        line.push_str(&format!(" {:x}", w.c0));
+    }
+    line.push('\n');
+    line
+}
+
+/// `UNI_HONEST_OUT=uni_honest.txt cargo test --release -p leanvm_univariate --test review_honest -- --ignored
+/// --nocapture lean_honest_vectors`: the honest proofs at four memory and bytecode sizes, in both claim modes,
+/// accepted; with the point claims, the three committed stacks and the bytecode's tuples (`STACK`, `BYTECODE`,
+/// for the Lean runner to read the witness back as Lv42's stack and check the point claims on them), and three
+/// mutated streams each.
+#[test]
+#[ignore]
+fn lean_honest_vectors() {
+    let path = std::env::var("UNI_HONEST_OUT").unwrap_or_else(|_| "target/uni_honest_vectors.txt".to_string());
+    let writer = std::sync::Arc::new(std::sync::Mutex::new(lean_format::Writer::default()));
+    writer.lock().unwrap().out.push_str("# leanvm_univariate honest-proof vectors (tests/review_honest.rs)\n");
+    for (memory, bytecode) in [(4usize, 4usize), (5, 4), (4, 5), (5, 5)] {
+        let writer = writer.clone();
+        deep(move || {
+            SIZES.set((memory, bytecode));
+            let bases = Bases::new(8);
+            let mut rng = Rng(0x5EED ^ (memory << 8 | bytecode) as u64);
+            let witness = execution(&mut rng);
+            let shape = shape_of(witness.active);
+            let mut w = writer.lock().unwrap();
+            for (name, mode) in [("weighted", Claims::Weighted), ("point", Claims::Point)] {
+                let proof = prove(&witness, mode, Tamper::default(), &bases);
+                assert!(proof.exact, "every identity divides exactly");
+                assert_eq!(verify(&witness, &proof, mode), Ok(true), "lm {memory} lb {bytecode} {mode:?}");
+                let config = lean_format::Config {
+                    name: format!("honest-lm{memory}-lb{bytecode}"),
+                    shape,
+                    flock: ("omitted", Blake2s::Omitted),
+                    claims: (name, mode),
+                };
+                let mut extra = String::new();
+                if mode == Claims::Point {
+                    for (commitment, layout) in &proof.layouts {
+                        let committed = match commitment {
+                            Commitment::C1 => &proof.c1,
+                            Commitment::C2 => &proof.c2,
+                            Commitment::Setup => &proof.setup,
+                        };
+                        extra.push_str(&words_line(&format!("STACK {commitment:?}"), &stack(layout, committed)));
+                    }
+                    let tuples: Vec<E> = witness.bytecode.iter().flat_map(|slots| slots.iter().copied()).collect();
+                    extra.push_str(&words_line("BYTECODE", &tuples));
+                }
+                // The seed's IV is the contract's (iteration 2, F2): derived from the program's, the shape and the roots.
+                let iv = contract_iv(&shape, &IV, &SetupRoots::REFERENCE);
+                w.emit_with(&config, "honest", &iv, &proof.public, &proof.stream, &extra);
+                if mode == Claims::Point {
+                    let positions = [
+                        (rng.next() as usize) % proof.stream.len(),
+                        (rng.next() as usize) % 32,
+                        proof.stream.len() - 24 + (rng.next() as usize) % 24,
+                    ];
+                    for position in positions {
+                        let mut stream = proof.stream.clone();
+                        stream[position] ^= 1 + (rng.next() % 255) as u8;
+                        w.emit(&config, "honest-mutate", &iv, &proof.public, &stream);
+                    }
+                }
+            }
+        });
+    }
+    let w = writer.lock().unwrap();
+    std::fs::write(&path, &w.out).expect("the vectors file");
+    println!("{} vectors written to {path}", w.id);
+    for (kind, (yes, no)) in &w.tally {
+        println!("{kind}: {yes} accepted, {no} rejected");
+    }
+}

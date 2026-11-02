@@ -50,11 +50,39 @@ option. Every file says where it comes from in its first lines.
   verifier generic over the scalar and compiled to EVM code through `crates/leanvm_flock_gas`'s port of leanVM
   `42422001`'s tables, flushes, constraints and Flock verifier (each file says what it takes). Its Cantor basis is
   computed as `crates/quotient/src/domain.rs`'s (adapted from leanVM `651453c6`).
+  - Its prover (`src/prover/`, `PROVER.md`) is new here. It reads the execution traces of leanVM `42422001` itself:
+    its execution and witness generation, unchanged, written out by `src/prover/dump/trace_dump.rs`, which
+    `src/prover/dump/apply.sh` copies into a leanVM checkout. It transforms them with `crates/quotient/src/domain.rs`'s
+    additive NTT, and commits and opens them with the vendored WHIR (`crates/pcs`, `crates/verifier`, leanVM
+    `c445e3d5`), its openings in the transcript shape of `crates/quotient/src/opening.rs`.
+  - Its Flock prover is leanVM `42422001`'s own, vendored for it:
+    - `crates/lv42_primitives`, `crates/lv42_parallel` and `crates/lv42_flock` are leanVM `42422001`'s
+      `primitives`, `parallel` and `flock`. They are renamed, since the workspace's `primitives` and `parallel` are
+      `c445e3d5`'s, and copied unchanged but for a header line. The exception is `flock/src/hash.rs`, which leaves
+      out the PCS packaging of the slices.
+    - `crates/lv42_pcs` is the part of `42422001`'s `pcs` that `flock` uses: the GF(2^8) additive NTT, its inverse
+      table, the packing constants and one inner product.
+    - `crates/lv42_fiat_shamir` (new here) states as a trait the transcript methods `flock` calls (leanVM's
+      `ProverState`'s), which the univariate prover's Keccak-256 chain implements.
 - **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
   Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
   proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's
   assembly of leanVM's verifier (`lean_vm/LeanVM/Protocol/EndToEnd/Sound/`, `Verifier/Cost.lean`). Each
   file says so in its header.
+- **Adapted from [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `f0393df4`** (the last
+  before its switch to Keccak, formalizing leanVM `3f7dc219`, whose `crates/verifier`, `crates/flock`,
+  `python-verifier` and `doc` are leanVM `42422001`'s; MIT OR Apache-2.0, `Protocol/ToCompPoly/AmbientStacking.lean`
+  Apache-2.0 by its own notice): `formal/Lv42`, leanVM `42422001`'s VM (leanISA with `BLAKE2S`), its
+  arithmetization, the abstract M3 instance with its Flock region and the leanISA adaptor, from `lean_vm/LeanVM/`
+  (`Spec/Isa.lean`, `Spec/IsaWith.lean`, `Spec/Blake2s.lean`, `Parameters/Isa.lean`, `Semantics/Lemmas.lean`,
+  `Arithmetization/`, `Protocol/Spine/Instance.lean`, `Protocol/Stack.lean`, `Protocol/FixedColumns.lean`,
+  `Protocol/LeanIsa.lean`, `Protocol/LeanIsa/`, `Protocol/Blake2sHash.lean`, `Protocol/Blake2sCircuit.lean`,
+  `Protocol/FlockSpec.lean`, `Protocol/ToArkLib/Flock/{BlockR1CS,Circuit,Builder,Words}.lean`,
+  `Protocol/ToCompPoly/{Stacking,AmbientStacking}.lean`, and the Flock constants and padding tables of
+  `Spec/Verifier.lean`), renamed from `LeanVM` to `Lv42` and otherwise unchanged but for the imports of the
+  BLAKE2s-era verifier and GKR bus phase, which are not ported. The field, multilinear and Clean-bridge modules
+  those files import are leanerVM `6175f1a0`'s, imported as they are (`formal/EndToEnd` builds against it).
+  Each file says so in its header.
 - **Lean dependencies** (pinned in `formal/lakefile.toml`, at the revisions leanerVM `mumbai` uses): [CompPoly](https://github.com/Verified-zkEVM/CompPoly) `572f9973` (Apache-2.0), whose `BF64` and `BF64.Ext3` (GF(2^64) and GF(2^192) with their irreducibility proofs) `formal/Field` builds on; [ArkLib](https://github.com/Verified-zkEVM/ArkLib), [VCVio](https://github.com/dtumad/VCV-io), [Mathlib](https://github.com/leanprover-community/mathlib4) (Apache-2.0); leanerVM `mumbai`'s `statement`, `common` and `lean_vm` packages (`formal/QuotientRpm`, `formal/Compose`, `formal/QuotientZk`, `formal/Circuit` import them). Files adapted from any of them say so in their header.
 - **Third-party credits carried by the vendored files** (each file names its own):
   [succinctlabs/flock](https://github.com/succinctlabs/flock) (MIT OR Apache-2.0),

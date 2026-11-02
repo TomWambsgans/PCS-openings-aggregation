@@ -1,0 +1,18 @@
+# Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, crates/parallel, renamed (the
+# workspace's `parallel` is leanVM c445e3d5's) for crates/lv42_flock. MIT OR Apache-2.0. See NOTICE.md.
+[package]
+name = "lv42_parallel"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Fixed-size heterogeneous thread pool for flat data-parallel kernels"
+
+[lib]
+test = false
+doctest = false
+
+[target.'cfg(all(target_arch = "aarch64", target_os = "macos"))'.dependencies]
+libc.workspace = true
+
+[lints]
+workspace = true

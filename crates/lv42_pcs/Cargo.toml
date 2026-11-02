@@ -1,0 +1,17 @@
+# Part of this repository: the parts of leanVM's (https://github.com/leanEthereum/leanVM) crates/pcs at commit
+# 42422001 that its flock prover uses (crates/lv42_flock). MIT OR Apache-2.0. See NOTICE.md.
+[package]
+name = "lv42_pcs"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+primitives = { package = "lv42_primitives", path = "../lv42_primitives" }
+
+[lints]
+workspace = true

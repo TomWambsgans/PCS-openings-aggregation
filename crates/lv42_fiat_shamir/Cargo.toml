@@ -1,0 +1,17 @@
+# Part of this repository. The transcript leanVM 42422001's flock prover (crates/lv42_flock) writes to, as a trait:
+# leanVM's `fiat_shamir::transcript::ProverState` methods that flock calls. MIT OR Apache-2.0. See NOTICE.md.
+[package]
+name = "lv42_fiat_shamir"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+primitives = { package = "lv42_primitives", path = "../lv42_primitives" }
+
+[lints]
+workspace = true

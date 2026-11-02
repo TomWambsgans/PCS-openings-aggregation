@@ -13,3 +13,18 @@ workspace = true
 [dependencies]
 leanvm_flock_gas = { path = "../leanvm_flock_gas" }
 revm.workspace = true
+# The prover (src/prover): leanVM's WHIR (c445e3d5) and its verifier, the Cantor transforms of crates/quotient.
+primitives.workspace = true
+pcs.workspace = true
+fiat_shamir.workspace = true
+verifier.workspace = true
+parallel.workspace = true
+quotient.workspace = true
+# Flock's prover: leanVM 42422001's, vendored (crates/lv42_*).
+lv42_flock = { path = "../lv42_flock" }
+lv42_fiat_shamir = { path = "../lv42_fiat_shamir" }
+lv42_primitives = { path = "../lv42_primitives" }
+lv42_parallel = { path = "../lv42_parallel" }
+
+[dev-dependencies]
+bench.workspace = true

@@ -8,6 +8,7 @@ import WhirBridge.Variant
 import WhirBridge.Family
 import WhirBridge.Verifier
 import WhirBridge.Gaps
+import WhirBridge.Large
 
 /-!
 # The WHIR bridge

@@ -1,0 +1,22 @@
+# Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, crates/flock (CREDIT:
+# https://github.com/succinctlabs/flock), MIT OR Apache-2.0, renamed; its prover writes to lv42_fiat_shamir's
+# transcript trait. See NOTICE.md.
+[package]
+name = "lv42_flock"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+test = false
+doctest = false
+
+[dependencies]
+parallel = { package = "lv42_parallel", path = "../lv42_parallel" }
+primitives = { package = "lv42_primitives", path = "../lv42_primitives" }
+fiat_shamir = { package = "lv42_fiat_shamir", path = "../lv42_fiat_shamir" }
+pcs = { package = "lv42_pcs", path = "../lv42_pcs" }
+tracing.workspace = true
+
+[lints]
+workspace = true
