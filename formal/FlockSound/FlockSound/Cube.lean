@@ -155,6 +155,11 @@ theorem mle_smul {m : ℕ} (a : F) (t : Cube m → F) (x : Fin m → F) :
     mle (fun b ↦ a * t b) x = a * mle t x := by
   simp only [mle, Finset.mul_sum, mul_assoc]
 
+theorem mle_smul_right {m : ℕ} (a : F) (t : Cube m → F) (x : Fin m → F) :
+    mle (fun b ↦ t b * a) x = mle t x * a := by
+  simp only [mle, Finset.sum_mul]
+  exact Finset.sum_congr rfl fun b _ ↦ by ring
+
 theorem mle_sum {m : ℕ} {ι : Type*} (s : Finset ι) (t : ι → Cube m → F) (x : Fin m → F) :
     mle (fun b ↦ ∑ i ∈ s, t i b) x = ∑ i ∈ s, mle (t i) x := by
   simp only [mle, Finset.sum_mul]

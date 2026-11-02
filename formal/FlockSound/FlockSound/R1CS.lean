@@ -56,6 +56,11 @@ theorem zcRow_surj (row : Pos k l m) (t : Cube κ) :
   refine ⟨lowPart row.1, Fin.append (Fin.append (highPart row.1) row.2) t, ?_, by simp⟩
   simp only [zcRow, lowPart_append, highPart_append, append_lowPart_highPart]
 
+/-- A sum over the positions: the skip bits, the other packing bits, the slot bits. -/
+theorem sum_pos {M : Type*} [AddCommMonoid M] (f : Pos k l m → M) :
+    ∑ row : Pos k l m, f row = ∑ i : Cube k, ∑ bl : Cube l, ∑ bh : Cube m, f (Fin.append i bl, bh) := by
+  rw [Fintype.sum_prod_type, sum_cube_append]
+
 section Char2
 
 variable [CharP F 2]

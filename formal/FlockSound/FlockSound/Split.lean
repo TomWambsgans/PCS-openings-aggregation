@@ -17,6 +17,12 @@ section Ring
 
 variable {F : Type*} [CommRing F]
 
+/-- The low block of a point. -/
+def lowPart {a b : ℕ} {α : Type*} (x : Fin (a + b) → α) : Fin a → α := fun j ↦ x (Fin.castAdd b j)
+
+/-- The high block of a point. -/
+def highPart {a b : ℕ} {α : Type*} (x : Fin (a + b) → α) : Fin b → α := fun j ↦ x (Fin.natAdd a j)
+
 theorem sum_cube_append {M : Type*} [AddCommMonoid M] {a b : ℕ} (f : Cube (a + b) → M) :
     ∑ x, f x = ∑ x : Cube a, ∑ y : Cube b, f (Fin.append x y) := by
   rw [← Fintype.sum_prod_type']
@@ -39,24 +45,6 @@ theorem mle_append {a b : ℕ} (t : Cube (a + b) → F) (x : Fin a → F) (y : F
   refine Finset.sum_congr rfl fun by' _ ↦ Finset.sum_congr rfl fun bx _ ↦ ?_
   ring
 
-/-- A table of the high coordinates only extends to its own extension there. -/
-theorem mle_high {a b : ℕ} (t : Cube b → F) (x : Fin a → F) (y : Fin b → F) :
-    mle (fun c : Cube (a + b) ↦ t (fun j ↦ c (Fin.natAdd a j))) (Fin.append x y) = mle t y := by
-  rw [mle_append]
-  simp only [Fin.append_right, mle_const]
-
-/-- A table of the low coordinates only extends to its own extension there. -/
-theorem mle_low {a b : ℕ} (t : Cube a → F) (x : Fin a → F) (y : Fin b → F) :
-    mle (fun c : Cube (a + b) ↦ t (fun j ↦ c (Fin.castAdd b j))) (Fin.append x y) = mle t x := by
-  rw [mle_append]
-  simp only [Fin.append_left, mle_const]
-
-/-- The low block of a point. -/
-def lowPart {a b : ℕ} {α : Type*} (x : Fin (a + b) → α) : Fin a → α := fun j ↦ x (Fin.castAdd b j)
-
-/-- The high block of a point. -/
-def highPart {a b : ℕ} {α : Type*} (x : Fin (a + b) → α) : Fin b → α := fun j ↦ x (Fin.natAdd a j)
-
 theorem append_lowPart_highPart {a b : ℕ} {α : Type*} (x : Fin (a + b) → α) :
     Fin.append (lowPart x) (highPart x) = x :=
   Fin.append_castAdd_natAdd
@@ -66,6 +54,28 @@ theorem append_lowPart_highPart {a b : ℕ} {α : Type*} (x : Fin (a + b) → α
 
 @[simp] theorem highPart_append {a b : ℕ} {α : Type*} (x : Fin a → α) (y : Fin b → α) :
     highPart (Fin.append x y) = y := funext fun j ↦ Fin.append_right x y j
+
+/-- A table of the high coordinates only extends to its own extension there. -/
+theorem mle_high {a b : ℕ} (t : Cube b → F) (x : Fin a → F) (y : Fin b → F) :
+    mle (fun c : Cube (a + b) ↦ t (highPart c)) (Fin.append x y) = mle t y := by
+  rw [mle_append]
+  simp only [highPart_append, mle_const]
+
+/-- A table of the low coordinates only extends to its own extension there. -/
+theorem mle_low {a b : ℕ} (t : Cube a → F) (x : Fin a → F) (y : Fin b → F) :
+    mle (fun c : Cube (a + b) ↦ t (lowPart c)) (Fin.append x y) = mle t x := by
+  rw [mle_append]
+  simp only [lowPart_append, mle_const]
+
+/-- Moving the outer of four sums innermost. -/
+theorem sum_comm_in3 {α β γ δ M : Type*} [Fintype α] [Fintype β] [Fintype γ] [Fintype δ]
+    [AddCommMonoid M] (f : α → β → γ → δ → M) :
+    ∑ a, ∑ b, ∑ c, ∑ d, f a b c d = ∑ b, ∑ c, ∑ d, ∑ a, f a b c d := by
+  rw [Finset.sum_comm]
+  refine Finset.sum_congr rfl fun b _ ↦ ?_
+  rw [Finset.sum_comm]
+  refine Finset.sum_congr rfl fun c _ ↦ ?_
+  rw [Finset.sum_comm]
 
 theorem mle_split {a b : ℕ} (t : Cube (a + b) → F) (x : Fin (a + b) → F) :
     mle t x = mle (fun by' ↦ mle (fun bx ↦ t (Fin.append bx by')) (lowPart x)) (highPart x) := by
