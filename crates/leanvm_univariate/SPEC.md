@@ -533,3 +533,16 @@ Each entry says what changed, why, and what the prover must change (none if the 
    - §4 and `contract.rs`: the public input's word order documented (F7).
    - §3: the setup is `2^23.32` words; §5.3: the measured degrees (SET 4.15 n); §11: the prover measured at 8×.
    Prover: nothing.
+10. **Lever F1b: the active rows at fixed cosets** (`domain::active_positions`, `is_active`,
+    `active_vanishing_from_bits`). A count's bit `b < r` owns the rows `[2^r - 2^(b+1), 2^r - 2^b)` (an aligned
+    coset with a constant offset `ω_(2^(r-b) - 2)`), bit `r` (a full table) all of `V_r`; the active rows are the
+    cosets of the count's set bits, the highest first. So `Z_act(t) = Π_(b<r) (1 + c_b (w_b + K_b + 1)) ·
+    (1 + c_r (w_r + 1))`: one product and one selection a bit, the factors shared by the tables of one height, and no
+    `ω_c` or digit chain of `t + ω_c` (entry 6). A count above `2^(r-1)` still starts with the prefix
+    `[0, 2^(r-1))`; the last row `2^r - 1` is active only in a full table. The rows' order is not part of leanVM's
+    statement (the bus is a multiset; padding rows are free). Measured, main line: straight 195,246 → 188,918
+    (`Z_act` 9,371 → 4,063, the bits 3,396 → 2,433); deployed 209,072 → 202,394; tx (EIP-7623, `c = 0`, deployed)
+    322,488 → 315,810.
+    Prover: place table `T`'s `c` active rows, in order, at `active_positions(c, r)` (and BLAKE2S's `q_flock`
+    instances with them, position by position); padding rows everywhere else. The heap's leaves follow the positions
+    (`is_active`).

@@ -14,7 +14,7 @@
 use std::sync::OnceLock;
 
 use leanvm_flock_gas::K;
-use leanvm_flock_gas::field::E;
+use leanvm_flock_gas::field::{E, ONE};
 use leanvm_flock_gas::scalar::Scalar;
 
 /// Basis vectors computed: enough for a heap of `2^27` positions and its quotient's spill.
@@ -168,6 +168,53 @@ pub fn prefix_vanishing_from_bits<S: Scalar>(t: S, bits: &[S]) -> S {
     product
 }
 
+/// The active rows' fixed cosets (SPEC.md §13): bit `b < r` of a count owns the rows `[2^r - 2^(b+1), 2^r - 2^b)`,
+/// and bit `r` (a count of `2^r`) all of `V_r`. A count's active rows are the cosets of its set bits, the highest
+/// first, so a count above `2^(r-1)` starts with the prefix `[0, 2^(r-1))`; the last row `2^r - 1` is active only
+/// in a full table. This coset's offset is a constant: `ω_(2^(r-b) - 2)`.
+pub fn coset_offset(r: usize, b: usize) -> E {
+    point_e((1 << (r - b)) - 2)
+}
+
+/// The positions of a height-`r` table's `rows` active rows, in order.
+pub fn active_positions(rows: u64, r: usize) -> Vec<u64> {
+    assert!(rows <= 1 << r);
+    if rows == 1 << r {
+        return (0..rows).collect();
+    }
+    let mut out = Vec::with_capacity(rows as usize);
+    for b in (0..r).rev() {
+        if rows >> b & 1 == 1 {
+            let start = (1u64 << r) - (2u64 << b);
+            out.extend(start..start + (1 << b));
+        }
+    }
+    out
+}
+
+/// Whether row `i` of a height-`r` table with `rows` active rows is active.
+pub fn is_active(i: u64, rows: u64, r: usize) -> bool {
+    if rows == 1 << r {
+        return true;
+    }
+    // Row i < 2^r - 1 lies in bit b's coset for the b with 2^r - 2^(b+1) <= i < 2^r - 2^b.
+    let gap = (1u64 << r) - i; // in (2^b, 2^(b+1)]
+    gap >= 2 && rows >> (63 - (gap - 1).leading_zeros()) & 1 == 1
+}
+
+/// `Z_act(t)` of the fixed cosets from the count's bits `bits[b]` (0 or 1, `b ≤ r`):
+/// `Π_(b<r) (1 + c_b (w_b + K_b + 1)) · (1 + c_r (w_r + 1))`, `K_b` [`coset_offset`]. The factors `w_b + K_b + 1`
+/// are shared by every table of the height.
+pub fn active_vanishing_from_bits<S: Scalar>(w: &[S], bits: &[S], r: usize) -> S {
+    assert_eq!(bits.len(), r + 1);
+    let one = S::one();
+    let mut product = one + bits[r] * (w[r] + one);
+    for (b, &bit) in bits[..r].iter().enumerate() {
+        product *= one + bit * (w[b] + S::constant(coset_offset(r, b) + ONE));
+    }
+    product
+}
+
 /// The vanishing polynomial of `[rows, 2^r)` in `V_r`, likewise.
 pub fn suffix_vanishing<S: Scalar>(w: &[S], rows: u64, r: usize) -> S {
     let mut product = S::one();
@@ -254,6 +301,31 @@ mod tests {
         let w = digits(t, r + 1);
         assert_eq!(prefix_vanishing(&w, rows) * suffix_vanishing(&w, rows, r), w[r]);
         assert_eq!(vanishing_ratio(&digits(t, 22), 17, 21) * w_at(t, 17), w_at(t, 21));
+    }
+
+    /// The fixed cosets: the active positions are `rows` of them, `is_active` agrees, and `Z_act` from the bits
+    /// vanishes exactly on them.
+    #[test]
+    fn fixed_cosets_from_the_bits() {
+        let mut next = rng(13);
+        for r in [1usize, 3, 6] {
+            for rows in 0..=(1u64 << r) {
+                let positions = active_positions(rows, r);
+                assert_eq!(positions.len() as u64, rows);
+                let bits: Vec<E> = (0..=r).map(|b| E::new(rows >> b & 1, 0, 0)).collect();
+                for i in 0..1u64 << r {
+                    let active = positions.contains(&i);
+                    assert_eq!(is_active(i, rows, r), active, "r {r} rows {rows} row {i}");
+                    let w = digits(point_e(i), r + 1);
+                    let z = active_vanishing_from_bits(&w, &bits, r);
+                    assert_eq!(z == E::default(), active, "r {r} rows {rows} row {i}");
+                }
+                let t = E::new(next(), next(), next());
+                let w = digits(t, r + 1);
+                let z = active_vanishing_from_bits(&w, &bits, r);
+                assert_ne!(z, E::default());
+            }
+        }
     }
 
     /// From the count's bits, the prefix vanishing polynomial is the one from the count, up to `2^r` included.

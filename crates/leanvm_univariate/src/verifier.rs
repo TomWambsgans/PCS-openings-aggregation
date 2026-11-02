@@ -21,7 +21,7 @@ use leanvm_flock_gas::VerifierError;
 use crate::claims::{COMMITMENTS, Column, Combined, Commitment, Relations, Term, term};
 use crate::stacks::{EqCache, StackLayout, limb_basis};
 use crate::domain::{
-    coordinate_functionals, coordinates_at, digits, point_e, prefix_vanishing_from_bits, vanishing_ratio,
+    active_vanishing_from_bits, coordinate_functionals, coordinates_at, digits, point_e, vanishing_ratio,
 };
 use crate::heap::{HeapLayout, Leaves};
 
@@ -413,11 +413,12 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
         let _phase = enter("digits, vanishing polynomials, coordinates");
         digits(t, digit_count)
     };
-    // The active rows' vanishing polynomials Z_act(t), from the counts' bits. Z_pad = w_r / Z_act is never needed:
-    // the leaf identity is multiplied by Z_act, and the counters are nonzero on every row (SPEC.md §13).
+    // The active rows' vanishing polynomials Z_act(t), from the counts' bits: the active rows are the fixed cosets of
+    // the counts' set bits (SPEC.md §13). Z_pad = w_r / Z_act is never needed: the leaf identity is multiplied by
+    // Z_act, and the counters are nonzero on every row.
     let active: Vec<S> = {
         let _phase = enter("row counts: Z_act from the bits");
-        count_bits.iter().map(|bits| prefix_vanishing_from_bits(t, bits)).collect()
+        count_bits.iter().zip(&heights).map(|(bits, &r)| active_vanishing_from_bits(&w, bits, r)).collect()
     };
 
     // 4. The values at t, with the relations they take part in.

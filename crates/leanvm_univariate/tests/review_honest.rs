@@ -20,7 +20,7 @@ use leanvm_flock_gas::multilinear::{eq_kernel, multilinear_eval};
 use leanvm_flock_gas::transcript::{Checks, KeccakChannel, KeccakWriter, keccak_seed};
 use leanvm_univariate::claims::{Column, Combined, Commitment};
 use leanvm_univariate::contract::{NAME, SetupRoots, calldata, compile_verifier, contract_iv, record_verifier};
-use leanvm_univariate::domain::{coordinate_functionals, point_e};
+use leanvm_univariate::domain::{active_positions, coordinate_functionals, coset_offset, is_active, point_e};
 use leanvm_univariate::heap::Leaves;
 use leanvm_univariate::stacks::{StackLayout, limb_basis};
 use leanvm_univariate::verifier::{chunks, degree, sent_columns};
@@ -421,16 +421,19 @@ fn execution(rng: &mut Rng) -> Witness {
     let heights = shape.heights();
     let mut rows = Vec::new();
     for table in &tables {
-        let n = 1usize << heights[table.opcode];
-        let mut all = active[table.opcode].clone();
-        while all.len() < n {
-            // Padding rows are free, but the counters' constraint holds on every row (SPEC.md §13): nonzero
-            // counters, here 1.
-            let mut row = table.padding.clone();
-            for c in table.count_columns() {
-                row[c] = ONE;
-            }
-            all.push(row);
+        let r = heights[table.opcode];
+        let n = 1usize << r;
+        // Padding rows are free, but the counters' constraint holds on every row (SPEC.md §13): nonzero counters,
+        // here 1.
+        let mut padding = table.padding.clone();
+        for c in table.count_columns() {
+            padding[c] = ONE;
+        }
+        // The active rows sit at the fixed cosets of their count's set bits (SPEC.md §13), in order.
+        let mut all = vec![padding; n];
+        let count = active[table.opcode].len() as u64;
+        for (row, at) in active[table.opcode].iter().zip(active_positions(count, r)) {
+            all[at as usize] = row.clone();
         }
         rows.push(all);
     }
@@ -502,28 +505,20 @@ fn has_unsent(tuple: &[Form], sent: &[bool]) -> bool {
         .any(|f| f.terms().any(|(m, c)| *c != ZERO && m.iter().any(|&i| !sent[i])))
 }
 
-/// The vanishing polynomial of the aligned cosets of `[0, rows)` (`prefix`) or of `[rows, 2^r)`.
-fn vanishing(w: &[Poly], rows: u64, r: usize, prefix: bool) -> Poly {
+/// The vanishing polynomial of the active rows (`active`: the fixed cosets of `rows`'s set bits, SPEC.md §13) or of
+/// the padding rows (the cosets of its zero bits below `r`, and the last row).
+fn vanishing(w: &[Poly], rows: u64, r: usize, active: bool) -> Poly {
+    if rows == 1 << r {
+        return if active { w[r].clone() } else { Poly::constant(ONE) };
+    }
     let mut out = Poly::constant(ONE);
-    let factor = |b: usize, start: u64| w[b].add(&Poly::constant(point_e(start >> b)));
-    if prefix {
-        let mut start = 0u64;
-        for b in (0..64).rev() {
-            if rows >> b & 1 == 1 {
-                out = out.mul(&factor(b, start));
-                start += 1 << b;
-            }
+    for b in 0..r {
+        if (rows >> b & 1 == 1) == active {
+            out = out.mul(&w[b].add(&Poly::constant(coset_offset(r, b))));
         }
-    } else {
-        let mut start = rows;
-        while start < 1 << r {
-            let mut b = (start.trailing_zeros() as usize).min(r);
-            while start + (1 << b) > 1 << r {
-                b -= 1;
-            }
-            out = out.mul(&factor(b, start));
-            start += 1 << b;
-        }
+    }
+    if !active {
+        out = out.mul(&w[0].add(&Poly::constant(point_e((1 << r) - 1))));
     }
     out
 }
@@ -760,7 +755,7 @@ fn prove(witness: &Witness, mode: Claims, tamper: Tamper, bases: &Bases) -> Proo
                     bytecode_push_poly.eval(x) * bytecode_pull_poly.eval(x).inv()
                 }
                 Leaves::Table(t) => {
-                    if (i as u64) < witness.active[t] {
+                    if is_active(i as u64, witness.active[t], block.r) {
                         let row = &witness.rows[t][i];
                         let table = &tables[t];
                         let (mut p, mut q) = (ONE, ONE);
