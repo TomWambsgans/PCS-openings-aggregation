@@ -1,5 +1,5 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
-import ZK.Simulator
+import ZK.Main
 
 /-! # The axioms of the zero-knowledge bridge's theorems -/
 
@@ -34,3 +34,15 @@ import ZK.Simulator
 /-- info: 'PcsQuotient.EndToEnd.zeroKnowledge_deployed_rpmSimulator' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zeroKnowledge_deployed_rpmSimulator
+
+/-- info: 'PcsQuotient.EndToEnd.realExperiment_coins' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.realExperiment_coins
+
+/-- info: 'PcsQuotient.EndToEnd.realBridge_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.realBridge_of
+
+/-- info: 'PcsQuotient.EndToEnd.zeroKnowledge_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.zeroKnowledge_end
