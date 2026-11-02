@@ -18,6 +18,14 @@ import QuotientZk.JointGadget
 import QuotientZk.Joint
 import QuotientZk.JointDeployed
 import QuotientZk.JointAxioms
+import QuotientZk.RpmTape
+import QuotientZk.RpmProver
+import QuotientZk.RpmMain
+import QuotientZk.RpmDuplex
+import QuotientZk.RpmDuplexProver
+import QuotientZk.RpmDeployed
+import QuotientZk.RpmJoint
+import QuotientZk.RpmAxioms
 
 /-!
 # Zero knowledge of the non-interactive proof (layer F3b)
@@ -31,6 +39,13 @@ import QuotientZk.JointAxioms
   operation count (`skel_queryBound`, `≤ 2^70` at `2^22` rows), the unopened rows' entropy for the
   redesigned (gadget) layout (`row_entropy`, `gadget_stackR_of_onFirst`) carried to the joint view
   (`Factors.bound`). **`zk_deployed`**, **`zk_deployed_bits`**: `εFS + εhv + 2^-2200`.
+* `Rpm*`: the random-permutation model (leanerVM `mumbai`'s `common`). The real game hashes with
+  Keccak-256 over `π` and calls `π` in the duplex; the simulator runs `sim` on the skeleton with
+  the duplex's bookkeeping and answers the distinguisher's `π`, `π⁻¹` with `common`'s two-oracle
+  indifferentiability simulator over the programmed cache. **`zk_rpm_deployed`**,
+  **`zk_rpm_deployed_bits`**, **`zk_rpm_deployed_joint`** (`RpmJoint.lean`): the ROM bounds plus
+  `Q² / 2^508` for `Q` permutation calls (`zk_rpm`, `RpmMain.lean`: a prover hashing with
+  Keccak-256 only, plus `Q² / 2^509`).
 -/
 
 /-- info: 'QuotientZk.zk_rom' depends on axioms: [propext, Classical.choice, Quot.sound] -/
