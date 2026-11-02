@@ -37,12 +37,11 @@ which is what `opening::verify` gives `verifier::whir::verify_whir`. It runs on 
 of `verifier::MerkleOpenings`); the Rust prover ships pruned paths, which the Rust verifier expands into
 these (`MerkleOpenings::Pruned`, not formalized; the differential test converts them).
 
-**Two adaptations of mumbai's program, both in how it is run** (`openingWith`): the root is not read
-from the stream (leanVM's stacked opening reads it there, `commitStack`) but given, as `opening::verify`
-gives it to `verify_whir`, so the run starts with it as commitment `0`; and the sponge is seeded as
-`opening::seed` seeds it: Keccak-256 of the label `"pcs-quotient-opening"` and Keccak-256 of the root and
-the claims (`seedInput`, the IV's and the public input's words, then one permutation, as leanVM's
-`Transcript::new`).
+**How mumbai's program is run** (`openingWith`): the sponge is seeded as `opening.rs` (version `2`) seeds
+it, from an IV that hashes a prefix (label, version, the layout's identifier, sizes) and the claims, with a
+zero public digest; the root rides the proof's first two scalars, absorbed and required to be the expected
+root (as leanVM's stacked opening reads it, `commitStack`), and the run of `verifyStackedOpening` starts with
+it as commitment `0`.
 -/
 
 @[expose] public section
@@ -238,41 +237,87 @@ def stackWeight (L : Layout) (c : Claim) (x : List E) : E :=
     let onOverflow := laneEq L.overflowLane + laneEq (L.share.getD 0)
     below * (even * on 0 + odd * on 1 + held * onOverflow)
 
-/-! ### The opening check -/
+/-! ### The opening check
+
+**The transcript's seed** (version `2`, `opening.rs`'s `prefix`, `iv`, `PUBLIC_DIGEST`): the IV is the
+Keccak-256 of a prefix (the label `"pcs-quotient-opening"`, the version, the layout's identifier — the
+Keccak-256 of its encoding —, its size and the rate, each number eight little-endian bytes) and of the
+claims (each point's coordinates then its value, three limbs of eight little-endian bytes each); the public
+digest is zero; the sponge starts at the permutation of the two (`seedInput`, as leanVM's `Transcript::new`).
+The root is not hashed: it is the proof's first two scalars, which the verifier reads and requires to be the
+root it expects. That is leanVM's transcript shape (`formal/WhirBridge`). -/
 
 /-- `LABEL` (`opening.rs`). -/
 def openingLabel : List UInt8 := "pcs-quotient-opening".toUTF8.toList
 
+/-- `VERSION` (`opening.rs`). -/
+def openingVersion : ℕ := 2
+
+/-- A number as eight little-endian bytes. -/
+def u64Bytes (n : ℕ) : List UInt8 := wordBytes n.toUInt64
+
+/-- `encode_layout` (`opening.rs`): every field of the layout as numbers of eight bytes: the variables, the
+stack's size, the lanes (each its kind, `0` a block, `1` the overflow, `2` random, then its block or `0`),
+the piece (`0`, or `1` then it), the held pieces (their count, then each), the share lane (as the piece). -/
+def Layout.encoding (L : Layout) : List UInt8 :=
+  let option : Option ℕ → List UInt8
+    | none => u64Bytes 0
+    | some v => u64Bytes 1 ++ u64Bytes v
+  u64Bytes L.vars ++ u64Bytes L.logN ++ u64Bytes L.lanes.length ++
+    L.lanes.flatMap (fun
+      | .block b => u64Bytes 0 ++ u64Bytes b
+      | .overflow => u64Bytes 1 ++ u64Bytes 0
+      | .random => u64Bytes 2 ++ u64Bytes 0) ++
+    option L.logPiece ++ u64Bytes L.pieces.length ++ L.pieces.flatMap u64Bytes ++ option L.share
+
 /-- The eight little-endian bytes of each limb of an element of `E`, limb `0` first. -/
 def eBytes (x : E) : List UInt8 := kBytes (x.limb 0) ++ kBytes (x.limb 1) ++ kBytes (x.limb 2)
 
-/-- What the opening's seed hashes (`seed`, `opening.rs`): the root, then each claim's point and value,
-each element as its limbs' little-endian bytes. -/
-def openingSeedBytes (root : Digest) (claims : List Claim) : List UInt8 :=
-  digestBytes root ++ claims.flatMap fun c ↦ (c.point ++ [c.value]).flatMap eBytes
+/-- The claims as the IV hashes them: each point's coordinates then its value. -/
+def claimBytes (claims : List Claim) : List UInt8 :=
+  claims.flatMap fun c ↦ (c.point ++ [c.value]).flatMap eBytes
+
+/-- The zero digest, the opening transcript's public digest (`PUBLIC_DIGEST`). -/
+def zeroDigest : Digest := Vector.replicate 4 0
 
 section With
 
 variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
 
+/-- **The opening's initial sponge** over `F` (`iv`, `prefix`, `layout_id`, `Transcript::new`): the
+permutation of the IV, Keccak-256 of the prefix and the claims, and the zero public digest. -/
+def openingSpongeWith (L : Layout) (claims : List Claim) : m Sponge := do
+  let layoutId ← keccak256With F L.encoding
+  let pre := openingLabel ++ u64Bytes openingVersion ++ digestBytes layoutId ++ u64Bytes L.logN ++
+    u64Bytes logInvRate
+  let iv ← keccak256With F (pre ++ claimBytes claims)
+  return ⟨← F (seedInput iv zeroDigest), []⟩
+
 /-- **The opening check** over the permutation `F` (`opening::verify`): every claim has the table's
-variables; the sponge seeded by Keccak-256 of the label and of the root and the claims; then mumbai's
-`verifyStackedOpening` (one challenge, its powers batching the claims, then `verifyWhir` at rate `1/2`)
-run on the opening proof with the root as commitment `0`, its level-0 rows `64` words at height
-`logN − 6 + 1`; and nothing of the proof left unread (`Transcript::finish`). -/
+variables; from the opening's initial sponge, the proof's first two scalars absorbed and required to be the
+expected root's halves; then mumbai's `verifyStackedOpening` (one challenge, its powers batching the claims,
+then `verifyWhir` at rate `1/2`) run on the rest of the proof with the root as commitment `0`, its level-0 rows
+`64` words at height `logN − 6 + 1`; and nothing of the proof left unread (`Transcript::finish`). -/
 def openingWith (L : Layout) (root : Digest) (claims : List Claim) (proof : Compile.Proof) :
     m Bool := do
   if claims.all (·.point.length = L.vars) then
-    let iv ← keccak256With F openingLabel
-    let statement ← keccak256With F (openingSeedBytes root claims)
-    let seed ← F (seedInput iv statement)
-    let program := verifyStackedOpening L.logN logInvRate
-      (claims.map fun c ↦ (stackWeight L c, c.value))
-    let height := L.logN - laneFold + logInvRate
-    match ← run F program ⟨⟨seed, []⟩, proof.stream, proof.openings, [(root, height, 2 ^ laneFold)]⟩
-      with
-    | some (_, s) => return s.stream.isEmpty && s.openings.isEmpty
-    | none => return false
+    match proof.stream with
+    | x0 :: x1 :: rest =>
+      let sp ← openingSpongeWith F L claims
+      let sp ← absorb F sp x0 dsObserve
+      let sp ← absorb F sp x1 dsObserve
+      match digestOfScalars (x0, x1) with
+      | some r =>
+        if r.toList = root.toList then
+          let program := verifyStackedOpening L.logN logInvRate
+            (claims.map fun c ↦ (stackWeight L c, c.value))
+          let height := L.logN - laneFold + logInvRate
+          match ← run F program ⟨sp, rest, proof.openings, [(root, height, 2 ^ laneFold)]⟩ with
+          | some (_, s) => return s.stream.isEmpty && s.openings.isEmpty
+          | none => return false
+        else return false
+      | none => return false
+    | _ => return false
   else return false
 
 end With

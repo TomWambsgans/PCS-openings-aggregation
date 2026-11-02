@@ -26,7 +26,8 @@ use primitives::test_rng::Rng;
 use quotient::circuit::{Builder, Circuit, Src, membership, membership_inputs, public_words};
 use quotient::opening::{self, Claim, Layout, commit, wire_proof};
 use quotient::protocol::{
-    Claims, Index, Openings, open, prove, quotient_layout, verify, wiring_layout, witness_layout,
+    Claims, Index, Openings, Randomness, open, prove_with_randomness, quotient_layout, verify, wiring_layout,
+    witness_layout,
 };
 use quotient::statement::{DEPTH, Secret, Statement};
 use quotient::transcript::Proof;
@@ -360,7 +361,8 @@ fn proofs(lines: &mut Vec<String>, rng: &mut Rng, name: &str, circuit: &Circuit,
         let cells = circuit.cells(inputs);
         let masks = masks(rng);
         let seed = random_hash(rng);
-        let proved = prove(circuit, &index, &index_committed.root, statement, &cells, &masks, &seed);
+        let randomness = Randomness { masks, padding: seed };
+        let proved = prove_with_randomness(circuit, &index, &index_committed.root, statement, &cells, &randomness);
         assert!(proved.fits);
         lines.push(prover_line(name, inputs, &seed, &masks, &proved.proof.stream));
         let (stream, roots, claims) = (proved.proof.stream.clone(), proved.roots, proved.claims.clone());

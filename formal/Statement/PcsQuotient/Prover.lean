@@ -169,18 +169,20 @@ section With
 
 variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
 
-/-- **An opening proof** of `claims` on the table committed by `tree` (its stack `stack`): the script run
-against the verifier's program from the opening's seed, with the table's tree as commitment `0`;
-`none` if a proof of work finds no nonce below `fuel`. -/
+/-- **An opening proof** of `claims` on the table committed by `tree` (its stack `stack`): the root's two
+halves sent first (`ProverState::add_root`), then the script run against the verifier's program from the
+opening's sponge, with the table's tree as commitment `0`; `none` if a proof of work finds no nonce below
+`fuel`. -/
 def proveOpeningWith (fuel : ℕ) (L : Layout) (tree : Tree) (stack : Array K) (claims : List Claim) :
     m (Option Compile.Proof) := do
-  let iv ← keccak256With F openingLabel
-  let statement ← keccak256With F (openingSeedBytes tree.root claims)
-  let seed ← F (seedInput iv statement)
+  let (r0, r1) := digestScalars tree.root
+  let sp ← openingSpongeWith F L claims
+  let sp ← absorb F sp r0 dsObserve
+  let sp ← absorb F sp r1 dsObserve
   let program := verifyStackedOpening L.logN logInvRate
     (claims.map fun c ↦ (stackWeight L c, c.value))
-  let r ← runFrom F fuel program (some (openingScript L stack claims)) ⟨seed, []⟩ [tree]
-  return r.map fun t ↦ ⟨t.1, t.2⟩
+  let r ← runFrom F fuel program (some (openingScript L stack claims)) sp [tree]
+  return r.map fun t ↦ ⟨r0 :: r1 :: t.1, t.2⟩
 
 /-! ### The reduction's prover -/
 
