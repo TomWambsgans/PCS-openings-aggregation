@@ -408,6 +408,50 @@ theorem fs_skelRec (skel : OracleComp DSpec Proof) (s : S) :
 
 /-! ## The theorems -/
 
+/-- **Zero knowledge in the random-permutation model, for any skeleton of the deployed oracle, the
+honest-verifier simulator within `εz`** (`VClose`): `zk_rom_approx`'s bound on `skelRec skel` plus
+`Q² / 2^508`. -/
+theorem zk_rpm_skel_approx [Fintype (Tbl × Pos)] (skel : OracleComp DSpec Proof)
+    (simV : List Out → ProbComp (View Msg Inp Tbl Pos)) (good : List Out → Prop)
+    (εFS εhv εz δ δ₂ : ℝ≥0∞) (QP QD Q : ℕ) (hQP : IsTotalQueryBound skel QP)
+    (hFS : Deployed.FSFresh P skel [] εFS)
+    (hzk : ∀ σ, good σ → VClose ((fun s ↦ P.view s σ) <$> ($ᵗ S)) (simV σ) εz)
+    (hgood : Pr{let σ ← uniformList Out P.n}[¬ good σ] ≤ εhv)
+    (hent : ∀ σ k x, P.opened σ k x = false → ∀ v y,
+      Pr{let s ← $ᵗ S}[P.view s σ = v ∧ P.rows s σ k x = y] ≤
+        δ * Pr{let s ← $ᵗ S}[P.view s σ = v])
+    (hent₂ : ∀ σ k x k' x', P.opened σ k x = false → P.opened σ k' x' = false →
+      (k, x) ≠ (k', x') → ∀ v,
+        Pr{let s ← $ᵗ S}[P.view s σ = v ∧ P.rows s σ k x = P.rows s σ k' x'] ≤
+          δ₂ * Pr{let s ← $ᵗ S}[P.view s σ = v])
+    (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m)
+    (hduplex : DuplexDiscipline P skel)
+    (D : Proof → OracleComp (permutationOracleSpec KSt) Bool)
+    (hD : ∀ pf, IsTotalQueryBound (D pf) QD)
+    (hQ : ∀ s, QueryCostAtMost (zkGameRpmD P skel D s) permutationCallCost Q) :
+    Close (realGameRpmD P skel D) (simGameRpmD P simV skel D)
+      (εFS + (εhv + εz) + ((Fintype.card (Tbl × Pos) * (QP + QD) : ℕ) * δ +
+        (Fintype.card (Tbl × Pos) ^ 2 : ℕ) * δ₂) + (Q ^ 2 : ℝ≥0∞) / 2 ^ 508) := by
+  have hFS' : Deployed.FSFresh P (skelRec skel) [] εFS := by
+    unfold Deployed.FSFresh at hFS ⊢
+    rw [bind_congr (x := ($ᵗ S)) fun s ↦ fs_skelRec P skel s]
+    exact hFS
+  have hrom : ∀ t : List KState, Close (QuotientZk.realGame P (skelRec skel) [] (throughTape2 t D))
+      (QuotientZk.simGame P simV (skelRec skel) [] (throughTape2 t D))
+      (εFS + (εhv + εz) + ((Fintype.card (Tbl × Pos) * (QP + QD) : ℕ) * δ +
+        (Fintype.card (Tbl × Pos) ^ 2 : ℕ) * δ₂)) := fun t ↦
+    (zk_rom_approx P (skelRec skel) [] simV good εFS εhv εz δ δ₂ QP QD
+      (isTotalQueryBound_skelRec skel QP hQP)
+      hFS' hzk hgood hent hent₂ _ (isTotalQueryBound_throughTape2 t D QD hD)).mono
+      (le_of_eq (by simp))
+  have h := (realGameRpmD_close P hrow skel hduplex D Q hQ).trans
+    ((Close.of_evalDistEq (realGameS2_tape P skel D QD hD)).trans
+      ((Close.bind_const _ _ _ _ hrom).trans
+        (Close.of_evalDistEq (simGameRpmD_tape P simV skel D QD hD).symm)))
+  refine h.mono (le_of_eq ?_)
+  simp only [zero_add, add_zero]
+  rw [add_comm]
+
 /-- **Zero knowledge in the random-permutation model, for any skeleton of the deployed oracle**:
 `zk_rom`'s bound on `skelRec skel` plus `Q² / 2^508`. -/
 theorem zk_rpm_skel [Fintype (Tbl × Pos)] (skel : OracleComp DSpec Proof)
@@ -430,24 +474,9 @@ theorem zk_rpm_skel [Fintype (Tbl × Pos)] (skel : OracleComp DSpec Proof)
     (hQ : ∀ s, QueryCostAtMost (zkGameRpmD P skel D s) permutationCallCost Q) :
     Close (realGameRpmD P skel D) (simGameRpmD P simV skel D)
       (εFS + εhv + ((Fintype.card (Tbl × Pos) * (QP + QD) : ℕ) * δ +
-        (Fintype.card (Tbl × Pos) ^ 2 : ℕ) * δ₂) + (Q ^ 2 : ℝ≥0∞) / 2 ^ 508) := by
-  have hFS' : Deployed.FSFresh P (skelRec skel) [] εFS := by
-    unfold Deployed.FSFresh at hFS ⊢
-    rw [bind_congr (x := ($ᵗ S)) fun s ↦ fs_skelRec P skel s]
-    exact hFS
-  have hrom : ∀ t : List KState, Close (QuotientZk.realGame P (skelRec skel) [] (throughTape2 t D))
-      (QuotientZk.simGame P simV (skelRec skel) [] (throughTape2 t D))
-      (εFS + εhv + ((Fintype.card (Tbl × Pos) * (QP + QD) : ℕ) * δ +
-        (Fintype.card (Tbl × Pos) ^ 2 : ℕ) * δ₂)) := fun t ↦
-    (zk_rom P (skelRec skel) [] simV good εFS εhv δ δ₂ QP QD (isTotalQueryBound_skelRec skel QP hQP)
-      hFS' hzk hgood hent hent₂ _ (isTotalQueryBound_throughTape2 t D QD hD)).mono
-      (le_of_eq (by simp))
-  have h := (realGameRpmD_close P hrow skel hduplex D Q hQ).trans
-    ((Close.of_evalDistEq (realGameS2_tape P skel D QD hD)).trans
-      ((Close.bind_const _ _ _ _ hrom).trans
-        (Close.of_evalDistEq (simGameRpmD_tape P simV skel D QD hD).symm)))
-  refine h.mono (le_of_eq ?_)
-  simp only [zero_add, add_zero]
-  rw [add_comm]
+        (Fintype.card (Tbl × Pos) ^ 2 : ℕ) * δ₂) + (Q ^ 2 : ℝ≥0∞) / 2 ^ 508) :=
+  (zk_rpm_skel_approx P skel simV good εFS εhv 0 δ δ₂ QP QD Q hQP hFS
+    (fun σ hσ ↦ VClose.of_evalDistEq (hzk σ hσ)) hgood hent hent₂ hrow hduplex D hD hQ).mono
+    (le_of_eq (by rw [add_zero]))
 
 end QuotientZk.DRpm

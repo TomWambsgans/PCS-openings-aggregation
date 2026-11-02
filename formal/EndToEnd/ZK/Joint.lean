@@ -19,8 +19,9 @@ verifier's claimed values) and the link `link`.
   64-bit words, `E`'s limbs);
 * F1's hypotheses on the statement and the witness (`hE`, `hvan`, `hsat`, `hvan0`, `hN`, `hdeg`) and
   the simulator's public functions (`hinK`, `hsig`), as `JointData.Valid` has them;
-* **the honest tables meet the verifier's claims** (`hTW`, `hTQ`; proved for the deployed tables in
-  `formal/Completeness`).
+* **the honest tables meet the verifier's claims** off the degenerate challenges and masks (`hTW`,
+  `hTQ`, under `ClaimsND`: the claims' scales `1 + w_k(t)`, the row outside `K`, the copy
+  denominator `claimDen · vRows(t)`; at the degenerate ones the verifier divides by zero).
 
 Every other field of `Valid` is proved (`Instance/Main.lean`, `Instance/Fresh.lean`).
 -/
@@ -81,10 +82,10 @@ theorem deployedJointData_valid (rep : QuotientZk.Instance.Rep K E) (P₀ : Para
     (hN : P₀.nCells = 2 ^ 24) (hdeg : van.natDegree ≤ 2 ^ 22)
     (hinK : ∀ e, inK e = true ↔ e ∈ Set.range (algebraMap K E))
     (hsig : ∀ t, sigmaAt t = P₀.sigmaPoly.eval t)
-    (hTW : ∀ c, good P₀ gK van c → ∀ m,
+    (hTW : ∀ c, good P₀ gK van c → ∀ m, ClaimsND (K := K) P₀ gK van c m →
       (openW rep Y).claims (c, redMsgs P₀ gK van c.1.1.2 m) (TW m) =
         valsW c (redMsgs P₀ gK van c.1.1.2 m))
-    (hTQ : ∀ c, good P₀ gK van c → ∀ m,
+    (hTQ : ∀ c, good P₀ gK van c → ∀ m, ClaimsND (K := K) P₀ gK van c m →
       (openQ rep P₀ Y).claims (c, redMsgs P₀ gK van c.1.1.2 m) (TQ c.1.1.1 m) =
         valsQ P₀ stmt Y c (redMsgs P₀ gK van c.1.1.2 m)) :
     (deployedJointData rep P₀ stmt Y gK van TW TQ R inK sigmaAt).Valid where
@@ -103,8 +104,8 @@ theorem deployedJointData_valid (rep : QuotientZk.Instance.Rep K E) (P₀ : Para
   hsig := hsig
   hS₁ := conditionsW rep h3 hY
   hS₂ := conditionsQ rep P₀ h3 hY
-  hT₁ c hc m := (hTW c hc m).trans (claims_solve _ _ _ (hTW c hc m)).symm
-  hT₂ c hc m := (hTQ c hc m).trans (claims_solve _ _ _ (hTQ c hc m)).symm
+  hT₁ c hc m hnd := (hTW c hc m hnd).trans (claims_solve _ _ _ (hTW c hc m hnd)).symm
+  hT₂ c hc m hnd := (hTQ c hc m hnd).trans (claims_solve _ _ _ (hTQ c hc m hnd)).symm
   hsimT₁ _ _ _ := rfl
   hsimT₂ _ _ _ := rfl
   hch := chOf_uniform rep.limbs

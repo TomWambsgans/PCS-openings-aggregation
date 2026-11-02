@@ -24,7 +24,8 @@ for every witness by definition (`pub_deployed`, `simV_deployed`).
 
 **Named**: the fields (`h3`, `hq`, `hK`, `hY`), F1's facts on the statement and the witness (`hE`, `hN`,
 `hvan`, `hsat`, `hvan0`, `hdeg`), the simulator's public functions (`hinK`, `hsig`), the honest tables'
-claims (`hTW`, `hTQ`); the prover's permutation budget `Qp`; a bijection `e` of the skeleton model's
+claims off the degenerate challenges and masks (`hTW`, `hTQ`, under `ClaimsND`); the prover's
+permutation budget `Qp`; a bijection `e` of the skeleton model's
 randomness onto the statement's coins' words (`he`; `CoinsMatch` follows, `coinsMatch_of_bijective`);
 `ProverBridge` at the coins `decodeCoins ∘ e`.
 -/
@@ -94,9 +95,11 @@ theorem zeroKnowledge_deployed_end (rep : QuotientZk.Instance.Rep K E) (P₀ : P
     (hinK : ∀ e, inK e = true ↔ e ∈ Set.range (algebraMap K E))
     (hsig : ∀ t, sigmaAt t = P₀.sigmaPoly.eval t)
     (hTW : ∀ stmt w, Relation stmt w → ∀ c, good P₀ (gK stmt w) (van stmt w) c → ∀ m,
+      ClaimsND (K := K) P₀ (gK stmt w) (van stmt w) c m →
       (openW rep Y).claims (c, redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m) (TW stmt w m) =
         valsW c (redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m))
     (hTQ : ∀ stmt w, Relation stmt w → ∀ c, good P₀ (gK stmt w) (van stmt w) c → ∀ m,
+      ClaimsND (K := K) P₀ (gK stmt w) (van stmt w) c m →
       (openQ rep P₀ Y).claims (c, redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m)
           (TQ stmt w c.1.1.1 m) =
         valsQ P₀ (stmtE stmt) Y c (redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m))
