@@ -4,6 +4,7 @@
 -- discipline `DuplexVm` and the block cost `hashBlocks`.
 import E2ECompleteness.Chain
 import E2ECompleteness.Transfer
+import E2ECompleteness.Regular
 import Completeness
 import PcsQuotient.Security
 
@@ -119,7 +120,7 @@ structure Staged.Holds (S : Staged) (stmt : PcsQuotient.Statement) (w : PcsQuoti
 
 /-- **One draw of the coins**: the run is rejected with probability at most the degenerate
 challenges' density, `2 / 2^256`, `εpow` and the transfer's `rpmError N`. -/
-theorem prEvent_run_false_le (hreg : Regular PcsQuotient.Transcript.challengeOf) (S : Staged)
+theorem prEvent_run_false_le (S : Staged)
     {stmt : PcsQuotient.Statement} {w : PcsQuotient.Secret} {N : ℕ} {εpow : ℝ≥0∞}
     (h : S.Holds stmt w N εpow) (c : S.Coins) :
     Pr{let z ← (simulateQ keccakCallsOverRandomPermutation (S.run c)).run' []}[z.1 = false] ≤
@@ -132,13 +133,13 @@ theorem prEvent_run_false_le (hreg : Regular PcsQuotient.Transcript.challengeOf)
       Pr{let z ← (simulateQ ro (S.run c)).run ∅}[z.1.2 ∈ badSet w (S.masks c)] := by
     rw [StateT.run'_eq, prEvent_map]
   rw [hc]
-  refine (prEvent_staged_le _ hreg _ _ _ _ (h.hashA c) (h.hashB c) ∅ fun m hm ↦
+  refine (prEvent_staged_le _ challengeOf_regular _ _ _ _ (h.hashA c) (h.hashB c) ∅ fun m hm ↦
     absurd rfl hm).trans ?_
   rw [add_comm]
   exact add_le_add (badSet_density w (S.masks c)) le_rfl
 
 /-- **Completeness in the random-permutation model, from the staged experiment.** -/
-theorem completeness_of_staged (hreg : Regular PcsQuotient.Transcript.challengeOf) {N : ℕ}
+theorem completeness_of_staged {N : ℕ}
     {εpow : ℝ≥0∞}
     (hS : ∀ stmt w, PcsQuotient.Relation stmt w → ∃ S : Staged, S.Holds stmt w N εpow) :
     PcsQuotient.Completeness
@@ -148,7 +149,7 @@ theorem completeness_of_staged (hreg : Regular PcsQuotient.Transcript.challengeO
   rw [h.experiment.prEvent_eq]
   refine prEvent_bind_le_of_forall_le _ _ _ fun c ↦ ?_
   rw [prEvent_map]
-  exact prEvent_run_false_le hreg S h c
+  exact prEvent_run_false_le S h c
 
 /-! ## The numbers -/
 
@@ -210,10 +211,10 @@ theorem deltaDeployed_lt : deltaDeployed < (2 : ℝ≥0∞)⁻¹ ^ 162 := by
 
 /-- **`PcsQuotient.Completeness` at the deployed bound**, from the staged experiment at `2^48`
 block calls and a proof-of-work error of `3 · 2^-277`. -/
-theorem completeness_deployed (hreg : Regular PcsQuotient.Transcript.challengeOf)
+theorem completeness_deployed
     (hS : ∀ stmt w, PcsQuotient.Relation stmt w →
       ∃ S : Staged, S.Holds stmt w (2 ^ 48) (3 * (2 : ℝ≥0∞)⁻¹ ^ 277)) :
     PcsQuotient.Completeness deltaDeployed :=
-  completeness_of_staged hreg hS
+  completeness_of_staged hS
 
 end E2ECompleteness

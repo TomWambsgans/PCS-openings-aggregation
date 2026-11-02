@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import E2ECompleteness.Chain
 import E2ECompleteness.Transfer
+import E2ECompleteness.Regular
 import E2ECompleteness.End
 
 /-!
@@ -21,11 +22,17 @@ layers, with an explicit `δ`:
   experiment (`Staged.Holds`); `completeness_deployed`, at `N = 2^48`, `εpow = 3 · 2^-277`,
   `δ < 2^-162` (`deltaDeployed_lt`).
 
-What stays a hypothesis: `Regular challengeOf` (the transcript's challenge, the low 192 bits of a
-digest, has at most `2^64` digests per value) and `Staged.Holds` for the Statement's experiment
-(its two-call staged form, the duplex discipline, the block count, the chain's lengths, and the
-grinding at non-degenerate challenges). See the completeness section of `formal/README.md`.
+* `Regular.lean`: the transcript's challenge (`challengeOf`, the digest's bytes `8 … 31` read
+  big-endian) has at most `2^64` digests per value (`challengeOf_regular`).
+
+What stays a hypothesis: `Staged.Holds` for the Statement's experiment (its two-call staged form,
+the duplex discipline, the block count, the chain's lengths, and the grinding at non-degenerate
+challenges). See the completeness section of `formal/README.md`.
 -/
+
+/-- info: 'E2ECompleteness.challengeOf_regular' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms E2ECompleteness.challengeOf_regular
 
 /-- info: 'E2ECompleteness.prEvent_staged_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
