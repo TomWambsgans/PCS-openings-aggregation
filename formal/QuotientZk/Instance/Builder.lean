@@ -17,7 +17,7 @@ entries in a fixed order (`entryAt k`, `k < N`), reduces each column by the rows
 (`reduce`: one subtraction per row) and, if what is left is not zero, keeps it as a new row,
 normalized at its first nonzero coordinate (`insertE`); **it stops once every coordinate is a
 pivot**. The solution (`solveElim`) is the target reduced by the rows, the entries recorded on the
-way: a table (`sparse`) zero but at most at the `r` rows' entries.
+way: a table (`sparse`) zero but at the at most `r` rows' entries.
 
 * `solveElim_spec`: **whenever the target is a combination of the scanned entries' columns, the
   solution's columns sum to it**: the rows are in echelon form (`WF`); a combination of them zero at
@@ -29,26 +29,29 @@ way: a table (`sparse`) zero but at most at the `r` rows' entries.
 **The deployed tables** (`Tables`). The claims' weights and values are compiled (`pointWc`, `valWc`,
 `pointQc`, `valsQc`: the verifier's formulas, the public polynomials evaluated by `Polynomial.eval`;
 equal to `pointW`, `valsW`, `pointQ`, `valsQ`). The scan takes first a few **candidates**, then every
-entry, lane by lane (`enumL`): for the witness claim the overflow lane's entries `256 .. 260, 264`,
-where the weight is `R·eq(ρ, ·)·eq(ρ², ·)·eq(u₂, ·)·eq(u₃, ·)` (`R` never zero), so that their columns
-span `K³` when `ρ ∉ K`, or when `ρ ≠ 1` and the row of `t` is not in `K`; for the quotient table the
-entry `2^22 - 1` of the lanes of blocks `3, 67, 131` (the sum claim weighs `g·(1, Y, Y²)` there) and
-the first entries of the overflow lane's pieces `1, 17, 33, 5, 21, 37` (the quotient claim weighs
-`R(1+z)(1+ρ)g·(1, Y, Y²)` on the first three, `Rz(1+ρ)g·(1, Y, Y²)` on the others, the sum claim
-nothing), so that their columns span `K⁶` when `ρ ≠ 1`. **`claims_simTW`**, **`claims_simTQ`**: the
-claims of `simTW rep Y c v`, `simTQ rep P₀ stmt Y c v` are the verifier's values `valsW c v`,
-`valsQ P₀ stmt Y c v` whenever some table's are.
+entry, lane by lane (`enumL`). The candidates are chosen so that the scan stops on them at almost
+every challenge; correctness does not depend on them (`claims_build` asks only that every entry be
+reached), and their rank, sketched here, is not proved in this file: for the witness claim the
+overflow lane's entries `256 .. 260, 264`, where the weight is `R·eq(ρ, ·)·eq(ρ², ·)·eq(u₂, ·)·eq(u₃, ·)`
+(`R` never zero), whose columns span `K³` when `ρ ∉ K`, or when `ρ ≠ 1` and the row of `t` is not in
+`K`; for the quotient table the entry `2^22 - 1` of the lanes of blocks `3, 67, 131` (the sum claim
+weighs `g·(1, Y, Y²)` there) and the first entries of the overflow lane's pieces `1, 17, 33, 5, 21, 37`
+(the quotient claim weighs `R(1+z)(1+ρ)g·(1, Y, Y²)` on the first three, `Rz(1+ρ)g·(1, Y, Y²)` on the
+others, the sum claim nothing), whose columns span `K⁶` when `ρ ≠ 1`. **`claims_simTW`**,
+**`claims_simTQ`**: the claims of `simTW rep Y c v`, `simTQ rep P₀ stmt Y c v` are the verifier's
+values `valsW c v`, `valsQ P₀ stmt Y c v` whenever some table's are.
 
 **Cost** (field operations; `m ≤ 2` claims, `r = 3m ≤ 6` equations; a stack of `L = 40` or `63`
 lanes of `2^ℓ = 2^19` or `2^22` entries, `H = 33` or `167` held pieces, points of `n = 25` or `30`
 coordinates). A column is `m` evaluations of a claim's weight at an entry (`Layout.claimW`:
 `O(6L + nH)`, about `4·10^3` operations) and `r` coordinates; inserting it is at most `r` reduction
-steps of `O(r)` operations; the solution `O(r²)`. **A scan of `k` entries costs
-`O(k·(4·10^3·m + r²))`**; it stops after the first entries whose columns span `K^r`: after the `6`
-(witness) or `9` (quotient) candidates at the challenges above, after at most
-`N = #candidates + L·2^ℓ` entries in any case (`6 + 40·2^19`, `9 + 63·2^22`). An entry of the table is
-read by comparing it with the `≤ r` listed entries. Nothing here is `noncomputable`
-(`Test/Builder.lean` runs it).
+steps of `O(r)` operations (each reduced vector computed once, `mat`); the solution `O(r²)`. **A scan
+of `k` entries costs `O(k·(4·10^3·m + r²))`**. It stops after the first entries whose columns span
+`K^r` (after the `6` or `9` candidates at the challenges above), and **after at most
+`N = #candidates + L·2^ℓ` entries in any case** (`6 + 40·2^19`, `9 + 63·2^22`: `scan`'s fuel). The
+table lists at most `2^r - 1` weighted entries (at most `r` distinct ones, the rows' entries); an
+entry is read by one pass over that list. Nothing here is
+`noncomputable` (`Test/Builder.lean` runs it on `F192`).
 -/
 
 open Finset Module QuotientSecurity QuotientSecurity.Hiding
@@ -143,10 +146,25 @@ def comboVal (col : α → Fin r → K) (x : List (α × K)) : Fin r → K :=
 /-- Weighted entries, scaled. -/
 def scaleL (a : K) (x : List (α × K)) : List (α × K) := x.map fun p => (p.1, a * p.2)
 
+/-- **A vector, computed once**: its coordinates in an array (`mat v = v`), so that a chain of
+reductions does not recompute its predecessors. -/
+def mat (v : Fin r → K) : Fin r → K :=
+  let a := Array.ofFn v
+  fun i => a.getD i 0
+
+@[simp] theorem mat_eq (v : Fin r → K) : mat v = v := by
+  funext i
+  simp [mat, Array.getD, Array.size_ofFn]
+
 /-- **One reduction step**: clear the vector's coordinate at the row's pivot, recording the row's
 entries. -/
 def step (vx : (Fin r → K) × List (α × K)) (row : Row K α r) : (Fin r → K) × List (α × K) :=
-  (vx.1 - vx.1 row.piv • row.vec, vx.2 ++ scaleL (-vx.1 row.piv) row.comb)
+  let c := vx.1 row.piv
+  (mat (vx.1 - c • row.vec), vx.2 ++ scaleL (-c) row.comb)
+
+theorem step_eq (vx : (Fin r → K) × List (α × K)) (row : Row K α r) :
+    step vx row = (vx.1 - vx.1 row.piv • row.vec, vx.2 ++ scaleL (-vx.1 row.piv) row.comb) := by
+  simp [step]
 
 /-- **Reduction** by the rows, in order. -/
 def reduce (B : List (Row K α r)) (vx : (Fin r → K) × List (α × K)) :
@@ -162,7 +180,7 @@ def insertE (col : α → Fin r → K) (B : List (Row K α r)) (e : α) : List (
   let vx := reduce B (col e, [(e, 1)])
   match firstNZ vx.1 with
   | none => B
-  | some p => B ++ [⟨p, (vx.1 p)⁻¹ • vx.1, scaleL (vx.1 p)⁻¹ vx.2⟩]
+  | some p => B ++ [⟨p, mat ((vx.1 p)⁻¹ • vx.1), scaleL (vx.1 p)⁻¹ vx.2⟩]
 
 /-- **The scan**: `n` entries from the `k`-th, stopping once every coordinate is a pivot. -/
 def scan (col : α → Fin r → K) (entryAt : ℕ → α) : ℕ → ℕ → List (Row K α r) → List (Row K α r)
@@ -233,7 +251,7 @@ theorem reduce_inv : ∀ {B : List (Row K α r)}, WF col B → ∀ vx : (Fin r �
   | [], _, _ => rfl
   | row :: B, h, vx => by
     rw [reduce_cons, reduce_inv h.2.2.2]
-    simp only [step, comboVal_append, comboVal_scaleL, h.1]
+    simp only [step_eq, comboVal_append, comboVal_scaleL, h.1]
     rw [neg_smul]
     abel
 
@@ -244,7 +262,7 @@ theorem reduce_zero_of : ∀ {B : List (Row K α r)} {q : Fin r}, (∀ row ∈ B
   | row :: B, q, hB, vx, h => by
     rw [reduce_cons]
     refine reduce_zero_of (fun row' hm => hB row' (List.mem_cons_of_mem _ hm)) _ ?_
-    simp [step, h, hB row List.mem_cons_self]
+    simp [step_eq, h, hB row List.mem_cons_self]
 
 /-- **The reduced vector is zero at every pivot.** -/
 theorem reduce_piv : ∀ {B : List (Row K α r)}, WF col B → ∀ vx : (Fin r → K) × List (α × K),
@@ -254,7 +272,7 @@ theorem reduce_piv : ∀ {B : List (Row K α r)}, WF col B → ∀ vx : (Fin r �
     rw [reduce_cons]
     rcases List.mem_cons.mp hm with rfl | hm
     · refine reduce_zero_of h.2.2.1 _ ?_
-      simp [step, h.2.1]
+      simp [step_eq, h.2.1]
     · exact reduce_piv h.2.2.2 _ row hm
 
 /-- The reduction subtracts a combination of the rows. -/
@@ -267,7 +285,7 @@ theorem reduce_sub_mem : ∀ (B : List (Row K α r)) (vx : (Fin r → K) × List
     have hmono : Submodule.span K (vecs B) ≤ Submodule.span K (vecs (row :: B)) :=
       Submodule.span_mono fun w ⟨row', hm, hw⟩ => ⟨row', List.mem_cons_of_mem _ hm, hw⟩
     have h2 : (step vx row).1 - vx.1 ∈ Submodule.span K (vecs (row :: B)) := by
-      simp only [step, sub_sub_cancel_left]
+      simp only [step_eq, sub_sub_cancel_left]
       exact Submodule.neg_mem _ (Submodule.smul_mem _ _
         (Submodule.subset_span ⟨row, List.mem_cons_self, rfl⟩))
     have := Submodule.add_mem _ (hmono h1) h2
@@ -344,7 +362,7 @@ theorem WF.insertE {B : List (Row K α r)} (h : WF col B) (e : α) : WF col (ins
       simpa using this
     refine WF.append _ h (fun row hm => ?_) ?_ ?_
     · simp [reduce_piv h _ row hm]
-    · simp only [comboVal_scaleL, hinv]
+    · simp only [comboVal_scaleL, hinv, mat_eq]
     · simp [inv_mul_cancel₀ hne]
 
 /-- **After insertion, the entry's column is a combination of the rows**, and so is every
@@ -369,15 +387,17 @@ theorem insertE_span (B : List (Row K α r)) (e : α) :
       have := List.find?_some hp
       simpa using this
     have hmono : Submodule.span K (vecs B) ≤ Submodule.span K
-        (vecs (B ++ [⟨p, (v p)⁻¹ • v, scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩])) :=
+        (vecs (B ++ [⟨p, mat ((v p)⁻¹ • v), scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩])) :=
       Submodule.span_mono fun w ⟨row, hm, hw⟩ => ⟨row, List.mem_append_left _ hm, hw⟩
     refine ⟨hmono, ?_⟩
     have hv : v ∈ Submodule.span K
-        (vecs (B ++ [⟨p, (v p)⁻¹ • v, scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩])) := by
+        (vecs (B ++ [⟨p, mat ((v p)⁻¹ • v), scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩])) := by
       have hrow := Submodule.smul_mem _ (v p) (Submodule.subset_span (R := K)
-        (s := vecs (B ++ [⟨p, (v p)⁻¹ • v, scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩]))
+        (s := vecs (B ++ [⟨p, mat ((v p)⁻¹ • v), scaleL (v p)⁻¹ (reduce B (col e, [(e, 1)])).2⟩]))
         ⟨_, List.mem_append_right _ (List.mem_singleton_self _), rfl⟩)
-      rwa [smul_smul, mul_inv_cancel₀ hne, one_smul] at hrow
+      have hvv : v p • mat ((v p)⁻¹ • v) = v := by
+        rw [mat_eq, smul_smul, mul_inv_cancel₀ hne, one_smul]
+      rwa [hvv] at hrow
     have := Submodule.add_mem _ (hmono hsub) hv
     rwa [sub_add_cancel] at this
 
@@ -433,7 +453,17 @@ variable {K E ι Y : Type} [Field K] [DecidableEq K] [Field E] [Algebra K E]
 /-- **The columns**: claim `j`'s weight at the entry, its coordinate `k`, at `(j, k)`. -/
 def colOf (co : E → Fin 3 → K) {m : ℕ} (Wc : Fin m → ι → Y → E) (e : ι × Y) :
     Fin (m * 3) → K :=
-  fun i => co (Wc (finProdFinEquiv.symm i).1 e.1 e.2) (finProdFinEquiv.symm i).2
+  let ws := Array.ofFn fun j : Fin m => co (Wc j e.1 e.2)
+  fun i => (ws.getD (finProdFinEquiv.symm i).1 0) (finProdFinEquiv.symm i).2
+
+theorem colOf_eq (co : E → Fin 3 → K) {m : ℕ} (Wc : Fin m → ι → Y → E) (e : ι × Y) :
+    colOf co Wc e = fun i => co (Wc (finProdFinEquiv.symm i).1 e.1 e.2) (finProdFinEquiv.symm i).2 := by
+  funext i
+  have hi : (i : ℕ) / 3 < m := (Nat.div_lt_iff_lt_mul (by norm_num)).mpr i.isLt
+  simp only [colOf]
+  rw [Array.getD_eq_getD_getElem?, Array.getElem?_ofFn]
+  simp only [finProdFinEquiv_symm_apply, Fin.coe_divNat, hi, ↓reduceDIte, Option.getD_some]
+  rfl
 
 /-- **The target**: the claimed values' coordinates. -/
 def tgtOf (co : E → Fin 3 → K) {m : ℕ} (val : Fin m → E) : Fin (m * 3) → K :=
@@ -452,7 +482,7 @@ theorem co_sparseVal (co : E ≃ₗ[K] (Fin 3 → K)) {m : ℕ} (Wc : Fin m → 
   | cons p x ih =>
     simp only [sparseVal, comboVal, List.map_cons, List.sum_cons] at ih ⊢
     rw [map_add, Pi.add_apply, ih, map_smul, Pi.add_apply, Pi.smul_apply, Pi.smul_apply]
-    simp [colOf]
+    simp [colOf_eq]
 
 /-- **The built table has the claimed values whenever some table has them**, for claims that
 weigh nothing of the randomness and a scan that reaches every entry. -/
@@ -466,7 +496,7 @@ theorem claims_build (co : E ≃ₗ[K] (Fin 3 → K)) (L : GadgetLayout ι Y) {m
       funext i
       rw [Finset.sum_apply, Fintype.sum_prod_type, tgtOf, ← hd]
       show co (∑ l, ∑ y, Wc _ l y * algebraMap K E (L.stackD d l y)) _ = _
-      simp only [map_sum, Finset.sum_apply, Pi.smul_apply, smul_eq_mul, colOf]
+      simp only [map_sum, Finset.sum_apply, Pi.smul_apply, smul_eq_mul, colOf_eq]
       refine Finset.sum_congr rfl fun l _ => Finset.sum_congr rfl fun y _ => ?_
       rw [mul_comm, ← Algebra.smul_def, map_smul, Pi.smul_apply, smul_eq_mul]
     rw [he]
@@ -649,11 +679,15 @@ def candsQ : List (ιQ × YQ) :=
     eQ 32 (256 * 33), eQ 32 (256 * 5), eQ 32 (256 * 21), eQ 32 (256 * 37)]
 
 /-- The witness claim's weight (`openW`'s), compiled. -/
-def wW (c : DChal E) : Fin 1 → ιW → YW → E := Lw.claimW fun _ : Fin 1 => pointWc c
+def wW (c : DChal E) : Fin 1 → ιW → YW → E :=
+  let p := pointWc c
+  Lw.claimW fun _ : Fin 1 => p
 
 /-- The quotient table's claims' weights (`openQ`'s), compiled. -/
 def wQ (P₀ : Params E) (Y : E) (c : DChal E) (v : Vals E) : Fin 2 → ιQ → YQ → E :=
-  Lq.claimW ![pointQc P₀ Y c v, pointSc Y]
+  let p := pointQc P₀ Y c v
+  let s := pointSc Y
+  Lq.claimW ![p, s]
 
 /-- **The simulator's witness table**: the elimination over the candidates, then every entry, for
 the verifier's claimed value. -/

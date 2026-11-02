@@ -135,12 +135,14 @@ in that PRG).
   public renderer `R` of the part of the joint view drawn for by then; leaves the 64-word images of the stacks'
   rows) and **`LinkV`** (`link`: the view from the joint view by causality, injective leaves, the free vectors
   from the novel basis's degrees, `Prover.lean`); **`FSFresh`'s conditions** (`Fresh.lean`: `hcw` at `2^-191`,
-  `hrow₀` at `2^-2368`, the three `ClaimsAt`, long rows, `hcK`, `hn`); the simulator's tables chosen with the
-  verifier's claimed values (`solve`). **`zk_rpm_deployed_instance`** (`Instance/Main.lean`) and, for the end
+  `hrow₀` at `2^-2368`, the three `ClaimsAt`, long rows, `hcK`, `hn`); the simulator's tables `simTW`, `simTQ`
+  built by a computable Gaussian elimination (`Instance/Builder.lean`: the claimed values met whenever some
+  table meets them, `claims_simTW`, `claims_simTQ`; the scan stops at full rank, at most every entry). **`zk_rpm_deployed_instance`** (`Instance/Main.lean`) and, for the end
   statement, `deployedJointData`, `deployedJointData_valid` (`EndToEnd/ZK/Joint.lean`): remaining are the
   field, F1's, and **the honest tables meeting the verifier's claims** (`hTW`, `hTQ`, the claim maps'
   completeness, proved for the deployed tables in `Completeness/`, not yet linked); every renderer `R` (WHIR's
-  honest prover is one) and every pair of such tables is covered. The simulator's tables are a classical choice.
+  honest prover is one) and every pair of such tables is covered. The simulator's tables are computed
+  (`Test/Builder.lean` runs the builder on `F192`).
 - **What stays a hypothesis**: the honest tables' claims (above); F1's on the witness; that `skel` and `Pb` are
   the Rust prover (transcribed; `skel` equal by test, not by proof: see the next item). The lift to leanerVM's
   random-permutation model is separate (`QuotientZk/Rpm*.lean`, `RpmJoint.lean`, `RpmDiscipline.lean`).
