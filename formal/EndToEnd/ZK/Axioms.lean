@@ -43,6 +43,18 @@ import ZK.Main
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.realBridge_of
 
+/-- info: 'PcsQuotient.EndToEnd.skelSetup_queryBound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.skelSetup_queryBound
+
+/-- info: 'PcsQuotient.EndToEnd.duplexDiscipline_skelSetup' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.duplexDiscipline_skelSetup
+
+/-- info: 'PcsQuotient.EndToEnd.zkBoundEnd_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms PcsQuotient.EndToEnd.zkBoundEnd_le
+
 /-- info: 'PcsQuotient.EndToEnd.zeroKnowledge_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms PcsQuotient.EndToEnd.zeroKnowledge_end

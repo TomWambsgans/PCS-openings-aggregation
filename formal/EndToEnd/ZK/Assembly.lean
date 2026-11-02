@@ -343,7 +343,12 @@ discipline proved (`fsFresh_deployed`, `duplexDiscipline_skel`): `PcsQuotient.Ze
 shape at `2^22` rows: the chain's public input `stmtD stmt`, the layouts' identifiers, the wiring
 codeword's rows), with at most `Qp`
 permutation calls (`hprover`), and the statement's experiments within `εR`, `εI` of `QuotientZk`'s
-games (`RealBridge`, `IdealBridge`; the proof formatted by `fmt` of at most `Qfmt` calls). -/
+games (`RealBridge`, `IdealBridge`; the proof formatted by `fmt` of at most `Qfmt` calls).
+
+This skeleton reads the circuit's commitment as a constant (`(stmtD stmt).indexRoot`); the statement's
+prover computes it over `π`, so its `RealBridge` holds only with a large `εR` (a distinguisher may
+recompute the commitment). The end theorem (`ZK/Main.lean`, `zeroKnowledge_end`) is on `skelSetup`
+(`ZK/Setup.lean`), which computes it first. -/
 theorem zeroKnowledge_deployed
     (J : Statement → Secret → JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂)
     (stmtD : Statement → QuotientZk.Deployed.Statement) (idW idσ idQ : QuotientRpm.Bytes32)

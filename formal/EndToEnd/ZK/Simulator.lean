@@ -211,7 +211,8 @@ theorem zeroKnowledge_of_rpmSimulator
 
 /-- **Zero knowledge of the membership proof with `QuotientZk`'s simulator in the statement, on the
 deployed skeleton**: `zeroKnowledge_deployed` with the ideal bridge exact (`εI = 0`), for a statement
-whose ideal experiment is `rpmSimulator`'s at the joint model's public data (`hI`). -/
+whose ideal experiment is `rpmSimulator`'s at the joint model's public data (`hI`). On the constant-root
+skeleton (see `zeroKnowledge_deployed`); the end theorem is `zeroKnowledge_end` (`ZK/Main.lean`). -/
 theorem zeroKnowledge_deployed_rpmSimulator
     (J : Statement → Secret → JointData K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂)
     (stmtD : Statement → QuotientZk.Deployed.Statement) (idW idσ idQ : QuotientRpm.Bytes32)

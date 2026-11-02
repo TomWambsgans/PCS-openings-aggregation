@@ -3,6 +3,7 @@ import ZK.Coins
 import ZK.Assembly
 import ZK.Simulator
 import ZK.Real
+import ZK.Setup
 import ZK.Main
 import ZK.Axioms
 
@@ -32,6 +33,15 @@ import ZK.Axioms
   (`realExperiment_coins`), then `CoinsMatch` (the coins are the skeleton model's uniform randomness read
   by `coinsOf`) and `ProverBridge` (the statement's prover at fixed coins against the skeleton's)
   give `RealBridge` (`realBridge_of`).
-* `ZK/Main.lean`: **`zeroKnowledge_end`**: `ZeroKnowledge (zkBoundDeployed Qp Qfmt εR (fun _ ↦ 0))`.
+* `ZK/Setup.lean`: the skeleton of the statement's prover, `skelSetup`: the circuit's commitment (the
+  wiring table's tree) computed over `π` first, its root the chain's index root, then `Deployed.skel`
+  (the statement's prover computes it so; `Deployed.skel` reads it as a constant). At most
+  `2^24 + 2^70` operations; its duplex discipline proved.
+* `ZK/Main.lean`: **`zeroKnowledge_end`**: `ZeroKnowledge (zkBoundEnd Qp Qfmt εFS εR)` on `skelSetup`,
+  `ζ Q = εR Q + εFS + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q) 2^-2368 + 2^48 2^-2368 +
+  (Qp + Qfmt + Q)² / 2^508`, at most `εR Q + εFS + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for
+  `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`). Named: the joint model (`JointData.Valid`), `skelSetup`'s
+  `FSFresh` (`εFS`), the budgets `Qp`, `Qfmt`, `CoinsMatch`, `ProverBridge` (`εR`), and the statement's
+  ideal experiment being `rpmSimulator`'s (`hI`).
 * `ZK/Axioms.lean`: the axioms of these theorems.
 -/
