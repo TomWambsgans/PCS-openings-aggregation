@@ -10,6 +10,7 @@ import ZK.Main
 import ZK.Format
 import ZK.CoinsMatch
 import ZK.End
+import ZK.ProverBridge
 import ZK.Axioms
 
 /-!
@@ -57,6 +58,15 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
   F1's facts, the simulator's public functions, the honest tables' claims, the prover's budget `Qp`, the
   bijection `e` of the randomness onto the coins' words, `ProverBridge`.
 * `ZK/Joint.lean`: the joint model of the deployed prover (`deployedJointData`, `deployedJointData_valid`).
+* `ZK/ProverBridge*.lean`: the prover bridge. The lazily sampled permutation is a uniform one drawn
+  first (`ProverBridgeEager.lean`, `prEvent_runWithRandomPermutation`, `close_of_perm`); the
+  statement's prover through monad morphisms (`ProverBridgeParam.lean`, `prover_hom`); the skeleton
+  against a fixed oracle (`ProverBridgeSkel.lean`, `mem_support_proverJ`); so **`proverBridge_of_det`**
+  (`ProverBridgeReduce.lean`): `ProverBridge` at `εR = δ` from a statement about programs at a fixed
+  permutation (`hcore`) and `δ` bounding the statement's prover making no proof. The renderer
+  **`whirRenderer`** (`ProverBridgeRender.lean`: WHIR's honest prover on the available view, driven
+  in the skeleton's order); **`proverBridge_whir`**, **`zeroKnowledge_deployed_whir`**
+  (`ProverBridge.lean`): the end theorem with that renderer, from `CoreWhir` and `noneProb ≤ δ`.
 * `ZK/Assembly.lean`: the same assembly for the package's own `simulator` given an ideal bridge
   (`zeroKnowledge_of_bridges`, `zeroKnowledge_deployed` on the constant-root skeleton); the joint
   model's data (`JointData`) and the bounds (`zkBound`).
