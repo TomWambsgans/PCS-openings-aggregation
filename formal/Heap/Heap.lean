@@ -3,3 +3,6 @@ import Heap.Tree
 import Heap.Cantor
 import Heap.Leaf
 import Heap.Bus
+import Heap.Balanced
+import Heap.Realize
+import Heap.LeanIsa

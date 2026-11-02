@@ -200,6 +200,26 @@ def LeavesHold (fp : τ → M) (T : ℕ → M) : ℕ → List (LeafBlock τ) →
   | _, [] => True
   | o, b :: bs => b.Holds fp T o ∧ LeavesHold fp T (o + b.size) bs
 
+/-- **The blocks are aligned** from position `o`: each block's first position is a multiple of
+its size, so that a block of `2^r` leaves at position `a` is the coset `ω_a + V_r`
+(`Heap.omega_add_of_dvd`), where the verifier reads it through the heap's restriction (SPEC §2,
+"restriction to a coset"). -/
+def AlignedFrom : ℕ → List (LeafBlock τ) → Prop
+  | _, [] => True
+  | o, b :: bs => 2 ^ b.r ∣ o ∧ AlignedFrom (o + b.size) bs
+
+/-- **Largest first is aligned** (`heap.rs`, `HeapLayout::new`): blocks sorted by size, largest
+first, from a position every block's size divides, are aligned. -/
+theorem alignedFrom_of_sorted :
+    ∀ (bs : List (LeafBlock τ)) (o : ℕ), bs.Pairwise (fun a b ↦ b.r ≤ a.r) →
+      (∀ b ∈ bs, 2 ^ b.r ∣ o) → AlignedFrom o bs
+  | [], _, _, _ => trivial
+  | b :: bs, o, hs, hd => by
+    rw [List.pairwise_cons] at hs
+    refine ⟨hd b (List.mem_cons_self ..), alignedFrom_of_sorted bs _ hs.2 fun b' hb' ↦ ?_⟩
+    exact dvd_add (hd b' (List.mem_cons_of_mem _ hb'))
+      (Nat.pow_dvd_pow 2 (hs.1 b' hb'))
+
 /-- Every push tuple of the blocks. -/
 def allPush (bs : List (LeafBlock τ)) : List τ := bs.flatMap LeafBlock.pushes
 
