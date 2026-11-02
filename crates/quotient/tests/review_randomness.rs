@@ -995,6 +995,13 @@ fn root_scalars_are_canonical_and_checked_first() {
     let result = check(&relabelled, &elsewhere);
     assert!(result.is_err(), "{result:?}");
     assert_ne!(result, Err(VerifierError::DigestHalf));
+
+    // A stream cut before, at or after the root's scalars: an error, not a panic.
+    for keep in [0, 1, 2, 3] {
+        let mut cut = proof.clone();
+        cut.stream.truncate(keep);
+        assert_eq!(check(&cut, &committed.root), Err(VerifierError::StreamExhausted), "{keep} scalars");
+    }
 }
 
 /// The claims an opening is of, exactly, in order: reordered, one dropped, one duplicated, a true one appended, a
