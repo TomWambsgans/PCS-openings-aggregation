@@ -18,7 +18,10 @@ coordinates over `K` its limbs, `coordsF`), on the deployed layouts:
 Each run prints the entries and values of the table it builds (zero elsewhere) and whether its claims,
 computed from the weights at those entries, are the claimed values. `#eval` interprets the code: a
 claim's weight at one entry is about `10^3`–`10^4` products in `F192`, which take seconds here (the
-witness run about two minutes, the quotient run, `BuilderQ.lean`, about half an hour).
+witness run about `75` s, the quotient run, `BuilderQ.lean`, about two minutes). Both scans stop on
+their candidates: the witness table is at the overflow lane's entries `256, 257, 258` (`7` listed
+values), the quotient table at entry `2^22 - 1` of the lanes `3, 19, 43` and the overflow lane's
+entries `256, 256·17, 256·33` (`63` listed values over these `6` entries).
 -/
 
 open QuotientZk.Instance QuotientZk.Instance.Builder Primitives

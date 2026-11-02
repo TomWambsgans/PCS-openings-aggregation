@@ -6,8 +6,8 @@ import QuotientZk.Test.Builder
 
 `Builder.lean`'s second run: `simTQ`'s elimination on `quotient_layout(22)` (`63` lanes of `2^22`
 entries), its two claims at a sample point of the quotient claim's shape and at the sum claim's fixed
-point, on `F192`. Interpreted, it takes about half an hour (a claim's weight at an entry is about
-`7·10^3` products in `F192` there).
+point, on `F192`. Interpreted, it takes about two minutes (a claim's weight at an entry is about
+`7·10^3` products in `F192` there); it prints the table and `claims met: true`.
 -/
 
 open QuotientZk.Instance QuotientZk.Instance.Builder Primitives
