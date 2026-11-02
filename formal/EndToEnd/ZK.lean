@@ -13,6 +13,7 @@ import ZK.End
 import ZK.ProverBridge
 import ZK.ProverBridgeDuplex
 import ZK.ProverBridgeMerkle
+import ZK.Final
 import ZK.Axioms
 
 /-!
@@ -42,9 +43,10 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
   (the statement's prover computes it so; `Deployed.skel` reads it as a constant). At most
   `2^24 + 2^70` operations; its duplex discipline proved.
 * `ZK/Main.lean`: **`zeroKnowledge_end`**: `ZeroKnowledgeWith s₀ (zkSimulator pp simV skelSetup fmt)
-  rpmSimOracle (zkBoundEnd Qp Qfmt εR)`, `ζ Q = εR Q + 2^-113 + 2^-165 + 2^24 (2^24 + 2^70 + Qfmt + Q)
+  rpmSimOracle (zkBoundEnd Qp Qfmt εR)`, `ζ Q = εR Q + 2^-113 + epsHV + 2^24 (2^24 + 2^70 + Qfmt + Q)
   2^-2368 + 2^48 2^-2368 + (Qp + Qfmt + Q)² / 2^508`, at most
-  `εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`);
+  `εR Q + 2^-113 + epsHV + 2^-2200 + (Qp + Qfmt + Q)² / 2^508` for `Qfmt + Q ≤ 2^127` (`zkBoundEnd_le`),
+  `epsHV = 2^-165 + 2^-125 + 2/2^192` (the joint model's bad challenges and degenerate masks);
   `QuotientZk`'s closeness from the joint model (`coreClose_of_joint`). Named: the joint model
   (`JointData.Valid`, its public part `pp`, its view simulator `simV`; `skelSetup`'s `FSFresh` is
   `fsFresh_setup_deployed_bits` from its conditions),
@@ -57,8 +59,14 @@ given as a parameter) for `QuotientZk`'s simulator, from `formal/QuotientZk`.
 * `ZK/End.lean`: **`zeroKnowledge_deployed_end`**: `zeroKnowledge_end` with the joint model of the deployed
   prover instantiated (`deployedJointData_valid`, `ZK/Joint.lean`), `fmt` and `coinsMatch_of_bijective`:
   the simulator `zkSimulator (fun _ ↦ deployedPub rep) (deployedSimV …) skelSetup fmt`. Named: the field,
-  F1's facts, the simulator's public functions, the honest tables' claims, the prover's budget `Qp`, the
-  bijection `e` of the randomness onto the coins' words, `ProverBridge`.
+  F1's facts, the simulator's public functions, the honest tables' claims (off the degenerate challenges
+  and masks, `ClaimsND`), the prover's budget `Qp`, the bijection `e` of the randomness onto the coins'
+  words, `ProverBridge`.
+* `ZK/Final.lean`: **`zeroKnowledge_deployed_final`**: `zeroKnowledge_deployed_end` at the deployed
+  fields, instance, tables and coins, the field, F1's facts, the simulator's public functions, the honest
+  tables' claims and the coins' bijection discharged (`ZK/FactsField.lean`, `ZK/FactsF1.lean`,
+  `ZK/FactsLayout.lean`: the layouts' claims on a placed table, `ZK/FactsClaims.lean`: `hTWD`, `hTQD`).
+  Named: the renderer `R`, the prover's budget `Qp`, `ProverBridge` at `decodeCoins ∘ eD`.
 * `ZK/Joint.lean`: the joint model of the deployed prover (`deployedJointData`, `deployedJointData_valid`).
 * `ZK/ProverBridge*.lean`: the prover bridge. The lazily sampled permutation is a uniform one drawn
   first (`ProverBridgeEager.lean`, `prEvent_runWithRandomPermutation`, `close_of_perm`); the
