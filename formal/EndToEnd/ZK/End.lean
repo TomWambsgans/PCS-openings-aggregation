@@ -2,6 +2,7 @@
 import ZK.Main
 import ZK.Joint
 import ZK.Format
+import ZK.CoinsMatch
 
 /-!
 # Zero knowledge of the membership proof, the joint model instantiated
@@ -23,7 +24,9 @@ for every witness by definition (`pub_deployed`, `simV_deployed`).
 
 **Named**: the fields (`h3`, `hq`, `hK`, `hY`), F1's facts on the statement and the witness (`hE`, `hN`,
 `hvan`, `hsat`, `hvan0`, `hdeg`), the simulator's public functions (`hinK`, `hsig`), the honest tables'
-claims (`hTW`, `hTQ`); the prover's permutation budget `Qp`; `CoinsMatch`; `ProverBridge`.
+claims (`hTW`, `hTQ`); the prover's permutation budget `Qp`; a bijection `e` of the skeleton model's
+randomness onto the statement's coins' words (`he`; `CoinsMatch` follows, `coinsMatch_of_bijective`);
+`ProverBridge` at the coins `decodeCoins ∘ e`.
 -/
 
 open OracleComp OracleSpec Common Polynomial Module QuotientSecurity QuotientSecurity.Hiding
@@ -99,18 +102,17 @@ theorem zeroKnowledge_deployed_end (rep : QuotientZk.Instance.Rep K E) (P₀ : P
         valsQ P₀ (stmtE stmt) Y c (redMsgs P₀ (gK stmt w) (van stmt w) c.1.1.2 m))
     (stmtBytes : Statement → Vector UInt8 64) (idW idσ idQ : QuotientRpm.Bytes32)
     (rowsW : List (List UInt8)) (hrows : rowsW.length = 2 ^ 19)
-    (coinsOf : Rand K ιW YW ιQ YQ → Masks × Padding × Padding)
+    (e : Rand K ιW YW ιQ YQ → CoinWords) (he : Function.Bijective e)
     (Qp : ℕ) (εR : ℕ → ℝ≥0∞) (s₀ : RpmSimState)
     (hprover : ∀ stmt w, Relation stmt w → ∀ s,
       QueryCostAtMost (QuotientZk.DRpm.proverJ (deployedJointData rep P₀ (stmtE stmt) Y (gK stmt w)
           (van stmt w) (TW stmt w) (TQ stmt w) R inK sigmaAt).P keccak256OverPermutation
         queryPermutation (QuotientZk.DRpm.coinR KSt) (QuotientZk.DRpm.coinR DigestBytes) s
         (skelSetup (stmtBytes stmt) idW idσ idQ rowsW)) permutationCallCost Qp)
-    (hcoins : CoinsMatch coinsOf)
     (hbridge : ∀ stmt w, Relation stmt w →
       ProverBridge stmt w (deployedJointData rep P₀ (stmtE stmt) Y (gK stmt w) (van stmt w)
         (TW stmt w) (TQ stmt w) R inK sigmaAt).P (skelSetup (stmtBytes stmt) idW idσ idQ rowsW)
-        (fmt stmt) coinsOf εR) :
+        (fmt stmt) (decodeCoins ∘ e) εR) :
     ZeroKnowledgeWith s₀
       (zkSimulator (fun _ ↦ deployedPub rep)
         (fun stmt ↦ deployedSimV rep P₀ (stmtE stmt) Y R inK sigmaAt)
@@ -119,12 +121,12 @@ theorem zeroKnowledge_deployed_end (rep : QuotientZk.Instance.Rep K E) (P₀ : P
   zeroKnowledge_end (fun stmt w ↦ deployedJointData rep P₀ (stmtE stmt) Y (gK stmt w) (van stmt w)
       (TW stmt w) (TQ stmt w) R inK sigmaAt) (fun _ ↦ deployedPub rep)
     (fun stmt ↦ deployedSimV rep P₀ (stmtE stmt) Y R inK sigmaAt) stmtBytes idW idσ idQ rowsW hrows
-    fmt coinsOf Qp fmtBudget εR s₀ fmt_queryBound
+    fmt (decodeCoins ∘ e) Qp fmtBudget εR s₀ fmt_queryBound
     (fun stmt w hw ↦ deployedJointData_valid rep P₀ (stmtE stmt) Y (gK stmt w) (van stmt w)
       (TW stmt w) (TQ stmt w) R inK sigmaAt h3 hq hK hY hE (hvan stmt w hw) (hsat stmt w hw)
       (hvan0 stmt w hw) hN (hdeg stmt w hw) hinK hsig (hTW stmt w hw) (hTQ stmt w hw))
     (fun stmt _ _ ↦ pub_deployed rep P₀ (stmtE stmt) Y _ _ _ _ R inK sigmaAt)
     (fun stmt _ _ ↦ simV_deployed rep P₀ (stmtE stmt) Y _ _ _ _ R inK sigmaAt)
-    hprover hcoins hbridge
+    hprover (coinsMatch_of_bijective e he) hbridge
 
 end PcsQuotient.EndToEnd
