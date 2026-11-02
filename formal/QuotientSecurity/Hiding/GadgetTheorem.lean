@@ -110,6 +110,51 @@ theorem view_evalDistEq [FiniteDimensional K E] [SampleableType (ι → Y → K)
       (hcube 33 (by decide) (by decide)) hφ (by simp [h2E])
       (hsolve_of_cube h3 φ hφ hK _ (cube_true_subset hcube) hlow)
 
+
+/-- **Averaged over the challenges, with the bound.** With `μ` from any uniform `γ` (`μ = λ^m` in the
+opening) and `φ` uniform in `E^6`, the two tables' experiments (challenges, then anything computed
+from the view) give every event probabilities that differ by at most `Pr[μ = 0]` plus
+`(12·|E| + 3·|K|²)/|E|²`: below `13·2^-192 + 3·2^-256` for the deployed fields and `μ = λ^m`. -/
+theorem prEvent_le_bound [FiniteDimensional K E] [SampleableType (ι → Y → K)] [Fintype K] [Fintype E]
+    [DecidableEq E] [SampleableType E] {Γ : Type} [SampleableType Γ] [Fintype Γ]
+    (h3 : Module.finrank K E = 3) {m : ℕ} (h2K : (2 : K) = 0) (pos : ι → (Fin 6 → Bool))
+    (hpos : Function.Injective pos) (Wc : Fin m → ι → Y → E) (hW : L.WeightsFit Wc)
+    (β : Module.Basis (Fin 3) K E) (enc : Q → Y → K) (hQ : Function.Surjective (firstEval enc L.first))
+    (hA : ∀ p, ¬ L.isRand (L.pairA p))
+    (hA0 : pos (L.pairA 0) = lane 0) (hB0 : pos (L.pairB 0) = lane 31)
+    (hA1 : pos (L.pairA 1) = lane 1) (hB1 : pos (L.pairB 1) = lane 30) (hov : pos L.ov = lane 32)
+    (hlow : ∀ b : Fin 6 → Bool, b (Fin.last 5) = false → b ∈ Set.range pos)
+    (hcube : ∀ l : Fin 64, 32 ≤ (l : ℕ) → (l : ℕ) < 40 → lane l ∈ Set.range pos)
+    (hrand : ∀ b ∈ cube true, b ≠ lane 32 → ∃ r, pos r = b ∧ L.isRand r)
+    (lam : Γ → Fin m → E) (μ : Γ → E) {O : Type}
+    (g : Γ × (Fin 6 → E) → (Fin 6 → E × E) × (Y → E) × (Q → ι → K) → O) {d d' : ι → Y → K}
+    (hd : HiddenLayout.claimsMap (K := K) (withGadget Wc (L.gadgetW pos β)) (L.stackD d)
+      = HiddenLayout.claimsMap (withGadget Wc (L.gadgetW pos β)) (L.stackD d'))
+    (S : (Γ × (Fin 6 → E)) × O → Prop) :
+    let run := fun (x : ι → Y → K) (c : Γ × (Fin 6 → E)) =>
+      (fun r => g c (viewMap (roundsMap pos c.2 (HiddenLayout.combinedW pos (withGadget Wc (L.gadgetW pos β))
+          (Fin.snoc (lam c.1) (μ c.1) : Fin (m + 1) → E))) (HiddenLayout.foldW pos c.2) enc
+          (L.stackD x + L.stackR r))) <$> ($ᵗ (ι → Y → K))
+    Pr{let o ← withChallenges (run d)}[S o]
+      ≤ Pr{let o ← withChallenges (run d')}[S o]
+        + (Pr{let c ← $ᵗ (Γ × (Fin 6 → E))}[μ c.1 = 0]
+          + ((2 * 6 * Fintype.card E + 3 * Fintype.card K ^ 2 : ℕ) : ENNReal) /
+              ((Fintype.card E ^ 2 : ℕ) : ENNReal)) := by
+  intro run
+  refine (prEvent_le_add_prEvent_bad (run d) (run d')
+    (fun c => μ c.1 ≠ 0 ∧ ((∀ i, c.2 i ≠ 0 ∧ c.2 i ≠ 1) ∧ ¬ TwoInK (K := K) c.2))
+    (fun c hc => L.view_evalDistEq h3 h2K pos hpos Wc hW β enc hQ hA hA0 hB0 hA1 hB1 hov hlow hcube
+      hrand (lam c.1) (μ c.1) hc.1 c.2 hc.2.1 hc.2.2 (g c) hd) S).trans (add_le_add le_rfl ?_)
+  calc Pr{let c ← $ᵗ (Γ × (Fin 6 → E))}[¬ (μ c.1 ≠ 0 ∧ ((∀ i, c.2 i ≠ 0 ∧ c.2 i ≠ 1) ∧
+          ¬ TwoInK (K := K) c.2))]
+      ≤ Pr{let c ← $ᵗ (Γ × (Fin 6 → E))}[μ c.1 = 0]
+        + Pr{let c ← $ᵗ (Γ × (Fin 6 → E))}[¬ ((∀ i, c.2 i ≠ 0 ∧ c.2 i ≠ 1) ∧ ¬ TwoInK (K := K) c.2)] := by
+        refine (prEvent_mono _ _ _ fun c h => ?_).trans (prEvent_or_le _ _ _)
+        by_cases hμ : μ c.1 = 0
+        · exact Or.inl hμ
+        · exact Or.inr fun h' => h ⟨hμ, h'⟩
+    _ ≤ _ := add_le_add le_rfl (prob_not_solvable_le (K := K) (Γ := Γ))
+
 end GadgetLayout
 
 end QuotientSecurity.Hiding
