@@ -126,10 +126,7 @@ impl Shape {
 
     /// The shape a leanVM proof announces in its first scalars.
     pub fn of_proof(proof: &Proof, bytecode_len: usize) -> Result<Self, VerifierError> {
-        let announced = proof
-            .stream
-            .get(..2 + N_TABLES)
-            .ok_or(VerifierError::StreamExhausted)?;
+        let announced = proof.stream.get(..2 + N_TABLES).ok_or(VerifierError::StreamExhausted)?;
         require(
             announced.iter().all(|value| value.c1 == 0 && value.c2 == 0),
             VerifierError::AnnouncedHighLimb,
@@ -338,7 +335,10 @@ pub struct Reduced<S> {
     pub bytecode: Claim<S>,
     /// On `A0`'s and `B0`'s (fixed) commitments, at one point, when the lincheck's terminal is left to them.
     pub matrices: Option<[Claim<S>; 2]>,
+    /// The stack's variables, the claims batched on it, and the depth of the bus's GKR.
     pub layout_stack_log: usize,
+    pub stack_claims: usize,
+    pub bus_depth: usize,
 }
 
 /// The contract's verifier: leanVM's walk on the Keccak-256 chain, the bytecode's value read from the proof, the
@@ -350,7 +350,13 @@ pub fn reduce<S: Scalar, C: Channel<S>>(
     transcript: &mut C,
     lincheck: LincheckTerminal,
 ) -> Result<Reduced<S>, VerifierError> {
-    let walked = walk(shape, public_words, transcript, |t: &mut C, _: &[S]| t.next_scalar(), lincheck)?;
+    let walked = walk(
+        shape,
+        public_words,
+        transcript,
+        |t: &mut C, _: &[S]| t.next_scalar(),
+        lincheck,
+    )?;
     let (point, value) = stack::batch_stack_claims(transcript, walked.layout.stack_log, &walked.stack_claims)?;
     let matrices = walked.flock.matrices.map(|MatrixClaim { point, a, b }| {
         [
@@ -370,5 +376,7 @@ pub fn reduce<S: Scalar, C: Channel<S>>(
         },
         matrices,
         layout_stack_log: walked.layout.stack_log,
+        stack_claims: walked.stack_claims.len(),
+        bus_depth: bus::bus_depth(&walked.layout),
     })
 }

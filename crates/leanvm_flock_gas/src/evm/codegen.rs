@@ -120,9 +120,16 @@ enum Item {
     /// Pop the value into output word `k`.
     Output(usize),
     /// Copy `words` constant words, from `data` on in the code's data, to output words `first` on.
-    CopyConst { first: usize, words: usize, data: usize },
+    CopyConst {
+        first: usize,
+        words: usize,
+        data: usize,
+    },
     /// Call `PCS_OPEN` on `words` output words from `first` on, and revert unless it attests.
-    PcsOpen { first: usize, words: usize },
+    PcsOpen {
+        first: usize,
+        words: usize,
+    },
     /// Jump to the revert if the top of the stack is nonzero.
     FailIf,
 }
@@ -217,7 +224,12 @@ impl Compiler<'_> {
                 let head = [&self.entry.name[..], &self.entry.iv[..16]].concat();
                 self.code(&[&push(&head)[..], &[PUSH0, MSTORE]].concat());
                 self.code(&[&push(&self.entry.iv)[..], &push_usize(16), &[MSTORE]].concat());
-                let copy = [&push_usize(32)[..], &push_usize(PUBLIC_INPUT), &push_usize(48), &[CALLDATACOPY]];
+                let copy = [
+                    &push_usize(32)[..],
+                    &push_usize(PUBLIC_INPUT),
+                    &push_usize(48),
+                    &[CALLDATACOPY],
+                ];
                 self.code(&copy.concat());
                 self.code(&[&push_usize(80)[..], &[PUSH0, KECCAK256]].concat());
             }

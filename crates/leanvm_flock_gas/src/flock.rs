@@ -6,14 +6,14 @@
 // see NOTICE.md.
 //! Flock reduction, then ring switching.
 
+use crate::VerifierError;
 use crate::field::{E, GEN, ONE};
 use crate::hash::{BLAKE2S_G_LANES, BLAKE2S_IV, BLAKE2S_SIGMA};
 use crate::layout::{BLAKE2S_CONSTANT_COLUMN, BLAKE2S_R1CS_LOG_SIZE, FLOCK_K_SKIP, FLOCK_NUM_LINCHECK_ROUNDS, K_BITS};
 use crate::matrices::{MatrixClaim, reduce_matrices};
-use crate::multilinear::{dot, eq_eval, eq_kernel, multilinear_eval, poly_eval};
+use crate::multilinear::{dot, eq_eval, eq_kernel, poly_eval};
 use crate::scalar::{Scalar, enter};
 use crate::transcript::{Channel, sumcheck};
-use crate::VerifierError;
 
 const PHI_BASIS: [u64; 8] = [
     0x0000000000000001,

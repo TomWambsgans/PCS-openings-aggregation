@@ -91,6 +91,11 @@ fn bus_layout(framework_log_rows: &[usize], blocks: &[BusBlock]) -> BusLayout {
     }
 }
 
+/// The depth of the bus's GKR: the push side's leaf cube.
+pub fn bus_depth(layout: &Layout) -> usize {
+    bus_layout(&[0, layout.log_memory, layout.log_bytecode], &layout.push).depth
+}
+
 pub struct ColumnClaim<S> {
     pub column: usize,
     pub point: Vec<S>,

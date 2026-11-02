@@ -9,10 +9,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::{Add, AddAssign, Mul, MulAssign};
 
+use crate::VerifierError;
 use crate::field::{E, ONE, ZERO};
 use crate::scalar::{Scalar, phase};
 use crate::transcript::Channel;
-use crate::VerifierError;
 
 /// One recorded value. Operands are indices of earlier nodes.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -21,7 +21,10 @@ pub enum Node {
     /// Word `k` of the public input, a 64-bit number.
     Statement(u8),
     /// The scalar at byte `offset` of the stream, `len` bytes big-endian (24, or 16 for a root's half).
-    Input { offset: u32, len: u8 },
+    Input {
+        offset: u32,
+        len: u8,
+    },
     Add(u32, u32),
     Mul(u32, u32),
     /// The transcript's seed: the hash of the name, the program's IV and the public input.

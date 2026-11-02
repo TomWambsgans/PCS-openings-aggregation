@@ -192,7 +192,7 @@ mod tests {
     /// are `A0` and `B0` at the point; a running claim the walk rejects is rejected.
     #[test]
     fn reduction_is_complete_and_its_claims_are_the_matrices() {
-        let mut seed = 0x5EED_0F_F10C;
+        let mut seed = 0x005E_ED0F_F10C;
         let z_skip = element(&mut seed);
         let chi_in: Vec<E> = (0..8).map(|_| element(&mut seed)).collect();
         let chi_in_prime: Vec<E> = (0..8).map(|_| element(&mut seed)).collect();

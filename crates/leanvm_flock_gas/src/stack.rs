@@ -83,7 +83,10 @@ mod tests {
                 *w += scales[j] * e;
             }
         }
-        for (w, (e0, e1)) in weight_table.iter_mut().zip(eq_kernel(&points[0]).into_iter().zip(eq_kernel(&points[1]))) {
+        for (w, (e0, e1)) in weight_table
+            .iter_mut()
+            .zip(eq_kernel(&points[0]).into_iter().zip(eq_kernel(&points[1])))
+        {
             *w += scales[3] * (e0 + e1);
         }
         let point = prove_product_sum(&mut writer, vec![stack.clone(), weight_table], n);

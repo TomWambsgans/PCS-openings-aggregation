@@ -136,7 +136,12 @@ pub fn compile_verifier(recorded: &Recorded, iv: &[u8; 32], mode: Mode, measure:
 /// The public input as calldata carries it: its four little-endian 64-bit words, each big-endian, word 0 first.
 pub fn public_input_calldata(public_input: &[u8; 32]) -> [u8; 32] {
     let mut bytes = [0; 32];
-    for (out, word) in bytes.as_chunks_mut::<8>().0.iter_mut().zip(crate::public_words(public_input)) {
+    for (out, word) in bytes
+        .as_chunks_mut::<8>()
+        .0
+        .iter_mut()
+        .zip(crate::public_words(public_input))
+    {
         *out = word.to_be_bytes();
     }
     bytes
@@ -165,6 +170,9 @@ pub fn sample_stream(shape: &Shape, recorded: &Recorded, seed: u64) -> Vec<u8> {
     stream
 }
 
+/// The claims, and the values the verifier requires to be zero, then nonzero.
+pub type Verdict = (Reduced<E>, Vec<E>, Vec<E>);
+
 /// The Rust verifier on the same calldata: the claims, and the values it requires to be zero, then nonzero.
 pub fn rust_verifier(
     shape: &Shape,
@@ -172,7 +180,7 @@ pub fn rust_verifier(
     public_input: &[u8; 32],
     stream: &[u8],
     lincheck: LincheckTerminal,
-) -> Result<(Reduced<E>, Vec<E>, Vec<E>), VerifierError> {
+) -> Result<Verdict, VerifierError> {
     let seed = keccak_seed(&NAME, iv, &public_input_calldata(public_input));
     let mut channel = KeccakChannel::new(
         seed,
@@ -228,6 +236,37 @@ pub fn fixed_roots() -> Vec<(u8, [u8; 32])> {
         .collect()
 }
 
+/// The breakdown's categories: what each phase is.
+pub fn category(phase: &str) -> &'static str {
+    match phase {
+        "transcript (Keccak-256 chain)" => "transcript hashing (Keccak-256)",
+        "calldata reads" => "calldata reads (CALLDATALOAD, first use)",
+        "bus GKR: sumcheck rounds"
+        | "table sumcheck: rounds"
+        | "flock zerocheck: rounds"
+        | "flock lincheck: rounds"
+        | "flock matrices: sumcheck rounds"
+        | "stack batch: sumcheck rounds" => "sumcheck rounds (all sumchecks)",
+        "bus GKR: layers" => "GKR layer checks (bus)",
+        "flock zerocheck: skip round"
+        | "flock matrices: reduction to A0, B0 claims"
+        | "flock lincheck: terminal walk of the BLAKE2s circuit" => "Flock checks (skip round, lincheck terminal)",
+        "ring switch: map, coefficients, target" | "stack batch: ring-switch weight at the point" => {
+            "ring switching (map, target, weight at the point)"
+        }
+        "bus leaves: fingerprints, selectors, padding"
+        | "table sumcheck: terminal (constraints, bus forms)"
+        | "public input binding"
+        | "stack batch: eq / selector weights at the point" => {
+            "public polynomials (eq, selectors, padding, index, bus forms)"
+        }
+        "PCS_OPEN: claims written, calls, replies checked" | "PCS_OPEN: fixed commitments read (cold SLOAD)" => {
+            "PCS_OPEN calls (c = 0) and fixed roots (cold SLOAD)"
+        }
+        _ => "entry, announced sizes",
+    }
+}
+
 /// One phase's share of a call.
 #[derive(Clone, Debug)]
 pub struct PhaseGas {
@@ -254,6 +293,10 @@ pub struct GasReport {
     pub hashed_bytes: usize,
     pub checks: usize,
     pub memory_words: usize,
+    /// The stack's variables, the claims batched on it, the depth of the bus's GKR.
+    pub stack_log: usize,
+    pub stack_claims: usize,
+    pub bus_depth: usize,
 }
 
 impl GasReport {
@@ -290,7 +333,11 @@ pub fn measure(shape: &Shape, iv: &[u8; 32], lincheck: LincheckTerminal) -> GasR
     let run = |claim_gas: u64| -> Outcome {
         let block = PcsOpen::attesting_all(claim_gas);
         let outcome = call(&contract.code, &fixed_roots(), &data, &block);
-        assert_eq!(outcome.output.as_deref(), Some(&word([1, 0, 0])[..]), "the measuring run returns 1");
+        assert_eq!(
+            outcome.output.as_deref(),
+            Some(&word([1, 0, 0])[..]),
+            "the measuring run returns 1"
+        );
         assert_eq!(outcome.pcs_calls.len(), claims, "one call per commitment");
         outcome
     };
@@ -310,7 +357,11 @@ pub fn measure(shape: &Shape, iv: &[u8; 32], lincheck: LincheckTerminal) -> GasR
     let total: u64 = phases.iter().map(|p| p.gas).sum();
     assert_eq!(total, outcome.execution, "the instructions' gas is the execution's");
     let measured = phases.iter().find(|p| p.phase == MEASURE).map_or(0, |p| p.gas);
-    assert_eq!(measured, contract.checks as u64 + claims as u64, "one JUMPDEST a check and a call");
+    assert_eq!(
+        measured,
+        contract.checks as u64 + claims as u64,
+        "one JUMPDEST a check and a call"
+    );
     phases.retain(|p| p.phase != MEASURE);
     phases.sort_by_key(|p| std::cmp::Reverse(p.gas));
     GasReport {
@@ -328,6 +379,9 @@ pub fn measure(shape: &Shape, iv: &[u8; 32], lincheck: LincheckTerminal) -> GasR
         hashed_bytes: contract.hashed_bytes,
         checks: contract.checks,
         memory_words: contract.memory_words,
+        stack_log: recorded.reduced.layout_stack_log,
+        stack_claims: recorded.reduced.stack_claims,
+        bus_depth: recorded.reduced.bus_depth,
     }
 }
 

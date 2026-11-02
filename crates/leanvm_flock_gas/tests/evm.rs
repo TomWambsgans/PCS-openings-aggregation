@@ -2,7 +2,7 @@
 //! The contract computes what the Rust verifier computes, and what a call of it costs.
 
 use leanvm_flock_gas::LincheckTerminal;
-use leanvm_flock_gas::evm::contract::{GasReport, measure, parity, record_verifier, sample_stream};
+use leanvm_flock_gas::evm::contract::{GasReport, category, measure, parity, record_verifier, sample_stream};
 use leanvm_flock_gas::shapes::{PROGRAM_IV, WORKLOADS, benchmark};
 
 /// Run `f` on a thread with a deep stack: the code generator recurses along the graph.
@@ -111,16 +111,84 @@ fn print_report(name: &str, report: &GasReport) {
     }
 }
 
+fn print_categories(report: &GasReport) {
+    let mut categories: Vec<(&str, u64)> = Vec::new();
+    for phase in &report.phases {
+        let name = category(phase.phase);
+        match categories.iter_mut().find(|(c, _)| *c == name) {
+            Some((_, gas)) => *gas += phase.gas,
+            None => categories.push((name, phase.gas)),
+        }
+    }
+    categories.sort_by_key(|(_, gas)| std::cmp::Reverse(*gas));
+    println!("| category | execution gas | share |");
+    println!("|---|---:|---:|");
+    for (name, gas) in categories {
+        println!(
+            "| {name} | {} | {:.1}% |",
+            grouped(gas),
+            100.0 * gas as f64 / report.execution as f64
+        );
+    }
+    println!("| **execution** | **{}** | |", grouped(report.execution));
+}
+
 /// What a call costs: `cargo test --release -p leanvm_flock_gas --test evm -- --ignored --nocapture gas_report`.
 #[test]
 #[ignore]
 fn gas_report() {
     deep(|| {
+        let mut rows = Vec::new();
         for workload in &WORKLOADS {
             for lincheck in [LincheckTerminal::Matrices, LincheckTerminal::Walk] {
                 let report = measure(&workload.shape, &PROGRAM_IV, lincheck);
-                print_report(&format!("{} ({:?})", workload.name, lincheck), &report);
+                if workload.xmss == benchmark().xmss {
+                    print_report(&format!("{} ({:?})", workload.name, lincheck), &report);
+                    print_categories(&report);
+                }
+                rows.push((workload, lincheck, report));
             }
+        }
+        println!("\n### Over the proofs (transaction gas without the 21,000 base)");
+        println!(
+            "| signatures | cycles | log heights (XOR MUL SET DEREF JUMP BLAKE2S), memory | committed | stack vars | \
+             GKR depth | stack claims | lincheck terminal | calldata bytes | execution (c = 0) | claims / calls | \
+             tx EIP-7623, c = 0 / 2,000 / 5,000 / 20,000 | tx EIP-7976, c = 0 / 20,000 |"
+        );
+        println!("|---:|---:|---|---:|---:|---:|---:|---|---:|---:|---:|---|---|");
+        for (workload, lincheck, report) in &rows {
+            let heights: Vec<String> = workload
+                .shape
+                .table_rows
+                .iter()
+                .map(|&rows| (64 - (rows - 1).leading_zeros()).to_string())
+                .collect();
+            let tx = |c, floor| grouped(report.transaction(c, floor));
+            println!(
+                "| {} | {} | {}, {} | 2^{:.2} | {} | {} | {} | {} | {} | {} | {} / {} | {} / {} / {} / {} | {} / {} |",
+                grouped(workload.xmss as u64),
+                grouped(workload.cycles),
+                heights.join(" "),
+                workload.shape.log_memory,
+                workload.log2_committed,
+                report.stack_log,
+                report.bus_depth,
+                report.stack_claims,
+                match lincheck {
+                    LincheckTerminal::Matrices => "A0, B0 claims",
+                    LincheckTerminal::Walk => "walk in contract",
+                },
+                grouped(report.calldata_bytes as u64),
+                grouped(report.execution),
+                report.claims,
+                report.calls,
+                tx(0, 40),
+                tx(2_000, 40),
+                tx(5_000, 40),
+                tx(20_000, 40),
+                tx(0, 64),
+                tx(20_000, 64),
+            );
         }
     });
 }
