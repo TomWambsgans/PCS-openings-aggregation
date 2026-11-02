@@ -141,8 +141,11 @@ fn constraint_count(trace: &Trace) -> u64 {
 pub struct Config {
     pub blake2s: Blake2s,
     pub claims: Claims,
-    /// Check every identity at `t` directly, and every combined claim against the polynomials (slower).
+    /// Check every combined claim against the committed stacks (slower).
     pub check: bool,
+    /// Fill every stack's words past its blocks with pseudo-random words instead of zeros (a test that the verifier
+    /// relies on nothing there).
+    pub garbage: bool,
 }
 
 /// Prove `trace`'s execution for the contract of `iv`.
@@ -182,6 +185,10 @@ pub fn prove(trace: &Trace, iv: &[u8; 32], config: Config) -> Result<(Proof, Rep
         let tuple: Vec<F64> = (0..16 * n).map(|i| setup.slots[i % 16].b[i / 16]).collect();
         stack_f.put_k(Column::BytecodeTuple, &tuple);
         stack_f.put_k(Column::Address, &setup.address.b);
+    }
+    if config.garbage {
+        stack1.fill_unused(0xC1);
+        stack_f.fill_unused(0xF0);
     }
     let committed1 = opening::commit(&stack1.words, stack1.layout.vars, stack1.placed());
     let committed_f = opening::commit(&stack_f.words, stack_f.layout.vars, stack_f.placed());
@@ -282,6 +289,9 @@ pub fn prove(trace: &Trace, iv: &[u8; 32], config: Config) -> Result<(Proof, Rep
     }
     drop(leaf_quotients);
     clock.lap(&mut report, "C2: chunks in basis B");
+    if config.garbage {
+        stack2.fill_unused(0xC2);
+    }
     let committed2 = opening::commit(&stack2.words, stack2.layout.vars, stack2.placed());
     report.stacks.push((Commitment::C2, stack2.placed(), stack2.layout.vars));
     clock.lap(&mut report, "C2: WHIR commit");

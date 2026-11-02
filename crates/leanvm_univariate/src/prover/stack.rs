@@ -85,6 +85,19 @@ impl Stack {
         self.layout.words()
     }
 
+    /// Fill the words past every block (inside the committed lanes) with pseudo-random words: nothing the verifier
+    /// checks may depend on them (`PROVER.md`, "the stacks' unused words").
+    pub fn fill_unused(&mut self, seed: u64) {
+        let placed = self.placed() as usize;
+        let mut state = seed | 1;
+        for word in &mut self.words[placed..] {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *word = F64(state);
+        }
+    }
+
     /// Write a K-column's words into its block.
     pub fn put_k(&mut self, column: Column, data: &[F64]) {
         let limbs = self.layout.limbs(column);
