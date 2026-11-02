@@ -293,10 +293,39 @@ proof: the random-permutation game starts from no edge), at most `2^70` operatio
 noncomputable def epsFSDeployed : ℝ≥0∞ :=
   epsFS 0 (2 ^ 70) ((2 : ℝ≥0∞) ^ 191)⁻¹ ((2 : ℝ≥0∞) ^ 2368)⁻¹
 
+set_option exponentiation.threshold 4000 in
+/-- `epsFSDeployed ≤ 2^-113`: `6·2^140 + 6·2^135 ≤ 2^143` over `2^256`. -/
+theorem epsFSDeployed_le : epsFSDeployed ≤ ((2 : ℝ≥0∞) ^ 113)⁻¹ := by
+  have hN : 2 ^ 70 * 6 * (0 + 2 ^ 70) + 2 * (0 + 2 ^ 70) * 3 * 2 ^ 65 + 0 ≤ 2 ^ 143 := by norm_num
+  have e1 : ((2 : ℝ≥0∞) ^ 191)⁻¹ = 2 ^ 65 * ((2 : ℝ≥0∞) ^ 256)⁻¹ :=
+    two_pow_inv_split 191 65 256 rfl
+  have e2 : ((2 : ℝ≥0∞) ^ 113)⁻¹ = 2 ^ 143 * ((2 : ℝ≥0∞) ^ 256)⁻¹ :=
+    two_pow_inv_split 113 143 256 rfl
+  unfold epsFSDeployed epsFS
+  rw [e1, e2, div_eq_mul_inv]
+  set U := ((2 : ℝ≥0∞) ^ 256)⁻¹
+  calc _ = ((2 ^ 70 * 6 * (0 + 2 ^ 70) + 2 * (0 + 2 ^ 70) * 3 * 2 ^ 65 + 0 : ℕ) : ℝ≥0∞) * U := by
+        push_cast; ring
+    _ ≤ ((2 ^ 143 : ℕ) : ℝ≥0∞) * U := by gcongr
+    _ = 2 ^ 143 * U := by norm_num
+
 /-- **The zero-knowledge error of the deployed proof** (`zkBound` at the deployed skeleton's `2^70`
 operations and `epsFSDeployed`), a function of the distinguisher's calls `Q`. -/
 noncomputable def zkBoundDeployed (Qp Qfmt : ℕ) (εR εI : ℕ → ℝ≥0∞) : ℕ → ℝ≥0∞ :=
   zkBound (2 ^ 70) Qp Qfmt epsFSDeployed εR εI
+
+/-- **The deployed error at our sizes**: for a distinguisher and a formatting of at most `2^127` calls
+together, `zkBoundDeployed Q ≤ εR Q + 2^-113 + 2^-165 + 2^-2200 + (Qp + Qfmt + Q)² / 2^508 + εI Q`. -/
+theorem zkBoundDeployed_le (Qp Qfmt : ℕ) (εR εI : ℕ → ℝ≥0∞) (Q : ℕ) (hQ : Qfmt + Q ≤ 2 ^ 127) :
+    zkBoundDeployed Qp Qfmt εR εI Q ≤
+      εR Q + (((2 : ℝ≥0∞) ^ 113)⁻¹ + 1 / 2 ^ 165 + ((2 : ℝ≥0∞) ^ 2200)⁻¹ +
+        ((Qp + (Qfmt + Q) : ℕ) ^ 2 : ℝ≥0∞) / 2 ^ 508) + εI Q := by
+  have h : 2 ^ 70 + (Qfmt + Q) ≤ 2 ^ 128 := by
+    have : (2 : ℕ) ^ 70 + 2 ^ 127 ≤ 2 ^ 128 := by norm_num
+    omega
+  refine (zkBound_le _ _ _ _ _ _ Q h).trans ?_
+  gcongr
+  exact epsFSDeployed_le
 
 /-- **Zero knowledge of the membership proof on the deployed skeleton**, `FSFresh` and the duplex
 discipline proved (`fsFresh_deployed`, `duplexDiscipline_skel`): `PcsQuotient.ZeroKnowledge` at
