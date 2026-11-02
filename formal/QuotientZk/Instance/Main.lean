@@ -5,6 +5,18 @@ import QuotientZk.Instance.Builder
 /-!
 # Zero knowledge of the deployed proof, the joint model instantiated
 
+**Superseded as a zero-knowledge result.** `zk_rpm_deployed_instance` asks the honest tables'
+claims (`hTW`, `hTQ`) at every mask of every good challenge, with no `ClaimsND`, which the honest
+tables do not meet: where `claimScale 2 23 t = 0` the verifier's witness value `valsW` is `0`
+(`EndToEnd/Review/E2EZkNondeg.lean`), and for many good challenges some masks make `claimDen`
+vanish (`Nondeg.lean`'s header). The deployed result is `PcsQuotient.EndToEnd.zeroKnowledge_closed`
+(`EndToEnd/ZK/CoreMain.lean`) through `jointHVZKε_of_linkV` (`Instance/Nondeg.lean`), with the
+joint data `deployedJointData` (`EndToEnd/ZK/Joint.lean`), which asks `hTW`, `hTQ` under `ClaimsND`
+only and is proved there (`EndToEnd/ZK/FactsClaims.lean`: `hTWD`, `hTQD`). That chain uses, as they
+are, this file's joint-model claims `clW`, `clQ` (the simulator's tables') and the discharges listed
+below (`conditionsW`, `conditionsQ`, `link`, `chOf_uniform`, `FSFresh`'s conditions, `claims_simTW`,
+`claims_simTQ`, from the files they name).
+
 **`zk_rpm_deployed_instance`**: `zk_rpm_deployed_jointV_fs'` (`JointV.lean`) for the deployed
 prover `ofBytes (Pb …)` (`Prover.lean`), its openings `openW`, `openQ` (`Openings.lean`), its
 challenges `chOf` (`Challenges.lean`), every hypothesis on them discharged:
@@ -23,11 +35,10 @@ challenges `chOf` (`Challenges.lean`), every hypothesis on them discharged:
 2, `K`'s 64-bit words and `E`'s limbs `rep`, `1, Y, Y²` independent); F1's (`hE`, `hvan`, `hsat`: the
 witness satisfies the relation, `hvan0`, `hN`, `hdeg`) and the simulator's public functions (`hinK`,
 `hsig`), as in `zk_rpm_deployed_joint`; **the honest tables meet the verifier's claims**
-(`hTW`, `hTQ`: the completeness of the claim maps for the tables `TW`, `TQ` the prover lays on its
-stacks, proved for the deployed tables in `formal/Completeness`, a package built against mumbai that
-this one cannot import); the permutation budget `hQ`. The statement holds for every renderer `R`
-of the messages (WHIR's honest prover is one) and every pair of tables `TW`, `TQ` meeting the
-claims.
+(`hTW`, `hTQ`, at every mask: not met by the honest tables at the degenerate challenges and masks,
+above; off them, under `ClaimsND`, proved for the deployed tables in `EndToEnd/ZK/FactsClaims.lean`);
+the permutation budget `hQ`. The statement holds for every renderer `R` of the messages (WHIR's
+honest prover is one) and every pair of tables `TW`, `TQ` meeting the claims.
 
 The simulator `jointSimV … (chOf σ)`, read through `out`, uses the tables `simTW`, `simTQ` (computed,
 `Builder.lean`: a Gaussian elimination over `rep.coords`, the coordinates of `E` over `K`) and no
@@ -59,7 +70,14 @@ noncomputable def clW (c : DChal E) (v : Vals E) : Fin 1 → E :=
 noncomputable def clQ (c : DChal E) (v : Vals E) : Fin 2 → E :=
   (openQ rep P₀ Y).claims (c, v) (simTQ rep P₀ stmt Y c v)
 
-/-- **Zero knowledge of the deployed proof in the random-permutation model, the joint model
+/-- **Superseded**: its hypotheses `hTW`/`hTQ` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`). (`hTW`, `hTQ` ask the honest tables' claims at every mask, with no
+`ClaimsND`; where `claimScale 2 23 t = 0` the verifier's witness value `valsW` is `0`,
+`EndToEnd/Review/E2EZkNondeg.lean`. The end theorem's joint data, `EndToEnd/ZK/Joint.lean`, asks
+them under `ClaimsND`, and `EndToEnd/ZK/FactsClaims.lean` proves them there: `hTWD`, `hTQD`.)
+
+**Zero knowledge of the deployed proof in the random-permutation model, the joint model
 instantiated**: for the deployed skeleton at `2^22` rows and the deployed prover `ofBytes (Pb …)`
 (every message renderer `R`, every pair of honest tables `TW`, `TQ` meeting the verifier's
 claims), every distinguisher of at most `QD ≤ 2^127` queries of `π` and `π⁻¹`, the real game making

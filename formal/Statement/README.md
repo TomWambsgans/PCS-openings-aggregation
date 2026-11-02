@@ -11,11 +11,14 @@ permutation, the random-permutation model, leanVM's WHIR verifier and the pieces
 extractor's Merkle inversion and list decoder. Mathlib, VCVio and CompPoly come through it, at mumbai's
 revisions (the toolchain is `leanprover/lean4:v4.34.1`).
 
-The extractor and the simulator are **explicit, computable definitions** referenced by the statements, so
-that a reviewer can check what they read and that they are efficient (Lean has no running-time theorem;
-the convention is mumbai's: a fixed straight-line extractor reading only the adversary's transcript, its
-cost read off its loops). They are not F1's (`formal/QuotientSecurity`), whose extractor reads the proof's
-polynomials in the ideal model and whose extractor and simulator are `noncomputable`. The proofs are in
+The extractor is an **explicit, computable definition** referenced by the statements, so that a reviewer
+can check what it reads and that it is efficient (Lean has no running-time theorem; the convention is
+mumbai's: a fixed straight-line extractor reading only the adversary's transcript, its cost read off its
+loops). The simulator the zero-knowledge theorem covers (`zkSimulator`, `formal/EndToEnd/ZK`, named in
+`zeroKnowledge_closed`'s statement) is an **explicit simulator; its computable form is in progress**; this
+package's own `simulator` is computable but is a heuristic no theorem covers ("The simulator", below).
+Neither is F1's (`formal/QuotientSecurity`), whose extractor reads the proof's polynomials in the ideal
+model and whose extractor and simulator are `noncomputable`. The proofs are in
 `formal/EndToEnd` (`formal/README.md`, "End-to-end theorems"): knowledge soundness, completeness and zero
 knowledge are proved with no hypotheses ("What is proved", below). `PcsQuotientTest/` is the differential test, not the
 statement.
@@ -199,8 +202,12 @@ def StatementBinds : Prop :=
 commitment (the circuit's index root, the tree's root; it could recompute it with `π`), with coins, `π` and
 `π⁻¹`;
 `Distinguisher` is `Option Proof → OracleComp RandomPermutationOracles Bool`, quantified after the
-statement and the witness (non-adaptive zero knowledge). `sampleCoins` is the prover's coins: twelve
-uniform mask words and a uniform word at every padding position of the two hidden tables.
+statement and the witness (non-adaptive zero knowledge). **Zero knowledge is for one proof**:
+`realExperiment` starts from an empty, lazily sampled `π`, the prover goes first, and the distinguisher
+queries `π` and `π⁻¹` only after it has the proof. Not covered: oracle queries before the proof (a
+distinguisher's precomputation or auxiliary input that depends on `π`), and several proofs under one `π`.
+`sampleCoins` is the prover's coins: twelve uniform mask words and a uniform word at every padding position
+of the two hidden tables.
 `QueryCostAtMost`, `permutationCallCost`, `runWithRandomPermutation`, `loggedOracles`, `queryPermutation`
 are mumbai's (`RandomPermutation.lean`). `PairCollision a b` is `a ≠ b ∧ pair a.1 a.2 = pair b.1 b.2`.
 
@@ -361,7 +368,9 @@ check the ones they use by kernel evaluation (`formal/EndToEnd/Bridge/Claims/Con
   (`PcsQuotient.EndToEnd.zeroKnowledge_closed`, `formal/EndToEnd/ZK/CoreMain.lean`), with WHIR's honest prover
   as the renderer. Two statement changes were needed: the deterministic core is stated off degenerate `α, β`
   (`CoreWhirG`; `CoreWhir` is false there), those charged to `deltaNone`; `fmt`'s `fillRun` ends at `fail` as at
-  `ret`. The simulator is explicit; its full computability is in progress. `ZeroKnowledge ζ`, for this
+  `ret`. An explicit simulator; its computable form is in progress. Single-proof zero knowledge: from an
+  empty `π`, the distinguisher's queries after the proof; no query before the proof and no second proof
+  under the same `π` (a pre-proof phase is planned). `ZeroKnowledge ζ`, for this
   package's heuristic `simulator`, is not proved, so neither is the structure `Theorems` (`Security.lean`),
   whose `zeroKnowledge` field it is.
 * Scope: the three are about `verifyWith` in the random-permutation model; the EVM theorem below holds at the

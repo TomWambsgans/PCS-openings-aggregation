@@ -319,14 +319,19 @@ layouts (not hiding, `2e2d17d`), the hidden ones cost about +9% of prover time a
 
 ## What remains open
 
-- The theorem's conditions now hold outside `B`, by the argument above, checked in its parts exactly; its Lean
-  formalization proves the argument's core and the solvers' span for every challenge (below), and what is left
-  is plumbing.
-- The Fiat–Shamir transfer (programmable random oracle) and the reduction's own hiding are taken from
-  `membership-zk.md` and the protocol's analysis, not redone.
-- The exact test of the whole view is on scaled-down layouts; at full size the argument rests on the steps above
-  and the exact checks of (R) and (S).
-- Side channels (timing, memory) are not considered; the padding is only as good as the seed.
+- Nothing of the theorem itself: its conditions hold outside `B`, by the argument above, checked in its parts
+  exactly, and the Lean proof covers the deployed layouts at every supported size (`deployed_prEvent_le`, below).
+- The Fiat–Shamir transfer (the roots, Merkle siblings, nonces and the programmable oracle) and the reduction's
+  own hiding are now proved in Lean too (`formal/QuotientZk`, F1's honest-verifier zero knowledge), and end to
+  end in the random-permutation model (`PcsQuotient.EndToEnd.zeroKnowledge_closed`, `formal/README.md`). That
+  statement is single-proof: the distinguisher queries the permutation only after the proof, with no query
+  before it and no second proof under the same permutation.
+- The exact test of the whole view is on scaled-down layouts; at full size the Lean theorem is about
+  `Layout::hidden_with` and `Table::hidden` as transcribed (`DeployedLayout.lean`, `hiddenWord_eq`): the
+  transcription is read against the Rust, not proved equal to it.
+- The model's padding is uniform; deployed it is ChaCha12 keyed from a 32-byte OS seed, so the hiding is
+  computational in that generator. Side channels (timing, memory) are not considered; the padding is only as
+  good as the seed.
 
 ## The Lean statement
 
@@ -356,10 +361,14 @@ guarded in `Hiding.lean`):
   proven, (Q) a hypothesis), and **`GadgetLayout.prEvent_le_bound`**: averaged over uniform challenges, the two
   tables' experiments differ on any event by at most `Pr[μ = 0] + (12·|E| + 3·|K|²)/|E|²`.
 
-What remains for the deployed end-to-end statement: (Q) for WHIR's novel basis at `|Q| ≤ 225 < D = 247`
-(`Interp.lean` proves (Q) for a degree-graded basis), and the instantiation with the deployed layouts (a concrete
-`GadgetLayout` and `pos` per table and size, its lane facts by `decide`, `WeightsFit` for the deployed claims);
-both are being done in parallel (`Deployed*.lean`). The F2 mirror of the layouts (`formal/WhirBridge`:
+- **The deployed layouts** (`DeployedLayout.lean`, `DeployedWeights.lean`, `NovelBasis.lean`, `Deployed.lean`):
+  (Q) for WHIR's novel basis at the positions a level-0 opening reads (`|Q| ≤ 225 < D = 247`;
+  `novel_firstEval_surjective`, after `Interp.lean`'s (Q) for a degree-graded basis), the witness and quotient
+  layouts as `GadgetLayout`s at `2^17 .. 2^22` rows, `WeightsFit` for `opening::verify`'s weight closure, and
+  **`deployed_prEvent_le`**: two tables with the same claims give experiments that differ on any event by at most
+  `1/|E| + (12·|E| + 3·|K|²)/|E|² < 2^-188`. Nothing of this layer remains open.
+
+The F2 mirror of the layouts (`formal/WhirBridge`:
 `Layout.hidden`, `readHidden`, `HiddenOK`, `Layouts.lean`, the weight closure with the gadget's term, the layout id's
 encoding) follows the gadget layout (`gadget_holds_iff`; `Test/Check.lean` accepts real proofs of both hidden openings
 and rejects the honest proof checked without the gadget's term).

@@ -23,6 +23,13 @@ openings over `ChV = Chal × Vals` (the challenges and the five values):
   `hrow`, `hduplex` discharged for a prover `ofBytes Pb`) for this model.
 
 The witness opening's weights do not read `v`; nothing here needs them to.
+
+**Superseded where the honest tables' claims are hypotheses.** `joint_hzkV`, `jointHVZK_of_linkV`
+and `zk_rpm_deployed_jointV_fs'` ask them (`hT₁`, `hT₂`) at every mask of every good challenge,
+with no `ClaimsND`, which the honest tables do not meet (where the claims' scales or `claimDen`
+vanish, `Nondeg.lean`'s header). The deployed result is `zeroKnowledge_closed` through
+`Nondeg.lean`'s `joint_hzkV_nd`, `jointHVZKε_of_linkV` (with `QuotientZk.DRpm.zk_rpm_skel_approx`);
+`modelV`, `jointSimV`, `LinkV`, `factors_singleV` and `factors_pairV` are used there as they are.
 -/
 
 open OracleComp OracleSpec Polynomial Module QuotientSecurity QuotientSecurity.Hiding Common
@@ -104,7 +111,13 @@ theorem hides_pair {ι Y Q O : Type} [Fintype ι] [DecidableEq ι] [Fintype Y] [
   obtain ⟨rfl, h2⟩ := Prod.mk.inj hd
   exact S.hides h3 hS lamOf φOf (c, v) (hc v) d d' h2
 
-/-- **Joint honest-verifier zero knowledge, the openings reading the five values**: at every good
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`; this theorem's form there: `joint_hzkV_nd`). (`hT₁`, `hT₂` ask the
+honest tables' claims at every mask, with no `ClaimsND`; where `claimScale 2 23 t = 0` the
+verifier's witness value is `0`, `EndToEnd/Review/E2EZkNondeg.lean`.)
+
+**Joint honest-verifier zero knowledge, the openings reading the five values**: at every good
 challenge the honest view under uniform masks and paddings has the distribution of `jointSimV`. -/
 theorem joint_hzkV (h3 : finrank K E = 3) (P : Params E) (hE : P.Exact) (stmt : Fin P.words → E)
     (gK : Fin 4 → K[X]) (van : K[X]) (hvan : ∀ x : P.T, aeval (rowPoly.eval (x : E)) van = 0)
@@ -385,7 +398,13 @@ variable {K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂ : Type
   [SampleableType (ι₁ → Y₁ → K)] [SampleableType (ι₂ → Y₂ → K)]
   [SampleableType Γ₁] [Fintype Γ₁] [SampleableType Γ₂] [Fintype Γ₂] [SampleableType Γw]
 
-/-- **`JointHVZK`** for a prover that is the model `modelV`, at our sizes: `εhv = 2^-165`. -/
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`: `hT₁`, `hT₂` under `ClaimsND` only, `εhv = 2^-165 + 2^-125`,
+`εz = 2/2^192`). (`hT₁`, `hT₂` here ask the honest tables' claims at every mask, with no
+`ClaimsND`.)
+
+**`JointHVZK`** for a prover that is the model `modelV`, at our sizes: `εhv = 2^-165`. -/
 theorem jointHVZK_of_linkV {I Ob Mm Xt : Type} [DecidableEq I] [Inhabited I] [SampleableType Ob]
     [Inhabited Ob] [DecidableEq Xt] (P : Proto (Rand K ι₁ Y₁ ι₂ Y₂) I Ob Mm (Fin 2) Xt)
     (h3 : finrank K E = 3) (P₀ : Params E) (hE : P₀.Exact) (stmt : Fin P₀.words → E)
@@ -425,7 +444,12 @@ theorem jointHVZK_of_linkV {I Ob Mm Xt : Type} [DecidableEq I] [Inhabited I] [Sa
 
 open QuotientZk.Deployed (Inp Out Msg Tbl Pos KSt DSpec Proof) in
 open QuotientZk.Deployed.Fresh in
-/-- **Zero knowledge of the deployed proof in the random-permutation model, for the model
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`). (`hT₁`, `hT₂` ask the honest tables' claims at every mask, with no
+`ClaimsND`.)
+
+**Zero knowledge of the deployed proof in the random-permutation model, for the model
 `modelV`, `FSFresh` discharged**: `zk_rpm_deployed_joint_fs'` (`FreshJoint.lean`) with the openings
 reading the five values. For a prover whose leaf rows are byte strings longer than 192 bytes
 (`ofBytes Pb`), that meets `fsFresh_deployed_bits`'s conditions and is the model `modelV`

@@ -41,7 +41,12 @@ index root) is public and the state after it may be in `c₀`; its freshness com
 root. Each opening's IV hashes public data (its prefix, and claims the verifier recomputes): its
 freshness comes from the claims holding a challenge drawn after `c₀` was fixed. That is the
 inherent `|c₀| · 2^-191` term: a distinguisher that guessed `t` before the proof had queried the
-wiring opening's whole first draw.
+wiring opening's whole first draw. In the end theorem (`PcsQuotient.EndToEnd.zeroKnowledge_closed`)
+the term is `0`: `c₀ = []` there (`fsFresh_setup_deployed_bits`, `Fresh/Setup.lean`: the Statement's
+`realExperiment` starts from an empty permutation and its distinguisher queries only after the
+proof); `epsFS`'s first argument then holds only the setup's `2^19` public rows, which the prover
+hashes itself, not a distinguisher's queries. A pre-proof phase for the distinguisher is planned;
+it will make this term nonzero.
 
 **`zk_deployed_fs`**, **`zk_deployed_fs_bits`**: `zk_deployed_bits` with `FSFresh` discharged:
 advantage at most `εFS + εhv + 2^-2200`, and `2^-54 + εhv + 2^-2200` at these sizes.

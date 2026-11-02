@@ -62,9 +62,22 @@ statements from the layers below. Every theorem in this section is sorry-free an
 - The simulator is explicit and named in the statement (`zkSimulator`, `rpmSimOracle`:
   `formal/EndToEnd/ZK/With.lean`, `Simulator.lean`). It reads no witness. It draws the Fiat–Shamir challenges
   first and programs them, takes the messages and opened rows from the joint honest-verifier simulator (WHIR's
-  honest prover on tables built from uniform values), and answers unopened leaves with fresh digests. Its full
-  computability is in progress (its tables are computed by Gaussian elimination,
+  honest prover on tables built from uniform values), and answers unopened leaves with fresh digests. Its
+  computable form is in progress (its tables are computed by Gaussian elimination,
   `QuotientZk/Instance/Builder.lean`).
+- Scope: single-proof zero knowledge. `realExperiment` starts from an empty permutation, the prover goes first,
+  and the distinguisher queries π and π⁻¹ only after it has the proof. Not covered: oracle queries before the
+  proof (a distinguisher's precomputation, or auxiliary input that depends on π), and several proofs under one
+  π. So Fiat–Shamir freshness is taken from an empty cache (`c₀ = []`), and `FSFresh`'s inherent |c₀|·2^-191
+  term (a distinguisher that guessed a challenge before the proof) is identically 0 here; a pre-proof phase is
+  planned, which will make it nonzero.
+- The proof goes through the non-degenerate chain (`QuotientZk/Instance/Nondeg.lean`: `jointHVZKε_of_linkV`,
+  `prob_not_goodT_bits`, `prob_not_claimsND_le`; `zk_rpm_skel_approx`), which asks the honest tables' claims only
+  off the degenerate challenges and masks (`ClaimsND`). The earlier joint-model theorems that ask them at every
+  mask (`zk_rpm_deployed_instance`, `zk_rpm_deployed_jointV_fs'`, `jointHVZK_of_linkV`, `joint_hzkV`,
+  `zk_deployed_joint(_fs)`, `zk_rpm_deployed_joint(_fs)(')`, `joint_hzk`, `jointHVZK_of_link`) are kept but
+  superseded: the honest tables do not meet their hypotheses (`EndToEnd/Review/E2EZkNondeg.lean`: where the
+  witness claim's scale vanishes, the verifier's value is 0).
 - The bound: ζ(Q) ≈ 2^-113 for Q ≤ 2^126 (`zkBoundEnd`, `zkBoundEnd_le`). Its terms:
   - 2^-113, Fiat–Shamir freshness of the honest prover's queries (`fsFresh_setup_deployed_bits`):
     6·Q'(c + Q')/2^256 ≈ 2^-113.4 for Q' = 2^24 + 2^70 oracle operations (worst-case grinding counted) and
@@ -130,7 +143,7 @@ statements from the layers below. Every theorem in this section is sorry-free an
 | Lean F1, the reduction: knowledge soundness (Q+3)/2^128 (rounds 2^-166, 2^-164, 3/q, with margin for list unions up to 2^18), HVZK for ideal hiding commitments, completeness, ROM | `formal/QuotientSecurity` | sorry-free, 761 declarations on propext, Classical.choice, Quot.sound |
 | Lean F2, the WHIR openings: random-oracle soundness of `opening::verify` itself (the seed; the hidden witness and quotient layouts with the gadget, the public wiring layout) at 2^17..2^22 rows: an accepted opening has a candidate of the root's Johnson list satisfying all its claims, except with (QA+10122)(2^-128 + 5(QA+10122)/2^256) ≤ 2^-63 for QA ≤ 2^64 (`ours_sound`) | `formal/WhirBridge` | sorry-free, three standard axioms, no `native_decide` (589 declarations swept); mumbai's two-oracle model (the permutation: F4); the Lean mirror equals the Rust by test (`Test/Check.lean` at 2^17; the review's `F2Differential.lean` at 2^22), not by proof; pruned paths not formalised |
 | Lean F3, hiding of one opening: for two tables with the same claims, the linear part of the view (lane rounds, folded table, opened rows) differs on any event by at most 1/\|E\| + (12\|E\| + 3\|K\|²)/\|E\|² < 2^-188, for the deployed witness and quotient layouts at 2^17..2^22 rows (`deployed_prEvent_le`); conditions (S) and (R) proven at every challenge outside a small set (`μ = 0`, a coordinate of `φ` in {0, 1}, two of `φ₀, φ₁, φ₂` in K; `GadgetLayout.roundsReached`); unopened rows keep ≥ 2,368 / 3,840 bits | `formal/QuotientSecurity/Hiding/` | sorry-free; uniform padding; the roots, siblings, nonces and Fiat–Shamir are F3b's |
-| Lean F3b, zero knowledge of the non-interactive proof: an explicit simulator (it programs the Fiat–Shamir challenges, takes the opened rows from the simulated view and fresh digests for the unopened leaves) with advantage εFS + 2^-165 + 2^-2200 for the deployed skeleton (`zk_deployed_joint`), + Q²/2^508 in the RPM (`zk_rpm_deployed_joint'`); εFS proved (`fsFresh_deployed`: ≤ 2^-54 for a distinguisher's precomputation up to 2^127; from an empty cache with the setup, 2^-113, `fsFresh_setup_deployed_bits`); the joint model instantiated for the deployed prover (`zk_rpm_deployed_instance`) | `formal/QuotientZk/` | sorry-free, three standard axioms; `skel` equals the Rust prover by a differential test, not by proof (`QuotientZk/Test/SkelTrace.lean`, `crates/quotient/tests/skel_trace.rs`: at 2^17 every Fiat–Shamir query, tree, grind and the proof byte for byte; at 2^17..2^22 the draws, messages and trees against the derived shapes; the differences are listed in `formal/README.md`); end to end: above |
+| Lean F3b, zero knowledge of the non-interactive proof: an explicit simulator (it programs the Fiat–Shamir challenges, takes the opened rows from the simulated view and fresh digests for the unopened leaves) with advantage εFS + εhv + 2^-2200 for the deployed skeleton (`zk_deployed_bits`), + Q²/2^508 in the RPM; εFS proved (`fsFresh_deployed`: ≤ 2^-54 for a distinguisher's precomputation up to 2^127; from an empty cache with the setup, 2^-113, `fsFresh_setup_deployed_bits`); the joint model for the deployed prover with the honest tables' claims off the degenerate challenges and masks (`Instance/Nondeg.lean`: `jointHVZKε_of_linkV`, εhv = 2^-165 + 2^-125 and the view within εz = 2/2^192, together epsHV; `zk_rpm_skel_approx`), which `zeroKnowledge_closed` uses. Superseded (kept; their all-masks `hT₁`/`hT₂`, `hTW`/`hTQ` are not met by the honest tables): `zk_deployed_joint(_fs)`, `zk_rpm_deployed_joint(_fs)(')`, `zk_rpm_deployed_jointV_fs'`, `zk_rpm_deployed_instance` | `formal/QuotientZk/` | sorry-free, three standard axioms; `skel` equals the Rust prover by a differential test, not by proof (`QuotientZk/Test/SkelTrace.lean`, `crates/quotient/tests/skel_trace.rs`: at 2^17 every Fiat–Shamir query, tree, grind and the proof byte for byte; at 2^17..2^22 the draws, messages and trees against the derived shapes; the differences are listed in `formal/README.md`); end to end: above |
 | Lean F4a, the reduction's Keccak-256 chain: knowledge soundness with `transcript.rs`'s chain byte for byte, in the ROM and in leanerVM's RPM: (Q+8)(2^-163 + 3(Q+8)/2^256) + Q²/2^509 | `formal/QuotientRpm/` | sorry-free, propext, Classical.choice, Quot.sound; ideal commitments; the `Wire` is a parameter (the Statement's chain is F4's `chainWith`: `EndToEnd/Bridge/Chain.lean`) |
 | Lean F4, composition: the chain, real Merkle roots, then `opening::verify` three times; every opening term F2's `ours_sound`; the circuit's root built by a setup over the oracle; a computable extractor reading the adversary's and the setup's queries; the claim maps `reduce`'s (`knowledgeSoundness_deployed_rust`, two-oracle model, ≈ 2^-62 for Q ≤ 2^64); in the random-permutation model (`knowledgeSoundness_wired_setup_rpm_bits`; at the deployed claim maps, `Soundness.knowledgeSoundness_rust_rpm`) | `formal/Compose/`, `formal/EndToEnd/Soundness/RpmV.lean` | sorry-free, three standard axioms; decoder mumbai's Guruswami–Sudan `decodeStacks` (exact for F2's candidates) |
 | Lean, the completeness layer: the honest prover's proof (reduction and three openings, gadget layouts) is accepted for any hash and randomness except on challenges of density < 2^-163 and failed grinding (≤ 2^-277 per opening in the ROM), on the deployed instance with no circuit, wiring, weight or basis hypothesis (`completeness_deployed_concrete`, `_keccak`); the honest assignment is the deployed circuit evaluated on `membership_inputs`, equal to `Circuit.outputs`; the basis is `beta()`'s 24 words (kernel-checked; `crates/quotient/tests/lean_beta_vector.rs`) | `formal/Completeness/`, `formal/QuotientSecurity/{DeployedHonest,DeployedBasis}.lean` | sorry-free, three standard axioms, no `native_decide`; the challenges in the random-oracle and permutation models: `formal/EndToEnd/Completeness` |
@@ -166,6 +179,25 @@ statements from the layers below. Every theorem in this section is sorry-free an
 
 ## Reviews and their outcome
 
+- **End-to-end zero knowledge (adversarial; `formal/EndToEnd/Review/E2EZk{Axioms,Closed,Nondeg}.lean`)**: the
+  end theorem `zeroKnowledge_closed` is on the three standard axioms, and every theorem of this repository's
+  modules in the `ZK` library's closure was swept (10,616 theorems, none on another axiom); it rests on the
+  non-degenerate chain (`jointHVZKε_of_linkV`, `prob_not_claimsND_le`, `prob_not_goodT_bits`), not on the
+  all-masks theorems; the simulator's arguments hold no witness. Found, and changed in the docs:
+  - the all-masks joint-model theorems (`zk_rpm_deployed_instance`, `zk_rpm_deployed_jointV_fs'`,
+    `jointHVZK_of_linkV`, `joint_hzkV`, `zk_deployed_joint(_fs)`, `zk_rpm_deployed_joint(_fs)(')`, `joint_hzk`,
+    `jointHVZK_of_link`) were presented as the deployed result, but the honest tables do not meet their
+    `hTW`/`hTQ` (`hT₁`/`hT₂`) at degenerate challenges and masks (`valsW c v = 0` where
+    `claimScale 2 23 t = 0`, `E2EZkNondeg.lean`) → kept, marked superseded (their docstrings, `formal/README.md`,
+    `Instance/Main.lean`'s header, `ZK/Assembly.lean`, the F3b row here);
+  - the scope was undocumented → single-proof zero knowledge stated (`Security.lean`'s `ZeroKnowledgeWith`,
+    the Statement README, `formal/README.md`, above), and `FSFresh`'s inherent |c₀|·2^-191 term noted as 0 in the
+    end theorem (`c₀ = []`);
+  - slack in ζ (the skeleton's grinding fuel; Pr[row ∈ K]) → under "Remaining", as possible improvements;
+  - stale lines (`coreClose_of_joint`'s lemmas under old names; `ProverBridge.lean`'s bound without
+    2^-125 + 2/2^192; `Nondeg.lean`'s (2^26 + 4|K|)/|E| for the proved (26·2^25 + 4|K|)/|E|, and "every good
+    challenge"; `Deployed/Main.lean`'s "`FSFresh` not proved here"; `HIDING.md`'s open items) → corrected;
+  - the simulator was called compiled/computable → "an explicit simulator; its computable form is in progress".
 - **End-to-end completeness (adversarial; `formal/EndToEnd/Review/E2ECompletenessReview.lean`)**: the end
   theorem is on the three standard axioms, and the statement's closure was swept (`#review_sweep`). Proved there:
   `Relation` is satisfiable (`relation_self`), and an explicit secret's statement is accepted with probability at
@@ -258,8 +290,20 @@ statements from the layers below. Every theorem in this section is sorry-free an
 
 ## Remaining
 
-- The zero-knowledge simulator's full computability (in progress; its tables are computed, `sigmaAtD` and
+- The zero-knowledge simulator's computable form (in progress; its tables are computed, `sigmaAtD` and
   `deployedSimV` are still `noncomputable`).
+- Zero knowledge is single-proof: no distinguisher query before the proof, no second proof under the same π.
+  A pre-proof phase (the distinguisher's queries before the proof) is planned; it will make `FSFresh`'s
+  |c₀|·2^-191 term nonzero (`QuotientZk/Deployed/Fresh.lean`; 0 in the end theorem today, `c₀ = []`).
+- Possible improvements to ζ (slack, documented only):
+  - ζ's dominant 2^-113 (Fiat–Shamir freshness) comes from the skeleton's grinding fuel, 2^64 nonces a grind
+    (`QuotientZk/Deployed/Skeleton.lean`'s `queryPhase`, `qpBound` in `Deployed/Bound.lean`: 2^70 operations),
+    while the Statement's prover tries 2^25 (`nonceFuel`). At that fuel εFS ≤ 2^-157
+    (`E2EZkNondeg.lean`: `epsFS (2^19) (2^24 + 2^31) 2^-191 2^-2368 ≤ 2^-157`), and ζ would be about 2^-125;
+  - the 2^-125 term of epsHV is almost entirely Pr[row ∈ K] (the 4|K|/|E| = 2^-126 of `card_not_TND_le`'s
+    26·2^25 + 4|K|): `goodT` excludes a row in K because `prob_not_claimsND_le` takes the values uniform in E. A
+    challenge-dependent mask bound (2/|K| for the masks at a row in K, whose values are uniform in K; 2/|E|
+    elsewhere) would avoid it, epsHV then below 2^-161, and with both changes ζ about 2^-157.
 - Tested, not proved: the bytecode computes the graph; `FIELD_MUL` and `KECCAK256` are the Lean operations; the
   `PCS_OPEN` mock is `opening::verify`, and that is `PcsQuotient.openingWith`; the Statement's definitions are the
   Rust; the Rust verifier's expansion of pruned Merkle paths; the extractor's cost table and Gao's decoder.

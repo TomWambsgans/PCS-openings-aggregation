@@ -694,7 +694,12 @@ variable {K E Γ₁ Γ₂ Γw W ι₁ Y₁ Q₁ O₁ ι₂ Y₂ Q₂ O₂ : Type
   [SampleableType (ι₁ → Y₁ → K)] [SampleableType (ι₂ → Y₂ → K)]
   [SampleableType Γ₁] [Fintype Γ₁] [SampleableType Γ₂] [Fintype Γ₂] [SampleableType Γw]
 
-/-- **`zk_rpm_deployed_joint` without `hrow` and `hduplex`**: for the deployed skeleton and a prover
+/-- **Superseded**: its hypotheses `hT₁`/`hT₂` are not met by the honest tables at degenerate
+challenges/masks; the deployed result is `zeroKnowledge_closed` through `jointHVZKε_of_linkV`
+(`Instance/Nondeg.lean`). (`hT₁`, `hT₂` ask the honest tables' claims at every mask, with no
+`ClaimsND`.)
+
+**`zk_rpm_deployed_joint` without `hrow` and `hduplex`**: for the deployed skeleton and a prover
 whose leaf rows are byte strings (`ofBytes Pb`) and that is the joint model, every distinguisher of
 at most `QD ≤ 2^127` queries of `π` and `π⁻¹`, the real game making at most `Q` permutation calls,
 tells the real game from the simulated one with advantage at most

@@ -10,13 +10,14 @@ The verifier's claims are the honest tables' only where they are defined: the wi
 point and value divide by `claimScale 2 23 t = Π (1 + w_{k+2}(t))`, the quotient claim's by
 `claimScale 0 26 t` and by `claimDen(α, β, t, a, s) · vRows(t)`, `a` the four values the masks give.
 `Good` (F1) asks `w_24(t) ≠ 0` only: at `t = β_24` (`w_24(t) = 1`) the witness claim's value is
-`x / 0 = 0` while the honest table's claim is the cells' half, and for every good challenge some
+`x / 0 = 0` while the honest table's claim is the cells' half, and for many good challenges some
 masks make `claimDen` vanish. So the honest tables meet the verifier's claims (`hT₁`, `hT₂`) only off
 a small set, which this file charges to the bound:
 
 * **`TND t`**: `1 + w_k(t) ≠ 0` for `k < 26`, and the row `t^4 + t` outside `K`; **`goodT`**:
-  `good` and `TND`. Uniform challenges fail `TND` with probability at most `(2^26 + 4|K|)/|E|`
-  (`prob_not_TND_le`: the roots of `1 + w_k`, `2^k` of them, and of `X^4 + X − a`, `a ∈ K`), so
+  `good` and `TND`. Uniform challenges fail `TND` with probability at most `(26·2^25 + 4|K|)/|E|`
+  (`prob_not_TND_le`, `card_not_TND_le`: the roots of `1 + w_k`, at most `2^k ≤ 2^25` for each `k < 26`,
+  and of `X^4 + X − a`, at most `4` for each `a ∈ K`), so
   `goodT` fails with probability at most `2^-165 + 2^-125` at our sizes (`prob_not_goodT_bits`);
 * **`ClaimsND c m`**: `TND` and `claimDen · vRows(t) ≠ 0` at the five values of the masks `m`. At a
   `goodT` challenge, masks fail it with probability at most `2/|E|` (`prob_not_claimsND_le`):
