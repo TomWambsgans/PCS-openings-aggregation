@@ -11,6 +11,7 @@ import QuotientSecurity.Hiding.Sumcheck
 import QuotientSecurity.Hiding.Gadget
 import QuotientSecurity.Hiding.GadgetLayout
 import QuotientSecurity.Hiding.Solve
+import QuotientSecurity.Hiding.GadgetTheorem
 
 /-!
 # Hiding WHIR openings of `K`-valued tables (`crates/quotient/HIDING.md`)
@@ -199,3 +200,15 @@ example {K E ι Y : Type} [Field K] [Field E] [Algebra K E] [FiniteDimensional K
     (hsolve_of_cube h3 φ hφ hK _ (cube_true_subset hcube) hlow)
 
 end QuotientSecurity.Hiding
+
+/-- info: 'QuotientSecurity.Hiding.GadgetLayout.claims_stackR' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.GadgetLayout.claims_stackR
+
+/-- info: 'QuotientSecurity.Hiding.GadgetLayout.view_evalDistEq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.GadgetLayout.view_evalDistEq
+
+/-- info: 'QuotientSecurity.Hiding.GadgetLayout.prEvent_le_bound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientSecurity.Hiding.GadgetLayout.prEvent_le_bound
