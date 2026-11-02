@@ -374,6 +374,180 @@ def place (t : ℕ → K) (l y : ℕ) : K :=
     t (L.pieces.getD (y / 2 ^ L.logPiece - 1) 0 * 2 ^ L.logPiece + y % 2 ^ L.logPiece)
   | _ => 0
 
+variable {L}
+
+theorem atPat_iff (h : L.OK) (p : Fin 3) (y : Fin (2 ^ L.logLane)) :
+    (L.toGadget h).AtPat p y ↔ 247 + 3 * (p : ℕ) ≤ y ∧ (y : ℕ) < 250 + 3 * (p : ℕ) := by
+  constructor
+  · rintro ⟨i, rfl⟩
+    have := i.isLt
+    show 247 + 3 * (p : ℕ) ≤ gadgetEntry logPieceD p i ∧ gadgetEntry logPieceD p i < 250 + 3 * (p : ℕ)
+    simp only [gadgetEntry, logPieceD, gadgetD]
+    norm_num
+    omega
+  · rintro ⟨h1, h2⟩
+    refine ⟨⟨(y : ℕ) - 247 - 3 * p, by omega⟩, Fin.ext ?_⟩
+    show gadgetEntry logPieceD p _ = y
+    simp only [gadgetEntry, logPieceD, gadgetD]
+    norm_num
+    omega
+
+/-- **`Table::hidden`'s stack is the model's**: at every lane and entry, the word `Table::hidden`
+writes for the table `t` and the lanes' random words `rnd` is `stackD (place t) + stackR rnd`. -/
+theorem hiddenWord_eq (h : L.OK) (t : ℕ → K) (rnd : ℕ → ℕ → K) (l : Fin L.lanes.length)
+    (y : Fin (2 ^ L.logLane)) :
+    L.hiddenWord t rnd l y = ((L.toGadget h).stackD (K := K) (fun l y => L.place t l y) +
+      (L.toGadget h).stackR (K := K) (fun l y => rnd l y)) l y := by
+  set G := L.toGadget h with hG
+  have hp : L.logPiece = 8 := h.piece
+  have e256 : (2 : ℕ) ^ 8 = 256 := by norm_num
+  have hA : ∀ p : Fin 3, G.AtPat p y ↔ 247 + 3 * (p : ℕ) ≤ y ∧ (y : ℕ) < 250 + 3 * (p : ℕ) :=
+    fun p => atPat_iff h p y
+  have hfirst : y ∈ G.first ↔ (y : ℕ) < 247 := by simp [G, toGadget, firstFree]
+  have hheld : y ∈ G.held ↔ 256 ≤ (y : ℕ) ∧ (y : ℕ) < (L.pieces.length + 1) * 256 := by
+    show y ∈ L.heldSet ↔ _
+    simp only [heldSet, mem_filter, mem_univ, true_and, logPieceD, e256]
+  have hov : ∀ l' : Fin L.lanes.length, l' = G.ov ↔ (l' : ℕ) = 32 := fun l' => by
+    simp [G, toGadget, Fin.ext_iff, overflowLane]
+  have hB0 : ∀ l' : Fin L.lanes.length, l' = G.pairB 0 ↔ (l' : ℕ) = 31 := fun l' => by
+    simp [G, toGadget, Fin.ext_iff]
+  have hB1 : ∀ l' : Fin L.lanes.length, l' = G.pairB 1 ↔ (l' : ℕ) = 30 := fun l' => by
+    simp [G, toGadget, Fin.ext_iff]
+  have hA0 : ((G.pairA 0 : Fin L.lanes.length) : ℕ) = 0 := rfl
+  have hA1 : ((G.pairA 1 : Fin L.lanes.length) : ℕ) = 1 := rfl
+  have hrand : G.isRand l ↔ L.lanes[(l : ℕ)]? = some .random := Iff.rfl
+  change L.hiddenWord t rnd l y = (if G.randPos l y then 0 else L.place t l y) +
+    (if G.randPos l y ∧ ¬ G.ZeroAt l y then rnd (G.copyOf y l) y else 0)
+  have e247 : (256 - gadgetD : ℕ) = 247 := rfl
+  have hfill : (y : ℕ) < 256 → ∀ a, L.fillWord t rnd a y = rnd a y := by
+    intro hy a
+    simp only [fillWord, hp, e256]
+    rw [if_pos hy]
+  rcases Nat.lt_or_ge (y : ℕ) 247 with hy | hy
+  · -- The first piece below the gadget: random on every lane.
+    have h1 : G.randPos l y := Or.inl (hfirst.mpr hy)
+    have h2 : ¬ G.ZeroAt l y := fun hz => by have := (hA 2).mp hz.1; omega
+    have h3 : G.copyOf y l = l := by
+      have n0 : ¬ G.AtPat 0 y := fun hz => by have := (hA 0).mp hz; omega
+      have n1 : ¬ G.AtPat 1 y := fun hz => by have := (hA 1).mp hz; omega
+      simp [GadgetLayout.copyOf, n0, n1]
+    rw [if_pos h1, if_pos ⟨h1, h2⟩, h3, zero_add]
+    simp only [hiddenWord, hp, e256, e247]
+    rw [if_neg (by omega), hfill (by omega)]
+  rcases Nat.lt_or_ge (y : ℕ) 256 with hy' | hy'
+  · -- The gadget's entries.
+    have hg : G.AtGadget y := by
+      by_cases a : (y : ℕ) < 250
+      · exact ⟨0, (hA 0).mpr (by simp; omega)⟩
+      by_cases b : (y : ℕ) < 253
+      · exact ⟨1, (hA 1).mpr (by simp; omega)⟩
+      · exact ⟨2, (hA 2).mpr (by simp; omega)⟩
+    have h1 : G.randPos l y := Or.inr (Or.inl hg)
+    rw [if_pos h1, zero_add]
+    simp only [hiddenWord, hp, e256, e247]
+    rw [if_pos (show 247 ≤ (y : ℕ) ∧ (y : ℕ) < 256 from ⟨hy, hy'⟩)]
+    rcases Nat.lt_or_ge (y : ℕ) 250 with a | a
+    · have g0 : ((y : ℕ) - 247) / 3 = 0 := by omega
+      have p0 : G.AtPat 0 y := (hA 0).mpr (by simp; omega)
+      have n2 : ¬ G.AtPat 2 y := fun hz => by have := (hA 2).mp hz; simp at this; omega
+      rw [g0]
+      simp only [gadgetLanes]
+      rw [if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨h1, fun hz => n2 hz.1⟩)]
+      by_cases hl : (l : ℕ) = 31
+      · rw [if_pos hl, hfill hy']
+        have : G.copyOf y l = G.pairA 0 := by
+          simp [GadgetLayout.copyOf, p0, (hB0 l).mpr hl]
+        rw [this, hA0]
+      · rw [if_neg hl, hfill hy']
+        have n1 : ¬ G.AtPat 1 y := fun hz => by have := (hA 1).mp hz; simp at this; omega
+        have nB : ¬ l = G.pairB 0 := fun h' => hl ((hB0 l).mp h')
+        have : G.copyOf y l = l := by
+          simp [GadgetLayout.copyOf, n1, nB]
+        rw [this]
+    rcases Nat.lt_or_ge (y : ℕ) 253 with b | b
+    · have g1 : ((y : ℕ) - 247) / 3 = 1 := by omega
+      have p1 : G.AtPat 1 y := (hA 1).mpr (by simp; omega)
+      have n0 : ¬ G.AtPat 0 y := fun hz => by have := (hA 0).mp hz; simp at this; omega
+      have n2 : ¬ G.AtPat 2 y := fun hz => by have := (hA 2).mp hz; simp at this; omega
+      rw [g1]
+      simp only [gadgetLanes]
+      rw [if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨h1, fun hz => n2 hz.1⟩)]
+      by_cases hl : (l : ℕ) = 30
+      · rw [if_pos hl, hfill hy']
+        have : G.copyOf y l = G.pairA 1 := by
+          simp [GadgetLayout.copyOf, n0, p1, (hB1 l).mpr hl]
+        rw [this, hA1]
+      · rw [if_neg hl, hfill hy']
+        have nB : ¬ l = G.pairB 1 := fun h' => hl ((hB1 l).mp h')
+        have : G.copyOf y l = l := by
+          simp [GadgetLayout.copyOf, n0, nB]
+        rw [this]
+    · have g2 : ((y : ℕ) - 247) / 3 = 2 := by omega
+      have p2 : G.AtPat 2 y := (hA 2).mpr (by simp; omega)
+      have n0 : ¬ G.AtPat 0 y := fun hz => by have := (hA 0).mp hz; simp at this; omega
+      have n1 : ¬ G.AtPat 1 y := fun hz => by have := (hA 1).mp hz; simp at this; omega
+      rw [g2]
+      simp only [gadgetLanes, overflowLane]
+      have hc : G.copyOf y l = l := by simp [GadgetLayout.copyOf, n0, n1]
+      by_cases hl : (l : ℕ) = 32
+      · rw [if_pos hl, if_neg (show ¬ (G.randPos l y ∧ ¬ G.ZeroAt l y) from
+          fun hz => hz.2 ⟨p2, (hov l).mpr hl⟩)]
+      · rw [if_neg hl, if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from
+          ⟨h1, fun hz => hl ((hov l).mp hz.2)⟩), hc, hfill hy']
+  · -- Past the first piece.
+    have nf : y ∉ G.first := fun hz => by have := hfirst.mp hz; omega
+    have ng : ¬ G.AtGadget y := by
+      rintro ⟨p, hz⟩
+      have := (hA p).mp hz
+      have := p.isLt
+      omega
+    have nz : ¬ G.ZeroAt l y := fun hz => ng ⟨2, hz.1⟩
+    have hc : G.copyOf y l = l := by
+      have n0 : ¬ G.AtPat 0 y := fun hz => ng ⟨0, hz⟩
+      have n1 : ¬ G.AtPat 1 y := fun hz => ng ⟨1, hz⟩
+      simp [GadgetLayout.copyOf, n0, n1]
+    have hrp : G.randPos l y ↔ G.isRand l ∨ (l = G.ov ∧ y ∉ G.held) := by
+      simp only [GadgetLayout.randPos, nf, ng, false_or]
+    simp only [hiddenWord, hp, e256, e247]
+    rw [if_neg (by omega)]
+    simp only [fillWord, hp, e256]
+    rw [if_neg (by omega), hc]
+    have hlt : (l : ℕ) < L.lanes.length := l.isLt
+    rcases hl : L.lanes[(l : ℕ)]? with _ | (b | _ | _)
+    · rw [List.getElem?_eq_none_iff] at hl
+      omega
+    · -- A block lane.
+      have nr : ¬ G.isRand l := by rw [hrand, hl]; simp
+      have no : ¬ l = G.ov := by
+        intro ho
+        have := h.at_ov
+        simp only [overflowLane] at this
+        rw [(hov l).mp ho] at hl
+        rw [hl] at this
+        simp at this
+      have nrp : ¬ G.randPos l y := by rw [hrp]; tauto
+      rw [if_neg nrp, if_neg (show ¬ (G.randPos l y ∧ ¬ G.ZeroAt l y) from fun hz => nrp hz.1),
+        add_zero]
+      simp only [place, hl]
+    · -- The overflow lane.
+      have ho : (l : ℕ) = 32 := h.ov_unique l hlt hl
+      have nr : ¬ G.isRand l := by rw [hrand, hl]; simp
+      by_cases hh : (y : ℕ) < (L.pieces.length + 1) * 256
+      · have hy2 : y ∈ G.held := hheld.mpr ⟨hy', hh⟩
+        have nrp : ¬ G.randPos l y := by rw [hrp]; tauto
+        rw [if_neg nrp, if_neg (show ¬ (G.randPos l y ∧ ¬ G.ZeroAt l y) from fun hz => nrp hz.1),
+          add_zero]
+        simp only [place, hl, hp, e256]
+        rw [if_pos hh]
+      · have hy2 : y ∉ G.held := fun hz => hh (hheld.mp hz).2
+        have hr : G.randPos l y := hrp.mpr (Or.inr ⟨(hov l).mpr ho, hy2⟩)
+        rw [if_pos hr, if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨hr, nz⟩), zero_add]
+        simp only []
+        rw [if_neg hh]
+    · -- A random lane.
+      have hr : G.randPos l y := hrp.mpr (Or.inl (hrand.mpr hl))
+      rw [if_pos hr, if_pos (show G.randPos l y ∧ ¬ G.ZeroAt l y from ⟨hr, nz⟩), zero_add]
+
 end Layout
 
 end Deployed
