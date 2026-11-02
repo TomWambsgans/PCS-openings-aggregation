@@ -59,6 +59,49 @@ pinned in `lakefile.toml`) lifts the reduction's knowledge soundness from an abs
   (`roundError_le`: `≤ 2^-163`, the identities' degree `2^29` over `2^192`) **`knowledgeSoundness_rpm_bits`**
   and, for every circuit, **`Instance.soundness_rpm`**: `(Q + 8)(2^-163 + 3(Q + 8)/2^256) + Q²/2^509`.
 
+## Zero knowledge of the non-interactive proof (F3b)
+
+`QuotientZk/` (library `QuotientZk`, sorry-free, `propext`, `Classical.choice`, `Quot.sound`) proves
+statistical zero knowledge of the proof the Rust prover outputs (calldata and the three openings: roots,
+multiproofs and opened rows, the stream, grinding nonces) in the random-oracle model, with the simulator an
+explicit computable definition in the statement. The prover's randomness is uniform (the deployed masks and
+padding come from ChaCha12 keyed by a Keccak KDF of a 32-byte OS seed: the deployed statement is computational
+in that PRG).
+
+- **The model** (`Rom/Defs.lean`): the prover is a public *skeleton* of four operations, a random-oracle query
+  (`pub`), a Fiat–Shamir query (`chal`, its answer the next challenge), the next message (`msg`) and the digest of
+  a secret table's leaf (`leaf`); an implementation answers them. The real prover (`implReal`): the random oracle
+  and the secret. **The simulator** (`sim`): draws the `n` challenges, then the view from the honest-verifier
+  simulator `simV`, then runs the same skeleton with `implView`: the `c`-th Fiat–Shamir query answered by the
+  `c`-th drawn challenge and written into the oracle's cache (programming), messages and opened rows from the
+  simulated view, a fresh private digest at every unopened leaf (so siblings and roots hash fresh values);
+  everything else, grinding included, from its own lazily sampled oracle. It outputs the proof and the cache the
+  distinguisher then queries. Cost: the honest prover's oracle operations (the skeleton, at most `2^70` at the
+  deployed shapes, worst-case grinding counted; the expected grinding is `2^17` permutations a level, 16 levels),
+  with no table, plus `simV`. `Check.lean` runs it (`runIO`) on a toy protocol.
+- **`zk_rom`** (`Rom/Main.lean`): for every distinguisher of at most `QD` queries, the real game and the
+  simulated one output `true` with probabilities within `εFS + εhv + N (|c₀| + QP + QD) δ + N² δ₂`: real →
+  fresh challenges (until a Fiat–Shamir input was already answered, `εFS`, `FS.lean`) → challenges drawn first
+  (the same, `Tape.lean`) → unopened leaves kept apart (the same, `Split.lean`) → the simulator's implementation
+  with the honest view (until an unopened row is asked or two collide, `Merkle.lean`; bounded by the rows'
+  entropy, `MerkleBound.lean`, `Entropy.lean`) → the simulated view (`εhv`).
+- **The deployed prover** (`Deployed/`): `skel` transcribes, at the level of its oracle calls, the reduction's
+  Keccak-256 chain (F4a's bytes), leanVM's Merkle trees (`H(row image)`, `H(left ‖ right)`) and
+  `PrunedMerklePaths`, the overwrite duplex (four scalars with tags, a draw a permutation, the fifth scalar a
+  permutation of its own), grinding (smallest 17-bit nonce from 0) and `recursive_prover`'s order of events;
+  `deployedShape` the three openings at `2^22` rows. `skel_queryBound`, `skelBound_deployed`: at most `2^70`
+  operations. The entropy hypotheses of `zk_rom` are **proved** from each secret table's factorization
+  (`Factors`: the joint view a function of the rest of the randomness and of the table's F3 view, its padding
+  independent) and the redesigned layout's row entropy (`row_entropy` for any layout whose entries below the
+  gadget are free, `gadget_stackR_of_onFirst` for `GadgetLayout`; pairs of rows too): `δ = 2^-64(L-3)`,
+  `2^-2368` (40 lanes) and `2^-3840` (63). **`zk_deployed_bits`**: `εFS + εhv + 2^-2200`.
+- **What stays a hypothesis**: `JointHVZK` (the interactive protocol's honest-verifier zero knowledge, F1 with F3
+  and the gadget's (R)); `FSFresh` (the honest prover's Fiat–Shamir inputs fresh but with probability `εFS`: every
+  such input holds the previous chain state or duplex capacity, or a fresh root; a collision bound not formalized);
+  `Factors` for the deployed prover (structural: the masks and the two paddings are independent and WHIR's
+  messages after the first fold are functions of `f¹`); that `skel` is the Rust prover (transcribed, not
+  differential-tested). The lift to leanerVM's random-permutation model is separate (`QuotientZk/Rpm.lean`).
+
 ## The port to this protocol (F1)
 
 `README.upstream.md` describes leanVM's circuit; this protocol differs in three ways, and the Lean files now
