@@ -42,14 +42,78 @@ set_option linter.unusedSectionVars false
 oracle's cache of Keccak-256 and of the permutation on bytes. -/
 abbrev RpmSimState := QuotientZk.DRpm.SimSt × QuotientZk.DRpm.HF.QueryCache
 
-/-- **The simulator's permutation**: `π` and `π⁻¹` on lanes, asked on bytes, answered by `S₂` from the
-state, its `H` and `F` the random oracle on the state's cache. -/
-noncomputable def rpmPermOracle : QueryImpl PermSpec (StateT RpmSimState ProbComp) :=
-  foldRO (simulator2 (Msg := List UInt8) keccakPadding) ∘ₛ QuotientZk.laneToByte
+/-! ### Compiled transcriptions
+
+`common` marks `simulator2` and `foldRO` `noncomputable`; their bodies compile. The statement's
+simulator must be a compiled definition (`formal/Statement`'s convention), so it is to use these
+transcriptions, equal to `common`'s by definition. -/
+
+section Compiled
+
+variable {Dg E C Msg : Type}
+  [XorOp Dg] [XorOp E] [XorCancel Dg] [XorCancel E]
+  [DecidableEq Dg] [DecidableEq E] [DecidableEq C] [DecidableEq Msg]
+  [Fintype Dg] [Fintype E] [Fintype C]
+  [SampleableType Dg] [SampleableType E] [SampleableType C]
+  (Pd : Common.Padding Msg (Dg × E)) [Pd.Lawful]
+
+/-- `Common.rootedAnswer2`, compiled. -/
+def rootedAnswerC (β : List (Dg × E)) (x : SpState Dg E C) :
+    OracleComp (unifSpec + hfSpec Msg Dg (SpState Dg E C)) (SpState Dg E C) :=
+  match Pd.unpad β with
+  | some m => do
+    let d ← hQuery (E := E) (C := C) m
+    let ec ← (liftM ($ᵗ (E × C)) : OracleComp (unifSpec + hfSpec Msg Dg (SpState Dg E C)) _)
+    pure ((d, ec.1), ec.2)
+  | none => fQuery (Dg := Dg) x
+
+/-- `Common.simulator2`, compiled. -/
+def simulator2C : QueryImpl (permutationOracleSpec (SpState Dg E C))
+    (StateT (SimState Dg E C) (OracleComp (unifSpec + hfSpec Msg Dg (SpState Dg E C))))
+  | .forward x => StateT.mk fun σ ↦
+      match forwardLookup σ.edges x with
+      | some y => pure (y, σ)
+      | none =>
+        match chainOf σ.chains x with
+        | some (s, β) => do
+          let y ← rootedAnswerC Pd (β ++ [blockTo s x]) x
+          pure (y, ⟨(x, y) :: σ.edges, (y, β ++ [blockTo s x]) :: σ.chains⟩)
+        | none => do
+          let y ← fQuery (Dg := Dg) x
+          pure (y, ⟨(x, y) :: σ.edges, σ.chains⟩)
+  | .inverse y => StateT.mk fun σ ↦
+      match inverseLookup σ.edges y with
+      | some x => pure (x, σ)
+      | none => do
+        let x ← (liftM ($ᵗ (SpState Dg E C)) :
+          OracleComp (unifSpec + hfSpec Msg Dg (SpState Dg E C)) _)
+        pure (x, ⟨(x, y) :: σ.edges, σ.chains⟩)
+
+theorem simulator2C_eq : simulator2C (C := C) Pd = simulator2 Pd := rfl
+
+end Compiled
+
+/-- `Common.foldRO`, compiled. -/
+def foldROC {ι : Type} {spec : OracleSpec.{0, 0} ι} {ι' : Type} [DecidableEq ι']
+    {hs : OracleSpec.{0, 0} ι'} [∀ t : hs.Domain, SampleableType (hs.Range t)] {σ : Type}
+    (impl : QueryImpl spec (StateT σ (OracleComp (unifSpec + hs)))) :
+    QueryImpl spec (StateT (σ × hs.QueryCache) ProbComp) :=
+  (hs.romImpl.mapStateTBase impl).flattenStateT
+
+theorem foldROC_eq {ι : Type} {spec : OracleSpec.{0, 0} ι} {ι' : Type} [DecidableEq ι']
+    {hs : OracleSpec.{0, 0} ι'} [∀ t : hs.Domain, SampleableType (hs.Range t)] {σ : Type}
+    (impl : QueryImpl spec (StateT σ (OracleComp (unifSpec + hs)))) : foldROC impl = foldRO impl :=
+  rfl
+
+/-- **The simulator's permutation**: `π` and `π⁻¹` on lanes, asked on bytes, answered by `S₂`
+(`simulator2`, compiled) from the state, its `H` and `F` the random oracle on the state's cache
+(`foldRO`, compiled). -/
+def rpmPermOracle : QueryImpl PermSpec (StateT RpmSimState ProbComp) :=
+  foldROC (simulator2C (Msg := List UInt8) keccakPadding) ∘ₛ QuotientZk.laneToByte
 
 /-- **The simulator's oracle** (the statement's `Simulator.simOracle`'s role): coins forwarded, `π`
 and `π⁻¹` by `rpmPermOracle`. -/
-noncomputable def rpmSimOracle : QueryImpl RandomPermutationOracles (StateT RpmSimState ProbComp)
+def rpmSimOracle : QueryImpl RandomPermutationOracles (StateT RpmSimState ProbComp)
   | .inl n => liftM (unifSpec.query n : ProbComp (Fin (n + 1)))
   | .inr q => rpmPermOracle q
 
@@ -64,14 +128,14 @@ variable {S : Type} (P : Proto S Inp Out Msg Tbl Pos)
 bookkeeping, the state set to the bookkeeping and the programmed cache, then the statement's proof read
 from the skeleton's by `fmt`, its permutation calls answered by `rpmPermOracle`. It uses of `P` only
 its public parts (`P.n`, `P.cK`, `P.opened`: `sim` reads nothing else). -/
-noncomputable def rpmSimulator : StateT RpmSimState ProbComp (Option Proof) := do
+def rpmSimulator : StateT RpmSimState ProbComp (Option Proof) := do
   let z ← liftM (QuotientZk.sim P simV (QuotientZk.DRpm.skelRec skel) [])
   set ((z.1.2, QuotientZk.DRpm.hfOf z.2) : RpmSimState)
   simulateQ rpmPermOracle (fmt z.1.1)
 
 /-- **The ideal experiment with this simulator**, in the statement's shape (`idealExperiment`), from
 any initial state. -/
-noncomputable def rpmIdeal (s₀ : RpmSimState) (D : Option Proof → OracleComp RandomPermutationOracles Bool) :
+def rpmIdeal (s₀ : RpmSimState) (D : Option Proof → OracleComp RandomPermutationOracles Bool) :
     ProbComp Bool :=
   (do
     let proof ← rpmSimulator P simV skel fmt
@@ -85,7 +149,7 @@ theorem runS2_eq (X : OracleComp PermSpec Bool) (σ : QuotientZk.DRpm.SimSt)
     (c : QuotientZk.DRpm.HF.QueryCache) :
     QuotientZk.DRpm.runS2 X σ c = (simulateQ rpmPermOracle X).run' (σ, c) := by
   unfold QuotientZk.DRpm.runS2 rpmPermOracle
-  rw [run'_simulateQ_foldRO, QueryImpl.simulateQ_compose]
+  rw [foldROC_eq, simulator2C_eq, run'_simulateQ_foldRO, QueryImpl.simulateQ_compose]
 
 /-- **The statement-shaped ideal experiment is `QuotientZk`'s simulated game.** -/
 theorem rpmIdeal_eq (s₀ : RpmSimState) (D₀ : Option Proof → OracleComp PermSpec Bool) :
