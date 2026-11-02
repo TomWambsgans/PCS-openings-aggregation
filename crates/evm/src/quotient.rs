@@ -264,11 +264,10 @@ mod tests {
     use super::*;
     use crate::codegen::INDEX_ROOT_SLOT;
     use crate::machine::{CALLER, Chain, DEPLOYER, PcsOpen, transaction_gas};
-    use primitives::field::F64;
     use primitives::test_rng::Rng;
     use quotient::circuit::{LOG_ROWS, membership, membership_inputs};
     use quotient::opening::commit;
-    use quotient::protocol::{Index, prove, verify};
+    use quotient::protocol::{Index, Randomness, prove_with_randomness, verify};
     use quotient::statement::{DEPTH, Secret};
     use revm::primitives::TxKind;
 
@@ -285,11 +284,12 @@ mod tests {
         let statement = secret.statement();
         let circuit = membership();
         let cells = circuit.cells(&membership_inputs(&secret));
-        let masks = std::array::from_fn(|_| std::array::from_fn(|_| F64(rng.next_u64())));
         let index = Index::new(&circuit);
         let index_root = commit(&index.table).root;
+        // The proof's seed from the test generator, so that the tests repeat: `prove` draws a fresh one.
         let seed = std::array::from_fn(|_| rng.next_u64() as u8);
-        let proved = prove(&circuit, &index, &index_root, &statement, &cells, &masks, &seed);
+        let randomness = Randomness::derive(&seed, &index_root, &statement, &cells);
+        let proved = prove_with_randomness(&circuit, &index, &index_root, &statement, &cells, &randomness);
         (index_root, statement, proved.proof)
     }
 

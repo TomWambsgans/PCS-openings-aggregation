@@ -55,7 +55,10 @@ TLDR: The PCS is relatively easy to upgrade, the only thing that cannot be upgra
   one `PCS_OPEN` call and checked by one opening (a precompile that accepted them separately would be forgeable at
   about 2^111 work), and the protocol must union-bound the challenges it draws before its claims over these lists
   (≥ 130 bits remain here).
-- **The opening's Fiat–Shamir seed** is the root and all its claims; it should also bind the layout and the PCS version.
+- **The opening's Fiat–Shamir seed** has leanVM's transcript shape, the form `formal/WhirBridge` proves sound
+  (`family_sound`): one hash of a prefix fixed by the verifier (label, version, the layout's hash, `log_n`, the
+  rate) and the claims, a zero public digest, and the root as the proof's first two scalars, which the verifier
+  checks (`opening::iv`).
 - **The Fiat–Shamir states need not be in the header**, given the two points above.
 - **The forward-compatibility upgrade by one Schwartz–Zippel point** needs the new commitment to bind one table: an
   OOD answer at commit time, or a root anyone recomputes from the public circuit.
