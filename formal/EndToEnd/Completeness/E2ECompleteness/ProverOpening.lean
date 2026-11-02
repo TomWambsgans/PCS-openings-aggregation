@@ -164,6 +164,31 @@ theorem overflow_tr {L : PcsQuotient.Layout} (hov : L.lanes[L.overflowLane]? = s
     exact List.findIdx_lt_length_of_exists ⟨_, hmem, by simp⟩
   exact ⟨(overflowLane_eq L.lanes h).symm, hlt⟩
 
+theorem kOfLane_one : K.ofLane 1 = 1 := rfl
+
+theorem kOfLane_zero : K.ofLane 0 = 0 := rfl
+
+theorem gadgetBeta_eq (i : ℕ) : PcsQuotient.gadgetBeta i = WhirBridge.gadgetBeta i := by
+  unfold PcsQuotient.gadgetBeta WhirBridge.gadgetBeta
+  split_ifs <;> simp_all [kOfLane_one, kOfLane_zero]
+
+/-- **The gadget's weight on the stack is F2's**, for a hidden layout of at least `33` lanes (the
+gadget's lanes `0, 1, 30, 31, 32` all lanes of the stack). -/
+theorem gadgetWeight_eq (L : PcsQuotient.Layout) {s : ℕ} (hs : L.logPiece = some s)
+    (hn : 33 ≤ L.lanes.length) (x : List E) :
+    PcsQuotient.gadgetWeight L x = (layoutTr L).gadgetWeight x := by
+  have h0 : 0 < L.lanes.length := by omega
+  have h1 : 1 < L.lanes.length := by omega
+  have h30 : 30 < L.lanes.length := by omega
+  have h31 : 31 < L.lanes.length := by omega
+  have h32 : 32 < L.lanes.length := by omega
+  simp [PcsQuotient.gadgetWeight, WhirBridge.Layout.gadgetWeight, WhirBridge.gadgetSum,
+    WhirBridge.Layout.gadgetParts, hs, List.range_succ, WhirBridge.laneEqs,
+    List.getD_eq_getElem?_getD, h0, h1, h30, h31, h32, eqBits_eq, PcsQuotient.gadgetLanes,
+    WhirBridge.gadgetLanes, WhirBridge.overflowLane, PcsQuotient.overflowLaneIndex,
+    PcsQuotient.Layout.gadgetEntry, WhirBridge.gadgetEntry, PcsQuotient.gadgetSize,
+    WhirBridge.gadget, gadgetBeta_eq]
+
 end OpeningTr
 
 open OpeningTr
@@ -446,5 +471,409 @@ theorem gadgetWeight_cube {L : PcsQuotient.Layout} (hL : WeightShape L) {s : ℕ
         (PcsQuotient.gadgetLanes ((y + 9 - (t + 9)) / 3)).contains l = true) from
           fun h' ↦ hr ⟨h'.1, h'.2.1⟩)]
     ring
+
+/-! ## The weight table -/
+
+theorem dot_append_single : ∀ (scales A : List E) (g : E),
+    dot scales (A ++ [g]) = dot scales A + scales.getD A.length 0 * g
+  | [], A, g => by simp [dot]
+  | s :: ss, [], g => by simp [dot]
+  | s :: ss, a :: A, g => by
+    rw [List.cons_append, Whir.Complete.dot_cons, Whir.Complete.dot_cons, dot_append_single ss A g]
+    simp only [List.length_cons, List.getD_cons_succ]
+    ring
+
+/-- **The weight table's entry `i`**: the gadget's scale times `gadgetAt`, plus the claims' scales
+times `weightAt`, at entry `⌊i / 64⌋` of lane `i mod 64`. -/
+theorem weightTable_getD (L : PcsQuotient.Layout) (scales : List E)
+    (claims : List PcsQuotient.Claim) {i : ℕ} (hi : i < 2 ^ L.logN) :
+    (weightTable L scales claims).getD i 0 =
+      scales.getD claims.length 0 * L.gadgetAt (i % 64) (i / 64) +
+        dot scales (claims.map fun c ↦ L.weightAt (L.claimWeights c) (i % 64) (i / 64)) := by
+  rw [weightTable, getD_ofFn' _ hi]
+  dsimp only
+  generalize scales.getD claims.length 0 * L.gadgetAt (i % 64) (i / 64) = init
+  induction claims generalizing scales init with
+  | nil => simp [dot]
+  | cons c cs ih =>
+    cases scales with
+    | nil => simp [dot]
+    | cons s ss =>
+      simp only [List.zip_cons_cons, List.map_cons, List.foldl_cons]
+      rw [ih, Whir.Complete.dot_cons]
+      ring
+
+/-- **The weight table is the batched weight of the stack claims on the cube**, in WHIR's
+variable order (mumbai's `basisTable`): for claims of the table's length on a layout of the shape
+`WeightShape`, and any scales. -/
+theorem weightTable_eq (L : PcsQuotient.Layout) (hL : WeightShape L)
+    (claims : List PcsQuotient.Claim) (hlen : ∀ c ∈ claims, c.point.length = L.vars)
+    (scales : List E) :
+    (weightTable L scales claims).toList =
+      Whir.Complete.basisTable L.logN scales (stackClaims L claims) := by
+  have h6 : 6 ≤ L.logN := hL.1
+  have hsz : (weightTable L scales claims).size = 2 ^ L.logN := by simp [weightTable]
+  refine Enc.list_ext_getD (by simp [hsz, Whir.Complete.basisTable]) fun i hi ↦ ?_
+  have hi' : i < 2 ^ L.logN := by simpa [hsz] using hi
+  rw [Enc.toList_getD_E, weightTable_getD _ _ _ hi', Whir.Complete.basisTable,
+    Whir.Complete.getD_tableOf _ _ _ hi']
+  have hℓ : L.logN = 6 + L.logLane := by
+    simp only [PcsQuotient.Layout.logLane, PcsQuotient.laneFold]
+    omega
+  have hrot : (boolPoint L.logN i).drop EndToEnd.laneBits ++
+      (boolPoint L.logN i).take EndToEnd.laneBits =
+        boolPoint L.logN (i / 64 + 2 ^ L.logLane * (i % 64)) := by
+    have h := Whir.Complete.boolPoint_rotIndex 6 L.logLane i (by rw [← hℓ]; exact hi')
+    rw [← hℓ, show L.logLane + 6 = L.logN by omega] at h
+    exact h.symm
+  have hy : i / 64 < 2 ^ L.logLane := by
+    rw [Nat.div_lt_iff_lt_mul (by norm_num)]
+    rw [hℓ, pow_add] at hi'
+    omega
+  have hl : i % 64 < 64 := Nat.mod_lt _ (by norm_num)
+  have hclaims : (claims.map fun c ↦ PcsQuotient.stackWeight L c
+      (boolPoint L.logN (i / 64 + 2 ^ L.logLane * (i % 64)))) =
+      claims.map fun c ↦ L.weightAt (L.claimWeights c) (i % 64) (i / 64) :=
+    List.map_congr_left fun c hc ↦ stackWeight_cube hL c (hlen c hc) hl hy
+  rw [hrot]
+  simp only [Whir.Complete.batchedBasis, stackClaims, List.map_append, List.map_map,
+    Function.comp_def]
+  rcases hs : L.logPiece with _ | s
+  · simp only [Option.isSome_none, Bool.false_eq_true, ↓reduceIte, List.map_nil, List.append_nil,
+      PcsQuotient.Layout.gadgetAt, hs, mul_zero, zero_add]
+    rw [hclaims]
+  · simp only [Option.isSome_some, ↓reduceIte, List.map_cons, List.map_nil]
+    rw [dot_append_single, List.length_map, gadgetWeight_cube hL hs hl hy, hclaims, add_comm]
+
+/-! ## The script makes the specification's moves -/
+
+theorem getD_colOf (μ : ℕ) (a : Array K) {i : ℕ} (hi : i < 2 ^ μ) :
+    (colOf μ a).values.toArray.getD i 0 = a.getD i 0 := by
+  simp [colOf, Array.getD_eq_getD_getElem?, hi]
+
+/-- The stack table of an array is its column's. -/
+theorem stackTableA_colOf {μ : ℕ} (h6 : 6 ≤ μ) (stack : Array K) :
+    stackTableA μ stack = stackTableA μ (colOf μ stack).values.toArray := by
+  unfold stackTableA
+  congr 1
+  funext i
+  have hi : i.val < 2 ^ (6 + (μ - 6)) := by rw [show 6 + (μ - 6) = μ by omega]; exact i.isLt
+  have h := Whir.Complete.rotIndex_lt hi
+  rw [show μ - 6 + 6 = μ by omega] at h
+  rw [getD_colOf μ stack (show i.val / 2 ^ 6 + 2 ^ (μ - 6) * (i.val % 2 ^ 6) < 2 ^ μ from h)]
+
+theorem toList_stackTableA_colOf {μ : ℕ} (h6 : 6 ≤ μ) (stack : Array K) :
+    (stackTableA μ stack).toList = Whir.Complete.stackTable μ (colOf μ stack) := by
+  rw [stackTableA_colOf h6, Enc.toList_stackTableA]
+
+/-- **The Statement's opening script makes the moves of mumbai's honest opening** of the stack
+claims on the stack's column: the same scalars sent and words committed, for every challenge and
+opening. -/
+theorem corr_openingScript (L : PcsQuotient.Layout) (hL : WeightShape L) (stack : Array K)
+    (claims : List PcsQuotient.Claim) (hlen : ∀ c ∈ claims, c.point.length = L.vars) :
+    Corr (fun _ _ ↦ True) (openingScript L stack claims)
+      (Whir.Complete.honestOpening L.logN PcsQuotient.logInvRate (colOf L.logN stack)
+        (stackClaims L claims)) := by
+  have h6 : 6 ≤ L.logN := hL.1
+  have hμ : L.logN ≤ 64 := hL.2.1
+  simp only [openingScript, Whir.Complete.honestOpening]
+  refine corrW_sampleE fun c ↦ ?_
+  cases Whir.ladder L.logN PcsQuotient.logInvRate with
+  | none => trivial
+  | some config =>
+    dsimp only
+    simp only [Whir.Complete.hWhirRun]
+    refine Corr.bind' (corr_roundA' (weightTable_eq L hL claims hlen _)
+      (toList_stackTableA_colOf h6 stack)) fun quad _ hq ↦ ?_
+    subst hq
+    have := corr_levelsA hμ (Whir.Complete.stackTable L.logN (colOf L.logN stack)) config 0
+      ⟨dot (powers c (stackClaims L claims).length) ((stackClaims L claims).map (·.2)),
+        Whir.Complete.roundQuad
+          (dot (powers c (stackClaims L claims).length) ((stackClaims L claims).map (·.2)))
+          (Whir.Complete.basisTable L.logN (powers c (stackClaims L claims).length)
+            (stackClaims L claims))
+          (Whir.Complete.stackTable L.logN (colOf L.logN stack)), [], []⟩
+      (weightTable L (powers c (stackClaims L claims).length) claims) (stackTableA L.logN stack)
+      (by rw [toList_stackTableA_colOf h6]; rfl)
+    rwa [weightTable_eq L hL claims hlen] at this
+
+/-- The same, then nothing. -/
+theorem corr_openingScript_ret (L : PcsQuotient.Layout) (hL : WeightShape L) (stack : Array K)
+    (claims : List PcsQuotient.Claim) (hlen : ∀ c ∈ claims, c.point.length = L.vars) :
+    Corr (fun _ _ ↦ True) (openingScript L stack claims)
+      ((Whir.Complete.honestOpening L.logN PcsQuotient.logInvRate (colOf L.logN stack)
+        (stackClaims L claims)).bind fun _ ↦ Script.ret ()) := by
+  rw [← Script.bind_ret (openingScript L stack claims)]
+  exact Corr.bind (fun _ _ _ ↦ trivial) _ _ (corr_openingScript L hL stack claims hlen)
+
+/-! ## The prover is mumbai's compiled honest prover -/
+
+/-- The opening program at an admissible shape: the stack's commitment, then the opening, then
+accept. -/
+theorem openingProgram_eq {μ R : ℕ} (hw : Whir.Admissible μ R) (sc : List StackClaim) :
+    Whir.Complete.openingProgram μ R sc =
+      Prog.commit (μ - 6 + R) (2 ^ 6)
+        ((verifyStackedOpening μ R sc).bind fun _ ↦ Prog.ret true) := by
+  obtain ⟨q₀, rest, hc, -⟩ := Whir.Complete.exists_ladder hw
+  simp only [Whir.Complete.openingProgram, commitStack, hc, Verifier.liftOption, Prog.bind_eq,
+    Prog.pure_eq, Prog.ret_bind, levelShape, Prog.readCommitment]
+  rfl
+
+/-- **A trailing `return` changes no proof**: the runner sees only the moves. -/
+theorem runFromWithHash_bind_ret {m : Type → Type} [Monad m] (H : Bytes → m Digest)
+    (F : KeccakState → m KeccakState) (fuel : ℕ) {α β : Type} (b : Bool) :
+    ∀ (P : Prog α) (S : Option (Script β)) (sp : Sponge) (cs : List LeanVM.Prover.Tree),
+      runFromWithHash H F fuel (P.bind fun _ ↦ Prog.ret b) S sp cs =
+        runFromWithHash H F fuel P S sp cs := by
+  intro P
+  induction P with
+  | ret a => intros; rfl
+  | fail => intros; rfl
+  | read k ih => intro S sp cs; simp only [Prog.bind, runFromWithHash, ih]
+  | sample k ih => intro S sp cs; simp only [Prog.bind, runFromWithHash, ih]
+  | grind bits k ih => intro S sp cs; simp only [Prog.bind, runFromWithHash, ih]
+  | commit ht w k ih => intro S sp cs; simp only [Prog.bind, runFromWithHash, ih]
+  | query i ps k ih => intro S sp cs; simp only [Prog.bind, runFromWithHash, ih]
+
+/-- The executable stack word reads the array as its column. -/
+theorem stackWordFast_colOf {μ : ℕ} (h6 : 6 ≤ μ) (R : ℕ) (a : Array K) :
+    stackWordFast μ R a = stackWordFast μ R (colOf μ a).values.toArray := by
+  have hb : ∀ {v u : ℕ}, v < 2 ^ (μ - 6) → u < 64 → v + 2 ^ (μ - 6) * u < 2 ^ μ := by
+    intro v u hv hu
+    have h := WhirBridge.lt_two_pow_add (b := 6) hv (show u < 2 ^ 6 from hu)
+    rwa [show μ - 6 + 6 = μ by omega] at h
+  have hcodes : stackCodes μ R a = stackCodes μ R (colOf μ a).values.toArray := by
+    simp only [stackCodes]
+    congr 1
+    funext u
+    congr 2
+    funext v
+    rw [getD_colOf μ a (hb v.isLt u.isLt)]
+  funext p
+  simp only [stackWordFast, stackWordFast.stackWordOf]
+  rw [hcodes]
+  split_ifs with hp
+  · rfl
+  · apply congrArg List.reverse
+    refine List.map_congr_left fun u hu ↦ ?_
+    have hfun : (fun x ↦ a.getD (LeanVM.Protocol.Whir.bitsToNat x + 2 ^ (μ - 6) * u) 0) =
+        fun x ↦ (colOf μ a).values.toArray.getD (LeanVM.Protocol.Whir.bitsToNat x + 2 ^ (μ - 6) * u) 0 :=
+      funext fun x ↦
+        (getD_colOf μ a (hb (LeanVM.Protocol.Whir.bitsToNat_lt x) (List.mem_range.1 hu))).symm
+    rw [hfun]
+
+/-- **The Statement's opening prover is mumbai's compiled honest prover**, at a pure hash `H` and
+permutation `F`: committing the stack (`commitWithH`) and running `openingScript` against the
+verifier's program from the opening's sponge is `prove` of `openingProgram` (commit the stack's
+word, open, accept) with the honest strategy `openingProver` of the stack's column, seeded with the
+opening's sponge state. -/
+theorem proveOpeningWithH_eq_prove (H : Bytes → Digest) (F : KeccakState → KeccakState)
+    (fuel : ℕ) (L : PcsQuotient.Layout) (hL : WeightShape L)
+    (hw : Whir.Admissible L.logN PcsQuotient.logInvRate) (stack : Array K)
+    (claims : List PcsQuotient.Claim) (hlen : ∀ c ∈ claims, c.point.length = L.vars) :
+    proveOpeningWithH (m := Id) H F fuel L (commitWithH (m := Id) H L.logN stack) stack claims =
+      Compile.prove H F
+        (Whir.Complete.openingProgram L.logN PcsQuotient.logInvRate (stackClaims L claims))
+        (Whir.Complete.openingProver L.logN PcsQuotient.logInvRate (colOf L.logN stack)
+          (stackClaims L claims))
+        (openingSpongeWithH (m := Id) H F L claims).state fuel := by
+  have h6 : 6 ≤ L.logN := hL.1
+  have hμ : L.logN ≤ 64 := hL.2.1
+  have hword : (Whir.Complete.openingProver L.logN PcsQuotient.logInvRate (colOf L.logN stack)
+      (stackClaims L claims)).word [] = stackWordFast L.logN 1 stack := by
+    show Whir.Complete.stackWord _ _ = _
+    rw [stackWordFast_colOf h6, Enc.stackWordFast_eq hμ]
+  have hrun : ∀ (sp : Sponge) (cs : List LeanVM.Prover.Tree) (ht w : ℕ) (W : Word),
+      proveFromM (m := Id) H F (Whir.Complete.openingProver L.logN PcsQuotient.logInvRate
+          (colOf L.logN stack) (stackClaims L claims)) fuel
+        ((verifyStackedOpening L.logN PcsQuotient.logInvRate (stackClaims L claims)).bind
+          fun _ ↦ Prog.ret true) sp [Ev.commit ht w W] cs =
+      runFromWithHash (m := Id) H F fuel
+        (verifyStackedOpening L.logN PcsQuotient.logInvRate (stackClaims L claims))
+        (some (openingScript L stack claims)) sp cs := by
+    intro sp cs ht w W
+    have hwalk : Script.walk (Whir.Complete.honestCommitOpening L.logN PcsQuotient.logInvRate
+        (colOf L.logN stack) (stackClaims L claims) >>= fun _ ↦ Script.ret ()) [Ev.commit ht w W] =
+        some ((Whir.Complete.honestOpening L.logN PcsQuotient.logInvRate (colOf L.logN stack)
+          (stackClaims L claims)).bind fun _ ↦ Script.ret ()) := rfl
+    rw [Whir.Complete.openingProver, ← runFrom_eq_proveFromM (m := Id) H F fuel _ _ _ sp _ cs hwalk,
+      runFromWithHash_bind_ret]
+    exact (runFrom_corr (m := Id) H F fuel _ (corr_openingScript_ret L hL stack claims hlen) sp cs).symm
+  rw [← proveM_id, openingProgram_eq hw]
+  simp only [proveM, proveFromM, proveOpeningWithH, commitWithH, hword, List.nil_append, hrun,
+    bind_assoc, pure_bind, Option.map_map]
+  rfl
+
+/-! ## The opening check accepts -/
+
+/-- Running a sequence is running its first part, then the rest from the state it leaves (copied
+from Bridge-Defs). -/
+theorem runWithHash_bind {m : Type → Type} [Monad m] [LawfulMonad m] (H : Bytes → m Digest)
+    (F : KeccakState → m KeccakState) {α β : Type} (P : Prog α) (f : α → Prog β) :
+    ∀ s : ProgState, runWithHash H F (P.bind f) s = runWithHash H F P s >>= fun o => match o with
+      | some (a, s') => runWithHash H F (f a) s'
+      | none => pure none := by
+  induction P with
+  | ret a => intro s; simp [Prog.bind, runWithHash]
+  | fail => intro s; simp [Prog.bind, runWithHash]
+  | read k ih =>
+    intro s
+    simp only [Prog.bind, runWithHash]
+    split <;> simp [ih]
+  | sample k ih =>
+    intro s
+    simp [Prog.bind, runWithHash, ih]
+  | grind b k ih =>
+    intro s
+    simp only [Prog.bind, runWithHash]
+    split
+    · simp
+    · simp only [bind_assoc]
+      congr 1; funext sp; congr 1; funext cs
+      split <;> simp [ih]
+  | commit h w k ih =>
+    intro s
+    simp only [Prog.bind, runWithHash]
+    split
+    · simp only [bind_assoc]
+      congr 1; funext sp0; congr 1; funext sp1
+      split <;> simp [ih]
+    · simp
+  | query i ps k ih =>
+    intro s
+    simp only [Prog.bind, runWithHash]
+    split
+    · simp
+    · simp only [bind_assoc]
+      congr 1; funext o
+      split <;> simp [ih]
+
+theorem id_bind_eq' {α β : Type} (x : Id α) (f : α → Id β) : x >>= f = f x := rfl
+
+theorem id_pure_eq' {α : Type} (a : α) : (pure a : Id α) = a := rfl
+
+/-- **The Statement's opening check is the compiled verifier of `openingProgram`** from the
+opening's sponge, on a proof whose first two scalars encode the expected root, for claims of the
+table's length, at an admissible shape. -/
+theorem openingWithH_eq_runProof (H : Bytes → Digest) (F : KeccakState → KeccakState)
+    (L : PcsQuotient.Layout) (hw : Whir.Admissible L.logN PcsQuotient.logInvRate)
+    (claims : List PcsQuotient.Claim) (hne : claims ≠ [])
+    (hlen : ∀ c ∈ claims, c.point.length = L.vars) (root : Digest) (x0 x1 : E) (rest : List E)
+    (os : List Opening) (hd : digestOfScalars (x0, x1) = some root) :
+    openingWithH (m := Id) H F L root claims ⟨x0 :: x1 :: rest, os⟩ =
+      runProofWithHash (m := Id) H F
+        (Whir.Complete.openingProgram L.logN PcsQuotient.logInvRate (stackClaims L claims))
+        (openingSpongeWithH (m := Id) H F L claims).state ⟨x0 :: x1 :: rest, os⟩ := by
+  have hall : (claims.all fun c ↦ decide (c.point.length = L.vars)) = true :=
+    List.all_eq_true.2 fun c hc ↦ decide_eq_true (hlen c hc)
+  rw [openingProgram_eq hw]
+  simp only [openingWithH, runProofWithHash, runWithHash, hd, ne_eq, hne, not_false_eq_true, hall,
+    and_self, ↓reduceIte, runWithHash_bind, List.nil_append, id_bind_eq', id_pure_eq',
+    show (⟨(openingSpongeWithH (m := Id) H F L claims).state, []⟩ : Sponge) =
+      openingSpongeWithH (m := Id) H F L claims from rfl,
+    show PcsQuotient.laneFold = 6 from rfl, show (2 : ℕ) ^ 6 = 64 from rfl]
+  split <;> rename_i h <;> simp [h]
+
+/-- **The Statement's opening check accepts the Statement's opening prover's proof**, at a pure
+hash `H` and permutation `F`: for a layout of the shape `WeightShape` at an admissible size, claims
+(at least one) of the table's length whose stack claims hold of the stack's column and have
+multilinear weights, every proof `proveOpeningWithH` produces from the stack's commitment is
+accepted against the commitment's root. Generic in the opening's sponge. -/
+theorem openingWithH_proveOpeningWithH (H : Bytes → Digest) (F : KeccakState → KeccakState)
+    (fuel : ℕ) (L : PcsQuotient.Layout) (hL : WeightShape L)
+    (hw : Whir.Admissible L.logN PcsQuotient.logInvRate) (stack : Array K)
+    (claims : List PcsQuotient.Claim) (hne : claims ≠ [])
+    (hlen : ∀ c ∈ claims, c.point.length = L.vars)
+    (hholds : ∀ sc ∈ stackClaims L claims, EndToEnd.StackClaim.Holds L.logN sc (colOf L.logN stack))
+    (hml : ∀ sc ∈ stackClaims L claims, EndToEnd.IsMultilinearFn L.logN sc.1) {π : Compile.Proof}
+    (hπ : proveOpeningWithH (m := Id) H F fuel L (commitWithH (m := Id) H L.logN stack) stack
+      claims = some π) :
+    openingWithH (m := Id) H F L (commitWithH (m := Id) H L.logN stack).root claims π = true := by
+  have hacc := runProof_prove H F _ _ _ fuel
+    (fun chal ↦ (Whir.Complete.runI_openingProgram hw (colOf L.logN stack) _ hholds hml chal).1)
+    (fun chal ↦ (Whir.Complete.runI_openingProgram hw (colOf L.logN stack) _ hholds hml chal).2)
+    ((proveOpeningWithH_eq_prove H F fuel L hL hw stack claims hlen).symm.trans hπ)
+  obtain ⟨t, -, rfl⟩ := Option.map_eq_some_iff.mp hπ
+  rw [openingWithH_eq_runProof H F L hw claims hne hlen (commitWithH (m := Id) H L.logN stack).root
+    _ _ t.1 t.2 (digestOfScalars_digestScalars _)]
+  exact hacc
+
+/-! ## The proofs of work -/
+
+/-- The opening program's proofs of work: WHIR's, of `Whir.queryGrindingBits = 17` bits. -/
+theorem movesOK_openingProgram (μ R : ℕ) (sc : List StackClaim) :
+    EndToEnd.Sound.MovesOK (· = Whir.queryGrindingBits) True
+      (Whir.Complete.openingProgram μ R sc) :=
+  EndToEnd.Sound.MovesOK.seq
+    ((EndToEnd.Sound.movesOK_commitStack _ _).mono (fun _ h ↦ h.elim) id) fun _ ↦
+      EndToEnd.Sound.MovesOK.seq (EndToEnd.Sound.movesOK_verifyStackedOpening _ _ _) fun _ ↦
+        EndToEnd.Sound.MovesOK.pure _
+
+/-- **The Statement's opening prover fails only at a proof of work**: if it produces no proof, the
+opening program reaches a `17`-bit proof of work at a sponge where every nonce below `fuel`
+fails. -/
+theorem exists_failed_pow_opening (H : Bytes → Digest) (F : KeccakState → KeccakState)
+    (fuel : ℕ) (L : PcsQuotient.Layout) (hL : WeightShape L)
+    (hw : Whir.Admissible L.logN PcsQuotient.logInvRate) (stack : Array K)
+    (claims : List PcsQuotient.Claim) (hlen : ∀ c ∈ claims, c.point.length = L.vars)
+    (h : proveOpeningWithH (m := Id) H F fuel L (commitWithH (m := Id) H L.logN stack) stack
+      claims = none) :
+    ∃ hist k sp, (Whir.Complete.openingProgram L.logN PcsQuotient.logInvRate
+        (stackClaims L claims)).after hist = some (.grind Whir.queryGrindingBits k) ∧
+      ∀ n < fuel,
+        powOk Whir.queryGrindingBits (Compile.nonceOf n) (Compile.powStep F sp (Compile.nonceOf n)).1 = false := by
+  rw [proveOpeningWithH_eq_prove H F fuel L hL hw stack claims hlen] at h
+  by_contra hne
+  refine prove_ne_none H F _ _ _ fuel (fun hist bits k sp hg hn ↦ hne ?_) h
+  obtain rfl := ((movesOK_openingProgram _ _ _).after hg).1
+  exact ⟨hist, k, sp, hg, ((findNonce_eq_none_iff F _ sp fuel).1 hn).2⟩
+
+/-! ## The stack claims' weights are multilinear -/
+
+/-- **Every stack claim of a layout of the shape `WeightShape` has a multilinear weight** (F2's
+`isMultiaffine_layoutClaimWeight`, `isMultiaffine_gadgetWeight` through the translation), so the
+hypothesis `hml` of `openingWithH_proveOpeningWithH` holds. -/
+theorem isMultilinearFn_stackClaims (L : PcsQuotient.Layout) (hL : WeightShape L)
+    (claims : List PcsQuotient.Claim) :
+    ∀ sc ∈ stackClaims L claims, EndToEnd.IsMultilinearFn L.logN sc.1 := by
+  obtain ⟨-, -, -, -, hhid⟩ := hL
+  have hov : L.logPiece.isSome → (layoutTr L).overflow < L.lanes.length := by
+    intro h
+    obtain ⟨s, hs⟩ := Option.isSome_iff_exists.1 h
+    obtain ⟨-, -, -, -, hov, -⟩ := hhid s hs
+    obtain ⟨hovtr, hovlt⟩ := overflow_tr hov
+    rw [hovtr]
+    exact hovlt
+  intro sc hsc
+  simp only [stackClaims, List.mem_append, List.mem_map] at hsc
+  rcases hsc with ⟨c, -, rfl⟩ | hg
+  · rw [show PcsQuotient.stackWeight L c = (layoutTr L).claimWeight (claimTr c) from
+      funext (stackWeight_eq L hov c)]
+    exact Completeness.isMultilinearFn_of_isMultiaffine
+      (WhirBridge.isMultiaffine_layoutClaimWeight (layoutTr L) (claimTr c))
+  · rcases hs : L.logPiece with _ | s
+    · simp [hs] at hg
+    · obtain ⟨-, -, -, h33, -⟩ := hhid s hs
+      simp only [hs, Option.isSome_some, ↓reduceIte, List.mem_singleton] at hg
+      subst hg
+      rw [show PcsQuotient.gadgetWeight L = (layoutTr L).gadgetWeight from
+        funext (gadgetWeight_eq L hs h33)]
+      exact Completeness.isMultilinearFn_of_isMultiaffine
+        (WhirBridge.isMultiaffine_gadgetWeight (layoutTr L))
+
+/-- **Acceptance without the multilinearity hypothesis**: `openingWithH_proveOpeningWithH` with
+`isMultilinearFn_stackClaims`. -/
+theorem openingWithH_proveOpeningWithH' (H : Bytes → Digest) (F : KeccakState → KeccakState)
+    (fuel : ℕ) (L : PcsQuotient.Layout) (hL : WeightShape L)
+    (hw : Whir.Admissible L.logN PcsQuotient.logInvRate) (stack : Array K)
+    (claims : List PcsQuotient.Claim) (hne : claims ≠ [])
+    (hlen : ∀ c ∈ claims, c.point.length = L.vars)
+    (hholds : ∀ sc ∈ stackClaims L claims, EndToEnd.StackClaim.Holds L.logN sc (colOf L.logN stack))
+    {π : Compile.Proof}
+    (hπ : proveOpeningWithH (m := Id) H F fuel L (commitWithH (m := Id) H L.logN stack) stack
+      claims = some π) :
+    openingWithH (m := Id) H F L (commitWithH (m := Id) H L.logN stack).root claims π = true :=
+  openingWithH_proveOpeningWithH H F fuel L hL hw stack claims hne hlen hholds
+    (isMultilinearFn_stackClaims L hL claims) hπ
 
 end E2ECompleteness
