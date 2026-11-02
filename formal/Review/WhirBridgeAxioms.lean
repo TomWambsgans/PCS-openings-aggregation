@@ -45,15 +45,20 @@ elab "#escapes " ns:ident : command => do
 
 #print axioms WhirBridge.Layout.check_eq
 #print axioms WhirBridge.isMultiaffine_layoutClaimWeight
+#print axioms WhirBridge.isMultiaffine_gadgetWeight
 #print axioms WhirBridge.openingSpec
 #print axioms WhirBridge.whirEps_le
 #print axioms WhirBridge.eBatch_two
+#print axioms WhirBridge.eBatch_three
 #print axioms WhirBridge.listMax_ours
 #print axioms WhirBridge.layouts_ok
 #print axioms WhirBridge.layouts_valid
+#print axioms WhirBridge.layouts_shape
 #print axioms WhirBridge.holds_iff
 #print axioms WhirBridge.holds_iff_hidden
 #print axioms WhirBridge.Layout.holds_iff
+#print axioms WhirBridge.gadget_holds_iff
+#print axioms WhirBridge.Layout.extra_holds_iff
 #print axioms WhirBridge.Layout.openingDoom_iff
 #print axioms WhirBridge.Layout.joint_of_not_doom
 #print axioms WhirBridge.candidates_ours
@@ -72,19 +77,23 @@ elab "#escapes " ns:ident : command => do
 and that the bridge's `witnessLayout` / `quotientLayout` were the pre-hiding ones (33 and 59 block lanes),
 so the deployed witness and quotient openings were outside it. `WhirBridge.Layout` now has every field of
 the Rust struct, `Layout.check` transcribes both branches of the closure, and the protocol's layouts are
-built by `Layout.hidden` (`WhirBridge/Layouts.lean`): -/
+built by `Layout.hidden` (`WhirBridge/Layouts.lean`). Since the hidden layout's redesign for condition
+(R) (no share lane; the overflow lane `32`, seven random lanes after it; the gadget batched as one more
+stack claim of value zero) the bridge transcribes that layout: -/
 
-/-- The bridge's witness and quotient layouts have the deployed lane counts `40` and `63`, the deployed
-random lanes, overflow and share lanes. -/
+/-- The bridge's witness and quotient layouts have the deployed lane counts `40` and `63`. -/
 example : ∀ r, 17 ≤ r → r ≤ 22 →
     (WhirBridge.witnessLayout r).lanes.length = 40 ∧ (WhirBridge.quotientLayout r).lanes.length = 63 := by
   decide +kernel
 
-/-- In the deployed witness layout lanes `1, 7, 13, 19, 25, 31, 39` are random and lane `38` holds the
+/-- In the deployed witness and quotient layouts lanes `33 .. 39` are random and lane `32` holds the
 overflow (`review_f2f3.rs`, `f3_design_facts_hold_at_every_size`). -/
 example : ((WhirBridge.witnessLayout 17).lanes.zipIdx.filter (·.1 = .random)).map (·.2) =
-      [1, 7, 13, 19, 25, 31, 39] ∧ (WhirBridge.witnessLayout 17).lanes[38]? = some .overflow := by
+      [33, 34, 35, 36, 37, 38, 39] ∧ (WhirBridge.witnessLayout 17).lanes[32]? = some .overflow ∧
+    ((WhirBridge.quotientLayout 17).lanes.zipIdx.filter (·.1 = .random)).map (·.2) =
+      [33, 34, 35, 36, 37, 38, 39] ∧ (WhirBridge.quotientLayout 17).lanes[32]? = some .overflow := by
   decide +kernel
 
-/-! `Test/Check.lean` now accepts deployed witness and quotient openings (the vectors of
-`crates/quotient/tests/whir_bridge_vector.rs`) and recomputes the 18 layouts' prefixes. -/
+/-! `Test/Check.lean` accepts deployed witness and quotient openings of the redesigned layouts (the
+vectors of `crates/quotient/tests/whir_bridge_vector.rs`), rejects them against the weight without the
+gadget's term, and recomputes the 18 layouts' prefixes. -/

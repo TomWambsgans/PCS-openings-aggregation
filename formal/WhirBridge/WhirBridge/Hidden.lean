@@ -2,33 +2,43 @@
 Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 
 What a claim of `crates/quotient/src/opening.rs` says of a **hidden** layout's stack: its
-multilinear claim on the table `Table::read` reads back from the stack. Uses lemmas of leanerVM
-`mumbai` (https://github.com/Verified-zkEVM/leanerVM, commit 6175f1a0, MIT OR Apache-2.0) on cube
-points (`boolPoint_add`, `eqEval_append`, `eqEval_comm`, `eqEval_cons`, `eqEval_boolPoint_boolPoint`,
-`selectorPoint_eq_boolPoint`).
+multilinear claim on the table `Table::read` reads back from the stack; and what the gadget the
+opening adds says of it. Uses lemmas of leanerVM `mumbai` (https://github.com/Verified-zkEVM/leanerVM,
+commit 6175f1a0, MIT OR Apache-2.0) on cube points (`boolPoint_add`, `eqEval_append`,
+`eqEval_comm`, `eqEval_boolPoint_boolPoint`, `selectorPoint_eq_boolPoint`).
 -/
 import WhirBridge.Table
 
 /-!
 # The claims on a hidden layout are claims on the table
 
-A hidden layout (`Layout::hidden`, `opening.rs:124-184`) stacks a table in lanes of `2^ℓ` entries,
-`ℓ = log_n − 6`, cut in pieces of `2^s`: block lane `l` holds its block's piece `k ⊕ (l mod 2)` at
-its piece `k ≥ 1` (its piece `0` is random), the overflow lane holds, at its piece `k + 1`, the
-table's piece `pieces[k]` plus the share lane's piece `k + 1`. `Layout.readHidden` is `Table::read`
-(`opening.rs:476-502`), entry by entry: the table a stack stands for.
+A hidden layout (`Layout::hidden_with`, `opening.rs:154-204`) stacks a table in lanes of `2^ℓ`
+entries, `ℓ = log_n − 6`, cut in pieces of `2^s`: block lane `l` holds its block but its first
+piece at its pieces `k ≥ 1` (its piece `0` is random), the overflow lane holds, at its piece
+`k + 1`, the table's piece `pieces[k]` (the blocks' first pieces, then the chunks' tails).
+`Layout.readHidden` is `Table::read` (`opening.rs:527-547`), entry by entry: the table a stack
+stands for.
 
 `holds_iff_hidden`: **for every stack `q`, `q` satisfies the stack claim of a claim `c` (with the
 weight `opening::verify` evaluates, `Layout.claimWeight`) exactly when the table read back from `q`
 has `c.value` as its multilinear extension at `c.point`**, for a layout of the shape
 `Layout::hidden` gives (`Layout.HiddenOK`: the pieces distinct and fewer than a lane's, each block
-on one lane, every block lane's given-up piece among the pieces and no other piece of its block,
-the overflow and share lanes where `layout_overflow` and `share` say).
+on one lane, every block lane's first piece among the pieces and no other piece of its block, the
+overflow lane where `Layout::overflow` says, the gadget's entries in the first piece and its lanes
+among the layout's).
 
 The proof reads each stack entry's weight on the cube (`claimWeight_cube`): the `eq` of the table
 entry it holds (`Layout.role`), or zero; and each table entry as the sum of the stack entries
-holding it (`readHidden_eq_fiber`): two (the overflow and share lanes) for a piece of `pieces`, one
-for any other piece of a block on a lane, none otherwise.
+holding it (`readHidden_eq_fiber`): one (the overflow lane's) for a piece of `pieces`, one for any
+other piece of a block on a lane, none otherwise.
+
+**The gadget** (`gadget_holds_iff`): the stack claim the opening adds, the gadget of value zero
+(`Layout.extra`), holds of `q` exactly when `Σ_{g,i} β_i · Σ_{l ∈ pattern g} q[l][2^s − 9 + 3g + i]
+= 0` (`Layout.gadgetValue`): at the gadget's entries the pattern lanes' `β`-combination is zero, a
+condition on the random first pieces, not on the table. So the opening's doom in table terms
+(`Layout.openingDoom_iff`) is: every candidate's table violates one of the claims, or the candidate
+violates the gadget; and an opening that is not doomed has one candidate whose table satisfies every
+claim and which satisfies the gadget (`Layout.joint_of_not_doom`).
 -/
 
 namespace WhirBridge
@@ -65,15 +75,6 @@ theorem boolPoint_zero' (m : ℕ) : boolPoint m 0 = List.replicate m 0 := by
   · intro i h1 h2
     simp [boolPoint]
 
-theorem boolPoint_succ' (m k : ℕ) :
-    boolPoint (m + 1) k = (if k.testBit 0 then 1 else 0) :: boolPoint m (k / 2) := by
-  apply List.ext_getElem
-  · simp [boolPoint]
-  · intro i h1 h2
-    cases i with
-    | zero => simp [boolPoint]
-    | succ i => simp [boolPoint, Nat.testBit_succ]
-
 /-- `eq_index` at a cube point is a Kronecker delta. -/
 theorem eqBits_cube {m i j : ℕ} (hi : i < 2 ^ m) (hj : j < 2 ^ m) :
     eqBits (boolPoint m j) i = if i = j then 1 else 0 := by
@@ -85,75 +86,40 @@ theorem eqBits_eq_boolPoint (p : List E) (b : ℕ) :
     eqBits p b = eqEval (boolPoint p.length b) p := by
   rw [eqBits_eq_eqEval, LeanVM.Protocol.EndToEnd.Front.selectorPoint_eq_boolPoint]
 
-theorem xor_one_div_two (k : ℕ) : (k ^^^ 1) / 2 = k / 2 := by
-  apply Nat.eq_of_testBit_eq
-  intro i
-  rw [← Nat.testBit_succ, ← Nat.testBit_succ, Nat.testBit_xor]
-  have : Nat.testBit 1 (i + 1) = false := by rw [Nat.testBit_succ]; simp
-  simp [this]
-
-theorem xor_one_testBit_zero (k : ℕ) : (k ^^^ 1).testBit 0 = !k.testBit 0 := by
-  rw [Nat.testBit_xor]
-  simp
-
-/-- Flipping a coordinate's claim flips the cube point's bit. -/
-theorem eqEval_flip (c : E) (a : List E) {m : ℕ} (ham : a.length + 1 = m) (k : ℕ) :
-    eqEval ((1 + c) :: a) (boolPoint m k) = eqEval (c :: a) (boolPoint m (k ^^^ 1)) := by
-  subst ham
-  rw [boolPoint_succ', boolPoint_succ', LeanVM.Protocol.Whir.Complete.eqEval_cons,
-    LeanVM.Protocol.Whir.Complete.eqEval_cons, xor_one_div_two, xor_one_testBit_zero]
-  congr 1
-  cases k.testBit 0
-  · simp only [Bool.not_false, ↓reduceIte, Bool.false_eq_true]
-    ring
-  · simp only [Bool.not_true, ↓reduceIte, Bool.false_eq_true]
-    linear_combination two_eq_zero_E
-
 /-- **The block term on the cube**: `eq` of the claim's coordinates and the lane's piece, but zero
 on the first piece. -/
-theorem blockTerm_cube (a : List E) (c : E) {m k : ℕ} (ham : a.length + 1 = m) (hk : k < 2 ^ m) :
-    blockTerm a (onePlusProd a) c (boolPoint m k) =
-      if k = 0 then 0 else eqEval (c :: a) (boolPoint m k) := by
+theorem blockTerm_cube (a : List E) {m k : ℕ} (ham : a.length = m) (hk : k < 2 ^ m) :
+    blockTerm a (onePlusProd a) (boolPoint m k) =
+      if k = 0 then 0 else eqEval a (boolPoint m k) := by
   subst ham
-  have h1 : (boolPoint (a.length + 1) k).drop 1 = boolPoint a.length (k / 2) := by
-    rw [boolPoint_succ']; rfl
-  have h2 : (boolPoint (a.length + 1) k).getD 0 0 = if k.testBit 0 then 1 else 0 := by
-    rw [boolPoint_succ']; rfl
-  have hfirst : eqZ a ((boolPoint (a.length + 1) k).drop 1) *
-      eq1 c ((boolPoint (a.length + 1) k).getD 0 0) = eqEval (c :: a) (boolPoint (a.length + 1) k) := by
-    rw [h1, h2, eqZ_eq_eqEval, eq1_eq, boolPoint_succ' a.length k,
-      LeanVM.Protocol.Whir.Complete.eqEval_cons]
-    ring
-  have hfa : onePlusProd a * (1 + c) = eqEval (c :: a) (boolPoint (a.length + 1) 0) := by
-    rw [LeanVM.Protocol.Whir.Complete.eqEval_comm, boolPoint_zero', List.replicate_succ,
-      LeanVM.Protocol.Whir.Complete.eqEval_cons, onePlusProd_eq]
-    ring
-  have hfp : onePlusProd (boolPoint (a.length + 1) k) = if k = 0 then 1 else 0 := by
+  have hfa : onePlusProd a = eqEval a (boolPoint a.length 0) := by
+    rw [LeanVM.Protocol.Whir.Complete.eqEval_comm, boolPoint_zero', onePlusProd_eq]
+  have hfp : onePlusProd (boolPoint a.length k) = if k = 0 then 1 else 0 := by
     rw [onePlusProd_eq, boolPoint_length', ← boolPoint_zero',
       LeanVM.Protocol.EndToEnd.Complete.eqEval_boolPoint_boolPoint _ 0 k (by positivity) hk]
     simp only [eq_comm]
-  rw [blockTerm, hfirst, hfa, hfp]
+  rw [blockTerm, eqZ_eq_eqEval, hfp]
   split_ifs with h0
   · subst h0
-    rw [mul_one]
+    rw [mul_one, ← hfa]
     exact CharTwo.add_self_eq_zero _
   · rw [mul_zero, add_zero]
 
 /-! ## The lanes on the cube -/
 
-/-- `on(odd)` at a lane's cube point: the lane's scale if it is a block lane of that parity. -/
-theorem onParity_cube (lanes : List Lane) (ps : List E) (odd : ℕ) {l : ℕ}
+/-- `on_blocks` at a lane's cube point: the lane's scale if it is a block lane. -/
+theorem onBlocks_cube (lanes : List Lane) (ps : List E) {l : ℕ}
     (hN : lanes.length ≤ 2 ^ laneFold) (hl : l < 2 ^ laneFold) :
-    onParity lanes ps (laneEqs lanes.length (boolPoint laneFold l)) odd =
+    onBlocks lanes ps (laneEqs lanes.length (boolPoint laneFold l)) =
       match lanes[l]? with
-      | some (.block _) => if l % 2 = odd then ps.getD l 0 else 0
+      | some (.block _) => ps.getD l 0
       | _ => 0 := by
-  rw [onParity_eq_sum, sum_zipIdx .random _ _ 0]
+  rw [onBlocks_eq_sum, sum_zipIdx .random _ _ 0]
   have hterm : ∀ i ∈ range lanes.length,
-      onTerm ps (laneEqs lanes.length (boolPoint laneFold l)) odd (lanes.getD i .random, 0 + i) =
+      onTerm ps (laneEqs lanes.length (boolPoint laneFold l)) (lanes.getD i .random, 0 + i) =
         if i = l then
           (match lanes[l]? with
-            | some (.block _) => if l % 2 = odd then ps.getD l 0 else 0
+            | some (.block _) => ps.getD l 0
             | _ => 0)
         else 0 := by
     intro i hi
@@ -168,7 +134,7 @@ theorem onParity_cube (lanes : List Lane) (ps : List E) (odd : ℕ) {l : ℕ}
     · subst hil
       rw [hsome]
       rcases lanes[i] with b | _ | _
-      · simp [Nat.and_one_is_mod]
+      · simp
       · simp
       · simp
     · rcases lanes[i] with b | _ | _
@@ -180,7 +146,7 @@ theorem onParity_cube (lanes : List Lane) (ps : List E) (odd : ℕ) {l : ℕ}
   · rw [if_pos hlN]
   · rw [if_neg hlN, List.getElem?_eq_none (by simpa using hlN)]
 
-/-- The overflow and share lanes' `eq` at a lane's cube point. -/
+/-- A lane's `eq` at a lane's cube point. -/
 theorem laneEq_cube {N i l : ℕ} (hN : N ≤ 2 ^ laneFold) (hi : i < N) (hl : l < 2 ^ laneFold) :
     (laneEqs N (boolPoint laneFold l)).getD i 0 = if i = l then 1 else 0 := by
   rw [laneEqs_getD, if_pos hi, eqBits_cube (lt_of_lt_of_le hi hN) hl]
@@ -227,12 +193,13 @@ theorem mem_blockLanes {L : Layout} {b i : ℕ} :
   · intro h
     exact ⟨(.block b, i), List.mem_zipIdx_iff_getElem?.2 h, rfl⟩
 
-/-- **What the meaning of the claims needs of a hidden layout**, all of which `Layout::hidden`
-gives (decided for ours, `Layouts.lean`): pieces of `2^s` inside lanes of `2^ℓ` inside the table,
-at most `64` lanes, fewer pieces than a lane's (the overflow lane's piece `0` is random), the
-overflow and share lanes where `layout_overflow` and `share` say, the pieces distinct and in the
-table, each block on one lane and in the table, and a block lane's given-up piece among the pieces
-and no other piece of its block. -/
+/-- **What the meaning of the claims and of the gadget needs of a hidden layout**, all of which
+`Layout::hidden` gives (decided for ours, `Layouts.lean`): pieces of `2^s` inside lanes of `2^ℓ`
+inside the table, at most `64` lanes, fewer pieces than a lane's (the overflow lane's piece `0` is
+random), the overflow lane where `Layout::overflow` says, the pieces distinct and in the table,
+each block on one lane and in the table, a block lane's first piece among the pieces and no other
+piece of its block; the gadget's entries inside the first piece (`GADGET < 2^s`, the Rust's
+assertion) and its patterns' lanes among the layout's. -/
 structure Layout.HiddenOK (L : Layout) (s : ℕ) : Prop where
   piece : L.logPiece = some s
   six_le : laneFold ≤ L.logN
@@ -241,13 +208,14 @@ structure Layout.HiddenOK (L : Layout) (s : ℕ) : Prop where
   lanes_le : L.lanes.length ≤ 2 ^ laneFold
   held_lt : L.pieces.length < 2 ^ (L.logLane - s)
   overflow : L.lanes[L.overflow]? = some .overflow
-  share : L.lanes[L.share.getD 0]? = some .random
   nodup : L.pieces.Nodup
   piece_lt : ∀ p ∈ L.pieces, p < 2 ^ (L.vars - s)
   blocks_nodup : (L.blockLanes.map Prod.fst).Nodup
   block_ok : ∀ bi ∈ L.blockLanes, bi.1 < 2 ^ (L.vars - L.logLane) ∧
-    bi.2 % 2 + 2 ^ (L.logLane - s) * bi.1 ∈ L.pieces ∧
-    ∀ p ∈ L.pieces, p / 2 ^ (L.logLane - s) = bi.1 → p % 2 ^ (L.logLane - s) = bi.2 % 2
+    2 ^ (L.logLane - s) * bi.1 ∈ L.pieces ∧
+    ∀ p ∈ L.pieces, p / 2 ^ (L.logLane - s) = bi.1 → p % 2 ^ (L.logLane - s) = 0
+  gadget_lt : gadget < 2 ^ s
+  gadget_lanes : ∀ g < 3, ∀ l ∈ gadgetLanes g, l < L.lanes.length
 
 theorem Layout.HiddenOK.block_inj {L : Layout} {s : ℕ} (hL : L.HiddenOK s) {i j b : ℕ}
     (hi : L.lanes[i]? = some (.block b)) (hj : L.lanes[j]? = some (.block b)) : i = j := by
@@ -265,23 +233,21 @@ theorem Layout.HiddenOK.block_inj {L : Layout} {s : ℕ} (hL : L.HiddenOK s) {i 
 
 /-! ## `Table::read` -/
 
-/-- The stack's entry `y` of lane `l` (`lane(l)[y]`, `opening.rs:481`). -/
+/-- The stack's entry `y` of lane `l` (`lane(l)[y]`, `opening.rs:532`). -/
 def stackAt {n : ℕ} (q : Column n) (logLane l y : ℕ) : K := q.values.getD (y + 2 ^ logLane * l) 0
 
-/-- **`Table::read`** (`opening.rs:476-502`), entry by entry, for a hidden layout with pieces of
-`2^s` entries: the table's entry `t`, in piece `p = t >> s` at `o = t mod 2^s`, is the sum of the
-overflow and share lanes at their piece `k + 1` if `p` is the overflow lane's `k`-th piece; else the
-entry of the block lane holding `p`'s block at its piece `(p mod 2^(ℓ−s)) ⊕ (l mod 2)`; else
-zero. -/
+/-- **`Table::read`** (`opening.rs:527-547`), entry by entry, for a hidden layout with pieces of
+`2^s` entries: the table's entry `t`, in piece `p = t >> s` at `o = t mod 2^s`, is the overflow
+lane's at its piece `k + 1` if `p` is the overflow lane's `k`-th piece; else the entry of the block
+lane holding `p`'s block at its piece `p mod 2^(ℓ−s)`; else zero. -/
 def Layout.readHidden (L : Layout) (s : ℕ) (q : Column L.logN) (t : ℕ) : K :=
   let ℓ := L.logLane
   let p := t >>> s
   let o := t % 2 ^ s
   match L.pieces.findIdx? (· == p) with
-  | some k => stackAt q ℓ L.overflow ((k + 1) * 2 ^ s + o) +
-      stackAt q ℓ (L.share.getD 0) ((k + 1) * 2 ^ s + o)
+  | some k => stackAt q ℓ L.overflow ((k + 1) * 2 ^ s + o)
   | none => match L.lanes.findIdx? (· == .block (p >>> (ℓ - s))) with
-    | some l => stackAt q ℓ l (((p &&& (2 ^ (ℓ - s) - 1)) ^^^ (l &&& 1)) * 2 ^ s + o)
+    | some l => stackAt q ℓ l ((p &&& (2 ^ (ℓ - s) - 1)) * 2 ^ s + o)
     | none => 0
 
 /-- **The table a stack stands for**: `Table::read` for a hidden layout; for a public one, its
@@ -291,21 +257,21 @@ def Layout.table (L : Layout) (q : Column L.logN) (t : ℕ) : K :=
   | some s => L.readHidden s q t
   | none => L.toBlocks.table q t
 
-/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:504-544`). -/
+/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:549-581`). -/
 def Layout.tableEval (L : Layout) (q : Column L.logN) (p : List E) : E :=
   ∑ t ∈ range (2 ^ L.vars), ofK (L.table q t) * eqEval (boolPoint L.vars t) p
 
 /-! ## The table entry each stack entry holds -/
 
 /-- **The table entry stack entry `y` of lane `l` holds** with a weight: a block lane's past its
-first piece, the overflow and share lanes' at their pieces `1 ..= |pieces|`. -/
+first piece, the overflow lane's at its pieces `1 ..= |pieces|`. -/
 def Layout.role (L : Layout) (s l y : ℕ) : Option ℕ :=
   match L.lanes[l]? with
   | some (.block b) =>
     if y / 2 ^ s = 0 then none
-    else some (y % 2 ^ s + 2 ^ s * (((y / 2 ^ s) ^^^ (l % 2)) + 2 ^ (L.logLane - s) * b))
+    else some (y % 2 ^ s + 2 ^ s * (y / 2 ^ s + 2 ^ (L.logLane - s) * b))
   | some _ =>
-    if (l = L.overflow ∨ l = L.share.getD 0) ∧ 1 ≤ y / 2 ^ s ∧ y / 2 ^ s ≤ L.pieces.length then
+    if l = L.overflow ∧ 1 ≤ y / 2 ^ s ∧ y / 2 ^ s ≤ L.pieces.length then
       some (y % 2 ^ s + 2 ^ s * L.pieces.getD (y / 2 ^ s - 1) 0)
     else none
   | none => none
@@ -316,11 +282,6 @@ theorem lt_two_pow_add {a b o z : ℕ} (ho : o < 2 ^ a) (hz : z < 2 ^ b) :
   calc o + 2 ^ a * z < 2 ^ a + 2 ^ a * z := by omega
     _ = 2 ^ a * (z + 1) := by ring
     _ ≤ 2 ^ a * 2 ^ b := Nat.mul_le_mul_left _ hz
-
-theorem xor_mod_two_lt {k l m : ℕ} (hm : 1 ≤ m) (hk : k < 2 ^ m) : k ^^^ (l % 2) < 2 ^ m :=
-  Nat.xor_lt_two_pow hk (lt_of_lt_of_le (Nat.mod_lt _ (by norm_num))
-    (by calc 2 = 2 ^ 1 := rfl
-      _ ≤ 2 ^ m := Nat.pow_le_pow_right (by norm_num) hm))
 
 theorem split_point {s m : ℕ} (p : List E) :
     p = p.take s ++ ((p.drop s).take m ++ p.drop (s + m)) := by
@@ -337,8 +298,8 @@ theorem eqEval_entry {s m V o j b : ℕ} (p : List E) (hp : p.length = V) (hsm :
   conv_lhs => rw [split_point (s := s) (m := m) p, hV]
   rw [LeanVM.Protocol.Whir.Complete.boolPoint_add _ _ _ _ ho,
     LeanVM.Protocol.Whir.Complete.boolPoint_add _ _ _ _ hj,
-    LeanVM.Protocol.Whir.Complete.eqEval_append _ _ _ _ (by simp [boolPoint_length', hp]; omega),
-    LeanVM.Protocol.Whir.Complete.eqEval_append _ _ _ _ (by simp [boolPoint_length', hp]; omega)]
+    LeanVM.Protocol.Whir.Complete.eqEval_append _ _ _ _ (by simp [hp]; omega),
+    LeanVM.Protocol.Whir.Complete.eqEval_append _ _ _ _ (by simp [hp]; omega)]
 
 /-- `eq` of a table entry `o + 2^s p` and a point. -/
 theorem eqEval_entry' {s V o p : ℕ} (x : List E) (hx : x.length = V) (hs : s ≤ V)
@@ -348,7 +309,7 @@ theorem eqEval_entry' {s V o p : ℕ} (x : List E) (hx : x.length = V) (hs : s �
   have hV : V = s + (V - s) := by omega
   conv_lhs => rw [← List.take_append_drop s x, hV]
   rw [LeanVM.Protocol.Whir.Complete.boolPoint_add _ _ _ _ ho,
-    LeanVM.Protocol.Whir.Complete.eqEval_append _ _ _ _ (by simp [boolPoint_length', hx]; omega)]
+    LeanVM.Protocol.Whir.Complete.eqEval_append _ _ _ _ (by simp [hx]; omega)]
 
 section Cube
 
@@ -363,17 +324,6 @@ theorem Layout.HiddenOK.logN_eq : L.logN = L.logLane + laneFold := by
 include hL in
 theorem Layout.HiddenOK.ov_lt : L.overflow < L.lanes.length :=
   (List.getElem?_eq_some_iff.1 hL.overflow).1
-
-include hL in
-theorem Layout.HiddenOK.sh_lt : L.share.getD 0 < L.lanes.length :=
-  (List.getElem?_eq_some_iff.1 hL.share).1
-
-include hL in
-theorem Layout.HiddenOK.ov_ne_sh : L.overflow ≠ L.share.getD 0 := by
-  intro h
-  have h1 := hL.overflow
-  rw [h, hL.share] at h1
-  cases h1
 
 include hL in
 /-- **A stack entry's weight on the cube** is the `eq` of the table entry it holds, or zero. -/
@@ -398,31 +348,26 @@ theorem claimWeight_cube (c : Claim) (hc : c.point.length = L.vars) {l y : ℕ}
   -- the claim's coordinates
   have hpll : (c.point.take L.logLane).length = L.logLane := by
     rw [List.length_take, hc]; omega
-  have hal : ((c.point.take L.logLane).drop (s + 1)).length + 1 = L.logLane - s := by
-    rw [List.length_drop, hpll]; omega
-  have hca : (c.point.take L.logLane).getD s 0 :: (c.point.take L.logLane).drop (s + 1) =
-      (c.point.drop s).take (L.logLane - s) := by
-    rw [List.getD_eq_getElem _ _ (by omega), ← List.drop_eq_getElem_cons (by omega),
-      List.drop_take]
+  have hal : ((c.point.take L.logLane).drop s).length = L.logLane - s := by
+    rw [List.length_drop, hpll]
+  have hca : (c.point.take L.logLane).drop s = (c.point.drop s).take (L.logLane - s) := by
+    rw [List.drop_take]
   have hbelow : eqZ ((c.point.take L.logLane).take s) (boolPoint s (y % 2 ^ s)) =
       eqEval (boolPoint s (y % 2 ^ s)) (c.point.take s) := by
     rw [eqZ_eq_eqEval, LeanVM.Protocol.Whir.Complete.eqEval_comm, List.take_take,
       min_eq_left hsℓ.le]
   rw [hbelow]
   generalize hpl : c.point.take L.logLane = pl at hpll hal hca
-  generalize ha : pl.drop (s + 1) = a at hal hca
-  generalize hc0 : pl.getD s 0 = c0 at hca
+  generalize ha : pl.drop s = a at hal hca
   generalize hm : L.logLane - s = m at hal hca
   have hkm : y / 2 ^ s < 2 ^ m := by
     rw [Nat.div_lt_iff_lt_mul (by positivity), ← pow_add, ← hm]
     convert hy using 2
     omega
   have hom : y % 2 ^ s < 2 ^ s := Nat.mod_lt _ (by positivity)
-  have hm1 : 1 ≤ m := by omega
   generalize hk : y / 2 ^ s = k at hkm ⊢
   generalize ho : y % 2 ^ s = o at hom ⊢
-  rw [blockTerm_cube a _ hal hkm, blockTerm_cube a _ hal hkm, onParity_cube _ _ _ hN hl,
-    onParity_cube _ _ _ hN hl, laneEq_cube hN hL.ov_lt hl, laneEq_cube hN hL.sh_lt hl]
+  rw [blockTerm_cube a hal hkm, onBlocks_cube _ _ hN hl, laneEq_cube hN hL.ov_lt hl]
   have hps : (L.pieceScales c.point).length = L.pieces.length := by
     simp [Layout.pieceScales, hL.piece]
   rw [pieces_cube _ (by rw [hps, ← hm]; exact hL.held_lt) hkm, hps]
@@ -430,16 +375,12 @@ theorem claimWeight_cube (c : Claim) (hc : c.point.length = L.vars) {l y : ℕ}
   · -- no lane
     have hov : L.overflow ≠ l := fun h ↦ by
       have := hL.overflow; rw [h, hlane] at this; cases this
-    have hsh : L.share.getD 0 ≠ l := fun h ↦ by
-      have := hL.share; rw [h, hlane] at this; cases this
-    simp [hov, hsh]
+    simp [hov]
   · rcases lane with b | _ | _
     · -- a block lane
       have hov : L.overflow ≠ l := fun h ↦ by
         have := hL.overflow; rw [h, hlane] at this; cases this
-      have hsh : L.share.getD 0 ≠ l := fun h ↦ by
-        have := hL.share; rw [h, hlane] at this; cases this
-      simp only [hov, hsh, ↓reduceIte, add_zero, mul_zero]
+      simp only [hov, ↓reduceIte, add_zero, mul_zero]
       have hscale : (L.laneScales c.point).getD l 0 =
           eqEval (boolPoint (L.vars - L.logLane) b) (c.point.drop L.logLane) := by
         have hl' : l < L.lanes.length := (List.getElem?_eq_some_iff.1 hlane).1
@@ -452,23 +393,13 @@ theorem claimWeight_cube (c : Claim) (hc : c.point.length = L.vars) {l y : ℕ}
       by_cases hk0 : k = 0
       · simp [hk0]
       · simp only [hk0, ↓reduceIte]
-        rw [eqEval_entry c.point hc (by omega) hom (xor_mod_two_lt hm1 hkm),
-          show s + m = L.logLane by omega, ← hca]
-        rcases Nat.mod_two_eq_zero_or_one l with hpar | hpar
-        · simp only [hpar, ↓reduceIte, Nat.xor_zero, zero_ne_one, mul_zero, add_zero]
-          rw [LeanVM.Protocol.Whir.Complete.eqEval_comm (c0 :: a)]
-        · simp only [hpar, ↓reduceIte, one_ne_zero, mul_zero, zero_add]
-          rw [eqEval_flip c0 a hal, LeanVM.Protocol.Whir.Complete.eqEval_comm (c0 :: a)]
+        rw [eqEval_entry c.point hc (by omega) hom hkm, show s + m = L.logLane by omega, ← hca,
+          LeanVM.Protocol.Whir.Complete.eqEval_comm a]
     all_goals
       -- the overflow lane or a random lane
       simp only [mul_zero, zero_add]
-      by_cases hos : l = L.overflow ∨ l = L.share.getD 0
-      · have hone : ((if L.overflow = l then 1 else 0) + if L.share.getD 0 = l then 1 else 0 : E)
-            = 1 := by
-          rcases hos with h | h
-          · rw [if_pos h.symm, if_neg (fun h' ↦ hL.ov_ne_sh (h.symm.trans h'.symm))]; simp
-          · rw [if_neg (fun h' ↦ hL.ov_ne_sh (h'.trans h)), if_pos h.symm]; simp
-        rw [hone, mul_one]
+      by_cases hos : l = L.overflow
+      · rw [if_pos hos.symm, mul_one]
         simp only [hos, true_and]
         by_cases hkp : 1 ≤ k ∧ k ≤ L.pieces.length
         · rw [if_pos hkp, if_pos hkp]
@@ -481,11 +412,10 @@ theorem claimWeight_cube (c : Claim) (hc : c.point.length = L.vars) {l y : ℕ}
           show _ = eqEval (boolPoint L.vars (o + 2 ^ s * L.pieces.getD (k - 1) 0)) c.point
           rw [hpk, eqEval_entry' c.point hc (by omega) hom]
         · rw [if_neg hkp, if_neg hkp, mul_zero]
-      · have h1 : L.overflow ≠ l := fun h ↦ hos (Or.inl h.symm)
-        have h2 : L.share.getD 0 ≠ l := fun h ↦ hos (Or.inr h.symm)
-        simp [h1, h2, hos]
+      · have h1 : L.overflow ≠ l := fun h ↦ hos h.symm
+        simp [h1, hos]
 
-/-! ## Each table entry is the sum of the stack entries holding it -/
+/-! ## Each table entry is the stack entry holding it -/
 
 include hL in
 theorem div_lt_window {y : ℕ} (hy : y < 2 ^ L.logLane) : y / 2 ^ s < 2 ^ (L.logLane - s) := by
@@ -500,17 +430,13 @@ theorem decomp_mod {a o z : ℕ} (ho : o < 2 ^ a) : (o + 2 ^ a * z) % 2 ^ a = o 
 theorem decomp_div {a o z : ℕ} (ho : o < 2 ^ a) : (o + 2 ^ a * z) / 2 ^ a = z := by
   rw [Nat.add_mul_div_left _ _ (by positivity), Nat.div_eq_of_lt ho, zero_add]
 
-theorem xor_xor_cancel (k f : ℕ) : (k ^^^ f) ^^^ f = k := by
-  rw [Nat.xor_assoc, Nat.xor_self, Nat.xor_zero]
-
 include hL in
 /-- A block lane's stack entry holds `t` exactly when it is past the first piece and lands on `t`'s
 piece and offset. -/
 theorem role_block {l y b t : ℕ} (hy : y < 2 ^ L.logLane) (hlane : L.lanes[l]? = some (.block b)) :
     L.role s l y = some t ↔ y / 2 ^ s ≠ 0 ∧ y % 2 ^ s = t % 2 ^ s ∧
-      (y / 2 ^ s) ^^^ (l % 2) = t / 2 ^ s % 2 ^ (L.logLane - s) ∧
+      y / 2 ^ s = t / 2 ^ s % 2 ^ (L.logLane - s) ∧
         b = t / 2 ^ s / 2 ^ (L.logLane - s) := by
-  have hm1 : 1 ≤ L.logLane - s := by have := hL.s_lt; omega
   unfold Layout.role
   rw [hlane]
   simp only
@@ -519,9 +445,7 @@ theorem role_block {l y b t : ℕ} (hy : y < 2 ^ L.logLane) (hlane : L.lanes[l]?
     split_ifs at h with hk0
     obtain rfl := (Option.some.inj h).symm
     have hom : y % 2 ^ s < 2 ^ s := Nat.mod_lt _ (by positivity)
-    have hj : (y / 2 ^ s) ^^^ (l % 2) < 2 ^ (L.logLane - s) := by
-      refine xor_mod_two_lt hm1 ?_
-      exact div_lt_window hL hy
+    have hj : y / 2 ^ s < 2 ^ (L.logLane - s) := div_lt_window hL hy
     refine ⟨hk0, (decomp_mod hom).symm, ?_, ?_⟩
     · rw [decomp_div hom, decomp_mod hj]
     · rw [decomp_div hom, decomp_div hj]
@@ -529,11 +453,11 @@ theorem role_block {l y b t : ℕ} (hy : y < 2 ^ L.logLane) (hlane : L.lanes[l]?
     rw [if_neg hk0, hb, hj, ho, Nat.mod_add_div, Nat.mod_add_div]
 
 include hL in
-/-- The overflow, share and other random lanes' stack entry holds `t` exactly when it is the
-overflow or share lane's piece `k + 1` holding `t`'s piece, at `t`'s offset. -/
+/-- The overflow and random lanes' stack entry holds `t` exactly when it is the overflow lane's
+piece `k + 1` holding `t`'s piece, at `t`'s offset. -/
 theorem role_other {l y t : ℕ} {lane : Lane} (hlane : L.lanes[l]? = some lane)
     (hnb : ∀ b, lane ≠ .block b) :
-    L.role s l y = some t ↔ (l = L.overflow ∨ l = L.share.getD 0) ∧ 1 ≤ y / 2 ^ s ∧
+    L.role s l y = some t ↔ l = L.overflow ∧ 1 ≤ y / 2 ^ s ∧
       y / 2 ^ s ≤ L.pieces.length ∧ y % 2 ^ s = t % 2 ^ s ∧
         L.pieces.getD (y / 2 ^ s - 1) 0 = t / 2 ^ s := by
   have hom : y % 2 ^ s < 2 ^ s := Nat.mod_lt _ (by positivity)
@@ -576,14 +500,15 @@ theorem sum_sum_single {A B l0 y0 : ℕ} (hl0 : l0 < A) (hy0 : y0 < B) (P : ℕ 
   rw [Finset.sum_congr rfl h, Finset.sum_ite_eq', if_pos (mem_range.2 hl0)]
 
 include hL in
-/-- **Each table entry is the sum of the stack entries holding it** (`Table::read`). -/
+/-- **Each table entry is the sum of the stack entries holding it** (`Table::read`): the one
+holding it, or none. -/
 theorem readHidden_eq_fiber (q : Column L.logN) (t : ℕ) :
     ofK (L.readHidden s q t) = ∑ l ∈ range (2 ^ laneFold), ∑ y ∈ range (2 ^ L.logLane),
       if L.role s l y = some t then ofK (stackAt q L.logLane l y) else 0 := by
   have hsℓ := hL.s_lt
   have hm1 : 1 ≤ L.logLane - s := by omega
   unfold Layout.readHidden
-  simp only [Nat.shiftRight_eq_div_pow, Nat.and_two_pow_sub_one_eq_mod, Nat.and_one_is_mod]
+  simp only [Nat.shiftRight_eq_div_pow, Nat.and_two_pow_sub_one_eq_mod]
   generalize hm : L.logLane - s = m at hm1
   have hℓ : L.logLane = s + m := by omega
   have hom : t % 2 ^ s < 2 ^ s := Nat.mod_lt _ (by positivity)
@@ -596,7 +521,7 @@ theorem readHidden_eq_fiber (q : Column L.logN) (t : ℕ) :
       simp at this
     rcases hl0 : L.lanes.findIdx? (· == Lane.block (t / 2 ^ s / 2 ^ m)) with _ | l0
     · -- no piece, no lane: nothing holds `t`
-      simp only [map_zero]
+      simp only
       symm
       refine Finset.sum_eq_zero fun l hl ↦ Finset.sum_eq_zero fun y hy ↦ if_neg fun hr ↦ ?_
       rcases hlane : L.lanes[l]? with _ | lane
@@ -616,19 +541,17 @@ theorem readHidden_eq_fiber (q : Column L.logN) (t : ℕ) :
         rw [List.getElem?_eq_getElem hl0lt]
         simpa using hl0eq
       have hj : t / 2 ^ s % 2 ^ m < 2 ^ m := Nat.mod_lt _ (by positivity)
-      have hk1 : (t / 2 ^ s % 2 ^ m) ^^^ (l0 % 2) < 2 ^ m := xor_mod_two_lt hm1 hj
-      have hk0 : (t / 2 ^ s % 2 ^ m) ^^^ (l0 % 2) ≠ 0 := by
+      have hk0 : t / 2 ^ s % 2 ^ m ≠ 0 := by
         intro h0
-        have hjf : t / 2 ^ s % 2 ^ m = l0 % 2 := by
-          rw [← xor_xor_cancel (t / 2 ^ s % 2 ^ m) (l0 % 2), h0, Nat.zero_xor]
         apply hnp
         have := (hL.block_ok _ (mem_blockLanes.2 hlane0)).2.1
         simp only at this
-        rw [hm, ← hjf, Nat.mod_add_div] at this
+        rw [hm] at this
+        rw [← Nat.mod_add_div (t / 2 ^ s) (2 ^ m), h0, zero_add]
         exact this
       have hl0' : l0 < 2 ^ laneFold := lt_of_lt_of_le hl0lt hL.lanes_le
       simp only
-      rw [sum_sum_single hl0' (hyl hk1) _ (fun l y ↦ ofK (stackAt q L.logLane l y)) ?_]
+      rw [sum_sum_single hl0' (hyl hj) _ (fun l y ↦ ofK (stackAt q L.logLane l y)) ?_]
       · congr 2
         ring
       · intro l hl y hy
@@ -644,17 +567,17 @@ theorem readHidden_eq_fiber (q : Column L.logN) (t : ℕ) :
               have hll : l = l0 := hL.block_inj hlane hlane0
               subst hll
               refine ⟨rfl, ?_⟩
-              rw [← Nat.mod_add_div y (2 ^ s), ho, ← hjx, xor_xor_cancel]
+              rw [← Nat.mod_add_div y (2 ^ s), ho, hjx]
             · push_neg at hb
               obtain ⟨-, h1, h2, -, h5⟩ := (role_other hL hlane hb).1 hr
               exact absurd (h5 ▸ getD_mem' (by omega)) hnp
         · rintro ⟨rfl, rfl⟩
-          refine (role_block hL (hyl hk1) hlane0).2 ⟨?_, ?_, ?_, ?_⟩
+          refine (role_block hL (hyl hj) hlane0).2 ⟨?_, ?_, ?_, ?_⟩
           · rw [decomp_div hom]; exact hk0
           · rw [decomp_mod hom]
-          · rw [decomp_div hom, xor_xor_cancel, hm]
+          · rw [decomp_div hom, hm]
           · rw [hm]
-  · -- a piece of the overflow lane: the overflow and share lanes hold `t`
+  · -- a piece of the overflow lane: the overflow lane holds `t`
     obtain ⟨hklt, hkeq, -⟩ := List.findIdx?_eq_some_iff_getElem.1 hk
     have hPk : L.pieces[k] = t / 2 ^ s := by simpa using hkeq
     have hheld := hL.held_lt
@@ -662,7 +585,7 @@ theorem readHidden_eq_fiber (q : Column L.logN) (t : ℕ) :
     have hy0 : t % 2 ^ s + 2 ^ s * (k + 1) < 2 ^ L.logLane := hyl (by omega)
     have hpmem : t / 2 ^ s ∈ L.pieces := hPk ▸ List.getElem_mem _
     have hiff : ∀ l < 2 ^ laneFold, ∀ y < 2 ^ L.logLane, L.role s l y = some t ↔
-        (l = L.overflow ∨ l = L.share.getD 0) ∧ y = t % 2 ^ s + 2 ^ s * (k + 1) := by
+        l = L.overflow ∧ y = t % 2 ^ s + 2 ^ s * (k + 1) := by
       intro l hl y hy
       constructor
       · intro hr
@@ -672,10 +595,7 @@ theorem readHidden_eq_fiber (q : Column L.logN) (t : ℕ) :
           · obtain ⟨b', rfl⟩ := hb
             obtain ⟨hy0', -, hjx, hb'⟩ := (role_block hL hy hlane).1 hr
             have hpar := (hL.block_ok _ (mem_blockLanes.2 hlane)).2.2 _ hpmem hb'.symm
-            simp only at hpar
-            have h0 : y / 2 ^ s = 0 := by
-              rw [← xor_xor_cancel (y / 2 ^ s) (l % 2), hjx, hpar, Nat.xor_self]
-            exact absurd h0 hy0'
+            exact absurd (hjx.trans hpar) hy0'
           · push_neg at hb
             obtain ⟨hos, h1, h2, ho, h5⟩ := (role_other hL hlane hb).1 hr
             refine ⟨hos, ?_⟩
@@ -686,41 +606,17 @@ theorem readHidden_eq_fiber (q : Column L.logN) (t : ℕ) :
             congr 2
             omega
       · rintro ⟨hos, rfl⟩
-        have hlane : ∃ lane, L.lanes[l]? = some lane ∧ ∀ b, lane ≠ .block b := by
-          rcases hos with rfl | rfl
-          · exact ⟨_, hL.overflow, fun b h ↦ by cases h⟩
-          · exact ⟨_, hL.share, fun b h ↦ by cases h⟩
-        obtain ⟨lane, hlane, hnb⟩ := hlane
-        refine (role_other hL hlane hnb).2 ⟨hos, ?_, ?_, ?_, ?_⟩
+        have hlane : L.lanes[l]? = some .overflow := by rw [hos]; exact hL.overflow
+        refine (role_other hL hlane fun b h ↦ by cases h).2 ⟨hos, ?_, ?_, ?_, ?_⟩
         · rw [decomp_div hom]; omega
         · rw [decomp_div hom]; omega
         · rw [decomp_mod hom]
         · rw [decomp_div hom, Nat.add_sub_cancel, List.getD_eq_getElem _ _ hklt, hPk]
-    have hsplit : ∀ l ∈ range (2 ^ laneFold), ∀ y ∈ range (2 ^ L.logLane),
-        (if L.role s l y = some t then ofK (stackAt q L.logLane l y) else 0) =
-          (if l = L.overflow ∧ y = t % 2 ^ s + 2 ^ s * (k + 1) then
-            ofK (stackAt q L.logLane l y) else 0) +
-          (if l = L.share.getD 0 ∧ y = t % 2 ^ s + 2 ^ s * (k + 1) then
-            ofK (stackAt q L.logLane l y) else 0) := by
-      intro l hl y hy
-      have h := hiff l (mem_range.1 hl) y (mem_range.1 hy)
-      by_cases hr : L.role s l y = some t
-      · obtain ⟨hos, rfl⟩ := h.1 hr
-        rw [if_pos hr]
-        rcases hos with rfl | rfl
-        · rw [if_pos ⟨rfl, rfl⟩, if_neg (fun h' ↦ hL.ov_ne_sh h'.1), add_zero]
-        · rw [if_neg (fun h' ↦ hL.ov_ne_sh h'.1.symm), if_pos ⟨rfl, rfl⟩, zero_add]
-      · rw [if_neg hr, if_neg (fun h' ↦ hr (h.2 ⟨Or.inl h'.1, h'.2⟩)),
-          if_neg (fun h' ↦ hr (h.2 ⟨Or.inr h'.1, h'.2⟩)), add_zero]
-    simp only
-    rw [Finset.sum_congr rfl fun l hl ↦ Finset.sum_congr rfl fun y hy ↦ hsplit l hl y hy]
-    simp only [Finset.sum_add_distrib]
     have hov : L.overflow < 2 ^ laneFold := lt_of_lt_of_le hL.ov_lt hL.lanes_le
-    have hsh : L.share.getD 0 < 2 ^ laneFold := lt_of_lt_of_le hL.sh_lt hL.lanes_le
-    rw [sum_sum_single hov hy0 _ (fun l y ↦ ofK (stackAt q L.logLane l y)) fun _ _ _ _ ↦ Iff.rfl,
-      sum_sum_single hsh hy0 _ (fun l y ↦ ofK (stackAt q L.logLane l y)) fun _ _ _ _ ↦ Iff.rfl,
-      show ∀ a b : K, ofK (a + b) = ofK a + ofK b from fun a b ↦ map_add (algebraMap K E) a b]
-    congr 3 <;> ring
+    simp only
+    rw [sum_sum_single hov hy0 _ (fun l y ↦ ofK (stackAt q L.logLane l y)) hiff]
+    congr 2
+    ring
 
 include hL in
 /-- The table entries the stack holds are in the table. -/
@@ -741,7 +637,7 @@ theorem role_lt {l y t : ℕ} (hy : y < 2 ^ L.logLane) (hr : L.role s l y = some
       have hb := (hL.block_ok _ (mem_blockLanes.2 hlane)).1
       have hV : L.vars = s + ((L.logLane - s) + (L.vars - L.logLane)) := by omega
       rw [hV]
-      exact lt_two_pow_add hom (lt_two_pow_add (xor_mod_two_lt (by omega) hkm) hb)
+      exact lt_two_pow_add hom (lt_two_pow_add hkm hb)
     all_goals
       simp only at hr
       split_ifs at hr with hc
@@ -797,6 +693,134 @@ theorem holds_iff_hidden (c : Claim) (hc : c.point.length = L.vars) (q : Column 
 
 end Cube
 
+/-! ## The gadget -/
+
+/-- **The gadget's value on a stack** of pieces `2^s`:
+`Σ_g Σ_i β_i · Σ_{l ∈ pattern g} q[l][2^s − 9 + 3g + i]`. -/
+def Layout.gadgetValue (L : Layout) (s : ℕ) (q : Column L.logN) : E :=
+  ((List.range 3).map fun g ↦ ((List.range 3).map fun i ↦ gadgetBeta i *
+    ((gadgetLanes g).map fun l ↦ ofK (stackAt q L.logLane l (gadgetEntry s g i))).sum).sum).sum
+
+/-- A sum over a `Finset` of a list's sum is the list's sum of the sums. -/
+theorem finset_sum_list_sum {α : Type} (S : Finset ℕ) (xs : List α) (g : α → ℕ → E) :
+    ∑ l ∈ S, (xs.map fun x ↦ g x l).sum = (xs.map fun x ↦ ∑ l ∈ S, g x l).sum := by
+  induction xs with
+  | nil => simp
+  | cons x xs ih => simp only [List.map_cons, List.sum_cons, Finset.sum_add_distrib, ih]
+
+theorem sum_delta2 {A B l0 y0 : ℕ} (hl0 : l0 < A) (hy0 : y0 < B) (c : E) :
+    ∑ l ∈ range A, ∑ y ∈ range B,
+      c * ((if y0 = y then 1 else 0) * (if l0 = l then 1 else 0)) = c := by
+  have h : ∀ l ∈ range A, ∑ y ∈ range B,
+      c * ((if y0 = y then (1 : E) else 0) * (if l0 = l then 1 else 0)) =
+        if l0 = l then c else 0 := by
+    intro l _
+    rw [Finset.sum_eq_single y0]
+    · by_cases h : l0 = l <;> simp [h]
+    · intro y _ hy
+      rw [if_neg (Ne.symm hy)]
+      simp
+    · intro h
+      exact absurd (mem_range.2 hy0) h
+  rw [Finset.sum_congr rfl h, Finset.sum_ite_eq, if_pos (mem_range.2 hl0)]
+
+/-- **The gadget's term against a stack**, summed over the cube: each pattern's entries' weights
+times its lanes' stack entries there. -/
+theorem gadgetSum_cube {N ℓ : ℕ} (hN : N ≤ 2 ^ laneFold) (parts : List (List ℕ × List (ℕ × E)))
+    (hlanes : ∀ pe ∈ parts, ∀ l ∈ pe.1, l < N) (hent : ∀ pe ∈ parts, ∀ yb ∈ pe.2, yb.1 < 2 ^ ℓ)
+    (f : ℕ → ℕ → E) :
+    ∑ l ∈ range (2 ^ laneFold), ∑ y ∈ range (2 ^ ℓ),
+        gadgetSum parts (laneEqs N (boolPoint laneFold l)) (boolPoint ℓ y) * f l y =
+      (parts.map fun pe ↦ (pe.2.map fun yb ↦ yb.2 * (pe.1.map fun l' ↦ f l' yb.1).sum).sum).sum := by
+  have hterm : ∀ l ∈ range (2 ^ laneFold), ∀ y ∈ range (2 ^ ℓ),
+      gadgetSum parts (laneEqs N (boolPoint laneFold l)) (boolPoint ℓ y) * f l y =
+        (parts.map fun pe ↦ (pe.2.map fun yb ↦ (pe.1.map fun l' ↦
+          yb.2 * f l' yb.1 * ((if yb.1 = y then 1 else 0) * (if l' = l then 1 else 0))).sum).sum).sum := by
+    intro l hl y hy
+    rw [gadgetSum_eq_sum, ← List.sum_map_mul_right]
+    refine congrArg List.sum (List.map_congr_left fun pe hpe ↦ ?_)
+    rw [← List.sum_map_mul_right, ← List.sum_map_mul_right]
+    refine congrArg List.sum (List.map_congr_left fun yb hyb ↦ ?_)
+    rw [eqBits_cube (hent pe hpe yb hyb) (mem_range.1 hy), ← List.sum_map_mul_left,
+      ← List.sum_map_mul_right]
+    refine congrArg List.sum (List.map_congr_left fun l' hl' ↦ ?_)
+    rw [laneEq_cube hN (hlanes pe hpe l' hl') (mem_range.1 hl)]
+    by_cases h1 : yb.1 = y
+    · by_cases h2 : l' = l
+      · rw [if_pos h1, if_pos h2, ← h1, ← h2]
+        ring
+      · rw [if_neg h2]
+        ring
+    · rw [if_neg h1]
+      ring
+  rw [Finset.sum_congr rfl fun l hl ↦ Finset.sum_congr rfl fun y hy ↦ hterm l hl y hy]
+  simp only [finset_sum_list_sum]
+  refine congrArg List.sum (List.map_congr_left fun pe hpe ↦ ?_)
+  refine congrArg List.sum (List.map_congr_left fun yb hyb ↦ ?_)
+  rw [← List.sum_map_mul_left]
+  refine congrArg List.sum (List.map_congr_left fun l' hl' ↦ ?_)
+  rw [sum_delta2 (lt_of_lt_of_le (hlanes pe hpe l' hl') hN) (hent pe hpe yb hyb)]
+
+section Gadget
+
+variable {L : Layout} {s : ℕ} (hL : L.HiddenOK s)
+
+include hL in
+/-- **What the gadget says of a stack**: the stack claim the opening adds (`Layout.extra`, the
+gadget of value zero) holds exactly when the gadget's value is zero: at the gadget's entries, the
+`β`-combination of the pattern lanes' entries is zero. -/
+theorem gadget_holds_iff (q : Column L.logN) :
+    StackClaim.Holds L.logN (L.gadgetWeight, 0) q ↔ L.gadgetValue s q = 0 := by
+  simp only [StackClaim.Holds]
+  suffices h : ∑ x : Fin (2 ^ L.logN), L.gadgetWeight (boolPoint L.logN x) *
+      ofK (q.values.getD x 0) = L.gadgetValue s q by
+    rw [h]
+  have hR : range (2 ^ L.logN) = range (2 ^ L.logLane * 2 ^ laneFold) := by
+    rw [← pow_add, ← hL.logN_eq]
+  rw [Fin.sum_univ_eq_sum_range (fun x ↦ L.gadgetWeight (boolPoint L.logN x) *
+    ofK (q.values.getD x 0)) (2 ^ L.logN), hR, sum_range_mul_split]
+  have hW : ∀ l ∈ range (2 ^ laneFold), ∀ y ∈ range (2 ^ L.logLane),
+      L.gadgetWeight (boolPoint L.logN (y + 2 ^ L.logLane * l)) *
+          ofK (q.values.getD (y + 2 ^ L.logLane * l) 0) =
+        gadgetSum (L.gadgetParts 1) (laneEqs L.lanes.length (boolPoint laneFold l))
+          (boolPoint L.logLane y) * ofK (stackAt q L.logLane l y) := by
+    intro l hl y hy
+    have hx : boolPoint L.logN (y + 2 ^ L.logLane * l) =
+        boolPoint L.logLane y ++ boolPoint laneFold l := by
+      rw [hL.logN_eq]
+      exact LeanVM.Protocol.Whir.Complete.boolPoint_add _ _ _ _ (mem_range.1 hy)
+    have hlen : (boolPoint L.logLane y).length = L.logLane := boolPoint_length' _ _
+    rw [Layout.gadgetWeight, hx, List.take_left' hlen, List.drop_left' hlen]
+    rfl
+  rw [Finset.sum_congr rfl fun l hl ↦ Finset.sum_congr rfl fun y hy ↦ hW l hl y hy]
+  have hparts : L.gadgetParts 1 = (List.range 3).map fun g ↦
+      (gadgetLanes g, (List.range 3).map fun i ↦ (gadgetEntry s g i, 1 * gadgetBeta i)) := by
+    simp only [Layout.gadgetParts, hL.piece]
+  have h9 : gadget < 2 ^ s := hL.gadget_lt
+  have hsl : 2 ^ s < 2 ^ L.logLane := Nat.pow_lt_pow_right (by norm_num) hL.s_lt
+  rw [gadgetSum_cube hL.lanes_le _ ?_ ?_ (fun l y ↦ ofK (stackAt q L.logLane l y)), hparts]
+  · simp only [Layout.gadgetValue, List.map_map]
+    refine congrArg List.sum (List.map_congr_left fun g _ ↦ ?_)
+    simp only [Function.comp, List.map_map]
+    refine congrArg List.sum (List.map_congr_left fun i _ ↦ ?_)
+    simp only [Function.comp, one_mul]
+  · intro pe hpe l hl
+    rw [hparts, List.mem_map] at hpe
+    obtain ⟨g, hg, rfl⟩ := hpe
+    exact hL.gadget_lanes g (List.mem_range.1 hg) l hl
+  · intro pe hpe yb hyb
+    rw [hparts, List.mem_map] at hpe
+    obtain ⟨g, hg, rfl⟩ := hpe
+    obtain ⟨i, hi, rfl⟩ := List.mem_map.1 hyb
+    have hg' := List.mem_range.1 hg
+    have hi' := List.mem_range.1 hi
+    show gadgetEntry s g i < 2 ^ L.logLane
+    unfold gadgetEntry
+    unfold gadget at h9 ⊢
+    omega
+
+end Gadget
+
 /-! ## Every layout -/
 
 /-- **What the meaning of the claims needs of a layout**: a public one whose blocks are a valid
@@ -822,37 +846,63 @@ theorem Layout.holds_iff (L : Layout) (hL : L.Valid) (c : Claim) (hc : c.point.l
     unfold Layout.tableEval Layout.table
     rw [hH.piece]
 
+/-- **The gadget holds of a stack**: in a hidden layout of pieces `2^s`, its value is zero;
+nothing to hold in a public layout. -/
+def Layout.GadgetHolds (L : Layout) (q : Column L.logN) : Prop :=
+  match L.logPiece with
+  | some s => L.gadgetValue s q = 0
+  | none => True
+
+/-- The stack claims the opening adds hold exactly when the gadget does. -/
+theorem Layout.extra_holds_iff (L : Layout) (hL : L.Valid) (q : Column L.logN) :
+    (∀ sc ∈ L.extra, StackClaim.Holds L.logN sc q) ↔ L.GadgetHolds q := by
+  rcases hL with ⟨hP, -⟩ | ⟨s, hH⟩
+  · rw [Layout.extra_of_none hP.1]
+    simp [Layout.GadgetHolds, hP.1]
+  · rw [Layout.extra_of_some hH.piece]
+    simp only [List.mem_singleton, forall_eq]
+    rw [gadget_holds_iff hH q]
+    simp [Layout.GadgetHolds, hH.piece]
+
 /-- **The opening's doom in table terms**, for every valid layout: the level-0 commitment has the
-stack's shape, and every candidate's table violates one of the claims. -/
+stack's shape, and every candidate's table violates one of the claims or the candidate violates
+the gadget (a hidden layout's stack claim of value zero). -/
 theorem Layout.openingDoom_iff (L : Layout) (hL : L.Valid) (R : ℕ) (claims : List Claim)
     (hc : ∀ c ∈ claims, c.point.length = L.vars) (cs : List (ℕ × ℕ × Word)) :
     OpeningDoom L.stacking R claims cs ↔
       LeanVM.Protocol.Whir.Sound.ShapeOK 0 (code₀ L.logN R) laneBits cs ∧
         ∀ q ∈ Candidates L.logN R (code₀ L.logN R).thr (LeanVM.Protocol.Whir.Sound.wordOf cs 0),
-          ∃ c ∈ claims, L.tableEval q c.point ≠ c.value := by
+          (∃ c ∈ claims, L.tableEval q c.point ≠ c.value) ∨ ¬ L.GadgetHolds q := by
   unfold OpeningDoom LeanVM.Protocol.Whir.Sound.StackedPre
   refine and_congr Iff.rfl (forall₂_congr fun q _ ↦ ?_)
+  rw [← L.extra_holds_iff hL q]
   constructor
   · rintro ⟨sc, hsc, hn⟩
-    obtain ⟨c, hcm, rfl⟩ := List.mem_map.1 hsc
-    exact ⟨c, hcm, fun h ↦ hn ((L.holds_iff hL c (hc c hcm) q).2 h)⟩
-  · rintro ⟨c, hcm, hn⟩
-    exact ⟨_, List.mem_map.2 ⟨c, hcm, rfl⟩, fun h ↦ hn ((L.holds_iff hL c (hc c hcm) q).1 h)⟩
+    rcases List.mem_append.1 hsc with hsc | hsc
+    · obtain ⟨c, hcm, rfl⟩ := List.mem_map.1 hsc
+      exact Or.inl ⟨c, hcm, fun h ↦ hn ((L.holds_iff hL c (hc c hcm) q).2 h)⟩
+    · exact Or.inr fun h ↦ hn (h sc hsc)
+  · rintro (⟨c, hcm, hn⟩ | hg)
+    · exact ⟨_, List.mem_append_left _ (List.mem_map.2 ⟨c, hcm, rfl⟩),
+        fun h ↦ hn ((L.holds_iff hL c (hc c hcm) q).1 h)⟩
+    · push_neg at hg
+      obtain ⟨sc, hsc, hn⟩ := hg
+      exact ⟨sc, List.mem_append_right _ hsc, hn⟩
 
 /-- **Joint extraction**: a root's commitment of the stack's shape that is not doomed for an
-opening has one candidate whose table satisfies all of that opening's claims. -/
+opening has one candidate whose table satisfies all of that opening's claims, and which satisfies
+the gadget. -/
 theorem Layout.joint_of_not_doom (L : Layout) (hL : L.Valid) (R : ℕ) (claims : List Claim)
     (hc : ∀ c ∈ claims, c.point.length = L.vars) (cs : List (ℕ × ℕ × Word))
     (hshape : LeanVM.Protocol.Whir.Sound.ShapeOK 0 (code₀ L.logN R) laneBits cs)
     (hnot : ¬ OpeningDoom L.stacking R claims cs) :
     ∃ q ∈ Candidates L.logN R (code₀ L.logN R).thr (LeanVM.Protocol.Whir.Sound.wordOf cs 0),
-      ∀ c ∈ claims, L.tableEval q c.point = c.value := by
+      (∀ c ∈ claims, L.tableEval q c.point = c.value) ∧ L.GadgetHolds q := by
   rw [L.openingDoom_iff hL R claims hc cs] at hnot
   by_contra hno
   refine hnot ⟨hshape, fun q hq ↦ ?_⟩
   by_contra hall
-  exact hno ⟨q, hq, fun c hcm ↦ by
-    by_contra hne
-    exact hall ⟨c, hcm, hne⟩⟩
+  push_neg at hall
+  exact hno ⟨q, hq, hall.1, hall.2⟩
 
 end WhirBridge

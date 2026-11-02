@@ -22,9 +22,11 @@
 //!
 //! A **hidden** layout ([`Layout::hidden`]) makes the commitment and its opening independent of the table given
 //! the claims (`HIDING.md`): every lane's first piece of `2^LOG_PIECE` entries is random, the pieces the table's
-//! blocks give up sit in one *overflow* lane, and a few lanes are random. The weight is zero on the
-//! randomness, or, on the overflow lane's *share*, cancels in every claim, so the claims, their values and the
-//! verifier are those of the table.
+//! blocks give up sit in one *overflow* lane, and seven lanes are random. The claims weigh nothing of the
+//! randomness. At the last [`GADGET`] entries of the first piece the opening adds a fixed weight, the *gadget*,
+//! on random values that cancel it (a pair of lanes holding one value, or a lane holding zero): it weighs
+//! nothing in any claim either, so the claims, their values and the verifier's checks are those of the table,
+//! and it is what makes the lane rounds of WHIR's first fold uniform for every challenge (`HIDING.md`).
 
 use fiat_shamir::digest_words;
 use fiat_shamir::merkle::Hash;
@@ -33,7 +35,8 @@ use pcs::whir::{LaneTensor, commit_tree_in, config_for_rate, recursive_prover_wi
 use primitives::field::{F64, F192, powers};
 use primitives::hash::hash as keccak256;
 use primitives::multilinear::{eq_table, mle_eval, mle_eval_par};
-use rand::{RngCore, SeedableRng, rngs::StdRng};
+use rand::{RngCore, SeedableRng};
+use rand_chacha::ChaCha12Rng;
 
 const LABEL: &[u8] = b"pcs-quotient-opening";
 
@@ -48,8 +51,35 @@ pub const VERSION: u64 = 2;
 pub const LANE_FOLD: usize = 6;
 
 /// A hidden lane's first piece: `2^LOG_PIECE` random entries, the coefficients of the basis polynomials of
-/// degree below `2^LOG_PIECE`. It must exceed the positions WHIR opens at its first level (at most 225).
+/// degree below `2^LOG_PIECE`. Those below `2^LOG_PIECE - GADGET` must exceed the positions WHIR opens at its
+/// first level (at most 225).
 pub const LOG_PIECE: usize = 8;
+
+/// The gadget's entries, the last of every lane's first piece: three patterns of three entries. Pattern `g`
+/// weighs its lanes ([`gadget_lanes`]) by `β_i` at its entry `i` ([`Layout::gadget_entry`]), `β = 1, t, t²` the
+/// basis of `E` over `K`; the values there cancel it.
+pub const GADGET: usize = 9;
+
+/// The hidden layouts' overflow lane: the first of the upper half, with the seven random lanes after it (the
+/// cube of lanes `32..40`).
+pub const OVERFLOW_LANE: usize = 32;
+
+/// The random lanes a hidden layout takes at least: with the overflow lane, the cube of lanes `32..40`.
+pub const MIN_RANDOM_LANES: usize = 7;
+
+/// The lanes of gadget pattern `g`: `0` and `31`, `1` and `30` (pairs complementary in the lower half, each
+/// holding one random value), then the overflow lane alone (holding zero).
+pub fn gadget_lanes(g: usize) -> &'static [usize] {
+    const LANES: [&[usize]; 3] = [&[0, 31], &[1, 30], &[OVERFLOW_LANE]];
+    LANES[g]
+}
+
+/// `β_i`, the gadget's weight at a pattern's entry `i`: the basis `1, t, t²` of `E` over `K`.
+pub fn gadget_beta(i: usize) -> F192 {
+    let mut c = [0u64; 3];
+    c[i] = 1;
+    F192::new(c[0], c[1], c[2])
+}
 
 /// A claim: the table's multilinear extension at `point` is `value`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,12 +91,11 @@ pub struct Claim {
 /// What a lane of the stack holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lane {
-    /// The table's block of `2^log_lane` entries (in a hidden layout, all of it but one piece, in an order of
-    /// pieces that depends on the lane's parity).
+    /// The table's block of `2^log_lane` entries (in a hidden layout, all of it but its first piece).
     Block(usize),
     /// Pieces of the table, at its pieces `1, 2, ...`: [`Layout::pieces`].
     Overflow,
-    /// Randomness: but for the share lane's pieces `1, 2, ...` (one share of the overflow lane's).
+    /// Randomness.
     Random,
 }
 
@@ -84,9 +113,6 @@ pub struct Layout {
     /// The table's pieces at the overflow lane's pieces `1, 2, ...`: the piece each block lane gives up, in lane
     /// order, then the pieces of what the chunks hold past their whole blocks.
     pieces: Vec<usize>,
-    /// The random lane whose pieces `1..=pieces.len()` are a share of the overflow lane's: the table's piece
-    /// is the sum of the two, and both carry its weight.
-    share: Option<usize>,
 }
 
 impl Layout {
@@ -112,15 +138,14 @@ impl Layout {
             lanes: blocks.into_iter().map(Lane::Block).collect(),
             log_piece: None,
             pieces: vec![],
-            share: None,
         }
     }
 
-    /// The hidden layout of the same chunks, with `random` random lanes, `L` lanes in all: a lane per whole
-    /// block of a chunk, the overflow lane `L - 2` for the pieces the blocks give up and the chunks' tails, the
-    /// share lane `L - 1`, and the other random lanes on odd lanes, spread from lane `1` up. Block lane `l`
-    /// holds its block's piece `k ⊕ (l mod 2)` at its piece `k`: its first piece is random, and the block's
-    /// piece `l mod 2` is on the overflow lane.
+    /// The hidden layout of the same chunks, with `random` random lanes (at least [`MIN_RANDOM_LANES`]): the
+    /// first `32` whole blocks of the chunks on lanes `0..32` (random lanes there if there are fewer), the
+    /// overflow lane [`OVERFLOW_LANE`] for the pieces the blocks give up and the chunks' tails, the random lanes
+    /// after it, then the other blocks. A block lane holds its block but for its first piece, which is random;
+    /// the block's first piece is on the overflow lane.
     pub fn hidden(vars: usize, log_chunk: usize, log_n: usize, chunks: &[(usize, usize)], random: usize) -> Self {
         Self::hidden_with(vars, log_chunk, log_n, chunks, random, LOG_PIECE)
     }
@@ -136,6 +161,10 @@ impl Layout {
     ) -> Self {
         let log_lane = log_n - LANE_FOLD;
         assert!(log_piece < log_lane && log_lane <= log_chunk && log_chunk <= vars);
+        assert!(
+            GADGET < 1 << log_piece,
+            "a first piece of 2^{log_piece} entries has no room past the gadget"
+        );
         let (mut blocks, mut tails) = (vec![], vec![]);
         for &(chunk, len) in chunks {
             assert!(chunk >> (vars - log_chunk) == 0 && len <= 1 << log_chunk);
@@ -146,25 +175,17 @@ impl Layout {
             let tail = len - (whole << log_lane);
             tails.extend((0..tail.div_ceil(1 << log_piece)).map(|j| at + j));
         }
-        let total = blocks.len() + 1 + random;
-        assert!(random >= 4 && total <= 1 << LANE_FOLD, "{total} lanes");
-        let mut lanes = vec![None; total];
-        lanes[total - 1] = Some(Lane::Random);
-        lanes[total - 2] = Some(Lane::Overflow);
-        // The other random lanes: odd, at the start of each of `random - 1` even spans of the pairs below, so
-        // lane `1` (zero in every bit the rounds after the first read) is one.
-        let pairs = (total - 2) / 2;
-        for k in 0..random - 1 {
-            lanes[2 * (k * pairs / (random - 1)) + 1] = Some(Lane::Random);
-        }
-        assert_eq!(lanes.iter().flatten().count(), random + 1, "distinct random lanes");
-        let mut blocks = blocks.into_iter();
-        let lanes: Vec<Lane> = lanes
-            .into_iter()
-            .map(|lane| lane.unwrap_or_else(|| Lane::Block(blocks.next().expect("a block per lane"))))
+        assert!(random >= MIN_RANDOM_LANES, "{random} random lanes");
+        let lower = blocks.len().min(OVERFLOW_LANE);
+        let lanes: Vec<Lane> = (blocks[..lower].iter().map(|&b| Lane::Block(b)))
+            .chain((lower..OVERFLOW_LANE).map(|_| Lane::Random))
+            .chain([Lane::Overflow])
+            .chain((0..random).map(|_| Lane::Random))
+            .chain(blocks[lower..].iter().map(|&b| Lane::Block(b)))
             .collect();
-        let given_up = lanes.iter().enumerate().filter_map(|(l, lane)| match *lane {
-            Lane::Block(b) => Some((b << (log_lane - log_piece)) | (l & 1)),
+        assert!(lanes.len() <= 1 << LANE_FOLD, "{} lanes", lanes.len());
+        let given_up = lanes.iter().filter_map(|lane| match *lane {
+            Lane::Block(b) => Some(b << (log_lane - log_piece)),
             _ => None,
         });
         let pieces: Vec<usize> = given_up.chain(tails).collect();
@@ -179,7 +200,6 @@ impl Layout {
             lanes,
             log_piece: Some(log_piece),
             pieces,
-            share: Some(total - 1),
         }
     }
 
@@ -224,9 +244,21 @@ impl Layout {
         self.lanes.iter().position(|&lane| lane == Lane::Overflow)
     }
 
-    /// The random lane holding a share of the overflow lane's pieces.
-    pub fn share(&self) -> Option<usize> {
-        self.share
+    /// The entry of gadget pattern `g` at which it weighs its lanes by `β_i`, in every lane's first piece.
+    pub fn gadget_entry(&self, g: usize, i: usize) -> usize {
+        assert!(g < 3 && i < 3);
+        (1 << self.log_piece.expect("a hidden layout")) - GADGET + 3 * g + i
+    }
+
+    /// The gadget's weight on entry `y` of lane `l` (zero in a public layout).
+    pub fn gadget_at(&self, l: usize, y: usize) -> F192 {
+        let Some(s) = self.log_piece else {
+            return F192::ZERO;
+        };
+        match y.checked_sub((1 << s) - GADGET) {
+            Some(k) if k < GADGET && gadget_lanes(k / 3).contains(&l) => gadget_beta(k % 3),
+            _ => F192::ZERO,
+        }
     }
 
     /// Leading entries of the table's `chunk` (of `2^log_chunk`) the stack holds.
@@ -269,38 +301,21 @@ impl Layout {
     }
 
     /// A claim's weight on the stack, scaled by `scale`, as lane tensors: in a public layout, the point's `eq` on
-    /// the lane's coordinates on every lane; in a hidden one, that `eq` past the first piece on even block lanes,
-    /// the same with the pieces of each pair swapped on odd ones, and the overflow pieces' on the overflow and
-    /// share lanes.
+    /// the lane's coordinates on every lane; in a hidden one, that `eq` past the first piece on the block lanes,
+    /// and the overflow pieces' on the overflow lane. The opening's weight adds the gadget once
+    /// ([`Layout::weight`]).
     pub fn tensors(&self, point: &[F192], scale: F192) -> Vec<LaneTensor> {
         let log_lane = self.log_lane();
         let (lanes, pieces) = self.scales(point);
-        let low = eq_table(&point[..log_lane]);
+        let mut low = eq_table(&point[..log_lane]);
+        let scales: Vec<F192> = lanes.iter().map(|&w| scale * w).collect();
         let Some(s) = self.log_piece else {
-            return vec![LaneTensor {
-                scales: lanes.iter().map(|&w| scale * w).collect(),
-                low,
-            }];
+            return vec![LaneTensor { scales, low }];
         };
         let piece = 1 << s;
-        let parity = |odd: usize| -> Vec<F192> {
-            lanes
-                .iter()
-                .enumerate()
-                .map(|(l, &w)| if l & 1 == odd { scale * w } else { F192::ZERO })
-                .collect()
-        };
-        // Even block lanes: the point's `eq`, zero on the first piece; odd ones: that of the pieces swapped.
-        let mut odd = vec![F192::ZERO; 1 << log_lane];
-        parallel::chunks_mut(&mut odd, 2 * piece, |pair, out| {
-            let at = pair * 2 * piece;
-            out[..piece].copy_from_slice(&low[at + piece..at + 2 * piece]);
-            out[piece..].copy_from_slice(&low[at..at + piece]);
-        });
-        odd[..piece].fill(F192::ZERO);
-        let mut even = low;
-        even[..piece].fill(F192::ZERO);
-        // The overflow lane and its share: each piece's `eq` below the piece, times the piece's scale.
+        // The block lanes: the point's `eq`, zero on the first piece.
+        low[..piece].fill(F192::ZERO);
+        // The overflow lane: each piece's `eq` below the piece, times the piece's scale.
         let piece_low = eq_table(&point[..s]);
         let mut overflow = vec![F192::ZERO; 1 << log_lane];
         for (k, &w) in pieces.iter().enumerate() {
@@ -309,15 +324,56 @@ impl Layout {
         }
         let mut on_overflow = vec![F192::ZERO; self.lanes()];
         on_overflow[self.overflow().expect("an overflow lane")] = scale;
-        on_overflow[self.share.expect("a share lane")] = scale;
-        let (even_scales, odd_scales) = (parity(0), parity(1));
-        // A tensor that is zero (a claim on blocks of one parity, or on no overflow piece) is left out.
+        // A tensor that is zero (a claim on no block, or on no overflow piece) is left out.
         let zero = |v: &[F192]| v.iter().all(|x| x.is_zero());
-        [(even_scales, even), (odd_scales, odd), (on_overflow, overflow)]
+        [(scales, low), (on_overflow, overflow)]
             .into_iter()
             .filter(|(scales, low)| !zero(scales) && !zero(low))
             .map(|(scales, low)| LaneTensor { scales, low })
             .collect()
+    }
+
+    /// The opening's weight for claims at the given points, each scaled by its challenge, as lane tensors: the
+    /// claims' [`Layout::tensors`], and in a hidden layout the gadget scaled by `gadget` (the opening's next power
+    /// of the challenge: the gadget is one more claim, of value zero, so that the opening binds the stack to weigh
+    /// it zero). The overflow lane's tensors, the claims' and the gadget's third pattern, are one (they share
+    /// their lane), so a hidden layout's weight is a tensor a claim on its blocks, one on its overflow lane and one
+    /// a pair of the gadget.
+    pub fn weight<'a>(&self, claims: impl IntoIterator<Item = (&'a [F192], F192)>, gadget: F192) -> Vec<LaneTensor> {
+        let tensors = claims.into_iter().flat_map(|(point, scale)| self.tensors(point, scale));
+        let Some(s) = self.log_piece else {
+            return tensors.collect();
+        };
+        let (lanes, lane) = (self.lanes(), 1usize << self.log_lane());
+        let overflow = self.overflow().expect("an overflow lane");
+        let pattern = |g: usize| -> LaneTensor {
+            let mut scales = vec![F192::ZERO; lanes];
+            gadget_lanes(g).iter().for_each(|&l| scales[l] = F192::ONE);
+            let mut low = vec![F192::ZERO; lane];
+            (0..3).for_each(|i| low[self.gadget_entry(g, i)] = gadget * gadget_beta(i));
+            LaneTensor { scales, low }
+        };
+        let mut on_overflow = pattern(2);
+        let mut out = vec![];
+        for tensor in tensors {
+            let scale = tensor.scales[overflow];
+            if !scale.is_zero()
+                && tensor
+                    .scales
+                    .iter()
+                    .enumerate()
+                    .all(|(l, x)| l == overflow || x.is_zero())
+            {
+                let low = &mut on_overflow.low[1 << s..];
+                low.iter_mut()
+                    .zip(&tensor.low[1 << s..])
+                    .for_each(|(o, &e)| *o += scale * e);
+            } else {
+                out.push(tensor);
+            }
+        }
+        out.extend([on_overflow, pattern(0), pattern(1)]);
+        out
     }
 
     /// The weight of a claim at `point` on entry `y` of lane `l`, from the claim's [`Layout::scales`]: what
@@ -331,9 +387,9 @@ impl Layout {
         let piece = y >> s;
         match self.lanes[l] {
             _ if piece == 0 => F192::ZERO,
-            Lane::Block(_) => scales.0[l] * eq_bits(low, y ^ ((l & 1) << s)),
-            Lane::Random if self.share != Some(l) => F192::ZERO,
-            _ => match scales.1.get(piece - 1) {
+            Lane::Block(_) => scales.0[l] * eq_bits(low, y),
+            Lane::Random => F192::ZERO,
+            Lane::Overflow => match scales.1.get(piece - 1) {
                 Some(&w) => w * eq_bits(&point[..s], y & ((1 << s) - 1)),
                 None => F192::ZERO,
             },
@@ -354,12 +410,13 @@ pub struct Table {
     pub stack: Vec<F64>,
 }
 
-/// Lane `l`'s generator: ChaCha (`StdRng`) keyed by Keccak-256 of the table's seed and the lane.
-fn lane_rng(seed: &[u8; 32], l: usize) -> StdRng {
-    StdRng::from_seed(keccak256(&[&seed[..], &(l as u64).to_le_bytes()].concat()))
+/// Lane `l`'s generator: ChaCha12, named (not `rand`'s `StdRng`, whose algorithm may change between versions),
+/// keyed by Keccak-256 of the table's seed and the lane.
+fn lane_rng(seed: &[u8; 32], l: usize) -> ChaCha12Rng {
+    ChaCha12Rng::from_seed(keccak256(&[&seed[..], &(l as u64).to_le_bytes()].concat()))
 }
 
-fn fill_random(rng: &mut StdRng, out: &mut [F64]) {
+fn fill_random(rng: &mut ChaCha12Rng, out: &mut [F64]) {
     out.iter_mut().for_each(|w| *w = F64(rng.next_u64()));
 }
 
@@ -411,7 +468,8 @@ impl Table {
 
     /// A table of a hidden layout: `entries(start, out)` writes the table's entries `start..start + out.len()`
     /// (a run of whole pieces of one block, or a piece), and everything else the stack holds is uniform, drawn
-    /// from `seed`, which must be 32 uniformly random bytes known to no one else.
+    /// from `seed`, which must be 32 uniformly random bytes known to no one else, but at the gadget's entries:
+    /// there each pair of a pattern holds one value, and the overflow lane zero.
     pub fn hidden(layout: Layout, seed: &[u8; 32], entries: impl Fn(usize, &mut [F64]) + Sync) -> Self {
         Self::hidden_in(layout, Vec::new(), seed, entries)
     }
@@ -430,7 +488,6 @@ impl Table {
         let log_lane = layout.log_lane();
         let piece = 1 << s;
         let held = layout.pieces.len();
-        let share = layout.share.expect("a share lane");
         let mut buffer = reuse(buffer, layout.placed());
         let entries = |start: usize, out: &mut [F64]| {
             entries(start, out);
@@ -438,36 +495,30 @@ impl Table {
         };
         parallel::chunks_mut(&mut buffer, 1 << log_lane, |l, out| {
             let mut rng = lane_rng(seed, l);
+            // Every lane's first piece, the gadget's entries included.
+            fill_random(&mut rng, &mut out[..piece]);
             match layout.lanes[l] {
-                Lane::Block(b) => {
-                    fill_random(&mut rng, &mut out[..piece]);
-                    if l & 1 == 0 {
-                        entries((b << log_lane) + piece, &mut out[piece..]);
-                    } else {
-                        // Pieces `2i` and `2i + 1` swapped: piece `1` is the block's piece `0`.
-                        for (k, at) in out.chunks_exact_mut(piece).enumerate().skip(1) {
-                            entries((b << log_lane) + (k ^ 1) * piece, at);
-                        }
-                    }
-                }
+                Lane::Block(b) => entries((b << log_lane) + piece, &mut out[piece..]),
                 Lane::Overflow => {
-                    fill_random(&mut rng, &mut out[..piece]);
-                    fill_random(&mut rng, &mut out[(held + 1) * piece..]);
                     for (k, &p) in layout.pieces.iter().enumerate() {
                         entries(p * piece, &mut out[(k + 1) * piece..(k + 2) * piece]);
                     }
-                    // The share lane holds `ρ` at its pieces `1..=held` (its generator's stream there): the
-                    // overflow lane holds the table's pieces plus `ρ`.
-                    let mut rho = vec![F64::ZERO; (held + 1) * piece];
-                    fill_random(&mut lane_rng(seed, share), &mut rho);
-                    out[piece..(held + 1) * piece]
-                        .iter_mut()
-                        .zip(&rho[piece..])
-                        .for_each(|(o, &r)| *o += r);
+                    fill_random(&mut rng, &mut out[(held + 1) * piece..]);
                 }
-                Lane::Random => fill_random(&mut rng, out),
+                Lane::Random => fill_random(&mut rng, &mut out[piece..]),
             }
         });
+        // The gadget's values: a pair's second lane takes its first lane's, the overflow lane zero.
+        for g in 0..3 {
+            for i in 0..3 {
+                let y = layout.gadget_entry(g, i);
+                match *gadget_lanes(g) {
+                    [a, b] => buffer[(b << log_lane) + y] = buffer[(a << log_lane) + y],
+                    [a] => buffer[(a << log_lane) + y] = F64::ZERO,
+                    _ => unreachable!(),
+                }
+            }
+        }
         Self { layout, stack: buffer }
     }
 
@@ -479,20 +530,14 @@ impl Table {
         let (piece, log_lane) = (1usize << s, layout.log_lane());
         assert!(start.is_multiple_of(piece) && out.len().is_multiple_of(piece));
         let lane = |l: usize| &self.stack[l << log_lane..(l + 1) << log_lane];
-        let (overflow, share) = (
-            lane(layout.overflow().expect("an overflow lane")),
-            lane(layout.share.expect("a share lane")),
-        );
+        let overflow = lane(layout.overflow().expect("an overflow lane"));
         parallel::chunks_mut(out, piece, |j, out| {
             let p = (start >> s) + j;
             if let Some(k) = layout.pieces.iter().position(|&q| q == p) {
-                let at = (k + 1) * piece..(k + 2) * piece;
-                out.iter_mut()
-                    .zip(&overflow[at.clone()])
-                    .zip(&share[at])
-                    .for_each(|((o, &a), &b)| *o = a + b);
+                out.copy_from_slice(&overflow[(k + 1) * piece..(k + 2) * piece]);
             } else if let Some(l) = layout.lanes.iter().position(|&x| x == Lane::Block(p >> (log_lane - s))) {
-                let k = (p & ((1 << (log_lane - s)) - 1)) ^ (l & 1);
+                // A block's first piece is on the overflow lane, found above.
+                let k = p & ((1 << (log_lane - s)) - 1);
                 out.copy_from_slice(&lane(l)[k * piece..(k + 1) * piece]);
             } else {
                 out.fill(F64::ZERO);
@@ -522,15 +567,13 @@ impl Table {
                 acc + match layout.lanes[l] {
                     Lane::Block(_) if lanes[l].is_zero() => F192::ZERO,
                     Lane::Block(_) => {
-                        // An odd lane's pieces are swapped in pairs: its point's coordinate `s` is flipped.
-                        let mut low = point[..log_lane].to_vec();
-                        low[s] += F192::from(F64((l & 1) as u64));
                         // The first piece is not the table's: its share of the lane's `eq` is taken out.
+                        let low = &point[..log_lane];
                         let first_share = low[s..].iter().fold(F192::ONE, |w, &p| w * (F192::ONE + p));
-                        lanes[l] * (mle_eval_par(lane, &low) + first_share * mle_eval(&lane[..piece], &point[..s]))
+                        lanes[l] * (mle_eval_par(lane, low) + first_share * mle_eval(&lane[..piece], &point[..s]))
                     }
-                    Lane::Random if layout.share != Some(l) => F192::ZERO,
-                    _ => pieces.iter().enumerate().fold(F192::ZERO, |sum, (k, &w)| {
+                    Lane::Random => F192::ZERO,
+                    Lane::Overflow => pieces.iter().enumerate().fold(F192::ZERO, |sum, (k, &w)| {
                         sum + w * mle_eval(&lane[(k + 1) * piece..(k + 2) * piece], &point[..s])
                     }),
                 }
@@ -612,7 +655,8 @@ fn put(bytes: &mut Vec<u8>, n: usize) {
 /// (a hidden layout's parameters included) never share a prefix. Encoded as 8-byte little-endian integers: the
 /// table's variables, the stack's, the number of lanes, each lane (its kind, `0` a block, `1` the overflow lane,
 /// `2` a random lane, then the block or `0`), then the piece's `log` (absent: `0`; present: `1` then the value),
-/// the number of overflow pieces and each of them, and the share lane (as the piece). A field added to
+/// the number of overflow pieces and each of them, and the gadget (`0` in a public layout; in a hidden one
+/// [`GADGET`] then each pattern's number of lanes, its lanes and its three entries). A field added to
 /// [`Layout`] must be added here: the destructuring does not compile without it.
 pub fn layout_id(layout: &Layout) -> [u8; 32] {
     let mut bytes = vec![];
@@ -627,7 +671,6 @@ fn encode_layout(layout: &Layout, bytes: &mut Vec<u8>) {
         lanes,
         log_piece,
         pieces,
-        share,
     } = layout;
     let option = |bytes: &mut Vec<u8>, value: &Option<usize>| match *value {
         None => put(bytes, 0),
@@ -648,7 +691,20 @@ fn encode_layout(layout: &Layout, bytes: &mut Vec<u8>) {
     option(bytes, log_piece);
     put(bytes, pieces.len());
     pieces.iter().for_each(|&p| put(bytes, p));
-    option(bytes, share);
+    // The gadget, which a hidden layout's opening adds to the weight: none in a public layout (`0`, as the share
+    // lane a public layout had none of); in a hidden one [`GADGET`], then each pattern's lanes (their number, then
+    // each) and its three entries.
+    match log_piece {
+        None => put(bytes, 0),
+        Some(_) => {
+            put(bytes, GADGET);
+            for g in 0..3 {
+                put(bytes, gadget_lanes(g).len());
+                gadget_lanes(g).iter().for_each(|&l| put(bytes, l));
+                (0..3).for_each(|i| put(bytes, layout.gadget_entry(g, i)));
+            }
+        }
+    }
 }
 
 /// Prove every one of `claims` on one committed table, in one opening.
@@ -678,18 +734,16 @@ fn open_stack(
     let config = config_for_rate(layout.log_n, LOG_INV_RATE).expect("a WHIR shape leanVM supports");
     let mut ps = ProverState::new(digest_words(&iv(layout, claims)), digest_words(&PUBLIC_DIGEST));
     ps.add_root(root);
-    let lambdas = powers(ps.sample(), claims.len());
+    // One power of the challenge a claim, and in a hidden layout the next for the gadget.
+    let lambdas = powers(ps.sample(), claims.len() + 1);
     let target = claims
         .iter()
         .zip(&lambdas)
         .fold(F192::ZERO, |acc, (c, &l)| acc + l * c.value);
-    // The combined weight on the stack, as lane tensors ([`Layout::tensors`]), each claim's scaled by its power of
-    // the challenge. The prover never writes the weight out.
-    let weight: Vec<LaneTensor> = claims
-        .iter()
-        .zip(&lambdas)
-        .flat_map(|(claim, &lambda)| layout.tensors(&claim.point, lambda))
-        .collect();
+    // The combined weight on the stack, as lane tensors ([`Layout::weight`]), each claim's scaled by its power of
+    // the challenge, and a hidden layout's gadget. The prover never writes the weight out.
+    let parts = claims.iter().zip(&lambdas).map(|(c, &l)| (&c.point[..], l));
+    let weight: Vec<LaneTensor> = layout.weight(parts, lambdas[claims.len()]);
     recursive_prover_with_lane_tensors(&config, layout.log_n, stack, &weight, target, None, tree, &mut ps);
     ps.into_proof()
 }
@@ -734,7 +788,8 @@ pub fn verify(
     use verifier::{Digest, E, Transcript};
     let one = E::new(1, 0, 0);
     let zero = E::new(0, 0, 0);
-    if claims.iter().any(|claim| claim.point.len() != layout.vars) {
+    // An opening of no claims proves nothing (its target and weight are zero), and `PCS_OPEN` takes at least one.
+    if claims.is_empty() || claims.iter().any(|claim| claim.point.len() != layout.vars) {
         return Err(verifier::VerifierError::WhirShape);
     }
     let mut transcript = Transcript::new(proof, Digest(iv(layout, claims)), Digest(PUBLIC_DIGEST), true);
@@ -745,7 +800,7 @@ pub fn verify(
     }
     let lambda = transcript.sample();
     let mut lambdas = vec![one];
-    while lambdas.len() < claims.len() {
+    while lambdas.len() <= claims.len() {
         lambdas.push(*lambdas.last().unwrap() * lambda);
     }
     let target = claims
@@ -766,7 +821,21 @@ pub fn verify(
         })
         .collect();
     let lanes = layout.lanes.clone();
-    let (piece, share) = (layout.log_piece, layout.share);
+    let (piece, overflow) = (layout.log_piece, layout.overflow());
+    // The gadget, in a hidden layout: per pattern, its lanes and its entries with their weights, scaled by the
+    // power of the challenge after the claims'.
+    let scale = lambdas[claims.len()];
+    // Per pattern: its lanes, and its entries with their weights.
+    type Pattern = (&'static [usize], Vec<(usize, E)>);
+    let gadget: Vec<Pattern> = match piece {
+        Some(_) => (0..3)
+            .map(|g| {
+                let entries = (0..3).map(|i| (layout.gadget_entry(g, i), scale * ext(gadget_beta(i))));
+                (gadget_lanes(g), entries.collect())
+            })
+            .collect(),
+        None => vec![],
+    };
     let eq1 = move |c: E, p: E| c * p + (one + c) * (one + p);
     let eq = move |a: &[E], b: &[E]| a.iter().zip(b).fold(one, |w, (&c, &p)| w * eq1(c, p));
     let eq_index = move |x: &[E], index: usize| {
@@ -778,33 +847,37 @@ pub fn verify(
         // `x` is a stack point: the lane's coordinates first, then the lane index's six.
         let (low, high) = x.split_at(log_lane);
         let lane_eq: Vec<E> = (0..lanes.len()).map(|l| eq_index(high, l)).collect();
-        parts.iter().fold(zero, |acc, part| {
-            let on = |odd: usize| {
-                lanes.iter().enumerate().fold(zero, |sum, (l, lane)| match lane {
-                    Lane::Block(_) if l & 1 == odd => sum + part.lanes[l] * lane_eq[l],
-                    _ => sum,
-                })
-            };
+        let claims = parts.iter().fold(zero, |acc, part| {
+            let on_blocks = lanes.iter().enumerate().fold(zero, |sum, (l, lane)| match lane {
+                Lane::Block(_) => sum + part.lanes[l] * lane_eq[l],
+                _ => sum,
+            });
             let Some(s) = piece else {
-                return acc + eq(&part.low, low) * (on(0) + on(1));
+                return acc + eq(&part.low, low) * on_blocks;
             };
-            // In-lane weights. Below a piece and above coordinate `s`, every one shares its factors; an odd block
-            // lane flips coordinate `s`; a block lane's first piece is not the table's, so its share of the
-            // lane's `eq`, `eq(·, 0)` above the piece, is taken out.
+            // In-lane weights. Below a piece every one shares its factors; a block lane's first piece is not the
+            // table's, so its share of the lane's `eq`, `eq(·, 0)` above the piece, is taken out; the overflow
+            // lane's piece `k + 1` holds the piece of scale `pieces[k]`.
             let below = eq(&part.low[..s], &low[..s]);
-            let above = eq(&part.low[s + 1..], &low[s + 1..]);
-            let first_above = part.low[s + 1..].iter().fold(one, |w, &p| w * (one + p));
+            let above = eq(&part.low[s..], &low[s..]);
+            let first_above = part.low[s..].iter().fold(one, |w, &p| w * (one + p));
             let first_piece = low[s..].iter().fold(one, |w, &p| w * (one + p));
-            let block = |c: E| above * eq1(c, low[s]) + first_above * (one + c) * first_piece;
-            let (even, odd) = (block(part.low[s]), block(one + part.low[s]));
             let pieces = part
                 .pieces
                 .iter()
                 .enumerate()
                 .fold(zero, |sum, (k, &w)| sum + w * eq_index(&low[s..], k + 1));
-            let on_overflow = lane_eq[layout_overflow(&lanes)] + lane_eq[share.expect("a share lane")];
-            acc + below * (even * on(0) + odd * on(1) + pieces * on_overflow)
-        })
+            let on_overflow = lane_eq[overflow.expect("an overflow lane")];
+            acc + below * ((above + first_above * first_piece) * on_blocks + pieces * on_overflow)
+        });
+        let gadget = gadget.iter().fold(zero, |acc, (pattern, entries)| {
+            let on = pattern.iter().fold(zero, |sum, &l| sum + lane_eq[l]);
+            acc + on
+                * entries
+                    .iter()
+                    .fold(zero, |sum, &(y, beta)| sum + beta * eq_index(low, y))
+        });
+        claims + gadget
     };
     verifier::whir::verify_whir(
         &mut transcript,
@@ -816,13 +889,6 @@ pub fn verify(
         &weight,
     )?;
     transcript.finish().map(|_| ())
-}
-
-fn layout_overflow(lanes: &[Lane]) -> usize {
-    lanes
-        .iter()
-        .position(|&lane| lane == Lane::Overflow)
-        .expect("an overflow lane")
 }
 
 #[cfg(test)]
@@ -875,8 +941,9 @@ mod tests {
         let mut rng = Rng::new(0x0F);
         let (vars, log_chunk, log_n) = (20, 15, 20);
         let chunks = [(3, 1 << 15), (0, 3000), (9, (1 << 14) + 700), (5, 1 << 15)];
-        let layout = Layout::hidden(vars, log_chunk, log_n, &chunks, 4);
-        assert_eq!((layout.lanes(), layout.pieces().len()), (5 + 1 + 4, 5 + 12 + 3));
+        let layout = Layout::hidden(vars, log_chunk, log_n, &chunks, MIN_RANDOM_LANES);
+        // Five blocks on lanes 0..5, random lanes to 32, the overflow lane and seven random lanes.
+        assert_eq!((layout.lanes(), layout.pieces().len()), (32 + 1 + 7, 5 + 12 + 3));
         assert_eq!(layout.covered(log_chunk, 0), 12 << LOG_PIECE);
         assert_eq!(layout.covered(log_chunk, 9), (1 << 14) + (3 << LOG_PIECE));
         // The table: chunk entries are a hash of their index, zero past each chunk's length.
@@ -908,6 +975,24 @@ mod tests {
         let mut wrong = claims.clone();
         wrong[0].value += F192::ONE;
         assert!(!opens(&table, &wrong));
+
+        // A cheating stack whose gadget entries do not cancel it: its weight against the gadget is `δ`, what a
+        // gadget weighed with the first claim (unscaled) would let it add to that claim's value. The opening
+        // weighs the gadget by the power after the claims', so it is bound to zero and the false claim fails.
+        let delta = rng.ext();
+        let mut cheat = Table {
+            layout: layout.clone(),
+            stack: table.stack.clone(),
+        };
+        let log_lane = layout.log_lane();
+        for (i, c) in [delta.c0, delta.c1, delta.c2].into_iter().enumerate() {
+            cheat.stack[(gadget_lanes(0)[1] << log_lane) + layout.gadget_entry(0, i)] += F64(c);
+        }
+        let mut offset = claims.clone();
+        offset[0].value += delta;
+        assert_eq!(cheat.eval(&claims[0].point), claims[0].value, "the table is the same");
+        assert!(!opens(&cheat, &offset), "the gadget offsets no claim");
+        assert!(!opens(&cheat, &claims), "nor opens its true claims");
     }
 
     /// The opening's transcript: the prefix binds the layout (layouts of the same chunks that differ in the stack's
@@ -920,9 +1005,9 @@ mod tests {
         let layouts = [
             Layout::new(20, 15, 20, &chunks),
             Layout::new(20, 15, 21, &chunks),
-            Layout::hidden(20, 15, 20, &chunks, 4),
-            Layout::hidden(20, 15, 20, &chunks, 5),
-            Layout::hidden_with(20, 15, 20, &chunks, 4, 7),
+            Layout::hidden(20, 15, 20, &chunks, 7),
+            Layout::hidden(20, 15, 20, &chunks, 8),
+            Layout::hidden_with(20, 15, 20, &chunks, 7, 7),
         ];
         let claim = Claim {
             point: vec![F192::ONE; 20],

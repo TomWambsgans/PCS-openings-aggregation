@@ -403,7 +403,8 @@ theorem prob_not_foldSpans_le [Fintype K] [Fintype E] [DecidableEq E] [Sampleabl
 
 /-- **The theorem for the hidden layouts, with its bound.** For uniform challenges, the two tables'
 experiments differ on any event by at most the probability that (R) fails plus
-`((2k + |K| + 1)·|E| + |K|^4)/|E|^2` (below `2^-127` at `k = 6`, `|K| = 2^64`, `|E| = 2^192`). -/
+`((2k + |K| + 1)·|E| + |K|^4)/|E|^2` (exactly `2^-127 + 13·2^-192` at `k = 6`, `|K| = 2^64`, `|E| = 2^192`: `Review/HidingReview.lean`, `sTerm_eq`;
+the deployed gadget layout has its own, smaller bound: `GadgetTheorem.lean`). -/
 theorem hidden_prEvent_le_bound [Fintype K] [Fintype E] [DecidableEq E] [SampleableType E]
     [FiniteDimensional K E] (h3 : Module.finrank K E = 3) [SampleableType (ι → Y → K)]
     {Γ : Type} [SampleableType Γ] [Fintype Γ] {m : ℕ} (pos : ι → (Fin k → Bool))

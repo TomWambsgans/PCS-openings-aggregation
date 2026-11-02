@@ -296,7 +296,7 @@ mod tests {
     use primitives::test_rng::Rng;
     use quotient::circuit::{LOG_ROWS, membership, membership_inputs};
     use quotient::opening::commit;
-    use quotient::protocol::{Index, Randomness, prove_with_randomness, verify};
+    use quotient::protocol::{Index, prove_with_seed, verify};
     use quotient::statement::{DEPTH, Secret};
     use revm::primitives::TxKind;
 
@@ -317,8 +317,7 @@ mod tests {
         let index_root = commit(&index.table).root;
         // The proof's seed from the test generator, so that the tests repeat: `prove` draws a fresh one.
         let seed = std::array::from_fn(|_| rng.next_u64() as u8);
-        let randomness = Randomness::derive(&seed, &index_root, &statement, &cells);
-        let proved = prove_with_randomness(&circuit, &index, &index_root, &statement, &cells, &randomness);
+        let proved = prove_with_seed(&circuit, &index, &index_root, &statement, &cells, &seed);
         (index_root, statement, proved.proof)
     }
 
