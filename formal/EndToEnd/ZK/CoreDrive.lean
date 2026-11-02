@@ -188,6 +188,41 @@ theorem runDet_drawO (o : OSt) (hist : List Out) :
   unfold drawO Dx.draw
   simp only [runDet_bind, Duplex.runDet_chalF, runDet_pure, runDet_getMsg]
 
+/-- **A commitment** against the oracle: the rows the renderer sent are the word's, the tree the
+statement's, its root's two scalars absorbed. -/
+theorem runDet_commitNext (o : OSt) (d : ℕ) (word : Compile.Word) (rest : Msg)
+    (h : o.items = Item.rows ((List.range (2 ^ d)).map fun i ↦ (word i).flatMap kBytes) :: rest)
+    (hist : List Out) :
+    runDet P G s (commitNext o d) hist =
+      (⟨(runDet P G s (o.dx.absorbAll
+          [limbsOf (digestScalars (buildTreeM (permId π) d word).run.root).1,
+            limbsOf (digestScalars (buildTreeM (permId π) d word).run.root).2]) hist).1,
+        rest, o.trees ++ [Merkle.treeBytes π d word],
+        o.stream ++ [limbsOf (digestScalars (buildTreeM (permId π) d word).run.root).1,
+          limbsOf (digestScalars (buildTreeM (permId π) d word).run.root).2], o.merkle⟩,
+        (runDet P G s (o.dx.absorbAll
+          [limbsOf (digestScalars (buildTreeM (permId π) d word).run.root).1,
+            limbsOf (digestScalars (buildTreeM (permId π) d word).run.root).2]) hist).2) := by
+  unfold commitNext
+  rw [h]
+  simp only [takeRows]
+  rw [runDet_bind, runDet_mapM_hashH, runDet_bind, Merkle.runDet_levels, runDet_bind, runDet_pure]
+  have hl : ((List.range (2 ^ d)).map fun i ↦ kDet π
+      (((List.range (2 ^ d)).map fun i ↦ (word i).flatMap kBytes).getD i [])) =
+      (List.range (2 ^ d)).map fun i ↦ kDet π ((word i).flatMap kBytes) := by
+    refine List.map_congr_left fun i hi ↦ ?_
+    rw [List.mem_range] at hi
+    rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range hi]
+    rfl
+  have hlv : Merkle.levelsP (fun m ↦ (G (.inl m)).1) d
+      ((List.range (2 ^ d)).map fun i ↦ kDet π ((word i).flatMap kBytes)) =
+      Merkle.treeBytes π d word := (Merkle.tree_levels π d word).symm
+  rw [hl, hlv]
+  have hroot : QuotientZk.Deployed.rootOf (Merkle.treeBytes π d word) =
+      Digest.toBytes (buildTreeM (permId π) d word).run.root := by
+    rw [Merkle.tree_levels]; exact Merkle.tree_root π d word
+  rw [hroot, rootLimbs_toBytes]
+
 theorem drawsIn_pos {evs : List Render.Ev} (h : evs.getLast? = some .draw) : 1 ≤ drawsIn evs := by
   induction evs with
   | nil => simp at h
@@ -351,7 +386,57 @@ theorem drive (hfuel : fuel < 2 ^ 64) : ∀ (evs : List Render.Ev) (o : OSt)
     refine ⟨?_, e2⟩
     rw [e1, List.map_append, List.append_assoc]
   | .commit d :: evs, o, pl, hist, S, sp, cs, rs, str, ops, ms, hI, hT, hH, hL, hn, hmsg, hr => by
-    sorry
+    change (runEvS π fuel evs (Script.afterCommit S)
+      (absorb (permId π) (absorb (permId π) sp (digestScalars (buildTreeM (permId π) d
+        (Script.wordOf S)).run.root).1 dsObserve).run (digestScalars (buildTreeM (permId π) d
+          (Script.wordOf S)).run.root).2 dsObserve).run
+      (cs ++ [(buildTreeM (permId π) d (Script.wordOf S)).run]) pl).map (fun t ↦
+        ((digestScalars (buildTreeM (permId π) d (Script.wordOf S)).run.root).1 ::
+          (digestScalars (buildTreeM (permId π) d (Script.wordOf S)).run.root).2 :: t.1, t.2)) =
+      some (str, ops, ms) at hr
+    obtain ⟨⟨t1, t2, t3⟩, ht, hte⟩ := Option.map_eq_some_iff.mp hr
+    simp only [Prod.mk.injEq] at hte
+    obtain ⟨rfl, rfl, rfl⟩ := hte
+    have hitems : o.items = Item.rows ((List.range (2 ^ d)).map fun i ↦
+        (Script.wordOf S i).flatMap kBytes) :: itemsAhead evs ⟨Script.afterCommit S,
+          rs.comms ++ [(d, Script.wordOf S)], rs.posLimbs, rs.acc ++ [Item.rows ((List.range
+            (2 ^ d)).map fun i ↦ (Script.wordOf S i).flatMap kBytes)], rs.done⟩ := by
+      rcases hI.items with h | h
+      · cases h
+      rw [h, itemsAhead]
+      show lastMsg (evRun evs [] ⟨Script.afterCommit rs.script, rs.comms ++
+        [(d, Script.wordOf rs.script)], rs.posLimbs, [] ++ [Item.rows ((List.range (2 ^ d)).map
+          fun i ↦ (Script.wordOf rs.script i).flatMap kBytes)], rs.done⟩) = _
+      rw [evRun_nil_acc, hI.script]
+      rfl
+    obtain ⟨a1, a2⟩ := absorbAll_rel P π gH gF s
+      [(digestScalars (buildTreeM (permId π) d (Script.wordOf S)).run.root).1,
+        (digestScalars (buildTreeM (permId π) d (Script.wordOf S)).run.root).2] o.dx sp hist hI.rel
+    simp only [List.map_cons, List.map_nil] at a1 a2
+    rw [skelEv_commit, runDet_bind, runDet_commitNext P π gH gF s o d _ _ hitems, a1]
+    have hT' : ∀ t ∈ cs ++ [(buildTreeM (permId π) d (Script.wordOf S)).run], TreeOK π t := by
+      intro t ht'
+      rcases List.mem_append.mp ht' with ht' | ht'
+      · exact hT t ht'
+      · rw [List.mem_singleton.mp ht']
+        rfl
+    obtain ⟨e1, e2⟩ := drive hfuel evs ⟨(runDet P G s (o.dx.absorbAll
+        [limbsOf (digestScalars (buildTreeM (permId π) d (Script.wordOf S)).run.root).1,
+          limbsOf (digestScalars (buildTreeM (permId π) d (Script.wordOf S)).run.root).2]) hist).1,
+        _, o.trees ++ [Merkle.treeBytes π d (Script.wordOf S)],
+        o.stream ++ [limbsOf (digestScalars (buildTreeM (permId π) d (Script.wordOf S)).run.root).1,
+          limbsOf (digestScalars (buildTreeM (permId π) d (Script.wordOf S)).run.root).2],
+        o.merkle⟩ pl hist _ _ _ ⟨Script.afterCommit S,
+        rs.comms ++ [(d, Script.wordOf S)], rs.posLimbs, rs.acc ++ [Item.rows ((List.range
+          (2 ^ d)).map fun i ↦ (Script.wordOf S i).flatMap kBytes)], rs.done⟩ t1 t2 t3
+      ⟨a2, rfl, hI.pos, by rw [hI.comms, List.map_append]; rfl,
+        by rw [hI.trees, List.map_append]; rfl, Or.inr rfl⟩ hT'
+      (by rw [List.map_append]; exact hH) (lastDraw_tail hL) (by simpa [drawsIn] using hn)
+      (fun chs h1 h2 ↦ by
+        rw [hmsg chs h1 (by simpa [drawsIn] using h2)]
+        show lastMsg (evRun evs chs ⟨Script.afterCommit rs.script, _, _, _, _⟩) = _
+        rw [hI.script]) ht
+    exact ⟨e1.trans (by simp), e2⟩
   | .grind :: evs, o, pl, hist, S, sp, cs, rs, str, ops, ms, hI, hT, hH, hL, hn, hmsg, hr => by
     rw [runEvS_grind] at hr
     rcases hfn : (findNonceM (permId π) 17 sp fuel).run with _ | n
