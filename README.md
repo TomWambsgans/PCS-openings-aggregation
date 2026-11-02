@@ -60,6 +60,5 @@ to `root`. Measured on the implementation in `crates/` (details: [`AGENTS.md`](A
 | PCS claims | 4, in 3 `PCS_OPEN` calls |
 | Opening proofs (off-chain, aggregated) | 248 + 278 + 333 KiB (WHIR, rate 1/2) |
 | Gas, `PCS_OPEN` free | 14,289 execution; 18,309 transaction (without the 21,000 base) |
-| Gas at a claim price c | 18,309 + 4c: 26,309 / 38,309 / 98,309 for c = 2K / 5K / 20K |
 | Contract deployment | 1.43 M gas |
 | Rust verifier | < 1 ms (PIOP) + 5 ms (the three openings) |
