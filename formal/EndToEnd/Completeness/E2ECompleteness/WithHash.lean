@@ -296,4 +296,223 @@ theorem simulateQ_setupWithH :
 
 end Commute
 
+/-! ## The prover -/
+
+section ProverWith
+
+variable {m : Type → Type} [Monad m] (H : Bytes → m Digest) (F : KeccakState → m KeccakState)
+
+/-- `proveOpeningWith` with Keccak-256 `H`. -/
+def proveOpeningWithH (fuel : ℕ) (L : PcsQuotient.Layout) (tree : Tree) (stack : Array K)
+    (claims : List PcsQuotient.Claim) : m (Option Compile.Proof) := do
+  let (r0, r1) := digestScalars tree.root
+  let sp ← openingSpongeWithH H F L claims
+  let sp ← absorb F sp r0 dsObserve
+  let sp ← absorb F sp r1 dsObserve
+  let program := verifyStackedOpening L.logN logInvRate
+    (stackClaims L claims)
+  let r ← runFromWithHash H F fuel program (some (openingScript L stack claims)) sp [tree]
+  return r.map fun t ↦ ⟨r0 :: r1 :: t.1, t.2⟩
+
+/-- `proveWith` with Keccak-256 `H`. -/
+def proveWithH (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array K) (masks : Masks)
+    (witnessPad quotientPad : Padding) :
+    m (Option PcsQuotient.Proof) := do
+  let mv := cellVars circuit.logRows
+  let n := 2 ^ mv
+  let big := 4 * n
+  let block := 2 ^ region
+  let sigmaHat := circuit.wiringTable
+  let indexTree ← commitWithH H mv sigmaHat
+  let wHat := coefficients mv 0 cells
+  let mask := maskEntries masks
+  let wStack := witnessStack circuit.logRows wHat mask witnessPad
+  let witnessTree ← commitWithH H (mv + 1) wStack
+  let c ← startWithH H (label indexTree.root stmt)
+  let witnessRoot := digestScalars witnessTree.root
+  let c := (c.absorb witnessRoot.1).absorb witnessRoot.2
+  let (α, c) ← squeezeWithH H c
+  let (β, c) ← squeezeWithH H c
+  let (γ, c) ← squeezeWithH H c
+  let h : Array E := Array.ofFn (n := n) fun i ↦
+    let common := α + ofK (cells.getD i.val 0)
+    (common + β * ofK (point i.val))⁻¹ + (common + β * ofK (point (circuit.sigma.getD i.val 0)))⁻¹ +
+      if i.val < block then publicCellWeight i.val γ * ofK (cells.getD i.val 0) else 0
+  let hHat := coefficients mv 0 h
+  let offset := betaAt (mv + 2)
+  let offsets := chain offset (mv + 1)
+  let wValues : Array K := values (mv + 2) offset (Array.ofFn (n := big) fun i ↦
+    if i.val < n then wHat.getD i.val 0 else mask.getD (i.val - n) 0)
+  let sigmaValues : Array K := values (mv + 2) offset (Array.ofFn (n := big) fun i ↦
+    sigmaHat.getD i.val 0)
+  let q₀ : Array E := values (mv + 2) offset (Array.ofFn (n := big) fun i ↦ hHat.getD i.val 0)
+  let b := coordinates region
+  let tau := rowVanishing mv
+  let rowPoly (x : K) : K := ((chain x (mv - 1)).zip tau).foldl (fun acc (w, t) ↦ acc + t * w) 0
+  let gammas : List E := [γ, γ * γ, (γ * γ) * (γ * γ)]
+  let blocks : Array (Array E × K × Array K) := Array.ofFn (n := big / block) fun hi ↦
+    let base := hi.val * block
+    let wAt (k : ℕ) : K := offsets.getD k 0 + point (base >>> k)
+    let indicator := (List.range' region (mv - region)).foldl (fun acc k ↦ acc * (1 + wAt k)) 1
+    let weights : Array E :=
+      if indicator = 0 then #[ofK indicator]
+      else (List.range region).foldl
+        (fun ws k ↦
+          let shift := (List.range' k (region - k)).foldl
+            (fun acc j ↦ acc + b.getD (j - k) 0 * wAt j) 0
+          let slope : E := 1 + (coordinateWeight k).getD (gammas.getD (k - 8) 0)
+          let low := 1 + slope * ofK shift
+          ws.map (· * low) ++ ws.map (· * (low + slope)))
+        #[ofK indicator]
+    let rowBase := rowPoly (offset + point base)
+    (weights, (wAt mv)⁻¹, Array.ofFn (n := 4) fun r ↦ (rowBase + rowPoly (point r.val))⁻¹)
+  let qValues : Array E := Array.ofFn (n := big) fun i ↦
+    let (weights, cellVanishing, _) := blocks.getD (i.val / block) (#[], 0, #[])
+    let w := wValues.getD i.val 0
+    let common := α + ofK w
+    let d := common + β * ofK (offset + point i.val)
+    let dNext := common + β * ofK (sigmaValues.getD i.val 0)
+    let pub := if i.val % block < weights.size then weights.getD (i.val % block) 0 * ofK w else 0
+    ((q₀.getD i.val 0 + pub) * d * dNext + d + dNext) * ofK cellVanishing
+  let qGateValues : Array K := Array.ofFn (n := big) fun i ↦
+    let (_, _, rowInv) := blocks.getD (i.val / block) (#[], 0, #[])
+    let at_ (j : ℕ) : K := wValues.getD j 0
+    let (x, y, cc, v) := (at_ i.val, at_ (i.val ^^^ 1), at_ (i.val ^^^ 2), at_ (i.val ^^^ 3))
+    (v + x + cc + y * cc) * rowInv.getD (i.val % 4) 0
+  let qHat := coefficients (mv + 2) offset qValues
+  let qGateHat := coefficients (mv + 2) offset qGateValues
+  let qStack := quotientStack circuit.logRows hHat qHat qGateHat quotientPad
+  let quotientTree ← commitWithH H (mv + 4) qStack
+  let quotientRoot := digestScalars quotientTree.root
+  let c := (c.absorb quotientRoot.1).absorb quotientRoot.2
+  let (t, _) ← squeezeWithH H c
+  let digits := digitsOf t mv
+  let a : Vector E 4 := Vector.ofFn fun j ↦
+    novelEval wHat j.val 4 ((digits.drop 2).take (mv - 2)) +
+      digits.getD mv 0 * novelEval mask j.val 4 ((digits.drop 2).take 2)
+  let next := novelEval sigmaHat 0 1 (digits.take mv)
+  let proof : ReductionProof := ⟨witnessRoot, quotientRoot, a, next⟩
+  match ← reduceWithH H circuit.logRows indexTree.root stmt proof with
+  | none => return none
+  | some r =>
+    let some witness ← proveOpeningWithH H F fuel (witnessLayout circuit.logRows) witnessTree wStack
+      [r.claims.witness] | return none
+    let some wiring ← proveOpeningWithH H F fuel (wiringLayout circuit.logRows) indexTree sigmaHat
+      [r.claims.wiring] | return none
+    let some quotient ← proveOpeningWithH H F fuel (quotientLayout circuit.logRows) quotientTree
+      qStack [r.claims.quotient, r.claims.sum] | return none
+    return some ⟨proof, witness, wiring, quotient⟩
+
+/-- `proverWith` with Keccak-256 `H`. -/
+def proverWithH (fuel : ℕ) (stmt : Statement) (w : Secret) (masks : Masks)
+    (witnessPad quotientPad : Padding) : m (Option PcsQuotient.Proof) :=
+  let circuit := membership logRows
+  proveWithH H F fuel circuit stmt (circuit.cells (membershipInputs w)) masks witnessPad
+    quotientPad
+
+end ProverWith
+
+section ProverEq
+
+variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
+
+theorem proveOpeningWith_eqH (fuel : ℕ) (L : PcsQuotient.Layout) (tree : Tree) (stack : Array K)
+    (claims : List PcsQuotient.Claim) :
+    proveOpeningWith F fuel L tree stack claims =
+      proveOpeningWithH (keccak256With F) F fuel L tree stack claims := by
+  simp only [proveOpeningWith, proveOpeningWithH, runFrom_eq_withHash]
+  rfl
+
+theorem proveWith_eqH (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array K)
+    (masks : Masks) (witnessPad quotientPad : Padding) :
+    proveWith F fuel circuit stmt cells masks witnessPad quotientPad =
+      proveWithH (keccak256With F) F fuel circuit stmt cells masks witnessPad quotientPad := by
+  simp only [proveWith, proveWithH, commitWith_eqH, proveOpeningWith_eqH]
+  rfl
+
+theorem proverWith_eqH (fuel : ℕ) (stmt : Statement) (w : Secret) (masks : Masks)
+    (witnessPad quotientPad : Padding) :
+    proverWith F fuel stmt w masks witnessPad quotientPad =
+      proverWithH (keccak256With F) F fuel stmt w masks witnessPad quotientPad :=
+  proveWith_eqH F _ _ _ _ _ _ _
+
+end ProverEq
+
+section ProverCommute
+
+variable {r : Type → Type} [Monad r] [LawfulMonad r] (impl : QueryImpl KeccakCalls r)
+
+/-- The script runner commutes with simulation. -/
+theorem simulateQ_runFromWithHash (fuel : ℕ) {α β : Type} (P : Prog α) :
+    ∀ (S : Option (Script β)) (sp : Sponge) (cs : List Tree),
+      simulateQ impl (runFromWithHash callKeccak256 callKeccakF1600 fuel P S sp cs) =
+        runFromWithHash (implH impl) (implF impl) fuel P S sp cs := by
+  induction P with
+  | ret a => intro S sp cs; simp [runFromWithHash]
+  | fail => intro S sp cs; simp [runFromWithHash]
+  | read k ih =>
+    intro S sp cs
+    simp only [runFromWithHash, simulateQ_bind, simulateQ_absorb, simulateQ_pure, ih]
+  | sample k ih =>
+    intro S sp cs
+    simp only [runFromWithHash, simulateQ_bind, simulateQ_squeeze, ih]
+  | grind bits k ih =>
+    intro S sp cs
+    simp only [runFromWithHash, simulateQ_bind, simulateQ_findNonceM]
+    congr 1; funext o
+    cases o with
+    | none => simp
+    | some n => simp only [simulateQ_bind, simulateQ_powStepM, simulateQ_pure, ih]
+  | commit ht w k ih =>
+    intro S sp cs
+    simp only [runFromWithHash, simulateQ_bind, simulateQ_buildTreeM, simulateQ_absorb,
+      simulateQ_pure, ih]
+  | query i ps k ih =>
+    intro S sp cs
+    simp only [runFromWithHash]
+    split
+    · simp
+    · simp only [simulateQ_bind, simulateQ_pure, ih]
+
+theorem simulateQ_proveOpeningWithH (fuel : ℕ) (L : PcsQuotient.Layout) (tree : Tree)
+    (stack : Array K) (claims : List PcsQuotient.Claim) :
+    simulateQ impl (proveOpeningWithH callKeccak256 callKeccakF1600 fuel L tree stack claims) =
+      proveOpeningWithH (implH impl) (implF impl) fuel L tree stack claims := by
+  simp only [proveOpeningWithH, simulateQ_bind, simulateQ_openingSpongeWithH, simulateQ_absorb,
+    simulateQ_runFromWithHash, simulateQ_pure]
+
+theorem simulateQ_proveWithH (fuel : ℕ) (circuit : Circuit) (stmt : Statement) (cells : Array K)
+    (masks : Masks) (witnessPad quotientPad : Padding) :
+    simulateQ impl (proveWithH callKeccak256 callKeccakF1600 fuel circuit stmt cells masks
+        witnessPad quotientPad) =
+      proveWithH (implH impl) (implF impl) fuel circuit stmt cells masks witnessPad quotientPad := by
+  unfold proveWithH
+  simp only [simulateQ_bind, simulateQ_commitWithH, simulateQ_startWithH, simulateQ_squeezeWithH,
+    simulateQ_reduceWithH]
+  congr 1; funext indexTree; congr 1; funext witnessTree; congr 1; funext c
+  congr 1; funext x₁; congr 1; funext x₂; congr 1; funext x₃
+  congr 1; funext quotientTree; congr 1; funext x₄; congr 1; funext red
+  split
+  · simp
+  · simp only [simulateQ_bind, simulateQ_proveOpeningWithH]
+    congr 1; funext o₁
+    split
+    · simp only [simulateQ_bind, simulateQ_proveOpeningWithH]
+      congr 1; funext o₂
+      split
+      · simp only [simulateQ_bind, simulateQ_proveOpeningWithH]
+        congr 1; funext o₃
+        split <;> simp
+      · simp
+    · simp
+
+theorem simulateQ_proverWithH (fuel : ℕ) (stmt : Statement) (w : Secret) (masks : Masks)
+    (witnessPad quotientPad : Padding) :
+    simulateQ impl (proverWithH callKeccak256 callKeccakF1600 fuel stmt w masks witnessPad
+        quotientPad) =
+      proverWithH (implH impl) (implF impl) fuel stmt w masks witnessPad quotientPad :=
+  simulateQ_proveWithH impl _ _ _ _ _ _ _
+
+end ProverCommute
+
 end E2ECompleteness
