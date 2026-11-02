@@ -468,4 +468,79 @@ theorem romImpl_hashJ (t : Inp) (c : (Inp →ₒ Out).QueryCache) :
       simp only [pure_bind, map_pure, h2, simulateQ_pure, StateT.run_pure, Equiv.symm_apply_apply]
       exact EvalDistEq.rfl
 
+/-- `implReal`'s state read as the two-oracle prover's: the challenges, the tables, `H` and `F`. -/
+def projHF (st : St Inp Out Tbl Pos) : (List Out × JTab) × HF.QueryCache :=
+  ((st.hist, jOf st.cache), hfOf st.cache)
+
+/-- A query `t` of `G` from the prover's state, read as the two-oracle prover's. -/
+theorem foldRO_hashJ (t : Inp) (hist : List Out) (c : (Inp →ₒ Out).QueryCache) (f : List Out → Out → List Out) :
+    (fun y ↦ (y.1.1, (y.1.2, y.2))) <$> (simulateQ HF.romImpl
+      ((fun z ↦ (z.1, (f hist z.1, z.2))) <$>
+        (hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes) t).run (jOf c))).run (hfOf c) =ᵈ
+      (fun z ↦ (z.1, ((f hist z.1, jOf z.2), hfOf z.2))) <$> Common.roStep (hs := Inp →ₒ Out) t c := by
+  rw [simulateQ_map, StateT.run_map, Functor.map_map]
+  refine EvalDistEq.trans ((romImpl_hashJ t c).map _) ?_
+  rw [Functor.map_map]
+
+/-- **One step of `implReal`**, read as the two-oracle prover's state, is one step of the
+two-oracle prover with `H` and `F` lazily sampled. -/
+theorem implReal_projHF (s : S) (op : Op Inp Tbl Pos) (st : St Inp Out Tbl Pos) :
+    Prod.map id projHF <$> (implReal P s op).run st =ᵈ
+      ((foldRO (implHF P s)) op).run (projHF st) := by
+  rw [Common.foldRO_run]
+  cases op with
+  | pub t =>
+    have e : Prod.map id projHF <$> (implReal P s (.pub t)).run st =
+        (fun z ↦ (z.1, ((st.hist, jOf z.2), hfOf z.2))) <$>
+          Common.roStep (hs := Inp →ₒ Out) t st.cache := by
+      have h := congrArg (fun x ↦ (fun z : Out × (List Out × (Inp →ₒ Out).QueryCache) ↦
+        (z.1, ((z.2.1, jOf z.2.2), hfOf z.2.2))) <$> x) (roStep_histCache t st)
+      simp only [Functor.map_map] at h
+      exact h
+    rw [e]
+    exact (foldRO_hashJ t st.hist st.cache fun h _ ↦ h).symm
+  | msg => exact EvalDistEq.rfl
+  | leaf k x =>
+    by_cases hk : st.hist.length < P.cK k
+    · change Prod.map id projHF <$> (if st.hist.length < P.cK k then pure (default, st) else _) =ᵈ
+        _ <$> (simulateQ HF.romImpl (if st.hist.length < P.cK k then pure (default, (st.hist,
+          jOf st.cache)) else _)).run (hfOf st.cache)
+      simp only [hk, ↓reduceIte, map_pure, simulateQ_pure, StateT.run_pure]
+      exact EvalDistEq.rfl
+    · have e : Prod.map id projHF <$> (implReal P s (.leaf k x)).run st =
+          (fun z ↦ (z.1, ((st.hist, jOf z.2), hfOf z.2))) <$> Common.roStep (hs := Inp →ₒ Out)
+            (P.rowFn s (st.hist.take (P.cK k)) k x) st.cache := by
+        change Prod.map id projHF <$> (if st.hist.length < P.cK k then pure (default, st) else
+          (QuotientZk.roStep (P.rowFn s (st.hist.take (P.cK k)) k x)).run st) = _
+        simp only [hk, ↓reduceIte]
+        have h := congrArg (fun x ↦ (fun z : Out × (List Out × (Inp →ₒ Out).QueryCache) ↦
+          (z.1, ((z.2.1, jOf z.2.2), hfOf z.2.2))) <$> x)
+          (roStep_histCache (P.rowFn s (st.hist.take (P.cK k)) k x) st)
+        simp only [Functor.map_map] at h
+        exact h
+      rw [e]
+      change _ =ᵈ _ <$> (simulateQ HF.romImpl (if st.hist.length < P.cK k then pure (default,
+        (st.hist, jOf st.cache)) else (fun z ↦ (z.1, (st.hist, z.2))) <$>
+          (hashJ hH2 hF2 (coin2 KSt) (coin2 DigestBytes)
+            (P.rowFn s (st.hist.take (P.cK k)) k x)).run (jOf st.cache))).run (hfOf st.cache)
+      simp only [hk, ↓reduceIte]
+      exact (foldRO_hashJ _ st.hist st.cache fun h _ ↦ h).symm
+  | chal t =>
+    have e : Prod.map id projHF <$> (implReal P s (.chal t)).run st =
+        (fun z ↦ (z.1, (((fun h u ↦ if h.length < P.n then h ++ [u] else h) st.hist z.1,
+          jOf z.2), hfOf z.2))) <$> Common.roStep (hs := Inp →ₒ Out) t st.cache := by
+      by_cases hn : st.hist.length < P.n
+      · rcases h : st.cache t with _ | u
+        · simp [implReal, StateT.run, hn, h, Common.roStep, projHF]
+        · simp [implReal, StateT.run, hn, h, Common.roStep, projHF]
+      · simp only [implReal, StateT.run]
+        simp only [hn, ↓reduceIte]
+        change Prod.map id projHF <$> (QuotientZk.roStep t).run st = _
+        have h := congrArg (fun x ↦ (fun z : Out × (List Out × (Inp →ₒ Out).QueryCache) ↦
+          (z.1, ((z.2.1, jOf z.2.2), hfOf z.2.2))) <$> x) (roStep_histCache t st)
+        simp only [Functor.map_map] at h
+        exact h
+    rw [e]
+    exact (foldRO_hashJ t st.hist st.cache fun h u ↦ if h.length < P.n then h ++ [u] else h).symm
+
 end QuotientZk.DRpm
