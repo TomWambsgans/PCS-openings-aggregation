@@ -202,6 +202,103 @@ theorem simulateQ_proverJ {ι ι' : Type} {spec : OracleSpec.{0, 0} ι}
   rw [StateT.run'_eq, StateT.run'_eq, simulateQ_map, QueryImpl.simulateQ_mapStateTBase_run,
     mapStateTBase_implJ]
 
+/-! ## In the shadow world, the prover's direct calls are the skeleton's bookkeeping -/
+
+/-- The oracles `H`, `F` and coins of the two-oracle random-oracle model, with a direct call's
+edge recorded in the simulator's state as in `common`'s shadow world. -/
+noncomputable abbrev recImpl : QueryImpl (unifSpec + hfSpec Msg Dg (SpState Dg E C))
+    (StateT (SimState Dg E C) (OracleComp (unifSpec + hfSpec Msg Dg (SpState Dg E C)))) :=
+  shadowImpl Pd ∘ₛ hfEmbed (Msg := Msg)
+
+/-- The coins of the two-oracle model, as the prover's completions draw them. -/
+noncomputable abbrev coinHF : OracleComp (unifSpec + hfSpec Msg Dg (SpState Dg E C)) (E × C) :=
+  liftM ($ᵗ (E × C))
+
+theorem recImpl_coin (σ : SimState Dg E C) :
+    (simulateQ (recImpl Pd) (coinHF (Msg := Msg) (Dg := Dg) (E := E) (C := C))).run σ =
+      (·, σ) <$> coinHF (Msg := Msg) (Dg := Dg) (E := E) (C := C) :=
+  run_simulateQ_liftM_of_coins (recImpl Pd) (fun n s ↦ by
+    simp [recImpl, hfEmbed, shadowImpl, QueryImpl.apply_compose]) _ σ
+
+theorem recImpl_hQuery (m : Msg) (σ : SimState Dg E C) :
+    (simulateQ (recImpl Pd) (hQuery (E := E) (C := C) m)).run σ =
+      (·, σ) <$> hQuery (Msg := Msg) (Dg := Dg) (E := E) (C := C) m := by
+  simp [recImpl, hfEmbed, shadowImpl, QueryImpl.apply_compose, hQuery]
+
+theorem recImpl_fQuery (x : SpState Dg E C) (σ : SimState Dg E C) :
+    (simulateQ (recImpl Pd) (fQuery (Msg := Msg) (Dg := Dg) x)).run σ =
+      (fun y ↦ (y, replayStep σ (.forward x, y))) <$> fQuery (Msg := Msg) (Dg := Dg) x := by
+  simp [recImpl, hfEmbed, shadowImpl, QueryImpl.apply_compose, fQuery]
+
+theorem recImpl_hashJ (t : Msg ⊕ SpState Dg E C) (J : JCache Msg E C) (σ : SimState Dg E C) :
+    (simulateQ (recImpl Pd) ((hashJ (fun m ↦ hQuery (E := E) (C := C) m)
+      (fun x ↦ fQuery (Msg := Msg) (Dg := Dg) x) coinHF t).run J)).run σ =
+      (fun z ↦ (z, recStep σ t z.1)) <$> (hashJ (fun m ↦ hQuery (E := E) (C := C) m)
+        (fun x ↦ fQuery (Msg := Msg) (Dg := Dg) x) coinHF t).run J := by
+  rcases t with m | x
+  · change (simulateQ (recImpl Pd) (hQuery m >>= _)).run σ = _ <$> (hQuery m >>= _)
+    rw [simulateQ_bind, StateT.run_bind, recImpl_hQuery, bind_map_left, map_bind]
+    refine bind_congr fun d ↦ ?_
+    rcases J m with _ | j
+    · simp only [simulateQ_bind, StateT.run_bind, recImpl_coin, bind_map_left, map_bind,
+        simulateQ_pure, StateT.run_pure, map_pure]
+      rfl
+    · simp [recStep]
+  · change (simulateQ (recImpl Pd) ((fun y ↦ (y, J)) <$> fQuery x)).run σ =
+      _ <$> ((fun y ↦ (y, J)) <$> fQuery x)
+    rw [simulateQ_map, StateT.run_map, recImpl_fQuery, Functor.map_map, Functor.map_map]
+    rfl
+
+variable (P : Proto S (Msg ⊕ SpState Dg E C) (SpState Dg E C) M K X)
+
+/-- The prover of the two-oracle model: `H`, `F`, and coins for the completions. -/
+noncomputable abbrev implHF (s : S) := implJ P (fun m ↦ hQuery (E := E) (C := C) m)
+  (fun x ↦ fQuery (Msg := Msg) (Dg := Dg) x) coinHF s
+
+theorem recImpl_implHF_step (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m) (s : S)
+    (op : Op (Msg ⊕ SpState Dg E C) K X) (st : List (SpState Dg E C) × JCache Msg E C)
+    (σ : SimState Dg E C) :
+    (simulateQ (recImpl Pd) ((implHF P s op).run st)).run σ =
+      (fun z ↦ (z, opRec σ op z.1)) <$> (implHF P s op).run st := by
+  cases op with
+  | pub t =>
+    change (simulateQ (recImpl Pd) ((fun z ↦ (z.1, (st.1, z.2))) <$> _)).run σ = _
+    rw [simulateQ_map, StateT.run_map, recImpl_hashJ, Functor.map_map, Functor.map_map]
+    rfl
+  | msg => simp [implJ, opRec, StateT.run]
+  | leaf k x =>
+    by_cases hk : st.1.length < P.cK k
+    · simp [implJ, opRec, StateT.run, hk]
+    · obtain ⟨m, hm⟩ := hrow s (st.1.take (P.cK k)) k x
+      change (simulateQ (recImpl Pd) (if st.1.length < P.cK k then _ else _)).run σ =
+        _ <$> (if st.1.length < P.cK k then _ else _)
+      simp only [hk, ↓reduceIte, hm]
+      rw [simulateQ_map, StateT.run_map, recImpl_hashJ, Functor.map_map, Functor.map_map]
+      rfl
+  | chal t =>
+    change (simulateQ (recImpl Pd) ((fun z ↦ (z.1, (if st.1.length < P.n then st.1 ++ [z.1]
+      else st.1, z.2))) <$> _)).run σ = _
+    rw [simulateQ_map, StateT.run_map, recImpl_hashJ, Functor.map_map, Functor.map_map]
+    rfl
+
+/-- **In the shadow world, the prover's direct calls are recorded as the skeleton's
+bookkeeping**: the prover run with the direct calls recorded from `σ` is the skeleton with its
+bookkeeping from `σ`, run by the prover. -/
+theorem recImpl_implHF (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m) (s : S) {α : Type}
+    (oa : OracleComp (OpSpec (Msg ⊕ SpState Dg E C) (SpState Dg E C) M K X) α)
+    (σ : SimState Dg E C) (st : List (SpState Dg E C) × JCache Msg E C) :
+    (simulateQ (recImpl Pd) ((simulateQ (implHF P s) oa).run st)).run σ =
+      (fun z ↦ ((z.1.1, z.2), z.1.2)) <$>
+        (simulateQ (implHF P s) ((simulateQ recOps oa).run σ)).run st := by
+  induction oa using OracleComp.inductionOn generalizing σ st with
+  | pure a => simp
+  | query_bind op k ih =>
+    simp only [simulateQ_bind, simulateQ_query, OracleQuery.input_query, OracleQuery.cont_query,
+      id_map, StateT.run_bind, recOps_run, bind_map_left, map_bind]
+    rw [recImpl_implHF_step Pd P hrow s op st σ, bind_map_left]
+    simp only [simulateQ_map, StateT.run_map, bind_map_left]
+    sorry
+
 end Setting
 
 end QuotientZk
