@@ -296,6 +296,12 @@ theorem shadow_game2D (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m) (s :
 
 /-! ## From the random-permutation model to `zk_rom`'s games -/
 
+/-- **The prover's permutation calls follow the duplex discipline** (`Common.Duplex`): each absorbs
+a non-final block into the zero state or into an earlier permutation answer, keeping its capacity
+(the overwrite duplex keeps lanes `16 .. 24`: `Common.keccakNF_blockTo`). -/
+def DuplexDiscipline (skel : OracleComp DSpec Proof) : Prop :=
+  ∀ s, Duplex KState.zero keccakNF (proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s skel) []
+
 /-- **The real game in the random-oracle model, the distinguisher querying the permutation**:
 `zk_rom`'s prover on `skelRec skel`, then `D` through `S₂` from the bookkeeping, `H` and `F` read
 on `G`'s cache. -/
@@ -310,8 +316,7 @@ noncomputable def realGameS2 (skel : OracleComp DSpec Proof)
 path whose prover follows the duplex discipline. -/
 theorem realGameRpmD_close (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m)
     (skel : OracleComp DSpec Proof)
-    (hduplex : ∀ s, Duplex KState.zero keccakNF
-      (proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s skel) [])
+    (hduplex : DuplexDiscipline P skel)
     (D : Proof → OracleComp (permutationOracleSpec KSt) Bool) (Q : ℕ)
     (hQ : ∀ s, QueryCostAtMost (zkGameRpmD P skel D s) permutationCallCost Q) :
     Close (realGameRpmD P skel D) (realGameS2 P skel D) ((Q ^ 2 : ℝ≥0∞) / 2 ^ 508) := by
@@ -415,8 +420,7 @@ theorem zk_rpm_skel [Fintype (Tbl × Pos)] (skel : OracleComp DSpec Proof)
         Pr{let s ← $ᵗ S}[P.view s σ = v ∧ P.rows s σ k x = P.rows s σ k' x'] ≤
           δ₂ * Pr{let s ← $ᵗ S}[P.view s σ = v])
     (hrow : ∀ s h k x, ∃ m, P.rowFn s h k x = .inl m)
-    (hduplex : ∀ s, Duplex KState.zero keccakNF
-      (proverJ P hH2 hF2 (coin2 KSt) (coin2 DigestBytes) s skel) [])
+    (hduplex : DuplexDiscipline P skel)
     (D : Proof → OracleComp (permutationOracleSpec KSt) Bool)
     (hD : ∀ pf, IsTotalQueryBound (D pf) QD)
     (hQ : ∀ s, QueryCostAtMost (zkGameRpmD P skel D s) permutationCallCost Q) :
