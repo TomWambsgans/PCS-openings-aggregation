@@ -61,4 +61,3 @@ to `root`. Measured on the implementation in `crates/` (details: [`AGENTS.md`](A
 | Opening proofs (off-chain, aggregated) | 248 + 278 + 333 KiB (WHIR, rate 1/2) |
 | Gas, `PCS_OPEN` free | 14,289 execution; 18,309 transaction (without the 21,000 base) |
 | Contract deployment | 1.43 M gas |
-| Rust verifier | < 1 ms (PIOP) + 5 ms (the three openings) |
