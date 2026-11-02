@@ -7,6 +7,7 @@
 
 pub mod circuit;
 pub mod domain;
+pub mod ntt;
 #[cfg(test)]
 mod hiding;
 pub mod opening;

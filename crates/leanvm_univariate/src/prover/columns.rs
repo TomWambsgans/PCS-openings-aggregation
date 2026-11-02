@@ -5,8 +5,9 @@
 use leanvm_flock_gas::N_TABLES;
 use leanvm_flock_gas::layout::{SEP_BYTECODE, tables};
 use primitives::field::{F64, g_powers};
+use quotient::ntt::{coefficients_from, subset_sums};
 
-use super::poly::{novel_from_values, subset_sums};
+use super::poly::copy;
 use super::trace::Trace;
 
 /// A K-column of `2^r` rows as a polynomial of degree `< 2^r`: its novel and its `B` coefficients.
@@ -18,9 +19,10 @@ pub struct Column {
 
 impl Column {
     pub fn from_values(values: &[F64]) -> Self {
-        let mut novel = values.to_vec();
-        novel_from_values(&mut novel);
-        let mut b = novel.clone();
+        let mut novel = vec![F64::ZERO; values.len()];
+        coefficients_from(values, &mut novel, F64::ZERO);
+        let mut b = vec![F64::ZERO; values.len()];
+        copy(&mut b, &novel);
         subset_sums(&mut b);
         Self { novel, b }
     }

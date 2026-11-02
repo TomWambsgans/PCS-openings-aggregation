@@ -3,7 +3,7 @@
 //! and witness generation, dumped by `dump/`), the stream the verifier reads and one WHIR opening per commitment.
 //!
 //! - [`trace`]: the trace leanVM wrote;
-//! - [`poly`]: the Cantor subspaces' transforms, basis `B`, the extension cosets;
+//! - [`poly`]: the Cantor subspaces' transforms (vectorized in `quotient::ntt`), basis `B`, the extension cosets;
 //! - [`columns`]: `C1`'s and the setup's polynomials;
 //! - [`fingerprint`], [`bus`]: the bus's fingerprints, leaves and product heap;
 //! - [`quotients`]: the tree, leaf and constraint quotients;

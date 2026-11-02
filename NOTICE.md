@@ -53,7 +53,8 @@ option. Every file says where it comes from in its first lines.
   - Its prover (`src/prover/`, `PROVER.md`) is new here. It reads the execution traces of leanVM `42422001` itself:
     its execution and witness generation, unchanged, written out by `src/prover/dump/trace_dump.rs`, which
     `src/prover/dump/apply.sh` copies into a leanVM checkout. It transforms them with `crates/quotient/src/domain.rs`'s
-    additive NTT, and commits and opens them with the vendored WHIR (`crates/pcs`, `crates/verifier`, leanVM
+    additive NTT, vectorized in `crates/quotient/src/ntt.rs` (the same layers in the same order; its lane-wise
+    product and reduction are those of the vendored `primitives`' AVX-512 field, after binius64), and commits and opens them with the vendored WHIR (`crates/pcs`, `crates/verifier`, leanVM
     `c445e3d5`), its openings in the transcript shape of `crates/quotient/src/opening.rs`.
   - Its Flock prover is leanVM `42422001`'s own, vendored for it:
     - `crates/lv42_primitives`, `crates/lv42_parallel` and `crates/lv42_flock` are leanVM `42422001`'s

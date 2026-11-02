@@ -17,24 +17,9 @@ pub fn novel_from_values<M: Module>(data: &mut [M]) {
     coefficients(data, F64::ZERO);
 }
 
-/// Novel to `B` coefficients (or back), in place: `b_k = Σ_{j ⊆ k} a_j`.
+/// Novel to `B` coefficients (or back), in place: `b_k = Σ_{j ⊆ k} a_j` ([`quotient::ntt::subset_sums`]).
 pub fn subset_sums<M: Module>(data: &mut [M]) {
-    let n = data.len();
-    assert!(n.is_power_of_two());
-    let mut half = 1;
-    while half < n {
-        let block = 2 * half;
-        let chunk = block.max(1 << 14).min(n);
-        parallel::chunks_mut(data, chunk, |_, piece| {
-            for pair in piece.chunks_exact_mut(block) {
-                let (lo, hi) = pair.split_at_mut(half);
-                for (h, &l) in hi.iter_mut().zip(lo.iter()) {
-                    *h = *h + l;
-                }
-            }
-        });
-        half = block;
-    }
+    quotient::ntt::subset_sums(data);
 }
 
 /// The `B` coefficients of the polynomial whose values on `V_r` are `values` (`2^r` of them).
@@ -42,6 +27,20 @@ pub fn b_from_values<M: Module>(mut data: Vec<M>) -> Vec<M> {
     novel_from_values(&mut data);
     subset_sums(&mut data);
     data
+}
+
+/// `dst = src`, in parallel blocks (a fresh allocation's pages are first touched by many workers).
+pub fn copy<T: Copy + Send + Sync>(dst: &mut [T], src: &[T]) {
+    parallel::chunks_mut_zip(dst, src, 1 << 15, |_, d, s| d.copy_from_slice(s));
+}
+
+/// The novel coefficients, limb by limb, of the E-polynomial whose values on `V_r` are `values`.
+pub fn novel_limbs(values: &[F192]) -> [Vec<F64>; 3] {
+    [0, 1, 2].map(|k| {
+        let mut limb: Vec<F64> = parallel::map_collect(values.len(), |i| F64([values[i].c0, values[i].c1, values[i].c2][k]));
+        quotient::ntt::coefficients(&mut limb, F64::ZERO);
+        limb
+    })
 }
 
 /// The point `ω_index`, for any index below `2^28`.
@@ -99,6 +98,12 @@ pub fn eval_e(b: &[F192], w: &[F192]) -> F192 {
         folded.truncate(half);
     }
     folded[0]
+}
+
+/// [`eval_e`] for an E-column held as its three limbs: `Σ_l y^l Σ_k b_(l,k) B_k(t)`.
+pub fn eval_limbs(b: [&[F64]; 3], w: &[F192]) -> F192 {
+    let y = [F192::ONE, F192::new(0, 1, 0), F192::new(0, 0, 1)];
+    b.iter().zip(y).fold(F192::ZERO, |acc, (limb, y)| acc + y * eval_k(limb, w))
 }
 
 /// `Π_{l<r}` of the digits' factors for a `B` basis element at a K point: `B_k(x)` from `x`'s digits, for tests.

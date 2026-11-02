@@ -19,7 +19,7 @@ use super::columns::{c1_polys, setup_polys};
 use super::flock::{FlockWitness, Matrices};
 use super::replay::Replay;
 use super::opening::{self, Committed};
-use super::poly::{eval_e, eval_k, from_v, novel_from_values, subset_sums, to_v};
+use super::poly::{copy, eval_k, eval_limbs, from_v, novel_limbs, subset_sums, to_v};
 use super::quotients::{self, Quotient};
 use super::stack::{Stack, c1_columns, c2_columns};
 use super::trace::Trace;
@@ -125,7 +125,7 @@ fn tuple_degree(tuple: &[Form]) -> usize {
 
 /// The verifier's count of a table block's leaf quotient coefficients: sized for the height's fewest rows
 /// (`Shape::least_rows`, SPEC.md §13, F1).
-fn table_leaf_count(t: usize, r: usize) -> u64 {
+pub fn table_leaf_count(t: usize, r: usize) -> u64 {
     let table = &tables()[t];
     let n = 1u64 << r;
     let pull = 1 + table.flushes.pull.iter().map(|tu| tuple_degree(tu)).sum::<usize>();
@@ -134,7 +134,7 @@ fn table_leaf_count(t: usize, r: usize) -> u64 {
 }
 
 /// The verifier's count of the constraint quotient's coefficients (`verifier::reduce`, step 5).
-fn constraint_count(trace: &Trace) -> u64 {
+pub fn constraint_count(trace: &Trace) -> u64 {
     let mut most = 0u64;
     for table in tables() {
         let r = trace.heights[table.opcode];
@@ -254,10 +254,8 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     if heap_values[1] != root {
         return Err("the bus does not balance: the heap's root is not fp(final) / fp(initial)".into());
     }
-    let mut heap_novel = heap_values.clone();
-    novel_from_values(&mut heap_novel);
-    let mut heap_b = heap_novel.clone();
-    subset_sums(&mut heap_b);
+    let heap_novel = novel_limbs(&heap_values);
+    drop(heap_values);
     clock.lap(&mut report, "heap: leaves, products, inverse NTT");
 
     // 5. The quotients.
@@ -271,8 +269,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
             Leaves::Unused => continue,
             other => &leaves.iter().find(|(l, _)| *l == other).expect("leaves").1,
         };
-        let mut r_novel = values.clone();
-        novel_from_values(&mut r_novel);
+        let r_novel = novel_limbs(values);
         let (name, q) = match block.leaves {
             Leaves::Memory => ("leaf: memory".to_string(), quotients::memory_leaf(trace, &c1, &setup, &bus, &r_novel, n - 1)),
             Leaves::Bytecode => (
@@ -299,7 +296,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
         let [a, b] = trace.public;
         [(F64(a[0]), F64(b[0])), (F64(a[1]), F64(b[1])), (F64::ZERO, F64::ZERO)]
     };
-    let constraint = quotients::constraints(trace, &c1, gamma, r_w, constraint_count(trace), lines);
+    let constraint = quotients::constraints(trace, &c1, gamma, constraint_count(trace), lines);
     report
         .quotients
         .push(("constraints Q_W".into(), constraint.degree, constraint.count, quotients::extension_vars(constraint.count, r_w)));
@@ -314,20 +311,25 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     let constraint_sizes = chunks(constraint.count);
     let leaf_sizes: Vec<(usize, Vec<usize>)> = leaf_quotients.iter().map(|(b, q)| (*b, chunks(q.count))).collect();
     let mut stack2 = Stack::new(StackLayout::new(&c2_columns(layout.h, &constraint_sizes, &leaf_sizes)));
-    stack2.put_e(Column::Heap, &heap_b);
-    let tree_chunks = tree.chunks_b(&[layout.h, 0]);
-    stack2.put_e(Column::TreeQuotient(0), &tree_chunks[0]);
-    stack2.put_e(Column::TreeQuotient(1), &tree_chunks[1]);
-    let constraint_chunks = constraint.chunks_b(&constraint_sizes);
-    for (c, chunk) in constraint_chunks.iter().enumerate() {
-        stack2.put_e(Column::ConstraintQuotient(c), chunk);
+    for (limb, novel) in heap_novel.iter().enumerate() {
+        let block = stack2.limb_mut(Column::Heap, limb);
+        copy(block, novel);
+        subset_sums(block);
     }
-    for ((block, q), (_, sizes)) in leaf_quotients.iter().zip(&leaf_sizes) {
-        for (chunk, part) in q.chunks_b(sizes).iter().enumerate() {
-            stack2.put_e(Column::LeafQuotient { block: *block, chunk }, part);
+    drop(heap_novel);
+    let mut put = |q: &Quotient, sizes: &[usize], column: &dyn Fn(usize) -> Column| {
+        for chunk in 0..sizes.len() {
+            for limb in 0..3 {
+                q.chunk_b(sizes, chunk, limb, stack2.limb_mut(column(chunk), limb));
+            }
         }
+    };
+    put(&tree, &[layout.h, 0], &Column::TreeQuotient);
+    put(&constraint, &constraint_sizes, &Column::ConstraintQuotient);
+    for ((block, q), (_, sizes)) in leaf_quotients.iter().zip(&leaf_sizes) {
+        put(q, sizes, &|chunk| Column::LeafQuotient { block: *block, chunk });
     }
-    drop(leaf_quotients);
+    drop((tree, constraint, leaf_quotients));
     clock.lap(&mut report, "C2: chunks in basis B");
     if config.garbage {
         stack2.fill_unused(0xC2);
@@ -386,12 +388,12 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
         + weights[2] * bytecode_final_at
         + (0..16).filter(|&s| s != 2).fold(F192::ZERO, |acc, s| acc + weights[s] * slots_at[s]);
     sent_values.extend([bytecode_final_at, bytecode_pull]);
-    let heap_at = eval_e(&heap_b, &w);
+    let heap_at = eval_limbs(stack2.limbs(Column::Heap), &w);
     let constraint_at = {
         let mut factor = F192::ONE;
         let mut sum = F192::ZERO;
-        for (chunk, &e) in constraint_chunks.iter().zip(&constraint_sizes) {
-            sum += factor * eval_e(chunk, &w);
+        for (c, &e) in constraint_sizes.iter().enumerate() {
+            sum += factor * eval_limbs(stack2.limbs(Column::ConstraintQuotient(c)), &w);
             factor *= w[e];
         }
         sum
