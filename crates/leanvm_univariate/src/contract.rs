@@ -19,7 +19,7 @@ use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::transcript::{Checks, KeccakChannel, keccak_seed};
 
 use crate::claims::{Combined, Commitment};
-use crate::verifier::{Blake2s, Reduced, Shape, reduce};
+use crate::verifier::{Blake2s, Claims, Opening, Reduced, Shape, reduce};
 
 /// The transcript's 16-byte name.
 pub const NAME: [u8; 16] = *b"leanVM-univar-v1";
@@ -49,11 +49,11 @@ pub struct Recorded {
     pub reads: Vec<(&'static str, u32)>,
 }
 
-pub fn record_verifier(shape: &Shape, blake2s: Blake2s) -> Recorded {
+pub fn record_verifier(shape: &Shape, blake2s: Blake2s, mode: Claims) -> Recorded {
     let ((reduced, stream_len, roots, reads), graph) = record(|| {
         let mut recorder = Recorder::new();
         let words = Recorder::statement();
-        let reduced = reduce(shape, words, &mut recorder, blake2s).expect("a recorder rejects nothing");
+        let reduced = reduce(shape, words, &mut recorder, blake2s, mode).expect("a recorder rejects nothing");
         (reduced, recorder.cursor as usize, recorder.roots.clone(), recorder.reads)
     });
     assert_eq!(roots.len(), 2, "two commitments in the stream");
@@ -76,32 +76,56 @@ fn scalar(sym: Sym) -> Word {
     Word::Node(sym.0)
 }
 
-fn combined_words(root: Word, layout: u64, claim: &Combined<Sym>) -> Vec<Word> {
-    let mut words = vec![root, number(layout), number(1), number(claim.points.len() as u64)];
+/// A weighted claim's words, after its header: `P`, the points, `m`, the terms, the value.
+fn combined_words<T: Copy, W: Clone>(claim: &Combined<T>, word: impl Fn(T) -> W, number: impl Fn(u64) -> W) -> Vec<W> {
+    let mut words = vec![number(claim.points.len() as u64)];
     for point in &claim.points {
         words.push(number(point.len() as u64));
-        words.extend(point.iter().map(|&x| scalar(x)));
+        words.extend(point.iter().map(|&x| word(x)));
     }
     words.push(number(claim.terms.len() as u64));
     for &(column, point, twist, coefficient) in &claim.terms {
         words.push(number(column.id() | (point as u64) << 32 | (twist as u64) << 48));
-        words.push(scalar(coefficient));
+        words.push(word(coefficient));
     }
-    words.push(scalar(claim.value));
+    words.push(word(claim.value));
     words
+}
+
+/// A commitment's call: its header (root, layout, claims), then its claims.
+fn opening_words<T: Copy, W: Clone>(
+    root: W,
+    layout: u64,
+    opening: &Opening<T>,
+    word: impl Fn(T) -> W + Copy,
+    number: impl Fn(u64) -> W + Copy,
+) -> Vec<W> {
+    match opening {
+        Opening::Weighted(claim) => [vec![root, number(layout), number(1)], combined_words(claim, word, number)].concat(),
+        Opening::Point { point, value, bit_slice } => {
+            let k = 1 + bit_slice.is_some() as u64;
+            let mut words = vec![root, number(layout), number(k)];
+            words.extend(point.iter().map(|&x| word(x)));
+            words.push(word(*value));
+            if let Some(claim) = bit_slice {
+                words.extend(combined_words(claim, word, number));
+            }
+            words
+        }
+    }
 }
 
 /// The calls of `PCS_OPEN`, as runs of output words.
 pub fn calls(recorded: &Recorded) -> Vec<Vec<Word>> {
     let reduced = &recorded.reduced;
     let mut out = Vec::new();
-    for (commitment, claim) in &reduced.claims {
+    for (commitment, opening) in &reduced.openings {
         let root = match commitment {
             Commitment::C1 => Word::Stream(recorded.roots_at[0]),
             Commitment::C2 => Word::Stream(recorded.roots_at[1]),
             Commitment::Setup => setup_root(1),
         };
-        out.push(combined_words(root, layout_id(*commitment), claim));
+        out.push(opening_words(root, layout_id(*commitment), opening, scalar, number));
     }
     if let Some(matrices) = &reduced.matrices {
         for (k, (layout, value)) in [(A0_LAYOUT, matrices.a), (B0_LAYOUT, matrices.b)].into_iter().enumerate() {
@@ -151,6 +175,7 @@ pub fn rust_verifier(
     public_words: &[u8; 32],
     stream: &[u8],
     blake2s: Blake2s,
+    mode: Claims,
 ) -> Result<(Reduced<E>, Vec<E>, Vec<E>), leanvm_flock_gas::VerifierError> {
     let seed = keccak_seed(&NAME, iv, public_words);
     let mut channel = KeccakChannel::new(
@@ -168,7 +193,7 @@ pub fn rust_verifier(
             0,
         )
     });
-    let reduced = reduce(shape, words, &mut channel, blake2s)?;
+    let reduced = reduce(shape, words, &mut channel, blake2s, mode)?;
     channel.finish()?;
     let Checks::Collect { zero, nonzero } = channel.checks else {
         unreachable!()
@@ -229,19 +254,29 @@ impl GasReport {
 
 /// Measure the verifier for `shape`: build it, run it on sample calldata with every call attested, and check the
 /// run's gas against a run at another claim price and the phases against the total.
-pub fn measure(shape: &Shape, iv: &[u8; 32], blake2s: Blake2s) -> GasReport {
-    let recorded = record_verifier(shape, blake2s);
+pub fn measure(shape: &Shape, iv: &[u8; 32], blake2s: Blake2s, mode: Claims) -> GasReport {
+    let recorded = record_verifier(shape, blake2s, mode);
     let contract = compile_verifier(&recorded, iv, true);
     let stream = sample_stream(recorded.stream_len, 0x6A5);
     let data = calldata(&[0x5a; 32], &stream);
     assert_eq!(data.len(), contract.calldata_len);
     let all_calls = calls(&recorded);
-    let claims = all_calls.len();
+    let claims: usize = recorded
+        .reduced
+        .openings
+        .iter()
+        .map(|(_, opening)| match opening {
+            Opening::Weighted(_) => 1,
+            Opening::Point { bit_slice, .. } => 1 + bit_slice.is_some() as usize,
+        })
+        .sum::<usize>()
+        + 2 * recorded.reduced.matrices.is_some() as usize;
+    let calls_count = all_calls.len();
     let run = |claim_gas: u64| -> Outcome {
         let block = PcsOpen::attesting_all(claim_gas);
         let outcome = call(&contract.code, &[], &data, &block);
         assert_eq!(outcome.output.as_deref(), Some(&word([1, 0, 0])[..]), "the measuring run returns 1");
-        assert_eq!(outcome.pcs_calls.len(), claims, "one call per commitment");
+        assert_eq!(outcome.pcs_calls.len(), calls_count, "one call per commitment");
         outcome
     };
     let outcome = run(0);
@@ -260,17 +295,23 @@ pub fn measure(shape: &Shape, iv: &[u8; 32], blake2s: Blake2s) -> GasReport {
     let total: u64 = phases.iter().map(|p| p.gas).sum();
     assert_eq!(total, outcome.execution, "the instructions' gas is the execution's");
     let measured = phases.iter().find(|p| p.phase == MEASURE).map_or(0, |p| p.gas);
-    assert_eq!(measured, contract.checks as u64 + claims as u64, "one JUMPDEST a check and a call");
+    assert_eq!(measured, contract.checks as u64 + calls_count as u64, "one JUMPDEST a check and a call");
     phases.retain(|p| p.phase != MEASURE);
     phases.sort_by_key(|p| std::cmp::Reverse(p.gas));
     let mut terms: Vec<(String, usize, usize)> = recorded
         .reduced
-        .claims
+        .openings
         .iter()
         .zip(&all_calls)
-        .map(|((commitment, claim), words)| (format!("{commitment:?}"), claim.terms.len(), words.len()))
+        .map(|((commitment, opening), words)| {
+            let terms = match opening {
+                Opening::Weighted(claim) => claim.terms.len(),
+                Opening::Point { bit_slice, .. } => 1 + bit_slice.as_ref().map_or(0, |c| c.terms.len()),
+            };
+            (format!("{commitment:?}"), terms, words.len())
+        })
         .collect();
-    for (name, words) in ["A0", "B0"].iter().zip(&all_calls[recorded.reduced.claims.len()..]) {
+    for (name, words) in ["A0", "B0"].iter().zip(&all_calls[recorded.reduced.openings.len()..]) {
         terms.push((name.to_string(), 1, words.len()));
     }
     let _ = ENTRY;
@@ -281,7 +322,7 @@ pub fn measure(shape: &Shape, iv: &[u8; 32], blake2s: Blake2s) -> GasReport {
         execution: outcome.execution - measured,
         phases,
         claims,
-        calls: claims,
+        calls: calls_count,
         pcs_words: all_calls.iter().map(Vec::len).sum(),
         terms,
         relations: recorded.reduced.relations,
@@ -307,23 +348,13 @@ fn expected_words(reduced: &Reduced<E>, recorded: &Recorded, stream: &[u8]) -> V
     let root = |at: usize| -> [u8; 32] { stream[at..at + 32].try_into().unwrap() };
     let constant = |k: u64| word([0x1111 * k, 0x2222, 0x3333]);
     let mut out = Vec::new();
-    for (commitment, claim) in &reduced.claims {
-        out.push(match commitment {
+    for (commitment, opening) in &reduced.openings {
+        let r = match commitment {
             Commitment::C1 => root(recorded.roots_at[0]),
             Commitment::C2 => root(recorded.roots_at[1]),
             Commitment::Setup => constant(1),
-        });
-        out.extend([number(layout_id(*commitment)), number(1), number(claim.points.len() as u64)]);
-        for point in &claim.points {
-            out.push(number(point.len() as u64));
-            out.extend(point.iter().map(|&x| element_word(x)));
-        }
-        out.push(number(claim.terms.len() as u64));
-        for &(column, point, twist, coefficient) in &claim.terms {
-            out.push(number(column.id() | (point as u64) << 32 | (twist as u64) << 48));
-            out.push(element_word(coefficient));
-        }
-        out.push(element_word(claim.value));
+        };
+        out.extend(opening_words(r, layout_id(*commitment), opening, element_word, number));
     }
     if let Some(matrices) = &reduced.matrices {
         for (k, (layout, value)) in [(A0_LAYOUT, matrices.a), (B0_LAYOUT, matrices.b)].into_iter().enumerate() {
@@ -337,8 +368,8 @@ fn expected_words(reduced: &Reduced<E>, recorded: &Recorded, stream: &[u8]) -> V
 
 /// The contract, built to return what it would hand `PCS_OPEN` and every value it checks, against the Rust verifier
 /// on the same calldata: word for word.
-pub fn parity(shape: &Shape, iv: &[u8; 32], public_words: &[u8; 32], stream: &[u8], blake2s: Blake2s) {
-    let recorded = record_verifier(shape, blake2s);
+pub fn parity(shape: &Shape, iv: &[u8; 32], public_words: &[u8; 32], stream: &[u8], blake2s: Blake2s, mode: Claims) {
+    let recorded = record_verifier(shape, blake2s, mode);
     let entry = Entry {
         name: NAME,
         iv: *iv,
@@ -352,7 +383,8 @@ pub fn parity(shape: &Shape, iv: &[u8; 32], public_words: &[u8; 32], stream: &[u
         .chain(checks.map(|&(id, _)| Word::Node(id)))
         .collect();
     let contract = compile(&recorded.graph, &outputs, &Ending::Return, &entry);
-    let (reduced, zero, nonzero) = rust_verifier(shape, iv, public_words, stream, blake2s).expect("the stream's length");
+    let (reduced, zero, nonzero) =
+        rust_verifier(shape, iv, public_words, stream, blake2s, mode).expect("the stream's length");
     let mut expected = expected_words(&reduced, &recorded, stream);
     expected.extend(zero.iter().chain(&nonzero).map(|&x| leanvm_flock_gas::evm::machine::element_word(x)));
     let outcome = call(&contract.code, &[], &calldata(public_words, stream), &PcsOpen::default());
@@ -361,4 +393,166 @@ pub fn parity(shape: &Shape, iv: &[u8; 32], public_words: &[u8; 32], stream: &[u
     for (k, (got, want)) in output.chunks(32).zip(&expected).enumerate() {
         assert_eq!(got, &want[..], "word {k}");
     }
+}
+
+/// What the contract writes and how it ends: the calls of `PCS_OPEN` (`verify`), or those words and every checked
+/// value returned (`!verify`, for parity).
+fn ends(recorded: &Recorded, iv: &[u8; 32], verify: bool, measure: bool) -> (Vec<Word>, Ending, Entry) {
+    let entry = Entry {
+        name: NAME,
+        iv: *iv,
+        stream_len: recorded.stream_len,
+        measure,
+    };
+    let calls = calls(recorded);
+    if verify {
+        let ending = Ending::PcsOpen(calls.iter().map(Vec::len).collect());
+        (calls.concat(), ending, entry)
+    } else {
+        let checks = recorded.graph.zero.iter().chain(&recorded.graph.nonzero);
+        let outputs = calls
+            .concat()
+            .into_iter()
+            .chain(checks.map(|&(id, _)| Word::Node(id)))
+            .collect();
+        (outputs, Ending::Return, entry)
+    }
+}
+
+/// One deployed contract of a deployable verifier: code bytes, and its deployment (execution, and transaction gas
+/// without the base under EIP-7623).
+#[derive(Clone, Debug)]
+pub struct ContractCost {
+    pub code_bytes: usize,
+    pub deployment_execution: u64,
+    pub deployment_tx: u64,
+}
+
+/// The deployable verifier: a verifying call, and the contracts (the driver first).
+#[derive(Clone, Debug)]
+pub struct DeployableReport {
+    pub report: GasReport,
+    pub straight: u64,
+    pub contracts: Vec<ContractCost>,
+}
+
+/// Measure the verifier as contracts of at most `limit` bytes (`leanvm_flock_gas::evm`'s linker, `crates/evm_link`):
+/// deploy them, each by a transaction; run the measuring build, cut at the same places, as [`measure`] runs the one
+/// contract.
+pub fn measure_deployable(
+    shape: &Shape,
+    iv: &[u8; 32],
+    blake2s: Blake2s,
+    mode: Claims,
+    limit: usize,
+) -> DeployableReport {
+    use leanvm_flock_gas::evm::codegen::{compile_deployable, compile_deployable_like};
+    use leanvm_flock_gas::evm::contract::{deploy, install};
+    let recorded = record_verifier(shape, blake2s, mode);
+    let (outputs, ending, entry) = ends(&recorded, iv, true, false);
+    let real = compile_deployable(&recorded.graph, &outputs, &ending, &entry, limit);
+    let deployed = deploy(&real, &[]);
+    let (outputs, ending, entry) = ends(&recorded, iv, true, true);
+    let measuring = compile_deployable_like(&recorded.graph, &outputs, &ending, &entry, &real);
+    assert_eq!(measuring.linked.starts(), real.linked.starts());
+    let installed = install(&measuring, &[]);
+    let stream = sample_stream(recorded.stream_len, 0x6A5);
+    let data = calldata(&[0x5a; 32], &stream);
+    let straight = measure(shape, iv, blake2s, mode);
+    let calls_count = straight.calls;
+    let run = |claim_gas: u64| -> Outcome {
+        let outcome = installed
+            .chain
+            .call(installed.address, &data, &PcsOpen::attesting_all(claim_gas));
+        assert_eq!(outcome.output.as_deref(), Some(&word([1, 0, 0])[..]), "the measuring run returns 1");
+        assert_eq!(outcome.pcs_calls.len(), calls_count, "one call per commitment");
+        outcome
+    };
+    let outcome = run(0);
+    assert_eq!(run(1000).execution, outcome.execution + 1000 * straight.claims as u64);
+    let mut phases: Vec<PhaseGas> = Vec::new();
+    for (address, gas_by_pc) in &outcome.gas_by_code {
+        let tags = &installed
+            .contracts
+            .iter()
+            .find(|c| c.address == *address)
+            .expect("a contract of the deployment")
+            .tags;
+        for (pc, &gas) in gas_by_pc.iter().enumerate() {
+            if gas == 0 {
+                continue;
+            }
+            let phase = tags.get(pc).copied().unwrap_or(CALLS);
+            match phases.iter_mut().find(|p| p.phase == phase) {
+                Some(p) => p.gas += gas,
+                None => phases.push(PhaseGas { phase, gas }),
+            }
+        }
+    }
+    let measured = phases.iter().find(|p| p.phase == MEASURE).map_or(0, |p| p.gas);
+    let parts = real.linked.parts.len();
+    assert_eq!(
+        measured,
+        (real.checks + calls_count + parts + (parts > 0) as usize) as u64,
+        "one JUMPDEST a check, a call of PCS_OPEN, a call of a part and the last part's word"
+    );
+    phases.retain(|p| p.phase != MEASURE);
+    phases.sort_by_key(|p| std::cmp::Reverse(p.gas));
+    // `deploy` deploys the parts first and the driver last.
+    let mut contracts: Vec<ContractCost> = deployed
+        .contracts
+        .iter()
+        .map(|c| ContractCost {
+            code_bytes: c.code_bytes,
+            deployment_execution: c.execution,
+            deployment_tx: c.transaction(40),
+        })
+        .collect();
+    contracts.rotate_right(1);
+    let mut report = straight.clone();
+    report.execution = outcome.execution - measured;
+    report.phases = phases;
+    report.code_bytes = real.linked.code_bytes();
+    DeployableReport {
+        report,
+        straight: straight.execution,
+        contracts,
+    }
+}
+
+/// The deployable build against the Rust verifier: its returning build (cut where the verifying one would be) returns
+/// the words the Rust verifier computes, word for word. Returns how many contracts it was cut into.
+pub fn parity_deployable(
+    shape: &Shape,
+    iv: &[u8; 32],
+    public_words: &[u8; 32],
+    stream: &[u8],
+    blake2s: Blake2s,
+    mode: Claims,
+    limit: usize,
+) -> usize {
+    use leanvm_flock_gas::evm::codegen::{compile_deployable, compile_deployable_like};
+    use leanvm_flock_gas::evm::contract::install;
+    let recorded = record_verifier(shape, blake2s, mode);
+    let (outputs, ending, entry) = ends(&recorded, iv, false, false);
+    let returning = compile_deployable(&recorded.graph, &outputs, &ending, &entry, limit);
+    let (outputs, ending, entry) = ends(&recorded, iv, false, true);
+    let installed = install(
+        &compile_deployable_like(&recorded.graph, &outputs, &ending, &entry, &returning),
+        &[],
+    );
+    let output = installed
+        .chain
+        .call(installed.address, &calldata(public_words, stream), &PcsOpen::default())
+        .output
+        .expect("a measuring build does not revert");
+    let (reduced, zero, nonzero) =
+        rust_verifier(shape, iv, public_words, stream, blake2s, mode).expect("the stream's length");
+    let mut expected = expected_words(&reduced, &recorded, stream);
+    expected.extend(zero.iter().chain(&nonzero).map(|&x| leanvm_flock_gas::evm::machine::element_word(x)));
+    assert_eq!(output.len(), 32 * expected.len(), "words returned");
+    for (k, (got, want)) in output.chunks(32).zip(&expected).enumerate() {
+        assert_eq!(got, &want[..], "word {k}");
+    }
+    returning.linked.parts.len() + 1
 }

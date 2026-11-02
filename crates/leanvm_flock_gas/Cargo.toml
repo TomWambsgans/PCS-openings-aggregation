@@ -11,4 +11,5 @@ description = "Gas of leanVM 42422001's PIOP verifier (BLAKE2s proven with Flock
 workspace = true
 
 [dependencies]
+evm_link.workspace = true
 revm.workspace = true

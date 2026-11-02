@@ -4,7 +4,7 @@
 //! `cargo test --release -p leanvm_univariate --test gas -- --ignored --nocapture gas_report`
 
 use leanvm_flock_gas::shapes::{PROGRAM_IV, WORKLOADS};
-use leanvm_univariate::{Blake2s, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, Shape};
+use leanvm_univariate::{Blake2s, Claims, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, Shape};
 use leanvm_univariate::contract::{GasReport, measure, rust_verifier, record_verifier, sample_stream};
 
 /// Run `f` on a thread with a deep stack: the code generator recurses along the graph.
@@ -85,16 +85,19 @@ fn print_report(name: &str, report: &GasReport) {
 fn gas_report() {
     deep(|| {
         let variants = [
-            ("(a') Flock skip 3, slices sent, ring weight as 64 twisted terms (E-linear claims)", Blake2s::Flock(FLOCK_MAIN)),
-            ("(a) Flock skip 4, one bit-slice combination claim (precompile extension)", Blake2s::Flock(FLOCK_BIT_SLICE)),
-            ("Flock leanVM's skip 6, slices sent, ring weight as 64 twisted terms", Blake2s::Flock(FLOCK_LEANVM_SKIP)),
-            ("no BLAKE2s argument (everything but Flock)", Blake2s::Omitted),
+            ("ABI point claims, Flock (a')", Blake2s::Flock(FLOCK_MAIN), Claims::Point),
+            ("ABI point claims, Flock (a) [ext. B]", Blake2s::Flock(FLOCK_BIT_SLICE), Claims::Point),
+            ("weighted claims [ext. W], Flock (a')", Blake2s::Flock(FLOCK_MAIN), Claims::Weighted),
+            ("weighted claims [ext. W], Flock (a) [ext. B]", Blake2s::Flock(FLOCK_BIT_SLICE), Claims::Weighted),
+            ("ABI point claims, Flock leanVM's skip 6", Blake2s::Flock(FLOCK_LEANVM_SKIP), Claims::Point),
+            ("ABI point claims, no BLAKE2s argument", Blake2s::Omitted, Claims::Point),
+            ("weighted claims [ext. W], no BLAKE2s argument", Blake2s::Omitted, Claims::Weighted),
         ];
         let mut rows = Vec::new();
         for workload in &WORKLOADS {
             let shape = Shape::of(&workload.shape);
-            for (name, blake2s) in variants {
-                let report = measure(&shape, &PROGRAM_IV, blake2s);
+            for (name, blake2s, mode) in variants {
+                let report = measure(&shape, &PROGRAM_IV, blake2s, mode);
                 if workload.xmss == 1000 {
                     print_report(&format!("{}, {name}", workload.name), &report);
                 }
@@ -135,14 +138,13 @@ fn rust_verifier_reads_the_recorded_stream() {
     deep(|| {
         for workload in &WORKLOADS {
             let shape = Shape::of(&workload.shape);
-            let recorded = record_verifier(&shape, Blake2s::Flock(FLOCK_MAIN));
-            let stream = sample_stream(recorded.stream_len, 7);
-            let (reduced, _, _) = rust_verifier(&shape, &PROGRAM_IV, &[3; 32], &stream, Blake2s::Flock(FLOCK_MAIN))
-                .expect("the stream's length");
-            assert_eq!(reduced.claims.len(), recorded.reduced.claims.len());
-            for ((_, a), (_, b)) in reduced.claims.iter().zip(&recorded.reduced.claims) {
-                assert_eq!(a.terms.len(), b.terms.len(), "{}", workload.name);
-                assert_eq!(a.points.len(), b.points.len(), "{}", workload.name);
+            for mode in [Claims::Point, Claims::Weighted] {
+                let recorded = record_verifier(&shape, Blake2s::Flock(FLOCK_MAIN), mode);
+                let stream = sample_stream(recorded.stream_len, 7);
+                let (reduced, _, _) =
+                    rust_verifier(&shape, &PROGRAM_IV, &[3; 32], &stream, Blake2s::Flock(FLOCK_MAIN), mode)
+                        .expect("the stream's length");
+                assert_eq!(reduced.openings.len(), recorded.reduced.openings.len(), "{}", workload.name);
             }
         }
     });
@@ -156,12 +158,82 @@ fn contract_is_the_rust_verifier() {
         let workload = leanvm_flock_gas::shapes::reference();
         let shape = Shape::of(&workload.shape);
         for blake2s in [Blake2s::Flock(FLOCK_MAIN), Blake2s::Flock(FLOCK_BIT_SLICE), Blake2s::Omitted] {
-            let recorded = record_verifier(&shape, blake2s);
-            for seed in [1u64, 2] {
-                let stream = sample_stream(recorded.stream_len, seed);
-                let public: [u8; 32] = std::array::from_fn(|i| (seed as u8).wrapping_mul(31) ^ i as u8);
-                leanvm_univariate::contract::parity(&shape, &PROGRAM_IV, &public, &stream, blake2s);
+            for mode in [Claims::Point, Claims::Weighted] {
+                let recorded = record_verifier(&shape, blake2s, mode);
+                for seed in [1u64, 2] {
+                    let stream = sample_stream(recorded.stream_len, seed);
+                    let public: [u8; 32] = std::array::from_fn(|i| (seed as u8).wrapping_mul(31) ^ i as u8);
+                    leanvm_univariate::contract::parity(&shape, &PROGRAM_IV, &public, &stream, blake2s, mode);
+                }
             }
+        }
+    });
+}
+
+/// The deployable build (contracts of at most 24,576 bytes, `crates/evm_link`) returns, word for word, what the Rust
+/// verifier computes, for the main line and the extensions.
+#[test]
+fn deployable_is_the_rust_verifier() {
+    deep(|| {
+        let shape = Shape::of(&leanvm_flock_gas::shapes::reference().shape);
+        for (blake2s, mode) in [
+            (Blake2s::Flock(FLOCK_MAIN), Claims::Point),
+            (Blake2s::Flock(FLOCK_BIT_SLICE), Claims::Weighted),
+        ] {
+            let recorded = record_verifier(&shape, blake2s, mode);
+            let stream = sample_stream(recorded.stream_len, 11);
+            let contracts = leanvm_univariate::contract::parity_deployable(
+                &shape,
+                &PROGRAM_IV,
+                &[0x42; 32],
+                &stream,
+                blake2s,
+                mode,
+                leanvm_flock_gas::evm::codegen::MAX_CODE,
+            );
+            assert!(contracts >= 1);
+        }
+    });
+}
+
+/// `cargo test --release -p leanvm_univariate --test gas -- --ignored --nocapture deployable_report`
+#[test]
+#[ignore]
+fn deployable_report() {
+    deep(|| {
+        let shape = Shape::of(&leanvm_flock_gas::shapes::reference().shape);
+        for (name, blake2s, mode) in [
+            ("ABI point claims, Flock (a')", Blake2s::Flock(FLOCK_MAIN), Claims::Point),
+            ("ABI point claims, Flock (a) [ext. B]", Blake2s::Flock(FLOCK_BIT_SLICE), Claims::Point),
+            ("weighted claims [ext. W], Flock (a')", Blake2s::Flock(FLOCK_MAIN), Claims::Weighted),
+            ("weighted claims [ext. W], Flock (a) [ext. B]", Blake2s::Flock(FLOCK_BIT_SLICE), Claims::Weighted),
+            ("ABI point claims, no BLAKE2s argument", Blake2s::Omitted, Claims::Point),
+            ("weighted claims [ext. W], no BLAKE2s argument", Blake2s::Omitted, Claims::Weighted),
+        ] {
+            let d = leanvm_univariate::contract::measure_deployable(
+                &shape,
+                &PROGRAM_IV,
+                blake2s,
+                mode,
+                leanvm_flock_gas::evm::codegen::MAX_CODE,
+            );
+            let sizes: Vec<String> = d.contracts.iter().map(|c| grouped(c.code_bytes as u64)).collect();
+            let deployment: u64 = d.contracts.iter().map(|c| c.deployment_tx).sum();
+            println!(
+                "| {name} | {} | {} | +{} | {} contracts: {} bytes | {} | {} / {} / {} / {} | {} / {} |",
+                grouped(d.straight),
+                grouped(d.report.execution),
+                grouped(d.report.execution - d.straight),
+                d.contracts.len(),
+                sizes.join(", "),
+                grouped(deployment),
+                grouped(d.report.transaction(0, 40)),
+                grouped(d.report.transaction(2_000, 40)),
+                grouped(d.report.transaction(5_000, 40)),
+                grouped(d.report.transaction(20_000, 40)),
+                grouped(d.report.transaction(0, 64)),
+                grouped(d.report.transaction(20_000, 64)),
+            );
         }
     });
 }

@@ -14,10 +14,11 @@ use leanvm_flock_gas::layout::{
 use leanvm_flock_gas::matrices::MatrixClaim;
 use leanvm_flock_gas::multilinear::{eq_kernel, log2_ceil};
 use leanvm_flock_gas::scalar::{Scalar, enter};
-use leanvm_flock_gas::transcript::Channel;
+use leanvm_flock_gas::transcript::{Channel, sumcheck};
 use leanvm_flock_gas::VerifierError;
 
 use crate::claims::{COMMITMENTS, Column, Combined, Commitment, Relations, Term, term};
+use crate::stacks::{EqCache, StackLayout, limb_basis};
 use crate::domain::{
     coordinate_functionals, coordinates_at, digits, point_e, prefix_vanishing, suffix_vanishing, vanishing_ratio,
 };
@@ -254,10 +255,35 @@ fn qflock_slot(name: &str) -> Option<usize> {
 /// What the verifier leaves: the two roots and one weighted claim on each commitment, and Flock's claims on `A0`, `B0`.
 pub struct Reduced<S> {
     pub roots: [[S; 2]; 2],
-    pub claims: Vec<(Commitment, Combined<S>)>,
+    pub openings: Vec<(Commitment, Opening<S>)>,
     pub matrices: Option<MatrixClaim<S>>,
-    /// The relations combined.
+    /// The relations combined, and each commitment's stack variables.
     pub relations: usize,
+    pub stack_vars: Vec<(Commitment, usize)>,
+}
+
+/// What a commitment's one `PCS_OPEN` call carries.
+#[derive(Clone, Debug)]
+pub enum Opening<S> {
+    /// One weighted claim (extension W, SPEC.md §8).
+    Weighted(Combined<S>),
+    /// One point claim, `PCS_OPEN`'s ABI (after the batching sumcheck), and on `C1` with Flock (a) the bit-slice
+    /// combination claim (extension B).
+    Point {
+        point: Vec<S>,
+        value: S,
+        bit_slice: Option<Combined<S>>,
+    },
+}
+
+/// How the relations reach `PCS_OPEN` (SPEC.md §8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Claims {
+    /// `crates/evm/src/machine.rs`'s ABI: point claims. One batching sumcheck over the stacks (the longest, the
+    /// others zero-extended) turns every commitment's relations into one point claim at its end point.
+    Point,
+    /// Extension W: one weighted claim per commitment, its terms evaluated by the precompile.
+    Weighted,
 }
 
 /// Flock's variants measured end to end (SPEC-FLOCK.md): (a′) the main line, `PCS_OPEN`'s claims `E`-linear; (a) a
@@ -291,8 +317,14 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     public_words: [S; 4],
     channel: &mut C,
     blake2s: Blake2s,
+    mode: Claims,
 ) -> Result<Reduced<S>, VerifierError> {
     let tables = tables();
+    let mut c2_columns: Vec<(Column, usize, bool)> = vec![
+        (Column::Heap, shape.heap().h, true),
+        (Column::TreeQuotient(0), shape.heap().h, true),
+        (Column::TreeQuotient(1), 0, true),
+    ];
     let heights = shape.heights();
     let heap = shape.heap();
     let r_w = shape.constraint_vars();
@@ -452,6 +484,12 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
         relations.push(terms, constraint_value * w[r_w] + known);
     }
     let constraint_chunks = chunks(quotient_degree + 1);
+    c2_columns.extend(
+        constraint_chunks
+            .iter()
+            .enumerate()
+            .map(|(c, &e)| (Column::ConstraintQuotient(c), e, true)),
+    );
 
     // 6. C2: the heap's tree, root and leaves, and Q_W's value.
     {
@@ -504,6 +542,12 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                 }
             };
             let sizes = chunks(degree + 1);
+            c2_columns.extend(
+                sizes
+                    .iter()
+                    .enumerate()
+                    .map(|(chunk, &e)| (Column::LeafQuotient { block: index, chunk }, e, true)),
+            );
             let mut terms = vec![term(Column::Heap, &mixed, pull)];
             terms.extend(quotient_terms(
                 |chunk| Column::LeafQuotient { block: index, chunk },
@@ -519,6 +563,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
 
     // 7. Flock's claim on q_flock: the ring switch's 64 twisted terms (E-linear), or one bit-slice combination.
     let mut matrices = None;
+    let mut bit_slice = Relations::default();
     if let Some(flock) = flock {
         match flock.end {
             End::Ring { map, target, .. } => {
@@ -541,7 +586,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
                     target,
                 );
             }
-            End::Combination { weights, value } => relations.push(
+            End::Combination { weights, value } => bit_slice.push(
                 weights
                     .iter()
                     .enumerate()
@@ -560,15 +605,140 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
 
     // 8. One claim per commitment.
     let rho = channel.sample();
-    let _phase = enter("claims: combination (powers of rho, merging)");
-    let claims = COMMITMENTS
-        .iter()
-        .filter_map(|&commitment| relations.combine(commitment, rho).map(|claim| (commitment, claim)))
-        .collect();
+    let combined: Vec<(Commitment, Combined<S>)> = {
+        let _phase = enter("claims: combination (powers of rho, merging)");
+        COMMITMENTS
+            .iter()
+            .filter_map(|&commitment| relations.combine(commitment, rho).map(|claim| (commitment, claim)))
+            .collect()
+    };
+    let bit_slice = bit_slice.combine(Commitment::C1, S::one());
+    let layouts = layouts(shape, &c2_columns);
+    let stack_vars = layouts.iter().map(|(c, l)| (*c, l.vars)).collect();
+    let openings = match mode {
+        Claims::Weighted => {
+            let mut openings: Vec<(Commitment, Opening<S>)> =
+                combined.into_iter().map(|(c, claim)| (c, Opening::Weighted(claim))).collect();
+            if let Some(claim) = bit_slice {
+                // Without the point ABI, the bit-slice terms join C1's weighted claim.
+                let (_, Opening::Weighted(c1)) = &mut openings[0] else { unreachable!() };
+                // A fresh power of rho, past the powers C1's relations took.
+                let fresh = rho.pow(c1.relations as u64);
+                let base = c1.points.len();
+                c1.points.extend(claim.points);
+                c1.terms
+                    .extend(claim.terms.into_iter().map(|(column, p, twist, k)| (column, p + base, twist, fresh * k)));
+                c1.value += fresh * claim.value;
+            }
+            openings
+        }
+        Claims::Point => batch(channel, &combined, &layouts, bit_slice)?,
+    };
     Ok(Reduced {
         roots: [root1, root2],
-        claims,
+        openings,
         matrices,
         relations: relations.list.len(),
+        stack_vars,
     })
+}
+
+/// The three stacks' layouts (SPEC.md §3).
+fn layouts(shape: &Shape, c2_columns: &[(Column, usize, bool)]) -> Vec<(Commitment, StackLayout)> {
+    let heights = shape.heights();
+    let mut c1: Vec<(Column, usize, bool)> = vec![(Column::Qflock, heights[OP_BLAKE2S] + 8, false)];
+    for table in tables() {
+        let h = heights[table.opcode];
+        c1.extend((0..table.width()).map(|column| {
+            (
+                Column::Table {
+                    table: table.opcode,
+                    column,
+                },
+                h,
+                false,
+            )
+        }));
+        c1.push((Column::Inverse(table.opcode), h, false));
+    }
+    c1.extend((0..4).map(|k| (Column::Memory(k), shape.log_memory, false)));
+    c1.push((Column::BytecodeFinal, shape.log_bytecode, false));
+    let setup = vec![
+        (Column::BytecodeTuple, shape.log_bytecode + 4, false),
+        (Column::Address, shape.log_memory, false),
+    ];
+    vec![
+        (Commitment::C1, StackLayout::new(&c1)),
+        (Commitment::C2, StackLayout::new(c2_columns)),
+        (Commitment::Setup, StackLayout::new(&setup)),
+    ]
+}
+
+/// A combined claim's weight at the stack point `r`: every term's eq weight on its column's blocks.
+fn weight_at<S: Scalar>(claim: &Combined<S>, layout: &StackLayout, r: &[S], base_id: usize) -> S {
+    let mut cache = EqCache::new(r);
+    let basis = limb_basis::<S>();
+    let mut total = S::zero();
+    for &(column, p, twist, coefficient) in &claim.terms {
+        let point = &claim.points[p];
+        let (column, row_len, id, row): (Column, usize, usize, Vec<S>) = match column {
+            Column::QflockSlot(j) => {
+                // q_flock's word `slot + 256 · instance`: the slot's bits, then the instance's coordinates.
+                let bits = (0..8).map(|b| S::constant(E::new((j >> b & 1) as u64, 0, 0)));
+                let row: Vec<S> = bits.chain(point.iter().copied()).collect();
+                (Column::Qflock, row.len(), base_id + 1000 + j, row)
+            }
+            _ => (column, 0, base_id + p, point.clone()),
+        };
+        for (limb, vars, offset) in layout.limbs(column) {
+            let len = if row_len > 0 { row_len } else { vars };
+            let eq = cache.row(id, &row, len, twist) * cache.selector(vars, offset);
+            let scale = if limb == 0 { coefficient } else { coefficient * basis[limb] };
+            total += scale * eq;
+        }
+    }
+    total
+}
+
+/// The batching sumcheck (SPEC.md §8): `Σ_k λ^k Σ_u W_k(u) C_k(u)` over the longest stack, the others zero-extended;
+/// at its end point `r`, the prover sends each `C_k(r)` and the verifier checks the sum with `W_k(r)`.
+fn batch<S: Scalar + PartialEq, C: Channel<S>>(
+    channel: &mut C,
+    combined: &[(Commitment, Combined<S>)],
+    layouts: &[(Commitment, StackLayout)],
+    bit_slice: Option<Combined<S>>,
+) -> Result<Vec<(Commitment, Opening<S>)>, VerifierError> {
+    let _phase = enter("claims: batching sumcheck to point claims");
+    let lambda = channel.sample();
+    let vars = layouts.iter().map(|(_, l)| l.vars).max().expect("stacks");
+    let mut target = S::zero();
+    let mut scale = S::one();
+    for (_, claim) in combined {
+        target += scale * claim.value;
+        scale *= lambda;
+    }
+    let (r, last) = sumcheck(channel, target, 3, &vec![None; vars])?;
+    let values = channel.next_scalars(combined.len())?;
+    let _weights = enter("claims: the batch's weights at its point (eq, selectors, twists)");
+    let mut sum = S::zero();
+    let mut scale = S::one();
+    let mut openings = Vec::new();
+    let mut bit_slice = bit_slice;
+    for (k, ((commitment, claim), &value)) in combined.iter().zip(&values).enumerate() {
+        let layout = &layouts.iter().find(|(c, _)| c == commitment).expect("a layout").1;
+        let weight = weight_at(claim, layout, &r, 10_000 * k);
+        let extension = (layout.vars..vars).fold(S::one(), |acc, j| acc * (S::one() + r[j]));
+        sum += scale * weight * extension * value;
+        scale *= lambda;
+        openings.push((
+            *commitment,
+            Opening::Point {
+                point: r[..layout.vars].to_vec(),
+                value,
+                bit_slice: if *commitment == Commitment::C1 { bit_slice.take() } else { None },
+            },
+        ));
+    }
+    channel.require_zero(sum + last, VerifierError::StackBatchTerminal)?;
+    Ok(openings)
 }

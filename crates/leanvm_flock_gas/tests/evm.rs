@@ -1,8 +1,10 @@
 // Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 //! The contract computes what the Rust verifier computes, and what a call of it costs.
 
+use leanvm_flock_gas::evm::codegen::MAX_CODE;
 use leanvm_flock_gas::evm::contract::{
-    FragmentGas, GasReport, category, measure, measure_fragment, parity, record_verifier, sample_stream,
+    DeployableReport, FragmentGas, GasReport, category, measure, measure_deployable, measure_fragment, parity,
+    parity_deployable, record_verifier, sample_stream,
 };
 use leanvm_flock_gas::keccak_gkr::{KECCAK_DEPTH, KeccakShape, STATE_LANES, verify_keccak};
 use leanvm_flock_gas::shapes::{PROGRAM_IV, WORKLOADS, benchmark};
@@ -273,4 +275,110 @@ fn gas_report() {
             );
         }
     });
+}
+
+/// The deployable verifier (contracts of at most EIP-170's 24,576 bytes, each deployed by a transaction) computes what
+/// the Rust verifier computes, word for word, on streams of the benchmark's shape; reverts exactly when it rejects;
+/// and calls `PCS_OPEN` exactly as the one straight-line contract does.
+#[test]
+fn deployable_is_the_rust_verifier() {
+    deep(|| {
+        let shape = benchmark().shape;
+        let recorded = record_verifier(&shape, LincheckTerminal::Matrices);
+        for seed in [4, 5] {
+            let stream = sample_stream(&shape, &recorded, seed);
+            let public_input: [u8; 32] = std::array::from_fn(|i| (seed as u8).wrapping_mul(29) ^ i as u8);
+            let contracts = parity_deployable(
+                &shape,
+                &PROGRAM_IV,
+                &public_input,
+                &stream,
+                LincheckTerminal::Matrices,
+                MAX_CODE,
+            );
+            assert!(contracts > 1, "117 KB of straight-line code is more than one contract");
+        }
+    });
+}
+
+/// What the deployable verifier costs against the straight-line contract, and its deployment:
+/// `cargo test --release -p leanvm_flock_gas --test evm -- --ignored --nocapture deployable_report`.
+#[test]
+#[ignore]
+fn deployable_report() {
+    deep(|| {
+        for workload in &WORKLOADS {
+            for lincheck in [LincheckTerminal::Matrices, LincheckTerminal::Walk] {
+                if workload.xmss != benchmark().xmss && lincheck == LincheckTerminal::Walk {
+                    continue;
+                }
+                let deployable = measure_deployable(&workload.shape, &PROGRAM_IV, lincheck, MAX_CODE);
+                print_deployable(&format!("{} ({lincheck:?})", workload.name), &deployable);
+            }
+        }
+    });
+}
+
+fn print_deployable(name: &str, d: &DeployableReport) {
+    let r = &d.report;
+    let added = r.execution - d.straight;
+    println!("\n### {name}: deployable, contracts of at most 24,576 bytes");
+    println!(
+        "straight-line: {} bytes, execution {}; deployable: {} contracts, {} bytes, execution {} (+{}, +{:.2}%)",
+        grouped(d.straight_code as u64),
+        grouped(d.straight),
+        d.contracts.len(),
+        grouped(r.code_bytes as u64),
+        grouped(r.execution),
+        grouped(added),
+        100.0 * added as f64 / d.straight as f64
+    );
+    println!(
+        "tx (−21,000), EIP-7623: straight {} / deployable {}; EIP-7976: {} / {}",
+        grouped(r.transaction_for(d.straight, 40)),
+        grouped(r.transaction(0, 40)),
+        grouped(r.transaction_for(d.straight, 64)),
+        grouped(r.transaction(0, 64)),
+    );
+    println!(
+        "| contract | code bytes | init bytes | deployment execution | deployment tx EIP-7623 (−21,000) | memory words \
+         | items | values in / out | stack in / out |"
+    );
+    println!("|---|---:|---:|---:|---:|---:|---|---:|---:|");
+    let (mut execution, mut tx) = (0, 0);
+    for (k, c) in d.contracts.iter().enumerate() {
+        execution += c.deployment_execution;
+        tx += c.deployment_tx;
+        println!(
+            "| {} | {} | {} | {} | {} | {} | {}..{} | {} / {} | {} / {} |",
+            if k == 0 {
+                "driver".to_string()
+            } else {
+                format!("part {k}")
+            },
+            grouped(c.code_bytes as u64),
+            grouped(c.init_bytes as u64),
+            grouped(c.deployment_execution),
+            grouped(c.deployment_tx),
+            grouped(c.memory_words as u64),
+            c.items.start,
+            c.items.end,
+            c.imports,
+            c.exports,
+            c.stack_in,
+            c.stack_out
+        );
+    }
+    println!(
+        "| **all** | {} | | {} | **{}** | | | values region: {} words | |",
+        grouped(r.code_bytes as u64),
+        grouped(execution),
+        grouped(tx),
+        d.values
+    );
+    println!("| phase | execution gas |");
+    println!("|---|---:|");
+    for phase in &r.phases {
+        println!("| {} | {} |", phase.phase, grouped(phase.gas));
+    }
 }
