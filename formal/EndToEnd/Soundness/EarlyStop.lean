@@ -130,17 +130,17 @@ theorem es_le (c : Consts) {P : Params E} {B : P.Bounds} (W : Wire P B) (hM : Ma
   refine mono_bind kcLazy _ _ _ _ _ (fun ch s => ?_) s
   by_cases hok : (reduceOf c 22 po.1 ch).isSome
   swap
-  · rw [if_neg hok, zero_pure kcLazy false _ (by simp) s]
+  · rw [ite_eq_right hok, zero_pure kcLazy false _ (by simp) s]
     exact bot_le
-  rw [if_pos hok]
+  rw [ite_eq_left hok]
   obtain ⟨x, hx⟩ := Option.isSome_iff_exists.mp hok
   have hrc := reductionCheck_of_reduce c hM po.1 ch hx
   refine early_le _ _ _ _ _ _ _ (fun s => ?_) (fun s => ?_) s
-  · rw [if_neg (by simp), zero_pure kcLazy false _ (by simp) s]
-  rw [if_pos rfl]
+  · rw [ite_eq_right (by simp), zero_pure kcLazy false _ (by simp) s]
+  rw [ite_eq_left rfl]
   refine early_le _ _ _ _ _ _ _ (fun s => ?_) (fun s => ?_) s
-  · rw [if_neg (by simp), zero_pure kcLazy false _ (by simp) s]
-  rw [if_pos rfl]
+  · rw [ite_eq_right (by simp), zero_pure kcLazy false _ (by simp) s]
+  rw [ite_eq_left rfl]
   have e : ∀ L R w, ourVerifierEarly L R w = ourVerifierEarly L R w >>= fun b => pure b :=
     fun _ _ _ => (bind_pure _).symm
   rw [e]
@@ -163,7 +163,7 @@ theorem verifier_malformed (ir : Digest) (stmt : PcsQuotient.Statement)
       stmt proof.reduction), r = none := by
     intro r hr
     unfold PcsQuotient.reduceWith at hr
-    rw [if_neg (not_not.mpr hS), mem_support_bind_iff] at hr
+    rw [ite_eq_right (not_not.mpr hS), mem_support_bind_iff] at hr
     obtain ⟨c0, -, hr⟩ := hr
     rcases hw : digestOfScalars proof.reduction.witnessRoot with _ | wr
     · simp only [hw] at hr

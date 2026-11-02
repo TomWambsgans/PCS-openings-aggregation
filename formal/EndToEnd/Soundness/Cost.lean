@@ -74,7 +74,7 @@ theorem allQ_ourVerifier (L : Layout) (R : ℕ) (w : (Digest × Stmt L.stacking)
   rw [ourVerifier_eq]
   by_cases hne : w.1.2.claims.isEmpty = false
   swap
-  · simp only [hne, ↓reduceIte]; trivial
+  · simp only [hne]; trivial
   simp only [hne, ↓reduceIte]
   refine allQueriesSatisfy_bind (allQueriesSatisfy_bind (LeanVM.Rpm.allQ_queryH ?_)
     fun _ => LeanVM.Rpm.allQ_queryF _) fun seed => ?_

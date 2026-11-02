@@ -122,14 +122,14 @@ theorem extractFrom_spec (n : ℕ) (circuit : PcsQuotient.Circuit) (hlog : circu
   rw [hlog, hw, Option.bind_eq_bind, Option.bind_some]
   refine findSome_orElse _ _ _ (PcsQuotient.Relation stmt) (fun a b hab => ?_) ⟨st, hst, ?_⟩
   · by_cases hr : PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit a)
-    · rw [if_pos hr] at hab
+    · rw [ite_eq_left hr] at hab
       cases hab
       exact hr
-    · rw [if_neg hr] at hab
+    · rw [ite_eq_right hr] at hab
       cases hab
   · show (if PcsQuotient.Relation stmt (PcsQuotient.secretOfStack circuit st) then
       some (PcsQuotient.secretOfStack circuit st) else none).isSome = true
-    rw [if_pos hrel]
+    rw [ite_eq_left hrel]
     rfl
 
 /-- **If Compose's list holds a witness, the Statement's extractor finds a secret.** For a proof
