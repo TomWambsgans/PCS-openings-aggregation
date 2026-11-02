@@ -28,10 +28,13 @@ An `F64` is a 64-bit word whose bit `i` is the coefficient of `x^i` (Rust's `F64
 `native_decide`; `BF64.ext3Poly_irreducible`), so both are fields (`inferInstance : Field F192`),
 and `Fintype.card F192 = 2 ^ 192` (`card`).
 
-That the Rust computes these operations (its `reduce` folding `x^64 = 0x1B`, its Karatsuba and
-PMULL paths) is tested, not proved: `formal/Field/Test.lean` checks, in the kernel, products the Rust
-computes in `crates/quotient/tests/lean_field_vectors.rs` (and the Python reference vectors of
-`gf2_64x3.rs`), and inverses and a Frobenius by compiled evaluation.
+The Rust's software product as `formal/Implementation` transcribes it (`mulE`: `software::clmul`,
+its shift-fold `reduce` folding `x^64 = 0x1B`, the nine limb products folded by `y^3 = y + 1`) is
+proved to be this field's `*`: `Implementation/Field192.lean` (`mul64_eq`, `isF192_primitives`).
+That the Rust computes these operations (that transcription, its Karatsuba and PMULL paths) is
+tested, not proved: `formal/Field/Test.lean` checks, in the kernel, products the Rust computes in
+`crates/quotient/tests/lean_field_vectors.rs` (and the Python reference vectors of `gf2_64x3.rs`),
+and inverses and a Frobenius by compiled evaluation.
 
 ## API
 

@@ -4,7 +4,7 @@
 # `formal/quotient` (branch PCS-openings-aggregation, commit 651453c6). MIT OR Apache-2.0; see NOTICE.md.
 name = "pcs-quotient-formal"
 version = "0.1.0"
-defaultTargets = ["Field", "QuotientSecurity", "QuotientRpm", "QuotientZk"]
+defaultTargets = ["Field", "QuotientSecurity", "QuotientRpm", "QuotientZk", "Implementation"]
 
 [leanOptions]
 autoImplicit = false
@@ -71,7 +71,19 @@ name = "QuotientSecurity"
 [[lean_lib]]
 name = "QuotientRpm"
 
+# The implementation is the model (F5): the graph the EVM contract and the Rust verifier are generated
+# from (`crates/evm/src/record.rs`), emitted as Lean (`Implementation/Graph.lean`), its interpreter, and
+# the proof that it computes the model's verifier.
+[[lean_lib]]
+name = "Implementation"
+
 # Zero knowledge of the non-interactive proof (layer F3b): an explicit simulator that programs the
 # random oracle, in the random-oracle model and then in leanerVM's random-permutation model.
 [[lean_lib]]
 name = "QuotientZk"
+
+# The differential test of the deployed skeleton (`QuotientZk/Deployed/Skeleton.lean`) against the
+# Rust prover: `lake build skeltrace`, then `crates/quotient/tests/skel_trace.rs` says how to run it.
+[[lean_exe]]
+name = "skeltrace"
+root = "QuotientZk.Test.SkelTraceMain"

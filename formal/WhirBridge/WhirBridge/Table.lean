@@ -43,7 +43,7 @@ structure Blocks.Valid (L : Blocks) : Prop where
   lanes_le : L.lanes ≤ 2 ^ laneFold
   block_lt : ∀ b ∈ L.blocks, b < 2 ^ (L.vars - L.logLane)
 
-/-- **The table a public stack stands for** (`Table::new`, `opening.rs:392-412`): entry `o + 2^ℓ·b`
+/-- **The table a public stack stands for** (`Table::new`, `opening.rs:449-467`): entry `o + 2^ℓ·b`
 (`o < 2^ℓ`) is entry `o + 2^ℓ·l` of the stack for the lane `l` holding block `b`, and `0` where no
 lane holds it; written as the sum over the lanes holding the block, which is that one entry for
 distinct blocks (as `Layout::new` lists them). -/
@@ -51,7 +51,7 @@ def Blocks.table (L : Blocks) (q : Column L.logN) (t : ℕ) : K :=
   ∑ l ∈ range L.lanes, if L.blocks.getD l 0 = t / 2 ^ L.logLane then
     q.values.getD (t % 2 ^ L.logLane + 2 ^ L.logLane * l) 0 else 0
 
-/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:504-516`). -/
+/-- The table's multilinear extension at `p` (`Table::eval`, `opening.rs:549-561`). -/
 def Blocks.tableEval (L : Blocks) (q : Column L.logN) (p : List E) : E :=
   ∑ t ∈ range (2 ^ L.vars), ofK (L.table q t) * eqEval (boolPoint L.vars t) p
 
@@ -241,7 +241,9 @@ theorem openingDoom_iff (L : Blocks) (hL : L.Valid) (R : ℕ) (claims : List Cla
       LeanVM.Protocol.Whir.Sound.ShapeOK 0 (code₀ L.logN R) laneBits cs ∧
         ∀ q ∈ Candidates L.logN R (code₀ L.logN R).thr (LeanVM.Protocol.Whir.Sound.wordOf cs 0),
           ∃ c ∈ claims, L.tableEval q c.point ≠ c.value := by
+  have hcl : L.stacking.claims claims = stackClaims L claims := List.append_nil _
   unfold OpeningDoom LeanVM.Protocol.Whir.Sound.StackedPre
+  rw [hcl]
   refine and_congr Iff.rfl (forall₂_congr fun q _ ↦ ?_)
   constructor
   · rintro ⟨sc, hsc, hn⟩
@@ -275,21 +277,6 @@ theorem sum_zipIdx {α : Type} (d : α) (g : α × ℕ → E) : ∀ (xs : List �
     refine congrArg (· + _) (Finset.sum_congr rfl fun i _ ↦ ?_)
     rw [show k + 1 + i = k + (i + 1) by omega]
 
-theorem and_one_cases (i : ℕ) : i &&& 1 = 0 ∨ i &&& 1 = 1 := by
-  rw [Nat.and_one_is_mod]
-  exact Nat.mod_two_eq_zero_or_one i
-
-/-- Both parities: every block lane. -/
-theorem onTerm_add (ps le : List E) (ll : Lane × ℕ) :
-    onTerm ps le 0 ll + onTerm ps le 1 ll =
-      match ll.1 with
-      | .block _ => ps.getD ll.2 0 * le.getD ll.2 0
-      | _ => 0 := by
-  rcases ll with ⟨_ | _ | _, i⟩ <;> simp only [onTerm]
-  · rcases and_one_cases i with h | h <;> simp [h]
-  · simp
-  · simp
-
 /-- **A public layout's claim weight is its blocks'**. -/
 theorem Layout.claimWeight_toBlocks (L : Layout) (hP : L.IsPublic) (c : Claim) :
     L.claimWeight c = WhirBridge.claimWeight L.toBlocks c := by
@@ -297,14 +284,14 @@ theorem Layout.claimWeight_toBlocks (L : Layout) (hP : L.IsPublic) (c : Claim) :
   have hlog : L.toBlocks.logLane = L.logLane := rfl
   have hlanes : L.toBlocks.lanes = L.lanes.length := by simp [Blocks.lanes, Layout.toBlocks]
   rw [claimWeight_public L c hP.1, claimWeight_eq, hlog, hlanes, eqZ_eq_eqEval,
-    onParity_eq_sum, onParity_eq_sum, ← List.sum_map_add, sum_zipIdx .random _ _ 0]
+    onBlocks_eq_sum, sum_zipIdx .random _ _ 0]
   refine congrArg (_ * ·) (Finset.sum_congr rfl fun i hi ↦ ?_)
   have hi' : i < L.lanes.length := mem_range.1 hi
   obtain ⟨b, hb⟩ := hP.2 _ (List.getElem_mem hi')
   have hget : L.lanes.getD i .random = .block b := by
     rw [List.getD_eq_getElem _ _ hi', hb]
   simp only [zero_add]
-  rw [onTerm_add, hget]
+  rw [onTerm, hget]
   simp only
   rw [laneEqs_getD, if_pos hi']
   congr 1

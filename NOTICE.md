@@ -15,7 +15,8 @@ option. Every file says where it comes from in its first lines.
   `src/ntt/additive_ntt_f64.rs`), which add ways to make the same commitments and proofs in less memory. The
   last of those also fixes an aliasing bug of leanVM's in-place encodes, reported in `UPSTREAM.md`. `src/whir.rs`
   and `src/whir_config.rs` also have comments corrected (no code change), reported there too. Each file's
-  header says what changed. The workspace `Cargo.toml` and `rustfmt.toml` follow leanVM's.
+  header says what changed. `crates/primitives/src/hash.rs` and `crates/fiat_shamir/src/lib.rs` also carry test-only trace hooks behind a
+  `trace` feature that no production build enables. The workspace `Cargo.toml` and `rustfmt.toml` follow leanVM's.
 - **Adapted from leanVM's branch `PCS-openings-aggregation`, commit `651453c6`**:
   - `crates/quotient`: the protocol of `flock::quotient` (`doc/quotient/main.tex` there), its Cantor-basis
     domain (copied), its circuit's wiring and public rows, the Keccak-256 transcript chain, and the idea of
@@ -27,6 +28,20 @@ option. Every file says where it comes from in its first lines.
   - `formal/`: the Lean proofs of `formal/quotient` (sorry-free for the original circuit), being ported to
     this circuit; each file names its source. Dependency revisions are those of
     [leanerVM](https://github.com/Verified-zkEVM/leanerVM)'s `mumbai` branch (MIT OR Apache-2.0).
+- **`formal/Statement/`** (new here): the statement of `crates/quotient` in Lean, in the style of leanerVM's
+  `Statement/` package (branch `mumbai`, commit `6175f1a0`, MIT OR Apache-2.0), on which it depends (a Lake
+  dependency, not vendored) for the fields, Keccak-256, the random-permutation model, the WHIR verifier and
+  prover pieces and the extractor's decoder; each file names what it takes from it.
+- **Adapted from leanVM, commit `42422001`** (branch `main`, the parent of `4af2cddd` "Replace BLAKE2S by
+  KECCAK-256"): `crates/leanvm_flock_gas`, the gas of that leanVM's verifier as a contract. Its `src/field.rs`,
+  `src/hash.rs`, `src/merkle.rs`, `src/bytecode.rs` and `src/whir.rs` are leanVM's `crates/verifier` files, unchanged
+  but for a header and the small changes each header lists; `src/lib.rs`, `src/bus.rs`, `src/layout.rs`,
+  `src/flock.rs`, `src/multilinear.rs` and `src/transcript.rs` adapt the files of the same names (the same protocol,
+  generic over the scalar it computes on); `src/matrices.rs` takes `matrix_values` from `deferred.rs`.
+  `src/keccak_gkr.rs` adapts `crates/verifier/src/keccak.rs` of leanVM commit `4af2cddd`, for an estimate. New there:
+  the Keccak-256 chain (after `crates/quotient/src/transcript.rs`), the stack's batching sumcheck, the matrices'
+  reduction, the EVM recorder, code generator and machine (after `crates/evm`), and the `gas-dump` command it adds to
+  a leanVM checkout (`dump/`). Each file says where it comes from in its first lines.
 - **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
   Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
   proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's

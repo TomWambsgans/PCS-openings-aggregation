@@ -12,7 +12,22 @@ import QuotientZk.Deployed.Skeleton
 import QuotientZk.Deployed.Bound
 import QuotientZk.Deployed.Main
 import QuotientZk.Check
+import QuotientZk.JointCore
+import QuotientZk.JointReduction
+import QuotientZk.JointGadget
+import QuotientZk.Joint
+import QuotientZk.JointDeployed
+import QuotientZk.JointAxioms
+import QuotientZk.RpmTape
+import QuotientZk.RpmProver
+import QuotientZk.RpmMain
+import QuotientZk.RpmDuplex
+import QuotientZk.RpmDuplexProver
+import QuotientZk.RpmDeployed
+import QuotientZk.RpmJoint
+import QuotientZk.RpmAxioms
 import QuotientZk.Deployed.Fresh
+import QuotientZk.FreshJoint
 
 /-!
 # Zero knowledge of the non-interactive proof (layer F3b)
@@ -31,6 +46,13 @@ import QuotientZk.Deployed.Fresh
   `fsFresh_deployed_bits`: `≤ 2^-54`), for a prover whose rows are long, whose witness table's first
   row has min-entropy, and whose openings' claims read a challenge; **`zk_deployed_fs`**,
   **`zk_deployed_fs_bits`**: `2^-54 + εhv + 2^-2200`.
+* `Rpm*`: the random-permutation model (leanerVM `mumbai`'s `common`). The real game hashes with
+  Keccak-256 over `π` and calls `π` in the duplex; the simulator runs `sim` on the skeleton with
+  the duplex's bookkeeping and answers the distinguisher's `π`, `π⁻¹` with `common`'s two-oracle
+  indifferentiability simulator over the programmed cache. **`zk_rpm_deployed`**,
+  **`zk_rpm_deployed_bits`**, **`zk_rpm_deployed_joint`** (`RpmJoint.lean`): the ROM bounds plus
+  `Q² / 2^508` for `Q` permutation calls (`zk_rpm`, `RpmMain.lean`: a prover hashing with
+  Keccak-256 only, plus `Q² / 2^509`).
 -/
 
 /-- info: 'QuotientZk.zk_rom' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -112,3 +134,11 @@ import QuotientZk.Deployed.Fresh
 /-- info: 'QuotientZk.Deployed.Fresh.epsFS_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs (whitespace := lax) in
 #print axioms QuotientZk.Deployed.Fresh.epsFS_le
+
+/-- info: 'QuotientZk.Joint.zk_deployed_joint_fs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.Joint.zk_deployed_joint_fs
+
+/-- info: 'QuotientZk.DRpm.zk_rpm_deployed_joint_fs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs (whitespace := lax) in
+#print axioms QuotientZk.DRpm.zk_rpm_deployed_joint_fs
