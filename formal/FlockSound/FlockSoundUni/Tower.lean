@@ -925,6 +925,42 @@ theorem ringClaim_code (κ : ℕ) (qf : LeanVM.Protocol.Column (8 + κ)) (p map 
   rw [towerCoefficients_getD map k (mem_range.mp hk)]
   ring
 
+/-! ## At the main line's sizes, the lists the code reads being `List.ofFn` of the cube forms -/
+
+theorem towerGetD_ofFn {α : Type} {n : ℕ} (F : Fin n → α) (i : ℕ) (h : i < n) (d : α) :
+    (List.ofFn F).getD i d = F ⟨i, h⟩ := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_ofFn]
+  simp [h]
+
+theorem ofFn_challenges (f : Fin 6 → E) (a : E) :
+    stagedMap [1, 2, 4, 8, 16, 32] (fun i ↦ (List.ofFn f).getD i.val 0) a =
+      stagedMap [1, 2, 4, 8, 16, 32] f a := by
+  congr 1
+  funext i
+  exact towerGetD_ofFn f i.val i.isLt 0
+
+theorem ptOf_ofFn {n : ℕ} (p : Fin n → E) : ptOf (List.ofFn p) n = p :=
+  funext fun i ↦ towerGetD_ofFn p i.val i.isLt 0
+
+theorem sliceOf_ofFn (s : Cube (3 + 3) → E) (cy : Cube (3 + 3)) :
+    sliceOf (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)) cy = s cy := by
+  rw [sliceOf, towerGetD_ofFn _ _ (cubeFin (3 + 3) cy).isLt]
+  simp
+
+/-- **The target at the main line** (the sibling's `Tx.target`). -/
+theorem tower_tx_target (s : Cube (3 + 3) → E) (f : Fin 6 → E) :
+    towerTarget (List.ofFn fun i : Fin 64 ↦ s ((cubeFin (3 + 3)).symm i)) (List.ofFn f) =
+      ∑ cy, packW (k := 3) (l := 3) rfl cy * stagedMap [1, 2, 4, 8, 16, 32] f (s cy) := by
+  rw [towerTarget_eq_target (k := 3) (l := 3) rfl]
+  simp only [sliceOf_ofFn, ofFn_challenges]
+
+/-- **The ring claim at the main line** (the sibling's `Tx.ring`). -/
+theorem tower_tx_ring (κ : ℕ) (qf : LeanVM.Protocol.Column (8 + κ)) (p : Fin (8 + κ) → E) (f : Fin 6 → E) :
+    ∑ k ∈ range 64, (towerCoefficients (List.ofFn f)).getD k 0 * mleE qf (twist (List.ofFn p) k) =
+      ∑ u, stagedMap [1, 2, 4, 8, 16, 32] f (eqP p u) * colWord qf u := by
+  rw [ringClaim_code, ptOf_ofFn]
+  simp only [ofFn_challenges]
+
 end FlockSound.Uni
 
 /-! ## Axiom guards -/
@@ -1012,3 +1048,13 @@ end FlockSound.Uni
 /-- info: 'FlockSound.Uni.ringClaim_code' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms FlockSound.Uni.ringClaim_code
+
+/-! ## Axiom guards -/
+
+/-- info: 'FlockSound.Uni.tower_tx_target' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.tower_tx_target
+
+/-- info: 'FlockSound.Uni.tower_tx_ring' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.tower_tx_ring
