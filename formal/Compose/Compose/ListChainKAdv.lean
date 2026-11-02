@@ -252,10 +252,10 @@ theorem runM_run (T : KTable) : ∀ (y : List UInt8) (es : List (List UInt8)),
     simp only [runM, hash256, callKeccak256, bind_assoc, pure_bind, tableQueryLog_query_bind,
       tableQueryLog_pure, evalWithAnswerFn_bind, evalWithAnswerFn_liftM_query,
       evalWithAnswerFn_pure, allIn, List.map_cons, List.map_nil]
-    refine ⟨?_, ?_⟩ <;> first | trivial | rfl
+    refine ⟨?_, ?_⟩ <;> trivial
   | y, e :: es => by
     obtain ⟨ih1, ih2⟩ := runM_run T (stepIn (viewT T y) e) es
-    simp only [runM, hash256, callKeccak256, bind_assoc, pure_bind, tableQueryLog_query_bind,
+    simp only [runM, hash256, callKeccak256, bind_assoc, pure_bind,
       tableQueryLog_bind, tableQueryLog_pure, List.append_nil, evalWithAnswerFn_bind,
       evalWithAnswerFn_liftM_query, evalWithAnswerFn_pure, allIn, List.map_cons]
     refine ⟨?_, ?_⟩
@@ -343,8 +343,8 @@ theorem runK_run (A : OracleComp KeccakCalls Pf)
     cases allIn (viewT T) (K.label (view p).1) (absorbs K.lim K.rounds (view p).2) <;> rfl
   constructor
   · simp only [runK, verK, ChainSpec.chain, tableQueryLog_bind, tableQueryLog_pure,
-      List.map_append, List.append_nil, evalWithAnswerFn_bind, evalWithAnswerFn_pure,
-      map_eq_bind_pure_comp, Function.comp_def, bind_assoc, pure_bind]
+      List.map_append, List.append_nil, map_eq_bind_pure_comp, Function.comp_def, bind_assoc,
+      pure_bind]
     rw [h1, h2, hch]
   · simp only [runK, verK, ChainSpec.chain, evalWithAnswerFn_bind, evalWithAnswerFn_pure,
       map_eq_bind_pure_comp, Function.comp_def, bind_assoc, pure_bind]

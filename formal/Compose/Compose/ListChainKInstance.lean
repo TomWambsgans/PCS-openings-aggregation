@@ -207,7 +207,6 @@ noncomputable def quotPiop : Piop (quotK W) (QM B) where
         refine (prEvent_mono _ _ (fun c => ¬ State₁ (W.decode s.2) g ∧
           State₂ (W.decode s.2) g (c3 c)) fun c h => ?_).trans ?_
         · obtain ⟨h1, m', g', R, hg', hR, h3⟩ := h
-          simp only [List.nil_append] at hg'
           rw [hg] at hg'
           simp only [Option.some.injEq, Sum.inl.injEq] at hg'
           subst hg'
@@ -479,5 +478,13 @@ theorem knowledgeSoundness_merkle_adv_K (hq : Fintype.card F = 2 ^ 192) (hN : P.
     hW hσ hQd).trans ?_
   gcongr
   exact listError_le_generic hq hN hw hd h₁ h₂
+
+/-! ## The re-derived statements are the originals' -/
+
+example : type_of% @knowledgeSoundness_list_adv = type_of% @knowledgeSoundness_list_adv_K := rfl
+example : type_of% @knowledgeSoundness_composed_adv =
+    type_of% @knowledgeSoundness_composed_adv_K := rfl
+example : type_of% @knowledgeSoundness_merkle_adv = type_of% @knowledgeSoundness_merkle_adv_K :=
+  rfl
 
 end Compose

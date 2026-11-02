@@ -152,7 +152,7 @@ theorem scalarsOf_inj : ∀ {l l' : List F}, l.length = l'.length →
 
 theorem dvd_length_encM (m : RMsg F) : 32 ∣ (encM lim m).length := by
   obtain ⟨r, l⟩ := m
-  cases r <;> simp [encM, length_scalarsOf, Nat.dvd_add, Nat.dvd_mul_right] <;> omega
+  cases r <;> simp [encM, length_scalarsOf, Nat.dvd_add]
 
 /-- **A message is determined by its bytes**, among the messages of a round. -/
 theorem encM_inj {s : RoundSpec} {m m' : RMsg F} (h : m.Fits s) (h' : m'.Fits s)
@@ -295,7 +295,7 @@ theorem allIn_eq : ∀ (y : List UInt8) (es : List (List UInt8)),
 theorem lastIn_append : ∀ (y : List UInt8) (es₁ es₂ : List (List UInt8)),
     lastIn T y (es₁ ++ es₂) = lastIn T (lastIn T y es₁) es₂
   | _, [], _ => rfl
-  | y, e :: es₁, es₂ => lastIn_append _ es₁ es₂
+  | _, _ :: es₁, es₂ => lastIn_append _ es₁ es₂
 
 theorem prevIn_append : ∀ (y : List UInt8) (es₁ es₂ : List (List UInt8)),
     prevIn T y (es₁ ++ es₂) = prevIn T y es₁ ++ prevIn T (lastIn T y es₁) es₂
@@ -323,7 +323,7 @@ theorem length_stepIn (st : Bytes32) (e : List UInt8) : (stepIn st e).length = 3
   simp [stepIn]
 
 theorem take_stepIn (st : Bytes32) (e : List UInt8) : (stepIn st e).take 32 = st.toList := by
-  simp [stepIn, List.take_append]
+  simp [stepIn]
 
 theorem stepIn_inj {st st' : Bytes32} {e e' : List UInt8} (h : stepIn st e = stepIn st' e') :
     st = st' ∧ e = e' := by
@@ -1184,7 +1184,7 @@ theorem step_mem_allIn (T : Table) : ∀ (y : List UInt8) (es : List (List UInt8
 theorem refers_stepIn_encM (lim : F ≃ Limbs) (st r : Bytes32) (l : List F) :
     Refers (stepIn st (encM lim (some r, l))) r := by
   refine Or.inr (Or.inr ?_)
-  simp [stepIn, encM, List.drop_append, List.take_append]
+  simp [stepIn, encM]
 
 theorem candLists_stable (C : ℕ → ListCommit M) {H H' : Hist} {T : Table} :
     ∀ (i : ℕ) (ms : List (RMsg F)),
