@@ -45,19 +45,21 @@ def cnst (c : Nat) : Option Nat := look (.const c)
 def add (a b : Nat) : Option Nat :=
   match constAt a, constAt b with
   | some x, some y => cnst (x ^^^ y)
-  | some 0, _ => some b
-  | _, some 0 => some a
-  | _, _ => if a = b then cnst 0 else look (.add (min a b) (max a b))
+  | _, _ =>
+    if constAt a = some 0 then some b
+    else if constAt b = some 0 then some a
+    else if a = b then cnst 0
+    else look (.add (min a b) (max a b))
 
 /-- `Sym * Sym`: two constants fold, zero absorbs, one is dropped. -/
 def mul (a b : Nat) : Option Nat :=
   match constAt a, constAt b with
   | some x, some y => cnst (mulE x y)
-  | some 0, _ => cnst 0
-  | _, some 0 => cnst 0
-  | some 1, _ => some b
-  | _, some 1 => some a
-  | _, _ => look (.mul (min a b) (max a b))
+  | _, _ =>
+    if constAt a = some 0 ∨ constAt b = some 0 then cnst 0
+    else if constAt a = some 1 then some b
+    else if constAt b = some 1 then some a
+    else look (.mul (min a b) (max a b))
 
 /-- `Sym::frobenius`. -/
 def frob (a : Nat) : Option Nat :=

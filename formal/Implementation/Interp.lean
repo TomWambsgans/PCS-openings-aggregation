@@ -57,12 +57,12 @@ def step (H : List UInt8 → Vector UInt8 32) (idx cd : List UInt8) (vals : Arra
   | .statement k => half (cdWord cd (4 + 32 * (k / 2))) k
   | .root k => half (cdWord cd (4 + 64 + 32 * (k / 2))) k
   | .input i => cdWord cd (4 + 128 + 24 * i) >>> 64
-  | .add a b => vals[a]! ^^^ vals[b]!
-  | .mul a b => mulE vals[a]! vals[b]!
-  | .frob a => frobE vals[a]!
+  | .add a b => vals.getD a 0 ^^^ vals.getD b 0
+  | .mul a b => mulE (vals.getD a 0) (vals.getD b 0)
+  | .frob a => frobE (vals.getD a 0)
   | .seed => beNat (H (bytesOf name ++ idx ++ (cd.drop 4).take 64)).toList
-  | .hash st xs => beNat (H (beBytes 32 vals[st]! ++ xs.flatMap fun x => beBytes 32 vals[x]!)).toList
-  | .low a => vals[a]! % B192
+  | .hash st xs => beNat (H (beBytes 32 (vals.getD st 0) ++ xs.flatMap fun x => beBytes 32 (vals.getD x 0))).toList
+  | .low a => vals.getD a 0 % B192
 
 /-- The values of a list of nodes, in order. -/
 def valuesOf (H : List UInt8 → Vector UInt8 32) (idx cd : List UInt8) (l : List Node) : Array Nat :=
@@ -78,7 +78,7 @@ def rootWord (r : List UInt8) : Nat := leNat (r.take 16) * 2 ^ 128 + leNat (r.dr
 
 /-- An output word's value. -/
 def wordOf (idx cd : List UInt8) (vals : Array Nat) : Word → Nat
-  | .node i => vals[i]!
+  | .node i => vals.getD i 0
   | .const w => w
   | .calldata o => cdWord cd (4 + o)
   | .storedRoot => rootWord idx
@@ -95,7 +95,7 @@ def run (H : List UInt8 → Vector UInt8 32) (idx : Vector UInt8 32) (cd : List 
     Option (List Nat) :=
   if WellFormed cd then
     let vals := values H idx.toList cd
-    if nonzero.all fun i => vals[i]! != 0 then some (outputs.map (wordOf idx.toList cd vals))
+    if nonzero.all fun i => vals.getD i 0 != 0 then some (outputs.map (wordOf idx.toList cd vals))
     else none
   else none
 
