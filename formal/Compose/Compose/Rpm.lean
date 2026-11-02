@@ -27,18 +27,29 @@ Keccak-f[1600] state, queried forward and inverse, lazily sampled; Keccak-256 is
 * **the extractor** (`rpmExtractor`): `adversaryExtractor` on the setup's log and the Keccak-256
   evaluations of the adversary's permutation transcript (mumbai's `keccakEvaluationsOfTranscript`
   of `permutationQueries T`, the statement's own reading of a transcript);
-* **`knowledgeSoundness_deployed_rpm`**: the verifier accepts while the extractor's list holds no
-  witness with probability at most the two-oracle bound of `knowledgeSoundness_deployed_setup` for
-  an adversary of `QS + Q` queries, plus `(QSπ + Q + 7 + 3 QOπ)² / 2^508`.
+* **`knowledgeSoundness_wired_rpm`**: the verifier accepts while the extractor's list holds no
+  witness with probability at most the two-oracle bound of `knowledgeSoundness_wired` for an
+  adversary of `QS + Q` queries, plus `(QSπ + Q + 7 + 3 QOπ)² / 2^508` (`QS`, `QSπ`: the setup's
+  Keccak-256 calls and calls of `π`; `Q`: the adversary's calls of `π`, `π⁻¹`; `QOπ`: one
+  opening's calls of `π`; `7`: the chain's);
+* **`knowledgeSoundness_wired_setup_rpm_bits`**: the same for the setup of the wiring stack and the
+  computable decoders, at the sizes of `quotient::protocol` (`knowledgeSoundness_wired_setup_bits`),
+  the setup's calls of `π` bounded (`cost_stackSetup`).
 
-The proof: the experiment is the real world of `common`'s two-oracle transfer game, the setup its
-honest part before the adversary (`rpmThreaded_evalDistEq`); `Common.keccak256_transfer2` moves it
-to the two random oracles against the adversary with the indifferentiability simulator; there the
-adversary's cache holds the setup's answers and exactly the Keccak-256 evaluations of its
-transcript (`consistent_romPrefix`), so the extractor reads the cache; coins do not help, the
-deterministic adversary recomputing the public setup to learn the cache it starts from
-(`exists_det_setup`); and the experiment of that adversary is `deployedExp`'s, its log the cache
-(`le_deployedExp`).
+The proof (`rpm_le_wired`): the experiment is the real world of `common`'s two-oracle transfer
+game, the setup its honest part before the adversary (`rpmThreaded_evalDistEq`);
+`Common.keccak256_transfer2` moves it to the two random oracles against the adversary with the
+indifferentiability simulator; there the adversary's cache holds the setup's answers and exactly
+the Keccak-256 evaluations of its transcript (`consistent_romPrefix`), so the extractor reads the
+cache (`rom_le`); coins do not help, the deterministic adversary recomputing the public setup to
+learn the cache it starts from (`exists_det_setup`); and the experiment of that adversary is
+`wiredExp`'s, its log the cache (`le_wiredExp`).
+
+**The extractor's cost.** For `n` permutation queries of the adversary: the replay
+(`keccakEvaluationsOfTranscript`) is `O(n²)` state comparisons and `O(136 · L)` per path to unpad,
+`L` its bytes; then the Merkle climb of `adversaryExtractor` from the first root, `2^ht` leaves of
+`ht` levels, each level a search of the `QS + n` recorded inputs (`O((QS + n)²)` with the list
+lookups), then the decoder `c₁.dec` (`DecoderCost.lean` for `tableCode`).
 -/
 
 set_option linter.unusedSectionVars false
@@ -1198,10 +1209,30 @@ theorem hOnly_stackSetup (q₀ : Column D.Lσ.logN) : HOnly (stackSetup D q₀) 
   rw [map_eq_bind_pure_comp]
   exact (LeanVM.Rpm.hOnly_buildTreeM _ _).bind fun _ => trivial
 
+/-- Every Keccak-256 input of the stack's setup is short (a leaf of `64` words, or two digests). -/
+theorem allQ_stackSetup (q₀ : Column D.Lσ.logN) :
+    AllQueriesSatisfy (stackSetup D q₀) LeanVM.Rpm.Short := by
+  unfold stackSetup wiringSetup LeanVM.Prover.buildTreeWithHash
+  rw [map_eq_bind_pure_comp]
+  refine allQueriesSatisfy_bind (allQueriesSatisfy_bind (LeanVM.Rpm.allQ_leafDigestsM _ ?_)
+    fun _ => allQueriesSatisfy_bind (LeanVM.Rpm.allQ_levelsM _ _) fun _ =>
+      LeanVM.Rpm.allQ_pure _) fun _ => LeanVM.Rpm.allQ_pure _
+  intro p
+  rw [LeanVM.Protocol.Whir.Complete.wellShaped_stackWord _ q₀ p]
+  decide
+
+/-- **The stack's setup makes at most `2^(ht+1) · 2^32` calls of `π`** (each of its `2^(ht+1)`
+hashes is short, `LeanVM.Rpm.hashBlocks_le_of_short`). -/
+theorem cost_stackSetup (q₀ : Column D.Lσ.logN) :
+    Common.QueryCostAtMost (stackSetup D q₀) hashBlocks (setupQueries D * 2 ^ 32) :=
+  LeanVM.Rpm.isWeightBound_of_isTotalQueryBound hashBlocks (2 ^ 32)
+    (isTotalQueryBound_stackSetup D q₀)
+    ((allQ_stackSetup D q₀).mono fun _ h => LeanVM.Rpm.hashBlocks_le_of_short h)
+
 /-- **The same with the setup of the wiring stack, at the sizes of `quotient::protocol`** (the RPM
 form of `knowledgeSoundness_wired_setup_bits`): the decoders `tableCode`, what remains of the
 two-oracle statement being `WitnessClaims`, `QuotientClaims`, `WiringClaims`, and the permutation
-calls of the setup (`QSπ`) and of one opening (`QOπ`). -/
+calls of one opening (`QOπ`); the setup's are at most `2^(ht+1) · 2^32` (`cost_stackSetup`). -/
 theorem knowledgeSoundness_wired_setup_rpm_bits (hq : Fintype.card F = 2 ^ 192)
     (hN : P.nCells = 2 ^ 24) (hw : P.words = 8) (hd : B.identity ≤ 2 ^ 28)
     (r : ℕ) (h1 : WhirBridge.minLogRows ≤ r) (h2 : r ≤ WhirBridge.maxLogRows)
@@ -1209,8 +1240,7 @@ theorem knowledgeSoundness_wired_setup_rpm_bits (hq : Fintype.card F = 2 ^ 192)
     (hLQ : D.LQ = quotientLayout r) (hR : D.R = logInvRate)
     (read₁ : Tab D.Lw → B.Msg₁) (read₂ : Tab D.LQ → B.Msg₂)
     (hcl₁ : WitnessClaims D read₁) (hcl₂ : QuotientClaims W D read₂)
-    (q₀ : Column D.Lσ.logN) (hclσ : WiringClaims (P := P) D q₀) (QSπ : ℕ)
-    (hSπ : Common.QueryCostAtMost (stackSetup D q₀) hashBlocks QSπ)
+    (q₀ : Column D.Lσ.logN) (hclσ : WiringClaims (P := P) D q₀)
     (A : Bytes32 → OracleComp Common.RandomPermutationOracles (RootProof F × OpenProofs))
     (Q : ℕ) (hA : ∀ ir, Common.QueryCostAtMost (A ir) Common.permutationCallCost Q) (QOπ : ℕ)
     (hOπ : ∀ (L : Layout) w, Common.QueryCostAtMost (ourVerifier L D.R w) hashBlocks QOπ) :
@@ -1224,9 +1254,10 @@ theorem knowledgeSoundness_wired_setup_rpm_bits (hq : Fintype.card F = 2 ^ 192)
           (((1 / 2 ^ 128 : ℝ≥0) : ℝ≥0∞) +
           5 * ((setupQueries D + (setupQueries D + Q) + 6 + 10122 + 10122 + 10122 : ℕ) :
             ℝ≥0∞) / 2 ^ 256) +
-        ((QSπ + Q + 7 + 3 * QOπ : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 := by
+        ((setupQueries D * 2 ^ 32 + Q + 7 + 3 * QOπ : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 := by
   obtain ⟨A', hA', hle⟩ := rpm_le_wired W D _ (stackSetup D q₀) (hOnly_stackSetup D q₀)
-    (setupQueries D) QSπ (isTotalQueryBound_stackSetup D q₀) hSπ A Q hA QOπ hOπ
+    (setupQueries D) (setupQueries D * 2 ^ 32) (isTotalQueryBound_stackSetup D q₀)
+    (cost_stackSetup D q₀) A Q hA QOπ hOπ
   exact hle.trans (add_le_add (knowledgeSoundness_wired_setup_bits W D hq hN hw hd r h1 h2 hLw
     hLσ hLQ hR read₁ read₂ hcl₁ hcl₂ q₀ hclσ A' (setupQueries D + Q) hA') le_rfl)
 
