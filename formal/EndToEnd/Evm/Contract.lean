@@ -68,11 +68,14 @@ def callsOf (ir : Digest) (r : PcsQuotient.Reduced) : List (List UInt8) :=
     openInput ir (layoutId 2 22) [r.claims.wiring],
     openInput r.quotientRoot (layoutId 3 22) [r.claims.quotient, r.claims.sum]]
 
-/-- **The block's opening proofs, as a proof carries them**: for a call naming the layout `id`, the
-proof's opening of the table the id names (`1` the witness table, `2` the wiring table, `3` the
-quotient table). -/
-def openingProofs (proof : PcsQuotient.Proof) (id : ℕ) : Compile.Proof :=
-  if id / 256 = 1 then proof.witness else if id / 256 = 2 then proof.wiring else proof.quotient
+/-- **The block's opening proofs**: for a call naming the layout `id`, the opening `w`, `f` or `q`
+of the table the id names (`1` the witness table, `2` the wiring table, `3` the quotient table). -/
+def openingsOf (w f q : Compile.Proof) (id : ℕ) : Compile.Proof :=
+  if id / 256 = 1 then w else if id / 256 = 2 then f else q
+
+/-- **The block's opening proofs, as a proof carries them**: its three openings (`openingsOf`). -/
+def openingProofs (proof : PcsQuotient.Proof) : ℕ → Compile.Proof :=
+  openingsOf proof.witness proof.wiring proof.quotient
 
 /-! ## F4's chain gives F5's leaves -/
 
@@ -168,7 +171,8 @@ theorem rootWord_toB (d : Digest) : rootWord (Compose.toB d).toList = rootWordOf
 
 theorem calls_three (A B D : List ℕ) (hA : A.length = 29) (hB : B.length = 28)
     (hD : D.length = 65) :
-    calls (A ++ B ++ D) = [A.flatMap (beBytes 32), B.flatMap (beBytes 32), D.flatMap (beBytes 32)] := by
+    calls (A ++ B ++ D) =
+      [A.flatMap (beBytes 32), B.flatMap (beBytes 32), D.flatMap (beBytes 32)] := by
   unfold calls
   rw [show Emitted.runs = [29, 28, 65] from rfl]
   simp only [splitRuns, List.append_assoc, List.take_left' hA, List.drop_left' hA,
@@ -283,15 +287,15 @@ theorem verifyWith_eq (ir : Digest) (stmt : PcsQuotient.Statement) (proof : PcsQ
 
 theorem openingProofs_witness (proof : PcsQuotient.Proof) :
     openingProofs proof (layoutId 1 22) = proof.witness := by
-  simp [openingProofs, layoutId]
+  simp [openingProofs, openingsOf, layoutId]
 
 theorem openingProofs_wiring (proof : PcsQuotient.Proof) :
     openingProofs proof (layoutId 2 22) = proof.wiring := by
-  simp [openingProofs, layoutId]
+  simp [openingProofs, openingsOf, layoutId]
 
 theorem openingProofs_quotient (proof : PcsQuotient.Proof) :
     openingProofs proof (layoutId 3 22) = proof.quotient := by
-  simp [openingProofs, layoutId]
+  simp [openingProofs, openingsOf, layoutId]
 
 /-- **`PCS_OPEN` on the calls of an accepted reduction is the statement's three openings.** -/
 theorem all_callsOf (proof : PcsQuotient.Proof) (ir : Digest) (r : PcsQuotient.Reduced)
@@ -377,11 +381,9 @@ theorem verifyWith_of_calldata_none (ir : Digest) (stmt : PcsQuotient.Statement)
     unfold calldata at h
     unfold PcsQuotient.reduce PcsQuotient.reduceWith
     rcases hw : digestOfScalars proof.reduction.witnessRoot with _ | r₁
-    · simp only [hw]
-      rfl
+    · rfl
     · rcases hq : digestOfScalars proof.reduction.quotientRoot with _ | r₂
-      · simp only [hq]
-        rfl
+      · rfl
       · rw [hw, hq] at h
         cases h
   rw [verifyWith_eq, hred]

@@ -228,7 +228,8 @@ theorem claimsOfWords_claimWords (v : ℕ) : ∀ (claims : List Claim),
       simp [claimWords, List.append_assoc]
     have hg : (p.map elementWord ++ (elementWord x :: claimWords cs)).getD v 0 = elementWord x := by
       rw [List.getD_append_right _ _ _ _ (by rw [hp]), hp, Nat.sub_self, List.getD_cons_zero]
-    have hd : (p.map elementWord ++ (elementWord x :: claimWords cs)).drop (v + 1) = claimWords cs := by
+    have hd :
+        (p.map elementWord ++ (elementWord x :: claimWords cs)).drop (v + 1) = claimWords cs := by
       rw [show p.map elementWord ++ (elementWord x :: claimWords cs) =
           (p.map elementWord ++ [elementWord x]) ++ claimWords cs by simp,
         List.drop_left' (by simp [hp])]

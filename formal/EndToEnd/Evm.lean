@@ -3,6 +3,7 @@ import Evm.Graph
 import Evm.PcsOpen
 import Evm.Formula
 import Evm.Contract
+import Evm.Calldata
 
 /-!
 # The deployed EVM contract is the statement's verifier
@@ -34,7 +35,13 @@ commitment `ir` (the contract's stored index root, the setup root's 32 bytes):
   accepts the calldata exactly when `PcsQuotient.verifyWith` at Keccak-f[1600] accepts the proof
   (`evm_accepts_eq_verifyWith`: the two `Bool`s are equal; `evm_accepts_iff_verify`: the same with
   `PcsQuotient.verify`). A proof with no calldata (a root's scalars naming no digest) is rejected by
-  the statement's verifier (`verifyWith_of_calldata_none`).
+  the statement's verifier (`verifyWith_of_calldata_none`);
+* **`evm_accepts_iff_exists`** (`Evm/Calldata.lean`), over **all** calldata: with `pcsOpen` given the
+  openings `w`, `f`, `q` of the three tables (`openingsOf`), the contract accepts `cd` exactly when
+  `cd` is the calldata of a statement and a reduction proof that, with those openings,
+  `PcsQuotient.verify` accepts — the contract reverts on calldata of another length or selector
+  (`accepts_of_not_wellFormed`), and every other calldata is a proof's (`calldata_surjective`,
+  the inverse of `quotient.rs`'s `calldata`, the tests' `parse` in `crates/evm/src/lean.rs`).
 
 **How**: F5's end theorems on `Primitives.F192` (`graph_reaches_iff_F192`; `run_words_formula`,
 `Evm/Graph.lean`: the output words *are* the words of `Formula`'s elements, every output node being
@@ -77,6 +84,14 @@ reduction is F4's chain then `claimsAt`; `Bridge.claimsAt_eq_reduce`: `claimsAt`
 /-- info: 'Evm.evm_accepts_iff_verifyWith' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms Evm.evm_accepts_iff_verifyWith
+
+/-- info: 'Evm.evm_accepts_iff_exists' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Evm.evm_accepts_iff_exists
+
+/-- info: 'Evm.calldata_surjective' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Evm.calldata_surjective
 
 /-- info: 'Evm.evm_accepts_eq_verifyWith' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

@@ -78,7 +78,8 @@ theorem run_words_formula (ws : List ℕ) (h : run H idx CD = some ws) :
         (Formula.quotient limbsEquiv (modelVals H idx sb r₁ r₂ limbsEquiv x0 x1 x2 x3 x4)).map
           (word limbsEquiv) ++
         sumPointWords ++
-        [word limbsEquiv (Formula.sum limbsEquiv (modelVals H idx sb r₁ r₂ limbsEquiv x0 x1 x2 x3 x4))] := by
+        [word limbsEquiv
+          (Formula.sum limbsEquiv (modelVals H idx sb r₁ r₂ limbsEquiv x0 x1 x2 x3 x4))] := by
   have hF := isF192_primitives
   have hfr := frobOK hF
   have hsome : (run H idx CD).isSome := by rw [h]; rfl
@@ -117,7 +118,8 @@ theorem run_words_formula (ws : List ℕ) (h : run H idx CD = some ws) :
         (word limbsEquiv) := by
     rw [hmap _ (fun i hi => by simp [wordsOf, hi]), hQ]
   have eS : vals.getD o.sum 0 =
-      word limbsEquiv (Formula.sum limbsEquiv (modelVals H idx sb r₁ r₂ limbsEquiv x0 x1 x2 x3 x4)) := by
+      word limbsEquiv
+        (Formula.sum limbsEquiv (modelVals H idx sb r₁ r₂ limbsEquiv x0 x1 x2 x3 x4)) := by
     rw [hmem _ (by simp [wordsOf]), hS]
   have h68 : cdWord CD (4 + 64) = rootWord r₁.toList := by
     rw [cdWord_slice _ _ (by rw [length_calldataOf]; omega),
