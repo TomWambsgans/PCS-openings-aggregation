@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import Heap.Tree
 import Mathlib.Algebra.BigOperators.Field
+import Mathlib.Algebra.CharP.Two
 
 /-!
 # Leaves, blocks and the root
@@ -191,6 +192,21 @@ theorem LeafBlock.holds_ofRows_iff (fp : τ → M) (T : ℕ → M) (o r rows : �
     by_cases hkr : k < rows
     · simpa [ofRows, hkr] using h1 k hk hkr
     · simpa [ofRows, hkr, fpProd] using h2 k hk (not_lt.mp hkr)
+
+/-- **The padded leaf identity, row by row** (`verifier.rs` at `leanvm-univariate` `56ea040`):
+where `(R·P + P')·Z_pad + (R + 1)·Z_act = 0` (the identity on `V_r`, where `Q·w_r` vanishes), an
+executed row (`Z_act = 0 ≠ Z_pad`) has `R·P = P'` and a padding row (`Z_pad = 0 ≠ Z_act`) has
+`R = 1`: the two clauses of `LeafBlock.holds_ofRows_iff`. -/
+theorem leaf_of_padded {K : Type*} [Field K] [CharP K 2] {R P P' Zact Zpad : K}
+    (h : (R * P + P') * Zpad + (R + 1) * Zact = 0) :
+    (Zact = 0 → Zpad ≠ 0 → R * P = P') ∧ (Zpad = 0 → Zact ≠ 0 → R = 1) := by
+  constructor
+  · intro ha hp
+    rw [ha, mul_zero, add_zero] at h
+    exact CharTwo.add_eq_zero.mp ((mul_eq_zero.mp h).resolve_right hp)
+  · intro hp ha
+    rw [hp, mul_zero, zero_add] at h
+    exact CharTwo.add_eq_zero.mp ((mul_eq_zero.mp h).resolve_right ha)
 
 /-- The leaves of the blocks laid end to end. -/
 def total (bs : List (LeafBlock τ)) : ℕ := (bs.map LeafBlock.size).sum

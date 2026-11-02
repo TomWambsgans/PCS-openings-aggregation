@@ -34,7 +34,10 @@ identities give `Lv42.Protocol.M3Instance.Balanced` (the push and pull tuples on
 2. **The leaves** (`Heap.Leaf`). The leaf lemma `prod_leaves_eq_div` (`Π leaves = Π P'/Π P` when no
    pull fingerprint vanishes) and its multiplied-out form `prod_leaves_mul` (no hypothesis); leaves
    in blocks laid end to end (`LeafBlock`, `LeavesHold`; a table's padding rows have leaf `1`,
-   `LeafBlock.ofRows`; aligned when largest first, `alignedFrom_of_sorted`); and **`heap_prod_eq`**:
+   `LeafBlock.ofRows`, which the verifier's padded identity `(R·P + P')·Z_pad + (R + 1)·Z_act = 0`
+   gives, `leaf_of_padded`, with `Z_act`, `Z_pad` products of aligned factors `w_b + ω_{a >> b}`
+   vanishing exactly on their blocks, `prod_blockVanishing_eq_zero_iff`; aligned when largest
+   first, `alignedFrom_of_sorted`); and **`heap_prod_eq`**:
    tree, leaves and root `T(1)·fp(init) = fp(fin)` give `Π_push fp · fp(init) = Π_pull fp · fp(fin)`,
    by multiplications only.
 3. **The fingerprint** (`Heap.Bus`). `fp α β τ = β + Σ_s eq(α, s)·τ_s` is leanerVM 6175f1a0's
@@ -68,7 +71,9 @@ That the verifier's checks at the random point `t` make the identities hold on t
 Schwartz–Zippel step per identity, over the Johnson lists of `C1` and `C2`), that the restriction
 `R_b` agrees with `T` on its aligned coset (`omega_add_of_dvd` gives `o_b + ω_k = ω_{pos_b + k}`),
 that the products `P_b(ω_k)`, `P'_b(ω_k)` of the committed columns are row `k`'s fingerprints, and
-that `Z_act`, `Z_pad` vanish on the executed and padding rows: these produce `HeapData.Sat` for the
+that the crate's `prefix_vanishing` and `suffix_vanishing` loops cover `[0, rows)` and
+`[rows, 2^r)` with aligned blocks (then `prod_blockVanishing_eq_zero_iff` and `leaf_of_padded` give
+the padded rows' leaves): these produce `HeapData.Sat` for the
 layout `LeanIsa.heapData`, to which `LeanIsa.prob_sat_not_balanced` and
 `prob_exists_candidate_le` apply.
 
@@ -121,6 +126,14 @@ axioms.
 /-- info: 'Heap.heap_prod_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms Heap.heap_prod_eq
+
+/-- info: 'Heap.leaf_of_padded' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Heap.leaf_of_padded
+
+/-- info: 'Heap.prod_blockVanishing_eq_zero_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms Heap.prod_blockVanishing_eq_zero_iff
 
 -- 3. The fingerprint.
 /-- info: 'Heap.prob_fpProd_eq_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/

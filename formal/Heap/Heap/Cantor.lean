@@ -266,4 +266,54 @@ theorem omega_two_pow_add (hn : 1 ≤ n) {k : ℕ} (hk : k < 2 ^ (n - 1)) :
     omega B (2 ^ (n - 1) + k) = B.β (n - 1) + omega B k := by
   rw [omega_add_of_dvd B (dvd_refl _) hk, omega_two_pow B (by omega)]
 
+/-! ## Vanishing on executed and padding rows -/
+
+/-- **The vanishing factor of an aligned block** `[a, a + 2^b)`: `w_b(x) + ω_{a >> b}`, the factor
+`w[b] + point_e(start >> b)` of the crate's `prefix_vanishing` (`Z_act`, the executed rows
+`[0, rows)`) and `suffix_vanishing` (`Z_pad`, the padding rows `[rows, 2^r)`). -/
+def blockVanishing (b a : ℕ) (x : F) : F := QuotientSecurity.sq^[b] x + omega B (a >>> b)
+
+/-- **The factor vanishes on its block and nowhere else in `V_n`**: for `2^b ∣ a` and
+`k, a < 2^n`, `w_b(ω_k) + ω_{a >> b} = 0` exactly when `a ≤ k < a + 2^b`. -/
+theorem blockVanishing_eq_zero_iff {b a k : ℕ} (hal : 2 ^ b ∣ a) (ha : a < 2 ^ n)
+    (hk : k < 2 ^ n) : blockVanishing B b a (omega B k) = 0 ↔ a ≤ k ∧ k < a + 2 ^ b := by
+  rw [blockVanishing, sq_iterate_omega B b hk, ← omega_xor]
+  have hlt : ∀ m, m < 2 ^ n → m >>> b < 2 ^ n := fun m hm ↦
+    lt_of_le_of_lt (by rw [Nat.shiftRight_eq_div_pow]; exact Nat.div_le_self _ _) hm
+  have hiff : omega B ((k >>> b) ^^^ (a >>> b)) = 0 ↔ k >>> b = a >>> b := by
+    constructor
+    · intro h0
+      by_contra hne
+      have hx : 0 < (k >>> b) ^^^ (a >>> b) := Nat.pos_of_ne_zero fun h ↦ hne (Nat.xor_eq_zero_iff.mp h)
+      exact omega_ne_zero B hx (Nat.xor_lt_two_pow (hlt k hk) (hlt a ha)) h0
+    · intro h
+      rw [h, Nat.xor_self, omega_zero]
+  rw [hiff, Nat.shiftRight_eq_div_pow, Nat.shiftRight_eq_div_pow]
+  obtain ⟨c, rfl⟩ := hal
+  have hp : 0 < 2 ^ b := Nat.two_pow_pos b
+  rw [Nat.mul_div_cancel_left c hp]
+  constructor
+  · intro h
+    have h1 := Nat.div_mul_le_self k (2 ^ b)
+    have h2 := Nat.lt_div_mul_add (a := k) hp
+    rw [h] at h1 h2
+    constructor <;> nlinarith
+  · rintro ⟨h1, h2⟩
+    exact Nat.div_eq_of_lt_le (by linarith) (by linarith)
+
+/-- **A product of aligned factors vanishes on the union of its blocks**: if the blocks
+`[a, a + 2^b)` of `bl` are aligned and below `2^n`, the product of their factors vanishes at `ω_k`,
+`k < 2^n`, exactly when `k` is in one of them. With `bl` covering `[0, rows)` it is `Z_act`, with
+`bl` covering `[rows, 2^r)` it is `Z_pad`. -/
+theorem prod_blockVanishing_eq_zero_iff (bl : List (ℕ × ℕ))
+    (hbl : ∀ p ∈ bl, 2 ^ p.1 ∣ p.2 ∧ p.2 < 2 ^ n) {k : ℕ} (hk : k < 2 ^ n) :
+    (bl.map fun p ↦ blockVanishing B p.1 p.2 (omega B k)).prod = 0 ↔
+      ∃ p ∈ bl, p.2 ≤ k ∧ k < p.2 + 2 ^ p.1 := by
+  rw [List.prod_eq_zero_iff, List.mem_map]
+  constructor
+  · rintro ⟨p, hp, h0⟩
+    exact ⟨p, hp, (blockVanishing_eq_zero_iff B (hbl p hp).1 (hbl p hp).2 hk).mp h0⟩
+  · rintro ⟨p, hp, h⟩
+    exact ⟨p, hp, (blockVanishing_eq_zero_iff B (hbl p hp).1 (hbl p hp).2 hk).mpr h⟩
+
 end Heap
