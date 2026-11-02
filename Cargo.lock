@@ -1739,8 +1739,15 @@ dependencies = [
 name = "leanvm_univariate"
 version = "0.1.0"
 dependencies = [
+ "bench",
+ "fiat_shamir",
  "leanvm_flock_gas",
+ "parallel",
+ "pcs",
+ "primitives",
+ "quotient",
  "revm",
+ "verifier",
 ]
 
 [[package]]
