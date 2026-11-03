@@ -74,7 +74,8 @@ random streams.
 
 1. **`C1`** (`columns.rs`, `stack.rs`).
    - Every table column, its values on `V_r`, goes through the inverse additive NTT of `crates/quotient/src/domain.rs`
-     (novel basis), then a subset-sum transform to basis `B` (`b_k = Σ_{j ⊆ k} a_j`).
+     (novel basis; vectorized in `crates/quotient/src/ntt.rs`), then a subset-sum transform to basis `B`
+     (`b_k = Σ_{j ⊆ k} a_j`), written into the stack: `C1`'s columns keep their novel coefficients only.
    - This applies to BLAKE2S's 18 limbs (the copies), the counter inverses `z_T` (`1/Π c_j` on active rows, 0 on
      padding rows), the memory's four columns and the bytecode's final counts.
    - `q_flock` is leanVM's packed witness, as values.
@@ -96,16 +97,27 @@ random streams.
    - Every leaf: `Π D'/Π D` per active row, 1 per padding row, `D_init/D_fin` per memory cell and per instruction.
    - One batch inversion each, then the products up the tree.
    - The root is checked against `fp(final)/fp(initial)`.
-6. **The quotients** (`quotients.rs`).
-   - Each numerator is evaluated on the extension coset `D_m = ω_{2^m} + V_m`, `2^m ≥` the verifier's count, and
-     divided there by the vanishing polynomial. The inverse NTT on `D_m` gives the quotient's novel coefficients.
-   - The sub-cosets of `V_r` are taken one at a time. `w_r`, and the lift `w_{r_W}/w_r`, are constant on them.
+6. **The quotients** (`quotients.rs`, on the vectorized transforms of `crates/quotient/src/ntt.rs`).
+   - Each numerator is evaluated on the first `T` points of an extension coset `D_M = ω_{2^M} + V_M` (outside the
+     domain), `T = Σ 2^{e_j}` the verifier's count rounded up to `2^{r-2}`, in binary: blocks of points
+     `ω_{s_j} + V_{e_j}`. BLAKE2S's are 20.5 sub-cosets of `V_18` (not `D_23`'s 32), XOR's, MUL's and DEREF's 8.5
+     (not 16). Divided there by the vanishing polynomial, the values give the quotient's novel coefficients
+     (`ntt::interpolate_prefix`): with `Q = Q_0 + w_{e_0} R_1`, `R_j = Q_j + w_{e_j} R_{j+1}`, `w_{e_j}` is a constant
+     `λ_j` on block `j`, whose inverse NTT is `U_j = Q_j + λ_j R_{j+1}`, and `λ_j + 1` on the later blocks, where
+     `R_{j+1} = R_j + U_j`; then `Q_j = U_j + λ_j R_{j+1}` from the last block back.
+   - The columns a numerator reads, and `R`'s three limbs, are transformed eight at a time (a batch: eight lanes a
+     carry-less product), one transform per piece of at most `2^r` points; the numerator is computed eight points
+     at a time (`prints.rs`). `Z_act` and `Z_pad` are their cosets' factors' products there.
+   - `Q_W` is the sum of each table's part `Σ γ^i W_i / w_r` and the public input's, each on its own points.
+     BLAKE2S's 18 copies are combined by their powers first: `Σ g_j copy_j` is one E-column, and `Σ g_j ℓ_j` the
+     multilinear of the combined slot table, one shifted cube.
    - Chunks: `Q = Q_0 + w_{e_0}(Q_1 + w_{e_1} Q_2)` are slices of the novel coefficients, since
-     `X_{2^e + k} = w_e X_k`. Each is put in basis `B`.
+     `X_{2^e + k} = w_e X_k`. Each is put in basis `B`, limb by limb, in place in `C2`'s stack.
    - `ℓ_j` on a sub-coset is the slot's multilinear on a shifted cube `bits(i) + y(ω_first)`: per variable,
      `(v_0, v_1) ↦ (v_0 + δ(v_0 + v_1), v_1 + δ(v_0 + v_1))`, in `K`.
-   - A quotient whose numerator does not vanish on its domain has full degree. Every quotient's degree is checked
-     below the verifier's count.
+   - A numerator that does not vanish on its domain is caught on one more block of points, where its value over the
+     vanishing polynomial's is checked against the interpolant's: the quotient is then reported at full degree.
+     Every quotient's degree is checked below the verifier's count.
 7. **`C2`**: the heap (basis `B`, three limbs), `Q_tree`'s two chunks, `Q_W`'s and every leaf quotient's chunks.
 8. **`t`, and the 84 values** in the verifier's order (`sent_columns`, then the fingerprints whose tuple reads an
    unsent column, the memory's, the bytecode's, `T(t)`, `Q_W(t)`).

@@ -107,6 +107,23 @@ impl Stack {
         super::poly::copy(&mut self.words[offset as usize..offset as usize + data.len()], data);
     }
 
+    /// Write a K-column's `B` coefficients into its block, from its novel ones (subset sums).
+    pub fn put_b(&mut self, column: Column, novel: &[F64]) {
+        let limbs = self.layout.limbs(column);
+        assert_eq!(limbs.len(), 1, "{column:?} is a K-column");
+        let (_, vars, offset) = limbs[0];
+        assert_eq!(novel.len(), 1 << vars, "{column:?}'s size");
+        quotient::ntt::subset_sums_from(novel, &mut self.words[offset as usize..offset as usize + novel.len()]);
+    }
+
+    /// A K-column's words as placed: its `B` coefficients.
+    pub fn k(&self, column: Column) -> &[F64] {
+        let limbs = self.layout.limbs(column);
+        assert_eq!(limbs.len(), 1, "{column:?} is a K-column");
+        let (_, vars, offset) = limbs[0];
+        &self.words[offset as usize..offset as usize + (1 << vars)]
+    }
+
     /// An E-column's limb `limb`, to be written in place.
     pub fn limb_mut(&mut self, column: Column, limb: usize) -> &mut [F64] {
         let (_, vars, offset) = self.layout.limbs(column)[limb];

@@ -132,15 +132,20 @@ pub fn extension_vars(count: u64, r: usize) -> usize {
 /// A column's place among a quotient's batches: (batch, lane).
 type Slot = (usize, usize);
 
-/// The batches' values on one piece of points, eight points a run: column `slot` at the points `8 j..8 j + 8`.
-pub struct Points<'a> {
-    batches: &'a [Vec<K8>],
+/// The columns' values on one piece of points, eight points a run: column `slot` at the points `8 j..8 j + 8`; from
+/// the batches (their runs transposed), or from each column's values alone (column `8 b + l` for the slot `(b, l)`).
+pub enum Points<'a> {
+    Batches(&'a [Vec<K8>]),
+    Alone(&'a [Vec<F64>]),
 }
 
 impl Points<'_> {
     #[inline(always)]
     fn at(&self, (b, l): Slot, j: usize) -> Kx8 {
-        Kx8::row(&self.batches[b][8 * j + l])
+        match self {
+            Self::Batches(v) => Kx8::row(&v[b][8 * j + l]),
+            Self::Alone(v) => Kx8::load(&v[8 * b + l][8 * j..]),
+        }
     }
 
     #[inline(always)]
@@ -168,8 +173,21 @@ fn prefix_quotient<D: Sync>(
     let sizes = ntt::prefix_sizes(count, r.saturating_sub(2));
     let base = 1usize << r.max(sizes[0] + 1);
     let total: usize = sizes.iter().map(|&e| 1usize << e).sum();
-    let batches: Vec<Vec<K8>> = columns.chunks(8).map(ntt::pack).collect();
+    // A few columns, or one piece: each column transformed alone (no batch to pack, no empty lanes); else eight at a
+    // time.
+    let pieces: usize = sizes.iter().map(|&e| 1usize << e.saturating_sub(r)).sum();
+    let alone = columns.len() <= 5 || pieces == 1;
+    let batches: Vec<Vec<K8>> = if alone {
+        Vec::new()
+    } else {
+        columns.chunks(8).map(ntt::pack).collect()
+    };
     let mut work: Vec<Vec<K8>> = batches.iter().map(|_| vec![K8::ZERO; n.max(8)]).collect();
+    let mut singles: Vec<Vec<F64>> = if alone {
+        columns.iter().map(|_| vec![F64::ZERO; n.max(8)]).collect()
+    } else {
+        Vec::new()
+    };
     // The quotient's values on the piece `ω_first + V_e`, into `out`.
     let mut evaluate = |first: usize, e: usize, out: [&mut [F64]; 3]| {
         let size = 1usize << e;
@@ -185,8 +203,19 @@ fn prefix_quotient<D: Sync>(
                 ntt::transpose_runs(&mut dst[..8]);
             }
         }
+        for (src, dst) in columns.iter().zip(singles.iter_mut()) {
+            if e == r {
+                ntt::values_from(src, &mut dst[..size], omega(first));
+            } else {
+                dst[..size].copy_from_slice(&ntt::on_coset_prefix(src, first, e));
+            }
+        }
         let data = piece(first, e);
-        let points = Points { batches: &work };
+        let points = if alone {
+            Points::Alone(&singles)
+        } else {
+            Points::Batches(&work)
+        };
         ntt::fill_limbs8(out, |j| value(&data, &points, j));
     };
     let mut limbs: [Vec<F64>; 3] = std::array::from_fn(|_| vec![F64::ZERO; total]);

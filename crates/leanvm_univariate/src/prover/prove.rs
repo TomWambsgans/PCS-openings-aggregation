@@ -199,14 +199,14 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     stack1.put_k(Column::Qflock, &trace.qflock);
     for (t, columns) in c1.tables.iter().enumerate() {
         for (c, column) in columns.iter().enumerate() {
-            stack1.put_k(Column::Table { table: t, column: c }, &column.b);
+            stack1.put_b(Column::Table { table: t, column: c }, &column.novel);
         }
-        stack1.put_k(Column::Inverse(t), &c1.inverses[t].b);
+        stack1.put_b(Column::Inverse(t), &c1.inverses[t].novel);
     }
     for (k, column) in c1.memory.iter().enumerate() {
-        stack1.put_k(Column::Memory(k), &column.b);
+        stack1.put_b(Column::Memory(k), &column.novel);
     }
-    stack1.put_k(Column::BytecodeFinal, &c1.bytecode_final.b);
+    stack1.put_b(Column::BytecodeFinal, &c1.bytecode_final.novel);
     let mut stack_f = super::setup::f_stack(&shape, &setup);
     if config.garbage {
         stack1.fill_unused(0xC1);
@@ -378,7 +378,8 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     let weights = &bus.weights;
     for table in tables() {
         let tcols = &c1.tables[table.opcode];
-        let at: Vec<F192> = parallel::map_collect(tcols.len(), |c| primitives::multilinear::mle_eval(&tcols[c].b, &w[..tcols[c].vars()]));
+        let b = |c: usize| stack1.k(Column::Table { table: table.opcode, column: c });
+        let at: Vec<F192> = parallel::map_collect(tcols.len(), |c| primitives::multilinear::mle_eval(b(c), &w[..tcols[c].vars()]));
         let mut sent = vec![false; table.width()];
         for c in sent_columns(&table) {
             sent_values.push(at[c]);
@@ -405,7 +406,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     }
     let lm = trace.log_memory;
     let lb = trace.log_bytecode;
-    let mem_at: Vec<F192> = c1.memory.iter().map(|c| eval_k(&c.b, &w[..lm])).collect();
+    let mem_at: Vec<F192> = (0..4).map(|k| eval_k(stack1.k(Column::Memory(k)), &w[..lm])).collect();
     let address_at = eval_k(&setup.address.b, &w[..lm]);
     let memory_pull = beta
         + weights[0] * from_v(SEP_MEM)
@@ -413,7 +414,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
         + weights[2] * mem_at[3]
         + (0..3).fold(F192::ZERO, |acc, k| acc + weights[3 + k] * mem_at[k]);
     sent_values.extend([mem_at[3], address_at, memory_pull]);
-    let bytecode_final_at = eval_k(&c1.bytecode_final.b, &w[..lb]);
+    let bytecode_final_at = eval_k(stack1.k(Column::BytecodeFinal), &w[..lb]);
     let slots_at: Vec<F192> = setup.slots.iter().map(|s| eval_k(&s.b, &w[..lb])).collect();
     let bytecode_pull = beta
         + weights[2] * bytecode_final_at

@@ -9,7 +9,8 @@ use quotient::ntt::{coefficients_from, subset_sums_from};
 
 use super::trace::Trace;
 
-/// A K-column of `2^r` rows as a polynomial of degree `< 2^r`: its novel and its `B` coefficients.
+/// A K-column of `2^r` rows as a polynomial of degree `< 2^r`: its novel and its `B` coefficients (`C1`'s columns
+/// keep their `B` coefficients in the stack only, [`Column::novel_only`]).
 #[derive(Clone)]
 pub struct Column {
     pub novel: Vec<F64>,
@@ -25,12 +26,19 @@ impl Column {
         Self { novel, b }
     }
 
+    /// Its novel coefficients alone, `b` empty: the stack takes the `B` ones from them (`Stack::put_b`).
+    pub fn novel_only(values: &[F64]) -> Self {
+        let mut novel = vec![F64::ZERO; values.len()];
+        coefficients_from(values, &mut novel, F64::ZERO);
+        Self { novel, b: Vec::new() }
+    }
+
     pub fn vars(&self) -> usize {
         self.novel.len().trailing_zeros() as usize
     }
 }
 
-/// `C1`'s polynomials: the tables' columns (BLAKE2S's limbs being the copies), the counter inverses, the memory's
+/// `C1`'s polynomials (novel coefficients only: their `B` ones are the stack's): the tables' columns (BLAKE2S's limbs being the copies), the counter inverses, the memory's
 /// four columns and the bytecode's final counts. `q_flock` is the trace's, as values.
 pub struct C1Polys {
     pub tables: Vec<Vec<Column>>,
@@ -55,7 +63,7 @@ pub fn c1_polys(trace: &Trace) -> C1Polys {
     let mut inverse_values = Vec::with_capacity(N_TABLES);
     for (t, table) in layout.iter().enumerate() {
         let columns = &trace.tables[t];
-        tables_out.push(columns.iter().map(|c| Column::from_values(c)).collect());
+        tables_out.push(columns.iter().map(|c| Column::novel_only(c)).collect());
         let n = 1usize << trace.heights[t];
         let counters: Vec<usize> = table.count_columns().collect();
         // Every row's counters are nonzero (the placed trace's padding rows hold 1: SPEC.md §13, F1).
@@ -80,15 +88,15 @@ pub fn c1_polys(trace: &Trace) -> C1Polys {
                 inv *= x;
             }
         });
-        inverses.push(Column::from_values(&z));
+        inverses.push(Column::novel_only(&z));
         inverse_values.push(z);
     }
     C1Polys {
         tables: tables_out,
         inverses,
         inverse_values,
-        memory: std::array::from_fn(|k| Column::from_values(&trace.memory[k])),
-        bytecode_final: Column::from_values(&trace.bytecode_final),
+        memory: std::array::from_fn(|k| Column::novel_only(&trace.memory[k])),
+        bytecode_final: Column::novel_only(&trace.bytecode_final),
     }
 }
 
