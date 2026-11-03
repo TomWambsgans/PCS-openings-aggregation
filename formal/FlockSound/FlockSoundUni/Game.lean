@@ -4,6 +4,7 @@
 import FlockSoundUni.PendingShape
 import UniSound.FsWalk
 import UniSound.FsSetup
+import UniSound.FsExtract
 
 /-!
 # The end theorem with the Fiat–Shamir layer reduced to its bridge facts
@@ -11,8 +12,9 @@ import UniSound.FsSetup
 **`uniKnowledgeSoundness_bridges`**: `uniKnowledgeSoundness_flock` with its hypothesis
 `hFs : FsLayer …` replaced by what `UniSound.fsLayer_of_bridges` proves it from: the deployment's
 stacks (`UniShapes`), its program IV (`UniIv`), the chain's numbers (`< 2^10` queries, rounds of
-`≤ 2^30` scalars), and the coupling's bridge facts: the setup's (`UniSetupBridge`) proved
-(`uniSetupBridge_of_small`, from `LayoutVarsSmall`), `UniVerifierBridge`, `UniExtractBridge`.
+`≤ 2^30` scalars), and the coupling's bridge facts: the setup's (`uniSetupBridge_of_small`) and
+the extractor's (`uniExtractBridge`) proved from `LayoutVarsSmall`, the verifier's
+(`UniVerifierBridge`) assumed.
 -/
 
 namespace FlockSound.Uni
@@ -37,7 +39,6 @@ theorem uniKnowledgeSoundness_bridges {D : Deployment} (κ : ℕ)
     (hnv : ∀ r ∈ uRounds (flockSoundInstance κ) valsCount (varsOf (layoutsOf D.shape)), r.nv ≤ 2 ^ 30)
     (hVer : UniVerifierBridge D (flockSoundInstance κ) J.nV J.V
       (uniCodeAt D (flockSoundInstance κ) hκ J.nV J.V hnV hV) hs)
-    (hX : UniExtractBridge D (flockSoundInstance κ) J.nV J.V hs)
     (hB : 4 * B.N + B.ncv ≤ 2 ^ 32)
     (hFl : ∀ j, (flockSoundInstance κ).err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
     (hdeg : J.degSum ≤ 2 ^ 32) (hrel : J.nRel + 2 ≤ 2 ^ 32) :
@@ -51,7 +52,8 @@ theorem uniKnowledgeSoundness_bridges {D : Deployment} (κ : ℕ)
     rw [hnV, hV]
     exact hnv
   exact uniKnowledgeSoundness_flock κ hκ B J hnV hV hprod htarget hW hsmall
-    (fsLayer_of_bridges D (flockSoundInstance κ) J.nV J.V _ hs hnQ' hnv' hI (uniSetupBridge_of_small D hs hsmall) hVer hX) hB hFl hdeg
+    (fsLayer_of_bridges D (flockSoundInstance κ) J.nV J.V _ hs hnQ' hnv' hI (uniSetupBridge_of_small D hs hsmall) hVer
+      (uniExtractBridge D (flockSoundInstance κ) J.nV J.V hs hsmall)) hB hFl hdeg
     hrel
 
 end FlockSound.Uni
