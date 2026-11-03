@@ -415,6 +415,172 @@ theorem tablesFacts : TablesFacts := by
 
 end UniSound.Ids
 
+namespace UniSound.Ids.Facts
+
+open LeanVM.Parameters UniStatement Polynomial
+
+/-! ## The fixed cosets -/
+
+theorem eK_zero' : eK (UInt64.ofNat 0) = 0 := by
+  rw [eK_eq, show K.ofLane (UInt64.ofNat 0) = 0 by decide, UniSound.Ids.ofK_zero]
+
+theorem eK_one' : eK (UInt64.ofNat 1) = 1 := by
+  rw [eK_eq, show K.ofLane (UInt64.ofNat 1) = 1 by decide, UniSound.Ids.ofK_one]
+
+/-- **A count's bit** (`Scalar::bits(j, 1)`) is the scalar `0` or `1`. -/
+theorem intBits_one (n j : ℕ) : intBits n j 1 = bitE n j := by
+  unfold intBits bitE
+  rw [show min 1 64 = 1 from rfl, pow_one, Nat.testBit_eq_decide_div_mod_eq,
+    ← Nat.shiftRight_eq_div_pow]
+  rcases Nat.mod_two_eq_zero_or_one (n >>> j) with h | h
+  · rw [h, eK_zero']
+    simp
+  · rw [h, eK_one']
+    simp
+
+theorem foldl_mul_eq {M : Type} [CommMonoid M] (q : ℕ → M) : ∀ (l : List ℕ) (init : M),
+    l.foldl (fun p b ↦ p * q b) init = init * (l.map q).prod
+  | [], init => by simp
+  | a :: l, init => by
+    rw [List.foldl_cons, foldl_mul_eq q l, List.map_cons, List.prod_cons, mul_assoc]
+
+/-- **`Z_act` at a point**, factor by factor. -/
+theorem eval_zActP (bits : List E) (r : ℕ) (x : E) :
+    (zActP bits r).eval x = (1 + bits.getD r 0 * ((digitP r).eval x + 1)) *
+      ((List.range r).map fun b ↦
+        1 + bits.getD b 0 * ((digitP b).eval x + (cosetOffset r b + 1))).prod := by
+  unfold zActP
+  rw [foldl_mul_eq (fun b ↦ 1 + C (bits.getD b 0) * (digitP b + C (cosetOffset r b + 1))),
+    Polynomial.eval_mul, eval_list_prod, List.map_map]
+  simp only [Function.comp_def, Polynomial.eval_add, Polynomial.eval_one, Polynomial.eval_mul,
+    Polynomial.eval_C]
+
+theorem bits_getD (count r : ℕ) {j : ℕ} (hj : j < r + 1) :
+    ((List.range (r + 1)).map fun j ↦ intBits count j 1).getD j 0 = bitE count j := by
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range hj, Option.map_some,
+    Option.getD_some, intBits_one]
+
+theorem pointE_add (h : BetaCantor) {i j : ℕ} (hi : i < 2 ^ 24) (hj : j < 2 ^ 24) :
+    pointE i + pointE j = pointE (i ^^^ j) := by
+  rw [pointE_eq_omega h hi, pointE_eq_omega h hj, pointE_eq_omega h (Nat.xor_lt_two_pow hi hj),
+    Heap.omega_xor]
+
+theorem pointE_eq_zero_iff (h : BetaCantor) {i : ℕ} (hi : i < 2 ^ 24) : pointE i = 0 ↔ i = 0 := by
+  constructor
+  · intro h0
+    by_contra hne
+    exact Heap.omega_ne_zero (cantorE h) (Nat.pos_of_ne_zero hne) hi
+      (by rw [← pointE_eq_omega h hi]; exact h0)
+  · rintro rfl
+    exact pointE_zero
+
+theorem one_add_one : (1 : E) + 1 = 0 := CharTwo.add_self_eq_zero 1
+
+/-- A coset's factor: `1 + c (ω_x + ω_y + 1)` vanishes iff `c = 1` and `x = y`. -/
+theorem factor_eq_zero_iff (h : BetaCantor) (c : Bool) {x y : ℕ} (hx : x < 2 ^ 24) (hy : y < 2 ^ 24) :
+    1 + (if c then 1 else 0) * (pointE x + (pointE y + 1)) = 0 ↔ c = true ∧ x = y := by
+  cases c
+  · simp
+  · simp only [ite_true, one_mul, true_and]
+    rw [show (1 : E) + (pointE x + (pointE y + 1)) = pointE x + pointE y by
+      linear_combination one_add_one, pointE_add h hx hy, pointE_eq_zero_iff h (Nat.xor_lt_two_pow hx hy),
+      Nat.xor_eq_zero_iff]
+
+/-- **Bit `b`'s coset**: `k >>> b = 2^(r−b) − 2` iff `k ∈ [2^r − 2^(b+1), 2^r − 2^b)`, i.e. the gap
+`2^r − k` is at least `2` and `log₂(2^r − k − 1) = b`. -/
+theorem coset_iff {r b k : ℕ} (hk : k < 2 ^ r) (hb : b < r) :
+    k >>> b = 2 ^ (r - b) - 2 ↔ 2 ≤ 2 ^ r - k ∧ Nat.log2 (2 ^ r - k - 1) = b := by
+  have hP : 0 < 2 ^ b := Nat.two_pow_pos b
+  have hN : 2 ^ (r - b) * 2 ^ b = 2 ^ r := by rw [← pow_add]; congr 1; omega
+  have hq : 2 ≤ 2 ^ (r - b) := by
+    have := Nat.pow_le_pow_right (show 0 < 2 by norm_num) (show 1 ≤ r - b by omega)
+    simpa using this
+  have h1 : (2 ^ (r - b) - 2) * 2 ^ b = 2 ^ r - 2 * 2 ^ b := by rw [Nat.sub_mul, hN]
+  have h2 : (2 ^ (r - b) - 2 + 1) * 2 ^ b = 2 ^ r - 2 ^ b := by
+    rw [show 2 ^ (r - b) - 2 + 1 = 2 ^ (r - b) - 1 by omega, Nat.sub_mul, hN, one_mul]
+  have h3 : 2 * 2 ^ b ≤ 2 ^ r := by rw [← hN]; exact Nat.mul_le_mul_right _ hq
+  have h2P : 2 ^ (b + 1) = 2 * 2 ^ b := by rw [pow_succ, mul_comm]
+  have hdiv : k / 2 ^ b = 2 ^ (r - b) - 2 ↔ 2 ^ r - 2 * 2 ^ b ≤ k ∧ k < 2 ^ r - 2 ^ b := by
+    rw [le_antisymm_iff, ← Nat.lt_succ_iff, Nat.div_lt_iff_lt_mul hP, Nat.le_div_iff_mul_le hP, h1,
+      Nat.succ_eq_add_one, h2]
+    exact and_comm
+  rw [Nat.shiftRight_eq_div_pow, hdiv]
+  constructor
+  · rintro ⟨hlo, hhi⟩
+    refine ⟨by omega, ?_⟩
+    rw [Nat.log2_eq_iff (by omega), h2P]
+    omega
+  · rintro ⟨hg, hl⟩
+    rw [Nat.log2_eq_iff (by omega), h2P] at hl
+    omega
+
+/-- `Z_act(ω_k)` vanishes iff the table is full or `k` is in a set bit's coset. -/
+theorem zAct_eval_eq_zero_iff (h : BetaCantor) {count r k : ℕ} (hr : r < 24) (hc : count ≤ 2 ^ r)
+    (hk : k < 2 ^ r) :
+    (zActP ((List.range (r + 1)).map fun j ↦ intBits count j 1) r).eval (pointE k) = 0 ↔
+      count = 2 ^ r ∨ ∃ b, b < r ∧ count.testBit b = true ∧ k >>> b = 2 ^ (r - b) - 2 := by
+  have hr24 : 2 ^ r ≤ 2 ^ 24 := Nat.pow_le_pow_right (by norm_num) hr.le
+  have hk24 : k < 2 ^ 24 := lt_of_lt_of_le hk hr24
+  rw [eval_zActP, mul_eq_zero, List.prod_eq_zero_iff, List.mem_map]
+  refine or_congr ?_ (exists_congr fun b ↦ ?_)
+  · rw [bits_getD count r (Nat.lt_succ_self r), eval_digitP_pointE h r hk24,
+      Nat.shiftRight_eq_div_pow, Nat.div_eq_of_lt hk, pointE_zero, zero_add, mul_one]
+    unfold bitE
+    by_cases hfull : count = 2 ^ r
+    · rw [hfull, Nat.testBit_two_pow_self]
+      simp [one_add_one]
+    · have hlt : count < 2 ^ r := lt_of_le_of_ne hc hfull
+      rw [Nat.testBit_lt_two_pow hlt]
+      simp [hfull]
+  · rw [List.mem_range]
+    constructor
+    · rintro ⟨hb, h0⟩
+      have hkb : k >>> b < 2 ^ 24 :=
+        lt_of_le_of_lt (by rw [Nat.shiftRight_eq_div_pow]; exact Nat.div_le_self _ _) hk24
+      have hm : 2 ^ (r - b) - 2 < 2 ^ 24 :=
+        lt_of_lt_of_le (Nat.sub_lt (Nat.two_pow_pos _) (by norm_num))
+          ((Nat.pow_le_pow_right (by norm_num) (Nat.sub_le r b)).trans hr24)
+      rw [bits_getD count r (by omega), eval_digitP_pointE h b hk24, cosetOffset] at h0
+      exact ⟨hb, (factor_eq_zero_iff h _ hkb hm).1 h0⟩
+    · rintro ⟨hb, hbit, hkb'⟩
+      have hkb : k >>> b < 2 ^ 24 :=
+        lt_of_le_of_lt (by rw [Nat.shiftRight_eq_div_pow]; exact Nat.div_le_self _ _) hk24
+      have hm : 2 ^ (r - b) - 2 < 2 ^ 24 :=
+        lt_of_lt_of_le (Nat.sub_lt (Nat.two_pow_pos _) (by norm_num))
+          ((Nat.pow_le_pow_right (by norm_num) (Nat.sub_le r b)).trans hr24)
+      refine ⟨hb, ?_⟩
+      rw [bits_getD count r (by omega), eval_digitP_pointE h b hk24, cosetOffset]
+      exact (factor_eq_zero_iff h _ hkb hm).2 ⟨hbit, hkb'⟩
+
+/-- `isActive` is the set bits' cosets (or every row of a full table). -/
+theorem isActive_iff {count r k : ℕ} (hk : k < 2 ^ r) :
+    isActive k count r = true ↔
+      count = 2 ^ r ∨ ∃ b, b < r ∧ count.testBit b = true ∧ k >>> b = 2 ^ (r - b) - 2 := by
+  unfold isActive
+  by_cases hfull : count = 2 ^ r
+  · simp [hfull]
+  · rw [ite_eq_right hfull, or_iff_right hfull]
+    simp only [Bool.and_eq_true, decide_eq_true_eq]
+    constructor
+    · rintro ⟨h2, hbit⟩
+      have hb : Nat.log2 (2 ^ r - k - 1) < r := (Nat.log2_lt (by omega)).2 (by omega)
+      exact ⟨_, hb, hbit, (coset_iff hk hb).2 ⟨h2, rfl⟩⟩
+    · rintro ⟨b, hb, hbit, hkb⟩
+      obtain ⟨h2, hlog⟩ := (coset_iff hk hb).1 hkb
+      exact ⟨h2, hlog ▸ hbit⟩
+
+end UniSound.Ids.Facts
+
+namespace UniSound.Ids
+
+open Facts
+
+/-- **The fixed cosets** (`ZActZero`, F1b): `Z_act(ω_k)` vanishes exactly on the active rows. -/
+theorem zActZero : ZActZero := fun h _ _ _ hr hc hk ↦
+  (zAct_eval_eq_zero_iff h hr hc hk).trans (isActive_iff hk).symm
+
+end UniSound.Ids
+
 /-! ## Axioms -/
 
 /-- info: 'UniSound.Ids.eqKernelLagrange' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -428,3 +594,7 @@ end UniSound.Ids
 /-- info: 'UniSound.Ids.tablesFacts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.Ids.tablesFacts
+
+/-- info: 'UniSound.Ids.zActZero' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.zActZero
