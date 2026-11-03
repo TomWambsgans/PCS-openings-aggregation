@@ -840,4 +840,181 @@ theorem sim_rounds (cw : Array E) (w0 : Array E × Array E × Array WalkWord) (�
       (by rw [show σ0.next + (n + 1472) + 1472 * L.length = σ0.next + n + 1472 * (L.length + 1) by ring]
           exact hfit)).cast (by ring)
 
+/-! ## Folds of writes -/
+
+theorem getD_foldl_set {α : Type} (g : ℕ → ℕ) (f : ℕ → α) (off : ℕ) (hg : ∀ w, g w = off + w) (d : α) :
+    ∀ (n : ℕ) (s0 : Array α), off + n ≤ s0.size →
+      ((List.range' 0 n).foldl (fun s w ↦ s.set! (g w) (f w)) s0).size = s0.size ∧
+      ∀ j, ((List.range' 0 n).foldl (fun s w ↦ s.set! (g w) (f w)) s0).getD j d =
+        if off ≤ j ∧ j < off + n then f (j - off) else s0.getD j d
+  | 0, s0, _ => ⟨rfl, fun j ↦ by rw [if_neg (show ¬(off ≤ j ∧ j < off + 0) by omega)]; rfl⟩
+  | n + 1, s0, h => by
+    obtain ⟨hs, hv⟩ := getD_foldl_set g f off hg d n s0 (by omega)
+    rw [List.range'_concat, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    simp only [Nat.one_mul, Nat.zero_add]
+    refine ⟨by rw [size_set!, hs], fun j ↦ ?_⟩
+    rw [getD_set!, hv, hs, hg]
+    split_ifs <;> first | (exfalso; omega) | rfl | (congr 1; omega)
+
+/-! ## The initial working vector -/
+
+theorem iv_getD (k : ℕ) (h : k < 8) : blake2sIv.getD k 0 = (Lv42.Parameters.iv[k]'h).toNat := by
+  interval_cases k <;> rfl
+
+theorem initState_getD (cw : Array E) :
+    (initState cw).size = 16 ∧ ∀ j, j < 16 → (initState cw).getD j #[] =
+      if j < 8 then walkSlots cw (32 * (j - 0)) else if j < 12 then walkLiteral cw (blake2sIv.getD (j - 8) 0)
+      else walkXor (walkLiteral cw (blake2sIv.getD (4 + (j - 12)) 0)) (walkSlots cw (1152 + 32 * (j - 12))) := by
+  have h3 : [1152, 1184, 1216, 1248].zip (List.range 4) = (List.range' 0 4).map (fun w ↦ (1152 + 32 * w, w)) :=
+    rfl
+  obtain ⟨s1, hs1⟩ : ∃ q, q = (List.range' 0 8).foldl (fun s w ↦ s.set! w (walkSlots cw (32 * w)))
+      (Array.replicate 16 (Array.replicate 32 (0 : E))) := ⟨_, rfl⟩
+  obtain ⟨s2, hs2⟩ : ∃ q, q = (List.range' 0 4).foldl
+      (fun s w ↦ s.set! (8 + w) (walkLiteral cw (blake2sIv.getD w 0))) s1 := ⟨_, rfl⟩
+  obtain ⟨s3, hs3⟩ : ∃ q, q = (List.range' 0 4).foldl (fun s w ↦ s.set! (12 + w)
+      (walkXor (walkLiteral cw (blake2sIv.getD (4 + w) 0)) (walkSlots cw (1152 + 32 * w)))) s2 := ⟨_, rfl⟩
+  have e : initState cw = s3 := by
+    rw [hs3, hs2, hs1]
+    unfold initState
+    dsimp only
+    rw [h3, List.foldl_map]
+  have H1 := getD_foldl_set (fun w ↦ w) (fun w ↦ walkSlots cw (32 * w)) 0 (fun w ↦ (Nat.zero_add w).symm)
+    (#[] : Array E) 8 (Array.replicate 16 (Array.replicate 32 (0 : E))) (by simp)
+  rw [← hs1] at H1
+  have H2 := getD_foldl_set (fun w ↦ 8 + w) (fun w ↦ walkLiteral cw (blake2sIv.getD w 0)) 8 (fun w ↦ rfl)
+    (#[] : Array E) 4 s1 (by rw [H1.1]; simp)
+  rw [← hs2] at H2
+  have H3 := getD_foldl_set (fun w ↦ 12 + w)
+    (fun w ↦ walkXor (walkLiteral cw (blake2sIv.getD (4 + w) 0)) (walkSlots cw (1152 + 32 * w))) 12 (fun w ↦ rfl)
+    (#[] : Array E) 4 s2 (by rw [H2.1, H1.1]; simp)
+  rw [← hs3] at H3
+  rw [e]
+  refine ⟨by rw [H3.1, H2.1, H1.1]; simp, fun j hj ↦ ?_⟩
+  rw [H3.2, H2.2, H1.2, getD_replicate]
+  split_ifs <;> first | (exfalso; omega) | rfl
+
+/-- **The initial working vector**: the walk's is the evaluation of the builder's `initW`. -/
+theorem srel_initState (cw : Array E) : SRel cw (initState cw) Blake2sCircuit.initW := by
+  obtain ⟨hsize, hget⟩ := initState_getD cw
+  refine ⟨hsize, fun j ↦ ?_⟩
+  have hj := j.isLt
+  rw [hget j hj]
+  simp only [Blake2sCircuit.initW, Fin.getElem_fin, Vector.getElem_ofFn]
+  by_cases h8 : (j : ℕ) < 8
+  · simp only [h8, ↓reduceIte]
+    rw [Nat.sub_zero]
+    exact wrel_slots cw (by rw [two_pow_bm]; omega)
+  · by_cases h12 : (j : ℕ) < 12
+    · simp only [h8, h12, ↓reduceIte]
+      exact wrel_lit cw _ (iv_getD _ (by omega))
+    · simp only [h8, h12, ↓reduceIte]
+      rw [show 4 + ((j : ℕ) - 12) = (j : ℕ) - 8 by omega]
+      exact wrel_xor (wrel_lit cw _ (iv_getD _ (by omega))) (wrel_slots cw (by rw [two_pow_bm]; omega))
+
+/-! ## The input rows -/
+
+theorem inputRow_fold (cw : Array E) (s : ℕ) : ∀ (n : ℕ) (b : Array E × Array E), s + n ≤ b.1.size →
+    s + n ≤ b.2.size →
+    ((List.range' s n).foldl (inputRow cw) b).1.size = b.1.size ∧
+    ((List.range' s n).foldl (inputRow cw) b).2.size = b.2.size ∧
+    ∀ j, ((List.range' s n).foldl (inputRow cw) b).1.getD j 0 =
+        (if s ≤ j ∧ j < s + n then cw.getD j 0 else b.1.getD j 0) ∧
+      ((List.range' s n).foldl (inputRow cw) b).2.getD j 0 =
+        (if s ≤ j ∧ j < s + n then cw.getD constantColumn 0 else b.2.getD j 0)
+  | 0, b, _, _ => ⟨rfl, rfl, fun j ↦ ⟨by rw [if_neg (show ¬(s ≤ j ∧ j < s + 0) by omega)]; rfl,
+      by rw [if_neg (show ¬(s ≤ j ∧ j < s + 0) by omega)]; rfl⟩⟩
+  | n + 1, b, h1, h2 => by
+    obtain ⟨hs1, hs2, hv⟩ := inputRow_fold cw s n b (by omega) (by omega)
+    rw [List.range'_concat, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    simp only [Nat.one_mul]
+    refine ⟨by rw [inputRow, size_set!, hs1], by rw [inputRow, size_set!, hs2], fun j ↦ ?_⟩
+    rw [inputRow]
+    dsimp only
+    rw [getD_set!, getD_set!, (hv j).1, (hv j).2, hs1, hs2]
+    constructor <;> split_ifs <;> first | (exfalso; omega) | rfl | (congr 1; omega)
+
+/-- **The input rows**: `(w_j, w_512)` at the inputs `0 … 255`, `640 … 1279`, zero elsewhere. -/
+theorem inputs_spec (cw : Array E) :
+    ([(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+        (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E))).1.size =
+        2 ^ bm ∧
+    ([(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+        (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E))).2.size =
+        2 ^ bm ∧
+    ∀ j, ([(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+        (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E))).1.getD j 0 =
+        (if j < 256 ∨ (640 ≤ j ∧ j < 1280) then cw.getD j 0 else 0) ∧
+      ([(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+        (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E))).2.getD j 0 =
+        (if j < 256 ∨ (640 ≤ j ∧ j < 1280) then cw.getD constantColumn 0 else 0) := by
+  have hsz : (2 : ℕ) ^ blake2sR1csLogSize = 2 ^ bm := rfl
+  simp only [List.foldl_cons, List.foldl_nil, inputRows, Prod.mk.eta]
+  obtain ⟨a1, ha1⟩ : ∃ q, q = (List.range' 0 256).foldl (inputRow cw)
+      (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E)) :=
+    ⟨_, rfl⟩
+  obtain ⟨a2, ha2⟩ : ∃ q, q = (List.range' 640 512).foldl (inputRow cw) a1 := ⟨_, rfl⟩
+  obtain ⟨a3, ha3⟩ : ∃ q, q = (List.range' 1152 128).foldl (inputRow cw) a2 := ⟨_, rfl⟩
+  rw [← ha1, ← ha2, ← ha3]
+  have I1 := inputRow_fold cw 0 256 (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E),
+    Array.replicate (2 ^ blake2sR1csLogSize) (0 : E)) (by simp [hsz, two_pow_bm]) (by simp [hsz, two_pow_bm])
+  rw [← ha1] at I1
+  have I2 := inputRow_fold cw 640 512 a1 (by rw [I1.1]; simp [hsz, two_pow_bm])
+    (by rw [I1.2.1]; simp [hsz, two_pow_bm])
+  rw [← ha2] at I2
+  have I3 := inputRow_fold cw 1152 128 a2 (by rw [I2.1, I1.1]; simp [hsz, two_pow_bm])
+    (by rw [I2.2.1, I1.2.1]; simp [hsz, two_pow_bm])
+  rw [← ha3] at I3
+  refine ⟨by rw [I3.1, I2.1, I1.1]; simp [hsz], by rw [I3.2.1, I2.2.1, I1.2.1]; simp [hsz], fun j ↦ ?_⟩
+  rw [(I3.2.2 j).1, (I3.2.2 j).2, (I2.2.2 j).1, (I2.2.2 j).2, (I1.2.2 j).1, (I1.2.2 j).2]
+  simp only [getD_replicate]
+  constructor <;> split_ifs <;> first | (exfalso; omega) | rfl
+
+/-! ## The output rows -/
+
+theorem outBit_fold (cw out : Array E) (word : ℕ) : ∀ (n : ℕ) (b : Array E × Array E),
+    256 + 32 * word + n ≤ b.1.size → 256 + 32 * word + n ≤ b.2.size →
+    ((List.range' 0 n).foldl (outBit cw out word) b).1.size = b.1.size ∧
+    ((List.range' 0 n).foldl (outBit cw out word) b).2.size = b.2.size ∧
+    ∀ j, ((List.range' 0 n).foldl (outBit cw out word) b).1.getD j 0 =
+        (if 256 + 32 * word ≤ j ∧ j < 256 + 32 * word + n then out.getD (j - (256 + 32 * word)) 0
+          else b.1.getD j 0) ∧
+      ((List.range' 0 n).foldl (outBit cw out word) b).2.getD j 0 =
+        (if 256 + 32 * word ≤ j ∧ j < 256 + 32 * word + n then cw.getD constantColumn 0 else b.2.getD j 0)
+  | 0, b, _, _ => ⟨rfl, rfl, fun j ↦
+      ⟨by rw [if_neg (show ¬(256 + 32 * word ≤ j ∧ j < 256 + 32 * word + 0) by omega)]; rfl,
+        by rw [if_neg (show ¬(256 + 32 * word ≤ j ∧ j < 256 + 32 * word + 0) by omega)]; rfl⟩⟩
+  | n + 1, b, h1, h2 => by
+    obtain ⟨hs1, hs2, hv⟩ := outBit_fold cw out word n b (by omega) (by omega)
+    rw [List.range'_concat, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    simp only [Nat.one_mul, Nat.zero_add]
+    refine ⟨by rw [outBit, size_set!, hs1], by rw [outBit, size_set!, hs2], fun j ↦ ?_⟩
+    rw [outBit]
+    dsimp only
+    rw [getD_set!, getD_set!, (hv j).1, (hv j).2, hs1, hs2]
+    constructor <;> split_ifs <;> first | (exfalso; omega) | rfl | (congr 1; omega)
+
+theorem outStep_fold (cw : Array E) (state : Array WalkWord) : ∀ (W : ℕ) (b : Array E × Array E),
+    256 + 32 * W ≤ b.1.size → 256 + 32 * W ≤ b.2.size →
+    ((List.range' 0 W).foldl (outStep cw state) b).1.size = b.1.size ∧
+    ((List.range' 0 W).foldl (outStep cw state) b).2.size = b.2.size ∧
+    ∀ j, ((List.range' 0 W).foldl (outStep cw state) b).1.getD j 0 =
+        (if 256 ≤ j ∧ j < 256 + 32 * W then (outWord cw state ((j - 256) / 32)).getD ((j - 256) % 32) 0
+          else b.1.getD j 0) ∧
+      ((List.range' 0 W).foldl (outStep cw state) b).2.getD j 0 =
+        (if 256 ≤ j ∧ j < 256 + 32 * W then cw.getD constantColumn 0 else b.2.getD j 0)
+  | 0, b, _, _ => ⟨rfl, rfl, fun j ↦
+      ⟨by rw [if_neg (show ¬(256 ≤ j ∧ j < 256 + 32 * 0) by omega)]; rfl,
+        by rw [if_neg (show ¬(256 ≤ j ∧ j < 256 + 32 * 0) by omega)]; rfl⟩⟩
+  | W + 1, b, h1, h2 => by
+    obtain ⟨hs1, hs2, hv⟩ := outStep_fold cw state W b (by omega) (by omega)
+    rw [List.range'_concat, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    simp only [Nat.one_mul, Nat.zero_add, outStep, Prod.mk.eta]
+    have O := outBit_fold cw (outWord cw state W) W 32 ((List.range' 0 W).foldl (outStep cw state) b)
+      (by rw [hs1]; omega) (by rw [hs2]; omega)
+    refine ⟨by rw [O.1, hs1], by rw [O.2.1, hs2], fun j ↦ ?_⟩
+    rw [(O.2.2 j).1, (O.2.2 j).2, (hv j).1, (hv j).2]
+    clear O hv hs1 hs2 h1 h2
+    constructor <;> split_ifs <;> first | (exfalso; omega) |
+      (rw [show (j - 256) / 32 = W by omega, show (j - 256) % 32 = j - (256 + 32 * W) by omega]) | rfl
+
 end FlockSound.Uni.Walk
