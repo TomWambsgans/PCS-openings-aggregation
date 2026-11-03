@@ -285,6 +285,20 @@ mod tests {
         }
     }
 
+    /// The paired batching sumcheck's coordinates (`leanvm_flock_gas::transcript::pair_point`, `crates/leanvm_rec/
+    /// SPEC-POINTS.md`) are this basis's `β_1` and `V_2`'s coordinate functionals, at any point.
+    #[test]
+    fn pair_points_are_v2s_coordinate_functionals() {
+        use leanvm_flock_gas::transcript::{cantor_beta1, pair_point};
+        assert_eq!(cantor_beta1(), point_e(2));
+        let a = coordinate_functionals(2);
+        let mut next = rng(7);
+        for _ in 0..50 {
+            let t = E::new(next(), next(), next());
+            assert_eq!(pair_point(t).to_vec(), coordinates_at(t, &a));
+        }
+    }
+
     /// The prefix and suffix vanishing polynomials vanish exactly where they should and multiply to `w_r`.
     #[test]
     fn active_and_padding_vanishing() {
