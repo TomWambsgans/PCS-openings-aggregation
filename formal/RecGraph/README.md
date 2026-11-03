@@ -46,7 +46,7 @@ REC_VECTORS=$PWD/rec_vectors.txt REC_REAL=$PWD/crates/leanvm_univariate/tests/ve
   whose scalars are node indices): `Prog.record` (the graph), `Prog.run` (the program on `E`, each node evaluated as
   it is made).
 - [`Commute.lean`](RecGraph/Commute.lean): **recording commutes with evaluation**, for every program.
-- [`Values.lean`](RecGraph/Values.lean): **the smart constructors' values**, folds, dropped zeros and ones, `x + x = 0`
+- [`Values.lean`](RecGraph/Values.lean): **every operation's node has the operation's meaning** (`op_val`), folds, dropped zeros and ones, `x + x = 0`
   and hash-consed nodes included.
 - [`RecGraphTest/Runner.lean`](RecGraphTest/Runner.lean): the differential runner.
 - `formal/UniStatement/UniStatement/Rec.lean`: `UniStatement` extended with π1-rec, π1-rec2, π1-rec3 (`FsShape`, `walk`;
@@ -68,19 +68,21 @@ theorem record_eval {α : Type} (p : Prog α) (calls : List (List Word)) (len : 
         stream) =
       (p.run π iv publicInput stream (RecState.start, evalAll π iv publicInput stream RecState.start)).2.2
 
--- Values.lean: for a recorder state with the invariant, and operands it holds
-theorem new_val (st : RecState) (h : Inv st) (n : Node) (hn : ∀ a ∈ reads st.kernels n, a < st.nodes.size) :
-    (evalAll π iv publicInput stream (st.new n).2)[(st.new n).1]? =
-      some (stepP π iv publicInput stream st.kernels (evalAll π iv publicInput stream st) n)
-theorem constant_val (st : RecState) (h : Inv st) (x : E) :
-    valE (evalAll π iv publicInput stream (st.constant x).2) (st.constant x).1 = x
-theorem add_val (st : RecState) (h : Inv st) (a b : Nat) (ha : a < st.nodes.size) (hb : b < st.nodes.size) :
-    valE (evalAll π iv publicInput stream (st.add a b).2) (st.add a b).1 =
-      valE (evalAll π iv publicInput stream st) a + valE (evalAll π iv publicInput stream st) b
-theorem mul_val (st : RecState) (h : Inv st) (a b : Nat) (ha : a < st.nodes.size) (hb : b < st.nodes.size) :
-    valE (evalAll π iv publicInput stream (st.mul a b).2) (st.mul a b).1 =
-      valE (evalAll π iv publicInput stream st) a * valE (evalAll π iv publicInput stream st) b
--- and new_inv, constant_inv, add_inv, mul_inv, start_inv: the invariant is kept
+-- Values.lean: for a recorder state with the invariant RecInv, and an operation whose operands it holds (OpOK),
+-- the operation's node has the operation's meaning on E (Op.value: the constant; the public word; the stream's
+-- bytes at the cursor; the challenge of Keccak-256 over π of the state and the bytes read since, narrow or not;
+-- the sum; the product; the bit field; ring_tower::weight_at), the smart constructors' folds, dropped zeros and
+-- ones, x + x = 0 and hash-consed nodes included
+theorem op_val (st : RecState) (h : RecInv st) (o : Op) (hok : OpOK st o) :
+    valE (evalAll π iv publicInput stream (st.op o).2) (st.op o).1 =
+      Op.value π publicInput stream st (evalAll π iv publicInput stream st) o
+theorem op_inv (st : RecState) (h : RecInv st) (o : Op) (hok : OpOK st o) : RecInv (st.op o).2
+theorem op_lt (st : RecState) (h : RecInv st) (o : Op) (hok : OpOK st o) : (st.op o).1 < (st.op o).2.nodes.size
+theorem record_inv {α : Type} (p : Prog α) (st : RecState) (h : RecInv st) (hs : p.Scoped st) :
+    RecInv (p.record st).2
+theorem start_inv : RecInv RecState.start
+-- and per operation: new_val, constant_val, add_val, mul_val, bits_val, input_val, statement_val, sample_val,
+-- ringWeight_val, and their …_inv
 
 -- UniStatement/Rec.lean: the shapes' parameters default to the main line
 theorem reduceWithFs_main (shape : Shape) (publicWords : List E) (blake2s : Blake2s) (mode : ClaimsMode) :
@@ -116,10 +118,13 @@ only off it. Two ways to close it:
   (which challenges, which prefix), a function of the shape alone. Then graph = verifier holds for every stream and
   permutation.
 
-**What is left** for a proof: write π1-rec3's verifier as a `Prog` (the Rust's operation order, so that
-`Prog.record`'s graph is `Emitted.graph` node for node, checked by the runner), then prove `Prog.run` of it equal to
-`UniStatement`'s `runFs … .rec3 true` off the bad event above, by `run_vals`, `record_eval` and the `…_val` lemmas
-(`input`, `sample`, `bits`, `ringWeight` by `new_val`), function by function.
+**What is left** for a proof: write π1-rec3's verifier as a scoped `Prog` (in the Rust's operation order, so that
+`Prog.record`'s graph is `Emitted.graph` node for node, which the runner can check without the kernel), then prove,
+function by function, that its run (each operation worth its `Op.value`: `op_val`, `record_inv`) computes
+`UniStatement`'s `runFs … .rec3 true` off the bad event above; `record_eval` then turns that into the graph's
+`evalNodes`. The per-operation and per-program lemmas are here; the simulation of the verifier (about 2,500 lines of
+`UniStatement` on π1-rec3's path: the counts, the transcript, Flock with the walk, the tables, the heap, `combine`,
+the paired batch) is not.
 
 ## The differential tests (run on h1, `leanvm-rec` 4247e37)
 

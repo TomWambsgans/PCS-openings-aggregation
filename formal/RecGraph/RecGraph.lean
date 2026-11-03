@@ -81,3 +81,35 @@ The build fails if a definition or theorem below uses an axiom beyond Lean's thr
 /-- info: 'RecGraph.start_inv' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecGraph.start_inv
+
+/-- info: 'RecGraph.op_val' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.op_val
+
+/-- info: 'RecGraph.op_inv' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.op_inv
+
+/-- info: 'RecGraph.op_lt' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.op_lt
+
+/-- info: 'RecGraph.record_inv' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.record_inv
+
+/-- info: 'RecGraph.sample_val' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.sample_val
+
+/-- info: 'RecGraph.input_val' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.input_val
+
+/-- info: 'RecGraph.ringWeight_val' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.ringWeight_val
+
+/-- info: 'RecGraph.bits_val' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.bits_val
