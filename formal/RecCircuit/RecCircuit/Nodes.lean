@@ -335,6 +335,130 @@ theorem arith_ok (G : c.ctx.Good w) {op : Op} {out lx ly : Array ℕ} (h : arith
   · exact arith_try G op (fun l hl => (hg l hl).1) hab
   · exact arith_try G op (fun l hl => (hg l hl).1) hab
 
+theorem limbsE_toList (a : Array ℕ) :
+    c.limbsE w a.toList = F192.ofLimbs (c.ctx.val w (a.getD 0 NONE)) (c.ctx.val w (a.getD 1 NONE))
+      (c.ctx.val w (a.getD 2 NONE)) := by
+  simp only [limbsE, toList_getD]
+
+/-- A live node with three limbs is an element node. -/
+theorem elem_of_limbs3 (hc : c.Checked r) {x : ℕ} (hx : x < c.nodes.size) (hlx : c.live.getD x false = true)
+    (h3 : (c.limbsOf x).size = 3) : isStateNode (c.nodes.getD x default) = false := by
+  have hok := hc.nodes x hx hlx
+  cases hn : c.nodes.getD x default with
+  | seed =>
+    simp only [nodeOk, hn] at hok
+    split at hok
+    · simp only [Bool.and_eq_true, Option.isNone_iff_eq_none] at hok
+      simp [limbsOf, hok.1.2] at h3
+    · cases hok
+  | hash s f t =>
+    simp only [nodeOk, hn] at hok
+    split at hok
+    · simp only [Bool.and_eq_true, Option.isNone_iff_eq_none] at hok
+      simp [limbsOf, hok.1.1.1.1.1.2] at h3
+    · cases hok
+  | _ => rfl
+
+theorem inv_add (hc : c.Checked r) (G : c.ctx.Good w) {id : ℕ} (hid : id < c.nodes.size)
+    (hl : c.live.getD id false = true) {x y : ℕ} (hnode : c.nodes.getD id default = .add x y)
+    (ihx : c.ElemInv r w x) (ihy : c.ElemInv r w y) : c.ElemInv r w id := by
+  have hok := hc.nodes id hid hl
+  simp only [nodeOk, hnode] at hok
+  obtain ⟨hs, -, -, he⟩ := arith_ok G hok
+  refine ⟨hs, ?_⟩
+  rw [limbsE_toList, limbsE_toList, limbsE_toList] at he
+  rw [he, ihx.2, ihy.2, valsW_step hc hid hl, hnode]
+  rfl
+
+theorem inv_mul (hc : c.Checked r) (G : c.ctx.Good w) {id : ℕ} (hid : id < c.nodes.size)
+    (hl : c.live.getD id false = true) {x y : ℕ} (hnode : c.nodes.getD id default = .mul x y)
+    (ihx : c.ElemInv r w x) (ihy : c.ElemInv r w y) : c.ElemInv r w id := by
+  have hok := hc.nodes id hid hl
+  simp only [nodeOk, hnode] at hok
+  obtain ⟨hs, -, -, he⟩ := arith_ok G hok
+  refine ⟨hs, ?_⟩
+  rw [limbsE_toList, limbsE_toList, limbsE_toList] at he
+  rw [he, valsW_step hc hid hl, hnode]
+  by_cases hxy : x = y
+  · subst hxy
+    simp only [beq_self_eq_true, ite_true, opE] at he ⊢
+    rw [ihx.2]; rfl
+  · have : (x == y) = false := by simpa using hxy
+    simp only [this, Bool.false_eq_true, ite_false, opE]
+    rw [ihx.2, ihy.2]; rfl
+
+/-! ## Reads -/
+
+/-- A hashed read's bytes are the stream's, its bits the free bits. -/
+theorem read_bits (hc : c.Checked r) (hw : c.circuit.Satisfied w) {off len : ℕ} (hlen1 : 1 ≤ len)
+    (hall : ∀ k < 8 * len, (c.bitSelf.getD (8 * off + k) none).isSome) :
+    off + len ≤ r.graph.streamLen ∧ ∀ i < len, ∀ j < 8, c.ctx.val w (c.streamBit (8 * (off + i) + j)) =
+      ofBool (((c.streamW r w).getD (off + i) 0).toNat.testBit j) := by
+  have hsz := hc.sizes.2.2.2.1
+  have hb : off + len ≤ r.graph.streamLen := by
+    have := hall (8 * len - 1) (by omega)
+    by_contra hcon
+    have : c.bitSelf.size ≤ 8 * off + (8 * len - 1) := by omega
+    simp [Array.getD_eq_getD_getElem?, this] at *
+  refine ⟨hb, fun i hi j hj => ?_⟩
+  exact stream_bit hc hw (by omega) hj (fun j' hj' => by
+    have := hall (8 * i + j') (by omega)
+    rwa [show 8 * off + (8 * i + j') = 8 * (off + i) + j' by ring] at this)
+
+theorem streamW_length : (c.streamW r w).length = r.graph.streamLen := by
+  simp [streamW, decodeStream_length]
+
+/-- The big-endian packing of a hashed read's bytes `off + a .. off + a + n`. -/
+theorem read_pack (hc : c.Checked r) (G : c.ctx.Good w) (hw : c.circuit.Satisfied w) {off len a n u : ℕ}
+    (hlen1 : 1 ≤ len) (hall : ∀ k < 8 * len, (c.bitSelf.getD (8 * off + k) none).isSome) (han : a + n ≤ len)
+    (h : c.packIs c.packOf u (beBits c.streamBit (off + a) n) = true) :
+    c.ctx.val w u = F64.ofNat (beNat (slice (c.streamW r w) (off + a) n)) := by
+  obtain ⟨hb, hbits⟩ := read_bits hc hw hlen1 hall
+  apply packBE_word hc G c.streamBit (c.streamW r w) (off + a) n (by rw [streamW_length]; omega) _ h
+  intro i hi j hj
+  have := hbits (a + i) (by omega) j hj
+  rwa [show off + (a + i) = off + a + i by ring] at this
+
+theorem inv_input_hashed (hc : c.Checked r) (G : c.ctx.Good w) (hw : c.circuit.Satisfied w) {id : ℕ}
+    (hid : id < c.nodes.size) (hl : c.live.getD id false = true) {off len : ℕ}
+    (hnode : c.nodes.getD id default = .input off len)
+    (hfree : (c.freeReads.any fun e => e.1 == off && e.2 == c.limbsOf id) = false) : c.ElemInv r w id := by
+  have hok := hc.nodes id hid hl
+  simp only [nodeOk, hnode, hfree, Bool.false_eq_true, ite_false, Bool.and_eq_true, beq_iff_eq,
+    decide_eq_true_eq, List.all_eq_true, List.mem_range] at hok
+  obtain ⟨hs, ⟨hlen1, hall⟩, hcase⟩ := hok
+  refine ⟨hs, ?_⟩
+  rw [valsW_step hc hid hl, hnode]
+  simp only [Graph.step, Value.toE, inputValue]
+  set S := c.streamW r w
+  by_cases h24 : len = 24
+  · subst h24
+    rw [if_pos rfl] at hcase
+    simp only [Bool.and_eq_true] at hcase
+    obtain ⟨⟨p0, p1⟩, p2⟩ := hcase
+    have q0 := read_pack hc G hw hlen1 hall (a := 16) (n := 8) (by norm_num) p0
+    have q1 := read_pack hc G hw hlen1 hall (a := 8) (n := 8) (by norm_num) p1
+    have q2 := read_pack hc G hw hlen1 hall (a := 0) (n := 8) (by norm_num) p2
+    rw [q0, q1, q2, if_pos rfl, elemOfNats, slice_slice _ _ _ _ _ (by norm_num : 16 + 8 ≤ 24),
+      slice_slice _ _ _ _ _ (by norm_num : 8 + 8 ≤ 24), slice_slice _ _ _ _ _ (by norm_num : 0 + 8 ≤ 24)]
+  · by_cases h16 : len = 16
+    · subst h16
+      rw [if_neg (by decide), if_pos rfl] at hcase
+      simp only [Bool.and_eq_true] at hcase
+      obtain ⟨⟨p0, p1⟩, p2⟩ := hcase
+      have q0 := read_pack hc G hw hlen1 hall (a := 8) (n := 8) (by norm_num) p0
+      have q1 := read_pack hc G hw hlen1 hall (a := 0) (n := 8) (by norm_num) p1
+      rw [q0, q1, Ctx.const_val G p2, if_neg (by decide), if_pos rfl, elemOfNats,
+        slice_slice _ _ _ _ _ (by norm_num : 8 + 8 ≤ 16), slice_slice _ _ _ _ _ (by norm_num : 0 + 8 ≤ 16),
+        Primitives.F64.ofNat_zero]
+    · rw [if_neg h24, if_neg h16] at hcase
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at hcase
+      obtain ⟨⟨⟨_, p0⟩, p1⟩, p2⟩ := hcase
+      have q0 := read_pack hc G hw hlen1 hall (a := 0) (n := len) (by omega) p0
+      rw [q0, Ctx.const_val G p1, Ctx.const_val G p2, if_neg h24, if_neg h16, elemOfNats,
+        Primitives.F64.ofNat_zero]
+      rfl
+
 end Compiled
 
 end RecCircuit

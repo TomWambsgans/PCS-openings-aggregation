@@ -321,7 +321,7 @@ def nodeOk (X : Ctx) (iv : List UInt8) (packOf : Array (Option ℕ)) (id : ℕ) 
   | .input off len =>
     l.size == 3 &&
     (if c.freeReads.any (fun e => e.1 == off && e.2 == l) then len == 24
-     else (List.range (8 * len)).all (fun k => (c.bitSelf.getD (8 * off + k) none).isSome) &&
+     else 1 ≤ len && (List.range (8 * len)).all (fun k => (c.bitSelf.getD (8 * off + k) none).isSome) &&
       (if len == 24 then pk (L 0) (beBits sb (off + 16) 8) && pk (L 1) (beBits sb (off + 8) 8) && pk (L 2) (beBits sb off 8)
        else if len == 16 then pk (L 0) (beBits sb (off + 8) 8) && pk (L 1) (beBits sb off 8) && X.constOk (L 2) 0
        else len ≤ 8 && pk (L 0) (beBits sb off len) && X.constOk (L 1) 0 && X.constOk (L 2) 0))
