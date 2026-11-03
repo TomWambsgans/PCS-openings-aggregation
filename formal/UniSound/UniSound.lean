@@ -16,6 +16,7 @@ import UniSound.CodeBatch
 import UniSound.CodeShape
 import UniSound.CodeLink
 import UniSound.FinalLink
+import UniSound.Ids.Assembly
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001

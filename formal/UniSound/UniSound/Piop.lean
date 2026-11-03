@@ -106,7 +106,8 @@ def uniRounds (flockRounds : List Compose.RoundSpec) (nV V : ℕ) : List Compose
   `rel_of`: with Flock's predicate on `qf c`, the relation.
 * `MainOK s c (α, β, γ)`: the state after round `0` for the bus and the constraints;
   `mainSound`: round `0` turns `¬ MainHolds` into `MainOK` with probability at most `errMain`.
-* `polys s c1 (α, β, γ) c2`: the identities `C1`, `C2` must satisfy, as polynomials in `t`;
+* `polys s c1 (α, β, γ) fd c2`: the identities `C1`, `C2` must satisfy, as polynomials in `t`
+  (`fd` Flock's transcript, drawn before `C2`: the identities may read its point);
   `main_of_polys`: all zero, the bus and constraint state holds; `deg_le`: their degrees sum to at
   most `degSum`.
 * `diffs … t vals`: for each commitment, each of its relations' `Σ terms + value` at `t` with the
@@ -132,16 +133,16 @@ structure UniIds (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) where
   MainOK : USt → Stk → List E → Prop
   errMain : ℝ≥0∞
   mainSound : ∀ s c, Pr{let ch ← Compose.draws E 6}[¬ MainHolds s c ∧ MainOK s c ch] ≤ errMain
-  polys : USt → Stk → List E → Stk → List (Polynomial E)
+  polys : USt → Stk → List E → Done → Stk → List (Polynomial E)
   degSum : ℕ
-  deg_le : ∀ s c1 ch c2, ((polys s c1 ch c2).map Polynomial.natDegree).sum ≤ degSum
-  main_of_polys : ∀ s c1 ch c2, (∀ P ∈ polys s c1 ch c2, P = 0) → MainOK s c1 ch
+  deg_le : ∀ s c1 ch fd c2, ((polys s c1 ch fd c2).map Polynomial.natDegree).sum ≤ degSum
+  main_of_polys : ∀ s c1 ch fd c2, (∀ P ∈ polys s c1 ch fd c2, P = 0) → MainOK s c1 ch
   diffs : USt → Stk → List E → Done → Stk → E → List E → List (List E)
   nRel : ℕ
   diffs_len : ∀ s c1 ch fd c2 t vals, ∀ d ∈ diffs s c1 ch fd c2 t vals, d.length ≤ nRel
   diffs_count : ∀ s c1 ch fd c2 t vals, (diffs s c1 ch fd c2 t vals).length ≤ 4
   diffs_eval : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
-    ∀ P ∈ polys s c1 ch c2, P.eval t = 0
+    ∀ P ∈ polys s c1 ch fd c2, P.eval t = 0
   diffs_flock : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
     FlockEndHolds (qf c1) (Fl.prog.out fd [])
   diffs_pending : ∀ s c1 ch fd c2 t vals, (∀ d ∈ diffs s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) →
@@ -296,7 +297,7 @@ def uniPre (s : USt) (p : Op Stk) (m : Option Stk × List E) : Prop :=
   if p.length = 0 then ∃ c, m.1 = some c ∧ Rel D s c
   else if p.length = Fl.prog.rounds.length + 1 then
     ∃ c1 c2, (rd p 0).1.1 = some c1 ∧ m.1 = some c2 ∧
-      (∀ P ∈ I.polys s c1 (rd p 0).2 c2, P = 0) ∧
+      (∀ P ∈ I.polys s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2, P = 0) ∧
       FlockEndHolds (I.qf c1) (Fl.prog.out (fdOf Fl.prog.rounds.length p) []) ∧
       PendingHolds (Fl.prog.out (fdOf Fl.prog.rounds.length p) []).2.2 ∧
       FlockDone Fl (fdOf Fl.prog.rounds.length p)
