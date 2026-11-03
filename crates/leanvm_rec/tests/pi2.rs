@@ -351,7 +351,7 @@ fn contract_checks(design: Design) {
         let pi2 = &calls[pi1.len()..];
         let word = |input: &[u8], k: usize| -> [u8; 32] { input[32 * k..32 * k + 32].try_into().unwrap() };
         assert_eq!(word(&pi2[0], 3), element_word(reduced.witness.0[0]));
-        assert_eq!(word(&pi2[1], 2), number(2), "Q's two claims in one call");
+        assert_eq!(word(&pi2[2], 2), number(2), "Q's two claims in one call");
         let _ = to_f192;
         for at in [36, data.len() / 2, data.len() - 1] {
             let mut bad = data.clone();

@@ -6,9 +6,11 @@
 //! mock `PCS_OPEN` (`leanvm_flock_gas::evm::machine`, point claims: `root, layout, k, k × (point, value)`).
 //!
 //! **Calldata**: the selector, π1's public input (32 bytes, which the seed hashes), then the stream: π1's roots and
-//! its claims' elements, `W`'s root, `Q`'s root, the `2^r + 3` values. **Calls**, in order: π1's five (their words
-//! from calldata and constants: `circuit::spec::Circuit::calls`), then π2's three: `W` (one claim), `Q` (two), the
-//! setup (one; its root a constant of the code).
+//! its claims' elements, `W`'s root, `Q`'s root, the `2^r + 1` values. **Calls**, in order: π1's (their words from
+//! calldata and constants: `circuit::spec::Circuit::calls`), then π2's three: `W` (one claim), the setup (one; its root
+//! a constant of the code), `Q` (two). Each call's input is written at the region's start just before it, only where
+//! the call before left another word (`Ending::PcsOpenReusing`, `PI2.md` §9): π1's calls at the batch's point write
+//! it once, the setup's reuses `W`'s digits.
 //!
 //! **One ABI for the eight calls** (REVIEW-REC.md M1): `machine.rs`'s, `root word, layout word, k, k × (point,
 //! value)`. Every root word is `PCS_OPEN`'s (`s_0 · 2^128 + s_1`, each half of the hash reversed: π1's roots are in
@@ -241,7 +243,10 @@ fn call_words<T: Copy, W: Clone>(
     let [lw, lq, ls] = layout_words(inst.spec.log_n);
     let claim = |(point, value): &(Vec<T>, T)| -> Vec<W> { point.iter().chain([value]).map(|&x| scalar(x)).collect() };
     let head = |root: W, id: [u8; 32], k: u64| vec![root, constant(id), constant(number(k))];
+    // W, then the setup (its point's `w_4 … w_{m-1}` where W's are: the contract writes them once, PI2.md §9, lever
+    // 3b), then Q.
     out.push([head(stream(roots_at[roots]), lw, 1), claim(&reduced.witness)].concat());
+    out.push([head(constant(root_word(&inst.setup_root)), ls, 1), claim(&reduced.setup)].concat());
     out.push(
         [
             head(stream(roots_at[roots + 1]), lq, 2),
@@ -250,7 +255,6 @@ fn call_words<T: Copy, W: Clone>(
         ]
         .concat(),
     );
-    out.push([head(constant(root_word(&inst.setup_root)), ls, 1), claim(&reduced.setup)].concat());
     out
 }
 
@@ -290,7 +294,7 @@ fn entry(inst: &Instance, recorded: &Recorded, measure: bool) -> Entry {
 /// The contract: it reverts unless every call of `PCS_OPEN` attests, and returns the word 1.
 pub fn compile_verifier(inst: &Instance, recorded: &Recorded, measure: bool) -> Contract {
     let calls = calls(inst, recorded);
-    let ending = Ending::PcsOpen(calls.iter().map(Vec::len).collect());
+    let ending = Ending::PcsOpenReusing(calls.iter().map(Vec::len).collect());
     compile(
         &recorded.graph,
         &calls.concat(),
@@ -303,7 +307,7 @@ pub fn compile_verifier(inst: &Instance, recorded: &Recorded, measure: bool) -> 
 fn ends(inst: &Instance, recorded: &Recorded, verify: bool) -> (Vec<Word>, Ending) {
     let calls = calls(inst, recorded);
     if verify {
-        let ending = Ending::PcsOpen(calls.iter().map(Vec::len).collect());
+        let ending = Ending::PcsOpenReusing(calls.iter().map(Vec::len).collect());
         (calls.concat(), ending)
     } else {
         let checks = recorded.graph.zero.iter().chain(&recorded.graph.nonzero);

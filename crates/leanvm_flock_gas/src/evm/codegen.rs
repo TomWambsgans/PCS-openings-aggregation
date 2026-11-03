@@ -66,6 +66,9 @@ pub enum Ending {
     /// Call `PCS_OPEN` on each of these runs of words of it, in order and back to back; revert unless every call
     /// succeeds returning the word 1, and return the word 1.
     PcsOpen(Vec<usize>),
+    /// As [`Ending::PcsOpen`], each call's input written at the region's start just before the call, and only where
+    /// the call before left another word (`evm_link::front::Source::reuse`): calls sharing a point write it once.
+    PcsOpenReusing(Vec<usize>),
 }
 
 /// The graph, with how the contract is seeded: the code of each node.
@@ -248,8 +251,9 @@ fn program(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, link
         outputs: words,
         calls: match ending {
             Ending::Return => None,
-            Ending::PcsOpen(runs) => Some(runs.clone()),
+            Ending::PcsOpen(runs) | Ending::PcsOpenReusing(runs) => Some(runs.clone()),
         },
+        reuse: matches!(ending, Ending::PcsOpenReusing(_)),
         calls_tag: CALLS,
         scratch,
         calldata_len,

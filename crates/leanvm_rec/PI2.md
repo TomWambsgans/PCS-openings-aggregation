@@ -279,6 +279,16 @@ proof; transaction gas without the 21,000 base, `c = 0`. Each row is one commit.
 | **2: π2's values 19 → 17**, one final inversion | 1,796 B | 35,787 | 71,630 | 61,659 | `ξ = κ(t) + βσ(t)` sent for `σ(t)`, `κ(t)`; `h(t)` not sent |
 | **3a: the fold's siblings** | 1,796 B | 35,212 | 71,630 (floor) | 60,339 | `v_{2k+1} = v_{2k} + d`: 32 products, not 64 |
 | **1a′: π1-rec2, the BLAKE2s circuit walked inside π2** | 1,292 B | 32,646 | **53,270** | | no claims on `A0`, `B0`: 51 → 30 elements, 5 → 3 calls |
+| **3b: `PCS_OPEN`'s inputs reuse the region** | 1,292 B | 31,103 | **51,727** | 58,014 (π1-rec) | π1-rec: 35,212 → 32,916 |
+
+**Lever 3b: the calls' inputs written once** (`evm_link::front::Source::reuse`, `codegen::Ending::PcsOpenReusing`).
+The contract wrote every call's words to their own place, all before the first call: 274 words for π1-rec's 8 calls.
+Now each call's input is written at the region's start just before the call, and only where the call before left
+another word (a zero of fresh memory is not written either). π1's calls at the batch's point (`C1`, `C2`, `F`) write
+`r` once; π2's calls are reordered `W`, the setup, `Q`, so the setup's point reuses `W`'s digits `w_4 … w_{m-1}`. The
+node of a word written once is then read once, so it is not kept in a memory slot either. The parity build keeps the
+words in place (it returns them all). Measured: `PCS_OPEN` 4,048 → 2,505 gas (π1-rec2), 5,492 → 3,196 (π1-rec, whose
+`A0`, `B0` calls share three coordinates with `F`'s and each other's point).
 
 **Lever 1a′: π1-rec2, the lincheck's terminal by the circuit's walk** (`leanvm_univariate::FLOCK_REC2`,
 `flock_min::Slices::TowerWalk`; SPEC-REC §12 item 4). π1's `A0`, `B0` claims (28 coordinates, 19 of them outside the

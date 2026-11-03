@@ -271,13 +271,14 @@ fn check(design: Design) {
         let l = prover::layouts(circuit.log_n);
         let [lw, lq, ls] = prover::layout_words(circuit.log_n);
         let known = [(&l.witness, lw), (&l.quotient, lq), (&l.setup, ls)];
-        let proofs = [&openings.witness, &openings.quotient, &openings.setup];
+        // Since PI2.md §9 (lever 3b) the order is W, the setup, Q.
+        let proofs = [&openings.witness, &openings.setup, &openings.quotient];
         for (input, proof) in outcome.pcs_calls[pi1.len()..].iter().zip(proofs) {
             let (hash, layout, claims) = decode(input, &known);
             quotient::opening::verify(layout, &hash, &claims, &quotient::opening::wire_proof(proof))
                 .expect("a decoded call of π2's is what its opening proves");
         }
-        assert_eq!(decode(&outcome.pcs_calls[pi1.len() + 1], &known[1..2]).2.len(), 2);
+        assert_eq!(decode(&outcome.pcs_calls[pi1.len() + 2], &known[1..2]).2.len(), 2);
         // The decoding mock (M1's fix) attests exactly the honest openings: π1's calls decoded under the registry,
         // π2's from the proof's roots and the reduction's claims.
         let honest = contract::expected_openings(&inst, &recorded, &reduced, &roots, &stream);

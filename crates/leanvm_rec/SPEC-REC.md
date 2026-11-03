@@ -867,3 +867,5 @@ in `PI2.md` §9.
    `2^24`. π2's public elements 51 → 30, calls 8 → 6. 1,796 → 1,292 B; execution 35,212 → 32,646; EIP-7623 `c = 0`
    71,630 → 53,270. This is lever 1(a) taken further: `A0`, `B0` need no point at all. For lever 1(b)'s design
    (branch `leanvm-rec-points`) it removes the matrices' claims from the problem.
+5. **`PCS_OPEN`'s inputs written once** (the contract only: `evm_link`'s `reuse`; π2's call order `W`, setup, `Q`).
+   Execution 32,646 → 31,103; EIP-7623 `c = 0` 53,270 → 51,727.

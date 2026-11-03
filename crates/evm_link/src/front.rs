@@ -60,7 +60,7 @@ pub enum Check {
 }
 
 /// A word the program writes to its outputs region.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Word {
     /// A recorded value.
     Node(u32),
@@ -80,6 +80,11 @@ pub struct Source<'a, D> {
     /// Calls of `PCS_OPEN` on these runs of the outputs, back to back, then the word 1 returned; or (`None`) the
     /// outputs returned.
     pub calls: Option<Vec<usize>>,
+    /// With calls: each call's input at the region's start, written just before the call and only where the region
+    /// does not hold that word already (a word of the call before at the same place, or a zero of fresh memory),
+    /// instead of every run at its own place, all written first. Calls of one point (π1's three at the batch's
+    /// point) then write it once.
+    pub reuse: bool,
     /// The tag of the outputs written and of the calls.
     pub calls_tag: Tag,
     /// Bytes of memory the nodes' code uses as scratch, from 0.
@@ -169,12 +174,47 @@ impl<D: Dag> Compiler<'_, D> {
 }
 
 /// The program `source` describes.
+/// The writes of each call when the calls reuse the region ([`Source::reuse`]): the region's positions and the
+/// outputs' indices written there before the call, each call's input at the region's start.
+fn reuse_plan(outputs: &[Word], runs: &[usize]) -> Vec<Vec<(usize, usize)>> {
+    let mut held: Vec<Option<usize>> = Vec::new();
+    let mut first = 0;
+    let mut plan = Vec::with_capacity(runs.len());
+    for &words in runs {
+        if held.len() < words {
+            held.resize(words, None);
+        }
+        let mut writes = Vec::new();
+        for (i, slot) in held.iter_mut().enumerate().take(words) {
+            let k = first + i;
+            let same = slot.is_some_and(|h| outputs[h] == outputs[k]);
+            let fresh_zero = slot.is_none() && outputs[k] == Word::Const([0; 32]);
+            if !same && !fresh_zero {
+                writes.push((i, k));
+            }
+            *slot = Some(k);
+        }
+        plan.push(writes);
+        first += words;
+    }
+    plan
+}
+
 pub fn compile<D: Dag>(source: &Source<D>) -> Compiled {
     let dag = source.dag;
     let n = dag.len();
     let mut uses = vec![0u32; n];
-    let output_nodes = source.outputs.iter().filter_map(|word| match word {
-        Word::Node(id) => Some(*id),
+    let plan = match (&source.calls, source.reuse) {
+        (Some(runs), true) => Some(reuse_plan(&source.outputs, runs)),
+        _ => None,
+    };
+    // The outputs written: all of them, or with reuse the plan's.
+    let written: Vec<usize> = match &plan {
+        Some(plan) => plan.iter().flatten().map(|&(_, k)| k).collect(),
+        None => (0..source.outputs.len()).collect(),
+    };
+    let output_nodes = written.iter().filter_map(|&k| match source.outputs[k] {
+        Word::Node(id) => Some(id),
         _ => None,
     });
     for root in source.checks.iter().map(|&(id, _)| id).chain(output_nodes) {
@@ -190,9 +230,9 @@ pub fn compile<D: Dag>(source: &Source<D>) -> Compiled {
     let mut kept = uses.clone();
     if source.linkable {
         // An output's node is kept, so that every output is written in the last part, after the last seam.
-        for word in &source.outputs {
-            if let Word::Node(id) = word {
-                kept[*id as usize] += 1;
+        for &k in &written {
+            if let Word::Node(id) = source.outputs[k] {
+                kept[id as usize] += 1;
             }
         }
     }
@@ -245,8 +285,8 @@ pub fn compile<D: Dag>(source: &Source<D>) -> Compiled {
     }
     compiler.tag = source.calls_tag;
     if source.linkable {
-        for word in &source.outputs {
-            if let &Word::Node(id) = word
+        for &k in &written {
+            if let Word::Node(id) = source.outputs[k]
                 && !dag.is_const(id)
                 && !compiler.done[id as usize]
             {
@@ -255,6 +295,41 @@ pub fn compile<D: Dag>(source: &Source<D>) -> Compiled {
                 compiler.code(vec![crate::op::POP]);
             }
         }
+    }
+    if let Some(plan) = plan {
+        // Each call's writes, then the call, its input at the region's start.
+        let runs = source.calls.as_ref().expect("calls");
+        let mut region = 0;
+        for (writes, &words) in plan.iter().zip(runs) {
+            for &(at, k) in writes {
+                match &source.outputs[k] {
+                    &Word::Node(id) => {
+                        compiler.eval(id);
+                        compiler.tag = source.calls_tag;
+                    }
+                    Word::Const(bytes) => compiler.code(crate::op::push(bytes)),
+                    Word::Code(pieces, tag) => {
+                        compiler.tag = tag;
+                        compiler.pieces(pieces.clone());
+                        compiler.tag = source.calls_tag;
+                    }
+                }
+                compiler.item(Item::Output(at));
+            }
+            compiler.item(Item::PcsOpen { first: 0, words });
+            region = region.max(words);
+        }
+        return Compiled {
+            program: Program {
+                items: compiler.items,
+                data: Vec::new(),
+                scratch: source.scratch,
+                outputs: region,
+                ending: Ending::Attest,
+                calldata_len: source.calldata_len,
+            },
+            uses,
+        };
     }
     // The region is fresh memory: a zero word is left as it is, and a run of constants is copied from the code
     // (`CODECOPY` and its three operands, 12 gas and 3 a word) when that is cheaper than a `PUSH` of each nonzero
