@@ -67,4 +67,5 @@ import UniComplete.ProbBadT
 import UniComplete.FlockCost
 import UniComplete.CoreRun
 import UniComplete.Core
+import UniComplete.CoreBatch
 import UniComplete.End

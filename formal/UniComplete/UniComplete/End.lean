@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import UniComplete.Core
+import UniComplete.CoreBatch
 import UniComplete.ProbBadT
 import UniComplete.FlockCost
 import UniComplete.ProbTFresh
@@ -18,7 +19,8 @@ The bad events, each bounded:
   most `capBound reference = 10,878,976` per `α`);
 * `6/2^256`: two of the five bus challenges' answers collide with earlier queries (the chain's freshness);
 * `3·2^17/2^192 + 2^-200`: `t` makes `y(t)` a proper prefix of another point on `C1` (`badTCard_reference`, at
-  most `2·2^17` such `t` per Flock point), or the `t` query is not fresh (`tQueryFresh_reference`, below `73 · 2^28 / 2^256`);
+  most `2·2^17` such `t` per Flock point), or the `t` query is not fresh (`tQueryFresh_reference`, below
+  `73 · 2^28 / 2^256`);
 * `2^-304`: an opening's proof of work fails for every nonce below `nonceFuel` (`coreFailsOnlyAtPow`);
 * `rpmError (2^48)`: the random permutation as two random oracles at `2^48` blocks.
 
@@ -34,15 +36,26 @@ namespace UniComplete
 
 open Prob
 
-/-- **End-to-end completeness at the reference deployment**, given the batch's hypothesis at the prover's state
-(`Core.BatchFront`) and the stacks' sizes (`Core.StackSizes`). -/
-theorem uniCompleteness_end_of (D : Deployment) (hD : D.shape = reference) (hiv : D.programIv.length ≤ 2 ^ 16)
-    (hbatch : Core.BatchFront) (hsizes : Core.StackSizes) :
+/-- **`CoreAccepts` for Flock's honest prover at the reference shape**, unconditionally. -/
+theorem coreAccepts_reference (D : Deployment) (hD : D.shape = reference) : Prob.CoreAccepts D flockProveH :=
+  Core.coreAccepts_of D hD (fun H tr seed hon href hbad hbadT ↦
+      Core.batchSyncsAt_front H (commitReal (m := Id) H) tr hon href seed hbad hbadT)
+    (fun tr _ href ↦ ⟨Core.c1Stack_size tr href, fun alphas beta gamma ↦
+      Core.c2Stack_size tr href (eqKernel alphas) beta gamma, Core.setupStackOf_size tr href⟩)
+
+/-- **End-to-end completeness at the reference deployment.** -/
+theorem uniCompleteness_end (D : Deployment) (hD : D.shape = reference) (hiv : D.programIv.length ≤ 2 ^ 16) :
     UniCompleteness D (uniProverRP flockProveH D) deltaUni :=
-  Prob.uniCompleteness_reference_flockProve D hD hiv (Core.coreAccepts_of D hD hbatch hsizes)
-    (Core.coreFailsOnlyAtPow D) (Core.badFpCard_reference D hD) Prob.badTCard_reference (Prob.tQueryFresh_reference D hD)
+  Prob.uniCompleteness_reference_flockProve D hD hiv (coreAccepts_reference D hD) (Core.coreFailsOnlyAtPow D)
+    (Core.badFpCard_reference D hD) Prob.badTCard_reference (Prob.tQueryFresh_reference D hD)
 
 end UniComplete
 
-/-- info: 'UniComplete.uniCompleteness_end_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
-#guard_msgs in #print axioms UniComplete.uniCompleteness_end_of
+/-- info: 'UniComplete.uniCompleteness_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.uniCompleteness_end
+
+/-- info: 'UniComplete.coreAccepts_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.coreAccepts_reference
+
+/-- info: 'UniComplete.Prob.deltaUni_lt' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.Prob.deltaUni_lt
