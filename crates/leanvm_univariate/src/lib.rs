@@ -14,4 +14,7 @@ pub mod prover;
 pub mod stacks;
 pub mod verifier;
 
-pub use verifier::{Blake2s, Claims, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, Opening, Reduced, Shape, reduce};
+pub use leanvm_flock_gas::transcript::FsShape;
+pub use verifier::{
+    Blake2s, Claims, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, FLOCK_REC, Opening, Reduced, Shape, reduce,
+};

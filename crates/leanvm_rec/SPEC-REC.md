@@ -2,7 +2,8 @@
 
 # Recursion: an EVM verifier for leanVM 42422001 near 100K gas
 
-**Status: milestone R1 done (measure, size, specify).** Branch `leanvm-rec`, from `leanvm-univariate` @ 29d3095.
+**Status: milestone R1 done (measure, size, specify); R2 step 1 done (π1-rec in code, §1.4, §7).** Branch `leanvm-rec`,
+from `leanvm-univariate` @ 29d3095; π1-rec on `leanvm-rec-pi1`.
 No Lean for now (the user's instruction: no proofs until the gas is close to 100K). Every number is marked:
 
 - **measured**: by `crates/leanvm_rec`'s tests on h1, or by the univariate crate's revm runs;
@@ -80,12 +81,13 @@ This graph is the circuit π2 proves. `crates/leanvm_rec`:
 
 - **`src/count.rs`** counts the **live** nodes: those the calls or the checks read, through their operands. The ring
   kernel is expanded by recording `ring_tower::weight_at` on fresh symbols.
-- **`src/eval.rs`** evaluates every node on a real proof. Test `the_graph_is_the_verifier_on_real_proofs`: on the 4
-  committed 1,000-signature vectors (main line, leanVM's skip, Flock omitted, extension B), the evaluated graph
-  writes exactly the vectors' `PCS_OPEN` inputs, all 13 (12) zero checks hold, and a flipped stream byte breaks
+- **`src/eval.rs`** evaluates every node on a real proof. Test `the_graph_is_the_verifier_on_real_proofs`: on the 5
+  committed 1,000-signature vectors (main line, π1-rec, leanVM's skip, Flock omitted, extension B), the evaluated
+  graph writes exactly the vectors' `PCS_OPEN` inputs, all 13 (12) zero checks hold, and a flipped stream byte breaks
   them. **Measured.** This is the core of π2's witness generator.
 - **`src/fs.rs`** records the verifier with chosen challenges derived as squares of the previous one (a channel
-  wrapping the recorder). That is how π1-rec is measured without changing π1's code.
+  wrapping the recorder). That is how π1-rec was measured before it was in code; it is now the check that π1-rec's
+  code records this graph (`tests/counts.rs`, `pi1_rec_is_record_derived`: node for node).
 
 ### 1.2 The counts (measured, 1,000 signatures, `Claims::Point`)
 
@@ -168,8 +170,29 @@ squarings. The claims and the stream are unchanged.
 - **Merging sumchecks does not help.** Their rounds are already one permutation each, and the lincheck cannot join the
   batch (SPEC.md §13, dropped levers).
 
-**What π1-rec changes in the prover** (R2): the zerocheck's eq point and the bus's `α` are computed as powers. The
-skip-3 kernels take any point; the seven fixed coordinates stay leanVM's. New vectors follow.
+**π1-rec in code** (R2 step 1, branch `leanvm-rec-pi1`; measured on h1):
+
+- **The parameter.** `leanvm_flock_gas::transcript::FsShape { Main, Rec }` (re-exported by `leanvm_univariate`), a
+  field `fs` of Flock's `flock_min::Variant`, so it reaches every function that takes the verifier's configuration
+  (`Blake2s`): `leanvm_univariate::FLOCK_REC` is `FLOCK_MAIN` with `fs: FsShape::Rec`, and `Blake2s::fs()` reads it
+  (`Blake2s::Omitted` is `Main`). `FsShape::draw(channel, n)` draws a run: `n` challenges, or one and its `n - 1`
+  successive squares. `flock_min::zerocheck` draws its coordinates after the seven fixed ones with it; `reduce` draws
+  `α` with it. The main line is unchanged: its graph, gas (`gas_report`, `deployable_report`: identical output), vector
+  and real proof (stream keccak `6b03217e…`) are the same.
+- **The prover.** `lv42_flock::zerocheck::skip::EqPoint { Sampled, Squares }`, a parameter of `prove_skip` and
+  `Blake2sSetup::prove_reduction_skip` (with `Squares` the skip module's zerocheck runs at every skip, 6 included); the
+  univariate prover maps the variant's `fs` to it and squares `α` in `E` as the verifier does.
+- **The check.** π1-rec's recorded graph is `fs::record_derived`'s, node for node (phases, checks, kernels, the
+  calls' words, the reads), at skip 3 and 6: **80 Keccak-256 calls, 107 Keccak-f permutations** (skip 6: 77, 114).
+- **The real proof** (1,000 signatures, `prove_real`'s `proves_and_verifies_main_line_rec`): 4.86 s, 10.4 GB; the Rust
+  verifier, the five openings (`C1`, `C2`, `F`, `A0`, `B0`) and both contract builds accept, mutations are rejected.
+  Stream keccak `53c06ada652d58b2…`. Vector `crates/leanvm_univariate/tests/vectors/main_line_rec.txt`, replayed with 17
+  mutations by `evm_vectors`; the main line's contract rejects it and π1-rec's rejects the main line's.
+  `leanvm_rec::eval` reproduces its five `PCS_OPEN` inputs.
+- **Gas** (`rec_gas_report`; the real vector's runs agree): execution 181,019 straight, 191,296 deployed in 3
+  contracts (main line 182,104 and 192,392), so 1,085 less. The transcript saves 1,717; the squarings and the code
+  around them cost 660 (Flock's zerocheck 579, `α` 81); the other phases move by at most 15. The calldata is the same
+  7,108 B, so EIP-7623 at `c = 0` is 304,712 deployed (305,808).
 
 ### 1.5 The claims, and what the contract must carry
 
@@ -555,12 +578,12 @@ adds 9 claims' worth.
 
 ### R2: π2's circuit, compiled from the recorded verifier, and its witness from real proofs
 
-1. **π1-rec in code.**
+1. **π1-rec in code.** **Done** (§1.4).
    - `flock_min::zerocheck` takes its 22 coordinates as `c, c², …`, and the univariate `reduce` takes `α` as
-     `(c, c², c⁴, c⁸)`. Both are behind a transcript-shape parameter: the main line stays as is.
+     `(c, c², c⁴, c⁸)`. Both are behind a transcript-shape parameter (`FsShape`): the main line stays as is.
    - The prover: the Flock zerocheck's point and the bus's `α`.
-   - New vectors from the 1,000-signature trace on h1 (`prove_real`).
-   - `fs::record_derived` is the check: the recorded graph must equal π1-rec's.
+   - New vectors from the 1,000-signature trace on h1 (`prove_real`): `main_line_rec.txt`.
+   - `fs::record_derived` is the check: the recorded graph equals π1-rec's (`pi1_rec_is_record_derived`).
 2. **The layout framework** (`crates/leanvm_rec/src/circuit/`):
    - positions, roles, regions;
    - expression slots and forwards, with the balancing rule (each value's segment ends at exactly one expression
@@ -632,8 +655,9 @@ adds 9 claims' worth.
 
 - **Measured:**
   - π1's counts, transcript and claims (§1.2, §1.3, §1.5), on the recorded graph;
-  - the evaluator, against the 4 real vectors;
-  - π1-rec's counts, via `fs::record_derived`;
+  - the evaluator, against the 5 real vectors (π1-rec's among them);
+  - π1-rec's counts, via `fs::record_derived` and on π1-rec's code (the same graph);
+  - π1-rec's real proof and its gas (§1.4);
   - `crates/quotient`'s rows and words (§2.1);
   - today's gas (`crates/leanvm_univariate`, SPEC.md §13).
 - **Modelled:** everything about π2:

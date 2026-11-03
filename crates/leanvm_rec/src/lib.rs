@@ -9,7 +9,8 @@
 //! - [`count`]: the graph's live nodes by kind, the Keccak-256 calls and their permutations, the packings between
 //!   bytes and `E`, the checks, and the claims' points.
 //! - [`eval`]: the graph evaluated on a real proof's calldata, every node's value: the witness `π2`'s prover starts
-//!   from, checked against the recorded `PCS_OPEN` inputs of the committed test vectors.
+//!   from, checked against the recorded `PCS_OPEN` inputs of the committed test vectors (π1-rec's among them).
+//! - [`fs`]: `π1`'s Fiat–Shamir shapes, the graph `π1-rec` (`leanvm_univariate::FLOCK_REC`) must record.
 
 #![forbid(unsafe_code)]
 

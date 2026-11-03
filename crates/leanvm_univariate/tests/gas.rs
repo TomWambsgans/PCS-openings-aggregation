@@ -4,7 +4,7 @@
 //! `cargo test --release -p leanvm_univariate --test gas -- --ignored --nocapture gas_report`
 
 use leanvm_flock_gas::shapes::{PROGRAM_IV, WORKLOADS};
-use leanvm_univariate::{Blake2s, Claims, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, Shape};
+use leanvm_univariate::{Blake2s, Claims, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, FLOCK_REC, Shape};
 use leanvm_univariate::contract::{GasReport, measure, rust_verifier, record_verifier, sample_stream};
 
 /// Run `f` on a thread with a deep stack: the code generator recurses along the graph.
@@ -199,6 +199,82 @@ fn deployable_is_the_rust_verifier() {
                 leanvm_flock_gas::evm::codegen::MAX_CODE,
             );
             assert!(contracts >= 1);
+        }
+    });
+}
+
+/// π1-rec (`FLOCK_REC`, SPEC-REC.md §1.4): the contract writes, word for word, what the Rust verifier computes, on
+/// random streams of the reference shape, in both claim modes.
+#[test]
+fn rec_contract_is_the_rust_verifier() {
+    deep(|| {
+        let shape = Shape::of(&leanvm_flock_gas::shapes::reference().shape);
+        for mode in [Claims::Point, Claims::Weighted] {
+            let recorded = record_verifier(&shape, Blake2s::Flock(FLOCK_REC), mode);
+            for seed in [1u64, 2] {
+                let stream = sample_stream(recorded.stream_len, seed);
+                let public: [u8; 32] = std::array::from_fn(|i| (seed as u8).wrapping_mul(29) ^ i as u8);
+                let rec = Blake2s::Flock(FLOCK_REC);
+                leanvm_univariate::contract::parity(&shape, &PROGRAM_IV, &public, &stream, rec, mode);
+            }
+        }
+    });
+}
+
+/// π1-rec: the deployable build returns, word for word, what the Rust verifier computes.
+#[test]
+fn rec_deployable_is_the_rust_verifier() {
+    deep(|| {
+        let shape = Shape::of(&leanvm_flock_gas::shapes::reference().shape);
+        let recorded = record_verifier(&shape, Blake2s::Flock(FLOCK_REC), Claims::Point);
+        let stream = sample_stream(recorded.stream_len, 13);
+        let contracts = leanvm_univariate::contract::parity_deployable(
+            &shape,
+            &PROGRAM_IV,
+            &[0x24; 32],
+            &stream,
+            Blake2s::Flock(FLOCK_REC),
+            Claims::Point,
+            leanvm_flock_gas::evm::codegen::MAX_CODE,
+        );
+        assert!(contracts >= 1);
+    });
+}
+
+/// π1-rec's gas next to the main line's, at the reference shape, straight and deployed.
+/// `cargo test --release -p leanvm_univariate --test gas -- --ignored --nocapture rec_gas_report`
+#[test]
+#[ignore]
+fn rec_gas_report() {
+    deep(|| {
+        let shape = Shape::of(&leanvm_flock_gas::shapes::reference().shape);
+        println!(
+            "| variant | calldata bytes | KECCAK256 (bytes) | FIELD_MUL | execution, straight | deployed (contracts) | tx \
+             EIP-7623, c = 0, straight / deployed |"
+        );
+        println!("|---|---:|---:|---:|---:|---:|---:|");
+        for (name, variant) in [("main line (FLOCK_MAIN)", FLOCK_MAIN), ("π1-rec (FLOCK_REC)", FLOCK_REC)] {
+            let d = leanvm_univariate::contract::measure_deployable(
+                &shape,
+                &PROGRAM_IV,
+                Blake2s::Flock(variant),
+                Claims::Point,
+                leanvm_flock_gas::evm::codegen::MAX_CODE,
+            );
+            let r = measure(&shape, &PROGRAM_IV, Blake2s::Flock(variant), Claims::Point);
+            println!(
+                "| {name} | {} | {} ({}) | {} | {} | {} ({}) | {} / {} |",
+                grouped(r.calldata_bytes as u64),
+                r.hashes,
+                grouped(r.hashed_bytes as u64),
+                grouped(r.field_muls as u64),
+                grouped(d.straight),
+                grouped(d.report.execution),
+                d.contracts.len(),
+                grouped(r.transaction(0, 40)),
+                grouped(d.report.transaction(0, 40)),
+            );
+            print_report(name, &r);
         }
     });
 }

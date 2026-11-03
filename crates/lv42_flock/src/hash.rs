@@ -1,7 +1,7 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/flock/src/hash.rs.
 // Modified here: `ring_claim` and `ring_switch_open` (leanVM's PCS packaging of the slices) left out, with the imports
 // only they used. The transcript is `lv42_fiat_shamir`'s trait, which the univariate prover's Keccak-256 chain implements.
-// Added: `Blake2sSetup::prove_reduction_skip`, the reduction with a zerocheck skip of 3 to 6.
+// Added: `Blake2sSetup::prove_reduction_skip`, the reduction with a zerocheck skip of 3 to 6 and the eq point's shape.
 // MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
 //! Monolithic BLAKE2s compression-function R1CS: one R1CS instance per
 //! `compress(h, m, t, f0, f1) → h'` call, encoding the 16-word state init, all
@@ -789,19 +789,21 @@ impl Blake2sSetup {
     }
 
     /// **The reduction with a zerocheck skip of `k`** (3 to 6; this repository's addition): leanVM's
-    /// [`Self::prove_reduction_precomputed`] at `k = 6`; below, the zerocheck of [`crate::zerocheck::skip`], then the
-    /// lincheck at the row weights it leaves, `L(z) ⊗ eq(ρ_(<6-k)) ⊗ eq(x_inner_rest)` (the skip's `k` bits, the
-    /// zerocheck's first `6 - k` rounds, the next 8), which leaves the same 64 slices at the same kind of point.
+    /// [`Self::prove_reduction_precomputed`] at `k = 6` with leanVM's eq point; otherwise the zerocheck of
+    /// [`crate::zerocheck::skip`] at the eq point `eq` describes, then the lincheck at the row weights it leaves,
+    /// `L(z) ⊗ eq(ρ_(<6-k)) ⊗ eq(x_inner_rest)` (the skip's `k` bits, the zerocheck's first `6 - k` rounds, the next
+    /// 8), which leaves the same 64 slices at the same kind of point.
     pub fn prove_reduction_skip(
         &self,
         k: usize,
+        eq: crate::zerocheck::skip::EqPoint,
         z_packed: &[u64],
         a_packed_words: &[u64],
         b_packed_words: &[u64],
         z_packed_lincheck: &[u8],
         ps: &mut fiat_shamir::transcript::ProverState,
     ) -> SliceClaim {
-        if k == K_SKIP {
+        if k == K_SKIP && eq == crate::zerocheck::skip::EqPoint::Sampled {
             return self.prove_reduction_precomputed(z_packed, a_packed_words, b_packed_words, z_packed_lincheck, ps);
         }
         let zc = {
@@ -820,6 +822,7 @@ impl Blake2sSetup {
                 packed_bytes(z_packed),
                 self.m(),
                 k,
+                eq,
                 &padding,
                 ps,
             )

@@ -5,9 +5,13 @@
 //!
 //! A [`Derived`] channel wraps the recorder: the challenges it is told to derive are the square of the challenge
 //! before them (so a run `c, c², c⁴, …` costs one Keccak-256 and squarings), every other call goes to the recorder.
-//! Which challenges may be derived is a soundness question (SPEC-REC.md §5): the zerocheck's eq point (a multilinear
-//! in each coordinate, so the power point `(c, c², c⁴, …)` keeps Schwartz–Zippel at degree `2^22`), the bus's tuple
-//! weights `α` (each fingerprint multilinear in `α`); not `β` against `α`, nor the ring map's stages.
+//! Which challenges may be derived is a soundness question (SPEC-REC.md §1.4, §5): the zerocheck's eq point (a
+//! multilinear in each coordinate, so the power point `(c, c², c⁴, …)` keeps Schwartz–Zippel at degree `2^22`), the
+//! bus's tuple weights `α` (each fingerprint multilinear in `α`); not `β` against `α`, nor the ring map's stages.
+//!
+//! π1-rec is in code since R2 step 1: `leanvm_univariate::FLOCK_REC` (the variant's `FsShape::Rec`). This module
+//! states what its recorded graph must be, and `tests/counts.rs`'s `pi1_rec_is_record_derived` checks that it is, node
+//! for node.
 
 use std::collections::BTreeSet;
 

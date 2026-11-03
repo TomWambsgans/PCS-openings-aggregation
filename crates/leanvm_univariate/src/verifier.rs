@@ -1,6 +1,7 @@
 // Part of this repository. The tables, their flushes and constraints, the bus fingerprints, the public input's lines
 // and the Flock reduction are leanVM's at commit 42422001 (crates/verifier/src/{layout,bus,lib,flock}.rs there), read
-// through `leanvm_flock_gas`'s port; the PIOP that checks them is new (SPEC.md). MIT OR Apache-2.0; see NOTICE.md.
+// through `leanvm_flock_gas`'s port; the PIOP that checks them is new (SPEC.md), and so is its Fiat–Shamir shape π1-rec
+// (`crates/leanvm_rec/SPEC-REC.md` §1.4). MIT OR Apache-2.0; see NOTICE.md.
 //! The verifier of SPEC.md, generic over the scalar it computes on: from the proof's stream (two roots, Flock's
 //! messages, the values at `t`) to one weighted claim per commitment.
 
@@ -15,7 +16,7 @@ use leanvm_flock_gas::layout::{
 use leanvm_flock_gas::matrices::MatrixClaim;
 use leanvm_flock_gas::multilinear::{eq_kernel, log2_ceil};
 use leanvm_flock_gas::scalar::{Scalar, enter};
-use leanvm_flock_gas::transcript::{Channel, sumcheck};
+use leanvm_flock_gas::transcript::{Channel, FsShape, sumcheck};
 use leanvm_flock_gas::VerifierError;
 
 use crate::claims::{COMMITMENTS, Column, Combined, Commitment, Relations, Term, term};
@@ -320,6 +321,16 @@ pub enum Claims {
 pub const FLOCK_MAIN: Variant = Variant {
     skip: 3,
     slices: Slices::Tower,
+    fs: FsShape::Main,
+};
+
+/// **π1-rec** (`crates/leanvm_rec/SPEC-REC.md` §1.4): the main line with its Fiat–Shamir shape [`FsShape::Rec`]. The
+/// bus's `α = (c, c², c⁴, c⁸)` of one challenge `c`, and Flock's zerocheck eq coordinates after the seven fixed ones
+/// `c', c'², c'⁴, …` of one challenge `c'`; `β`, `γ`, the ring map's six and every other challenge drawn as on the main
+/// line. The same stream layout and claims; 80 Keccak-256 calls and 107 Keccak-f permutations instead of 104 and 131.
+pub const FLOCK_REC: Variant = Variant {
+    fs: FsShape::Rec,
+    ..FLOCK_MAIN
 };
 
 /// The twist field of the term that stands for the whole ring-switch weight `Φ(eq(p, ·))` on the main line: the
@@ -329,10 +340,12 @@ pub const RING_TWIST: u8 = u8::MAX;
 pub const FLOCK_BIT_SLICE: Variant = Variant {
     skip: 4,
     slices: Slices::Claim,
+    fs: FsShape::Main,
 };
 pub const FLOCK_LEANVM_SKIP: Variant = Variant {
     skip: 6,
     slices: Slices::Weighted,
+    fs: FsShape::Main,
 };
 
 /// Which BLAKE2s argument the verifier runs (SPEC.md §7).
@@ -343,6 +356,17 @@ pub enum Blake2s {
     Flock(Variant),
     /// None: the rest of the verifier alone, to measure it apart.
     Omitted,
+}
+
+impl Blake2s {
+    /// The verifier's Fiat–Shamir shape: Flock's variant's ([`Variant::fs`]); without Flock, the main line's (π1-rec
+    /// is defined with Flock, SPEC-REC.md §1.4).
+    pub fn fs(&self) -> FsShape {
+        match self {
+            Blake2s::Flock(variant) => variant.fs,
+            Blake2s::Omitted => FsShape::Main,
+        }
+    }
 }
 
 /// The verifier (SPEC.md §4–§8): `public_words` are the public input's four 64-bit words, low first.
@@ -376,9 +400,10 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
         count_bits.push((0..=r).map(|b| count.bits(b, 1)).collect());
     }
 
-    // 1. C1, then the bus's and the constraints' challenges.
+    // 1. C1, then the bus's and the constraints' challenges: α drawn one by one, or with π1-rec (c, c², c⁴, c⁸) of
+    // one c (SPEC-REC.md §1.4; β stays independent of it).
     let root1 = channel.next_root()?;
-    let alphas = channel.samples(4);
+    let alphas = blake2s.fs().draw(channel, 4);
     let beta = channel.sample();
     let gamma = channel.sample();
     let weights = {

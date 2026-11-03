@@ -20,7 +20,7 @@ use leanvm_univariate::prover::opening;
 use leanvm_univariate::prover::poly::to_v;
 use leanvm_univariate::prover::prove::{Config, OpeningProof, Proof, prove, verify};
 use leanvm_univariate::prover::trace::{Trace, placement};
-use leanvm_univariate::{Blake2s, Claims, FLOCK_LEANVM_SKIP, FLOCK_MAIN};
+use leanvm_univariate::{Blake2s, Claims, FLOCK_LEANVM_SKIP, FLOCK_MAIN, FLOCK_REC};
 use primitives::field::F192;
 
 fn dir() -> Option<std::path::PathBuf> {
@@ -415,6 +415,14 @@ fn proves_and_verifies_with_flock() {
 #[ignore]
 fn proves_and_verifies_main_line() {
     end_to_end(Blake2s::Flock(FLOCK_MAIN));
+}
+
+/// π1-rec (`crates/leanvm_rec/SPEC-REC.md` §1.4): the main line with the bus's `α` and Flock's zerocheck eq point
+/// derived as squares of one challenge each (`FLOCK_REC`, `FsShape::Rec`). The same stream layout and claims.
+#[test]
+#[ignore]
+fn proves_and_verifies_main_line_rec() {
+    end_to_end(Blake2s::Flock(FLOCK_REC));
 }
 
 /// Extension B: Flock (a), its skip of 4, the slices not sent, the matrices' reduction in the batch whose terminal

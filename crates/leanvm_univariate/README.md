@@ -51,7 +51,9 @@ Phase table and the skip-3 Flock kernels: [`PROVER.md`](PROVER.md).
   linked into deployable parts by `crates/evm_link`) computes word for word what the Rust verifier computes — it is
   compiled from the Rust verifier, which is generic over the scalar.
 - `tests/evm_vectors.rs`: the committed Rust→EVM vectors of real 1,000-signature proofs (`tests/vectors/`: calldata,
-  each `PCS_OPEN` input, verdict, gas) replayed on both builds, plus 13–17 mutations each that must revert.
+  each `PCS_OPEN` input, verdict, gas) replayed on both builds, plus 13–17 mutations each that must revert. Among them
+  π1-rec's (`main_line_rec.txt`: `FLOCK_REC`, the main line with the Fiat–Shamir shape `FsShape::Rec` that the
+  recursion of `crates/leanvm_rec` proves; 181,019 gas straight, 191,296 deployed).
 - `tests/prove_real.rs` (needs a trace; `--ignored`), `tests/prove_tiny.rs`, `tests/review_honest.rs` (an
   independent honest prover), `tests/flock_skip.rs`: the Rust verifier, the WHIR openings and both contract builds
   accept real proofs and reject mutated ones.
