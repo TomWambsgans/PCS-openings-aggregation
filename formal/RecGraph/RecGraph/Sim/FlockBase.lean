@@ -1,5 +1,5 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
-import RecGraph.Sim.Arith
+import RecGraph.Sim.Chan
 
 /-!
 # Pure runs of programs: a Hoare judgment for Flock's pure parts
@@ -10,12 +10,22 @@ ends in. The rules: `PH.ret`, `PH.bind'`, `PH.mono`; the arithmetic operations (
 `PH.forIn_rel`, `PH.forIn_rel_range` against an `Id` loop of `UniStatement`, step for step).
 
 Arrays of nodes against arrays of `E` (`RpA`: the same size, entry `i` a node worth entry `i`), and the transport of
-the representations along a pure step (`Rp.pgrow`, `RpA.pgrow`, `RpL.pgrow`; the tactic `grow_all`).
+the representations along a pure step (`RpA.pgrow`, with `Sim.Chan`'s `Rp.pgrow`, `RpL.pgrow`; the tactic
+`grow_all`). `PH p st Q` is `Sim.Chan`'s `PSim st p () (fun st' a _ ↦ Q st' a)` (`PH.psim`).
 -/
 
 namespace RecGraph.Sim
 
 open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash UniStatement RecGraph.Pi1
+
+theorem iteT {c : Prop} [Decidable c] {α : Sort _} {a b : α} (h : c) : (if c then a else b) = a :=
+  ite_eq_left_of_eq_true _ _ (eq_true h)
+
+theorem ditT {c : Prop} [Decidable c] {α : Sort _} {a : c → α} {b : ¬ c → α} (h : c) : dite c a b = a h := by
+  simp [h]
+
+theorem iteF {c : Prop} [Decidable c] {α : Sort _} {a b : α} (h : ¬ c) : (if c then a else b) = b :=
+  ite_eq_right_of_eq_false _ _ (eq_false h)
 
 /-- **A pure run**: `p` recorded from `st` is a pure step, its output `Q` in the state it ends in. -/
 def PH {α : Type} (p : Prog α) (st : RecState) (Q : RecState → α → Prop) : Prop :=
@@ -31,6 +41,19 @@ theorem PH.bind' {α β : Type} {p : Prog α} {k : α → Prog β} {st : RecStat
   unfold PH
   rw [record_bind]
   exact ⟨hp.1.trans h1, h2⟩
+
+/-- `PH` as `Sim.Chan`'s `PSim`. -/
+theorem PH.psim {α β : Type} {p : Prog α} {st : RecState} {b : β} {R : RecState → α → β → Prop}
+    (h : PH p st (fun st' a ↦ R st' a b)) : PSim st p b R := h
+
+/-- `Id`'s bind is application (for `rw`, keeping the kernel off the loops). -/
+theorem idBind {α β : Type} (x : Id α) (f : α → Id β) : x >>= f = f x := rfl
+
+theorem PH.ite {α : Type} {c : Prop} [Decidable c] {a b : Prog α} {st : RecState} {Q : RecState → α → Prop}
+    (h1 : c → PH a st Q) (h2 : ¬ c → PH b st Q) : PH (if c then a else b) st Q := by
+  by_cases h : c
+  · rw [iteT h]; exact h1 h
+  · rw [iteF h]; exact h2 h
 
 theorem PH.mono {α : Type} {p : Prog α} {st : RecState} {Q R : RecState → α → Prop} (h : PH p st Q)
     (hQR : ∀ st' a, PStep st st' → Q st' a → R st' a) : PH p st R := ⟨h.1, hQR _ _ h.1 h.2⟩
@@ -145,15 +168,6 @@ theorem PH.forIn_rel_range {β γ : Type} (s e : ℕ) (init : β) (f : ℕ → �
 
 /-! ## Arrays -/
 
-theorem iteT {c : Prop} [Decidable c] {α : Sort _} {a b : α} (h : c) : (if c then a else b) = a :=
-  ite_eq_left_of_eq_true _ _ (eq_true h)
-
-theorem ditT {c : Prop} [Decidable c] {α : Sort _} {a : c → α} {b : ¬ c → α} (h : c) : dite c a b = a h := by
-  simp [h]
-
-theorem iteF {c : Prop} [Decidable c] {α : Sort _} {a b : α} (h : ¬ c) : (if c then a else b) = b :=
-  ite_eq_right_of_eq_false _ _ (eq_false h)
-
 theorem getD_setB {α : Type} (a : Array α) (j i : ℕ) (v d : α) :
     (a.set! j v).getD i d = if j = i ∧ i < a.size then v else a.getD i d := by
   simp only [Array.getD_eq_getD_getElem?, Array.set!_eq_setIfInBounds, Array.getElem?_setIfInBounds]
@@ -185,14 +199,6 @@ def RpA (st : RecState) (a : Array Sym) (x : Array E) : Prop :=
   a.size = x.size ∧ ∀ i, i < a.size → Rp π iv publicInput stream st (a.getD i 0) (x.getD i 0)
 
 variable {π iv publicInput stream}
-
-theorem Rp.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {i : Nat} {x : E}
-    (h : Rp π iv publicInput stream st i x) : Rp π iv publicInput stream st' i x :=
-  h.grow π iv publicInput stream hg.inv.kinv hs.grows
-
-theorem RpL.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {is : List Nat} {xs : List E}
-    (h : RpL π iv publicInput stream st is xs) : RpL π iv publicInput stream st' is xs :=
-  h.grow π iv publicInput stream hg.inv.kinv hs.grows
 
 theorem RpA.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {a : Array Sym} {x : Array E}
     (h : RpA π iv publicInput stream st a x) : RpA π iv publicInput stream st' a x :=
