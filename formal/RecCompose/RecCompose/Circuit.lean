@@ -33,16 +33,19 @@ namespace RecCompose
 open RecStatement LeanVM.Parameters LeanVM.Protocol
 open scoped ENNReal
 
-/-- **π1's roots' words in π2's calls name π1-rec3's WHIR roots** (the composition's finding; the fix, option (a), on
-`fix-pi1-root`): the word 0 of π1's `C1`, `C2` calls the circuit rebuilds from a root's 32 stream bytes `raw`
-(`RecCircuit.pcsWord 0 raw`), decoded as the contract's `PCS_OPEN` decodes it (`rootOfWord`), is the digest π1-rec3's
-verifier opens (`UniStatement.rootOf` of the halves `nextRoot` reads, which is `rootOfWord raw`). At `leanvm-rec` d93c375
-it is false: `pcsWord` reverses each 16-byte half and π2's stream carries the reversed word (the real vectors: π2's
-stream starts `b25c056f…`, π1's `C1` root is `f30c504d…`), so the contract decodes `digestOfBytes32 raw`, not
-`rootOfWord raw`; then `Pi1GraphAccepts`'s roots disagree on honest proofs and the contract opens π1's commitments at
-other digests than π1-rec3's. `CircuitBridge` and `Pi1OpeningsAgree` hold only with the corrected encoding. -/
+/-- **π1's roots' words in π2's calls name π1-rec3's WHIR roots** (the composition's finding; the fix, option (a),
+branch `fix-pi1-root`, merged): the word 0 of π1's `C1`, `C2` calls the circuit rebuilds from a root's 32 stream bytes
+`raw` (`RecCircuit.pcsWord 0 (.stream at) raw`), decoded as the contract's `PCS_OPEN` decodes it (`rootOfWord`), is the
+digest π1-rec3's verifier opens (`UniStatement.rootOf` of the halves `nextRoot` reads, which is `rootOfWord raw`). At
+`leanvm-rec` d93c375 it was false: `pcsWord` reversed each 16-byte half and π2's stream carried the reversed word (the
+real vectors: π2's stream started `b25c056f…`, π1's `C1` root `f30c504d…`), so the contract decoded `digestOfBytes32 raw`;
+`Pi1GraphAccepts`'s roots then disagreed on honest proofs and the contract opened π1's commitments at other digests than
+π1-rec3's. With the fix `pcsWord` keeps a stream root's word as it is: `pi1RootWordOk`. -/
 def Pi1RootWordOk : Prop :=
-  ∀ raw : List UInt8, raw.length = 32 → rootOfWord (RecCircuit.pcsWord 0 raw) = rootOfWord raw
+  ∀ (at' : ℕ) (raw : List UInt8), rootOfWord (RecCircuit.pcsWord 0 (.stream at') raw) = rootOfWord raw
+
+/-- **The corrected root word** (`fix-pi1-root`): a stream root's word is kept as it is. -/
+theorem pi1RootWordOk : Pi1RootWordOk := fun _ _ ↦ rfl
 
 /-- **The Lean recording of π1-rec3's verifier is the emitted graph** (a run: `RecGraphTest/Pi1Check.lean`). -/
 def GraphsAgree : Prop := RecGraph.Pi1.pi1Graph = RecGraph.Emitted.graph

@@ -20,7 +20,8 @@ RecStatement's `Pi1GraphAccepts` with the contract's π1 openings (`pi1OpsOf`). 
 * **the calls**: the circuit's rebuilt words are the contract's π1 call words (`CallWordsAgree`), and RecCircuit's
   `compile_sound_calls` makes them the graph's words, word 0 as `pcsWord` of it; so the contract's decoding of each call
   (`decodeWith`) and `decodePi1Call` of the graph's agree (`decode_agree`): the layouts and claims, and `C1`'s, `C2`'s
-  roots by `Pi1RootWordOk` (the corrected root word, branch `fix-pi1-root`).
+  roots as the stream carries them (`pi1RootWordOk`: with the root-word fix, branch `fix-pi1-root`, `pcsWord` keeps a
+  stream root's word as it is).
 
 The named facts (`StatementPortMeaning`, `ZeroPortsMeaning`, `CallWordsAgree`, `Pi1CallsLayouts`) are what the
 compiler's ports and calls mean in the contract's terms: the runners establish them (RecCircuitTest's ports and calls
@@ -291,6 +292,21 @@ theorem length_wordBytes_le (s : Array UInt8) (vals : Array RecGraph.Value) (w :
 theorem length_rootWordBytes (b : List UInt8) : (RecCircuit.rootWordBytes b).length = b.length := by
   simp [RecCircuit.rootWordBytes]; omega
 
+theorem pcsWord_ne_zero {k : ℕ} (hk : k ≠ 0) (wd : RecGraph.Word) (b : List UInt8) : RecCircuit.pcsWord k wd b = b := by
+  cases wd <;> simp [RecCircuit.pcsWord, hk]
+
+theorem length_pcsWord (k : ℕ) (wd : RecGraph.Word) (bs : List UInt8) :
+    (RecCircuit.pcsWord k wd bs).length = bs.length := by
+  cases wd with
+  | const x => by_cases hk : k = 0 <;> simp [RecCircuit.pcsWord, hk, length_rootWordBytes]
+  | node id => rfl
+  | stream at_ => rfl
+
+/-- `C1`'s and `C2`'s calls' word 0 in the emitted graph: the stream's root. -/
+theorem emitted_root_words (k : ℕ) (hk : k < 2) :
+    ∃ a, (RecGraph.Emitted.graph.calls.getD k []).getD 0 default = .stream a := by
+  interval_cases k <;> exact ⟨_, rfl⟩
+
 theorem getD_map_of_lt {α β : Type} (f : α → β) (l : List α) {k : ℕ} (hk : k < l.length) (d : β) (d' : α) :
     (l.map f).getD k d = f (l.getD k d') := by
   simp [List.getD_eq_getElem?_getD, hk]
@@ -343,9 +359,9 @@ theorem three_le_of_decodeWith {reg : List (List UInt8 × Opener)} {ws : List (L
   | _ :: _ :: _ :: _, _ => simp
 
 /-- **`CircuitBridge` for the real deployment**, from the ports' and the calls' meaning, the compiler's run at the
-emitted graph's roots, the graphs agreeing and the corrected root word. -/
+emitted graph's roots and the graphs agreeing (the root words as `fix-pi1-root` corrects them). -/
 theorem circuitBridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa : Pi2Facts D C)
-    (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hroot : Pi1RootWordOk)
+    (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
     (hstmt : StatementPortMeaning D C Fa) (hzero : ZeroPortsMeaning D C Fa) (hcalls : CallWordsAgree D C Fa)
     (hlay : Pi1CallsLayouts D) :
     CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream) := by
@@ -435,7 +451,8 @@ theorem circuitBridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa 
       rw [hgws, List.length_map, ← hgwl, hcwl]
     have hlc : cws.length = gws.length := by rw [hcws, List.length_map, hpl, hlg]
     have hword : ∀ kk < (D.pi1Calls.getD k []).length,
-        cwf ((D.pi1Calls.getD k []).getD kk default) = RecCircuit.pcsWord kk (gws.getD kk []) ∧
+        cwf ((D.pi1Calls.getD k []).getD kk default) =
+          RecCircuit.pcsWord kk ((RecGraph.Emitted.graph.calls.getD k []).getD kk default) (gws.getD kk []) ∧
           (cwf ((D.pi1Calls.getD k []).getD kk default)).length = 32 := by
       intro kk hkk
       obtain ⟨h1, h2⟩ := hcww kk hkk
@@ -446,17 +463,14 @@ theorem circuitBridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa 
       intro kk h1 h2
       rw [hlg] at h2
       rw [hcws, getD_map_of_lt _ _ (by rw [hpl]; exact h2) _ default, hpk kk h1, (hword kk h2).1,
-        RecCircuit.pcsWord, ite_eq_right (by omega)]
+        pcsWord_ne_zero (by omega)]
     have h32 : ∀ y ∈ gws, y.length = 32 := by
       intro y hy
       obtain ⟨kk, hkk, rfl⟩ := List.getElem_of_mem hy
       have hkk' : kk < (D.pi1Calls.getD k []).length := by rw [← hlg]; exact hkk
       have h := (hword kk hkk').2
-      rw [(hword kk hkk').1, List.getD_eq_getElem _ _ hkk] at h
-      unfold RecCircuit.pcsWord at h
-      split at h
-      · rwa [length_rootWordBytes] at h
-      · exact h
+      rw [(hword kk hkk').1, List.getD_eq_getElem _ _ hkk, length_pcsWord] at h
+      exact h
     have h3c := three_le_of_decodeWith hxk
     have hlay1 : cws.getD 1 [] = w1 k := by
       have h1 : 1 < (D.pi1Calls.getD k []).length := by omega
@@ -471,9 +485,8 @@ theorem circuitBridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa 
     refine ⟨by rw [hg1] at hdec; exact hdec, hlay1, fun hk2 ↦ ?_⟩
     rw [hroot0]
     have h0 : 0 < (D.pi1Calls.getD k []).length := by omega
-    have hl0 : (gws.getD 0 []).length = 32 :=
-      h32 _ (by rw [List.getD_eq_getElem _ _ (by rw [hlg]; exact h0)]; exact List.getElem_mem _)
-    rw [hcws, hp2 hk2, getD_map_of_lt _ _ h0 _ default, (hword 0 h0).1, hroot _ hl0]
+    obtain ⟨a, ha⟩ := emitted_root_words k hk2
+    rw [hcws, hp2 hk2, getD_map_of_lt _ _ h0 _ default, (hword 0 h0).1, ha, pi1RootWordOk a]
     unfold digOf
     rw [hg1, ite_eq_right (by
       have := w1_codes
@@ -557,14 +570,14 @@ theorem circuitBridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa 
 
 
 /-- **π2's part at the real deployment, the bridge proved**: `recKnowledgeSoundness2_real` with `CircuitBridge` from
-`circuitBridge` (the ports' and calls' meaning, `Pi1CallsLayouts`, the corrected root word). -/
+`circuitBridge` (the ports' and calls' meaning, `Pi1CallsLayouts`; the root word `pi1RootWordOk`). -/
 theorem recKnowledgeSoundness2_real_bridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa : Pi2Facts D C)
     (T : Pi2Tables D C) (hfs : Pi2FsLayer D) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
-    (hroot : Pi1RootWordOk) (hstmt : StatementPortMeaning D C Fa) (hzero : ZeroPortsMeaning D C Fa)
+    (hstmt : StatementPortMeaning D C Fa) (hzero : ZeroPortsMeaning D C Fa)
     (hcalls : CallWordsAgree D C Fa) (hlay : Pi1CallsLayouts D) :
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 :=
-  recKnowledgeSoundness2_real D hD C Fa T hfs hroots hg hroot
-    (circuitBridge D hD C Fa hroots hg hroot hstmt hzero hcalls hlay)
+  recKnowledgeSoundness2_real D hD C Fa T hfs hroots hg pi1RootWordOk
+    (circuitBridge D hD C Fa hroots hg hstmt hzero hcalls hlay)
 
 end RecCompose
 
