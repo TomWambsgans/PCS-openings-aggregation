@@ -239,9 +239,11 @@ argument and the composition.
 - **M1, one `PCS_OPEN` ABI for the eight calls.** Every call is `machine.rs`'s `root word, layout word, k, k × (point,
   value)`:
   - every root word is `PCS_OPEN`'s, `s_0 · 2^128 + s_1` (`machine::root_word`: each 16-byte half of the hash
-    reversed). π2's `W`, `Q` and setup roots were already; π1's `C1`, `C2` are now in calldata so (the circuit's root
-    ports pack the stream's root bytes in that order, `circuit::compile`), and π1's setup roots `F`, `A0`, `B0` are
-    constants so;
+    reversed). π2's `W`, `Q` and setup roots were already; π1's `C1`, `C2` are now in calldata so, and π1's setup
+    roots `F`, `A0`, `B0` are constants so. *R1 (`REVIEW-REC.md`): π1's prover now sends a root as its two WHIR
+    scalars, so π1's stream carries `C1`'s and `C2`'s root words as they are, and the circuit's root ports pack the
+    stream's bytes as they are (`circuit::compile`). Before, π1's stream carried the hashes and the ports reversed
+    their halves: the same words in π2's calldata, now read off π1's stream without the reversal;*
   - every layout word names its stack: π1's are `leanvm_univariate::contract::layout_word`'s (shape, code, variables,
     words placed); π2's are now `prover::layout_word`'s, in the same format (the tag `"pi2"`, `log_n`, the codes
     `0x5601` `W`, `0x5602` `Q`, `0x5603` setup, the variables, the words placed), instead of `quotient::opening::

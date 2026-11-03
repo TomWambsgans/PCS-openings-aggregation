@@ -23,7 +23,7 @@ mod vectors;
 use leanvm_flock_gas::shapes::PROGRAM_IV;
 use leanvm_rec::circuit::compile::{Compiled, Inputs, Layout, pi2};
 use leanvm_rec::pi2::adapt;
-use leanvm_flock_gas::evm::machine::Opening;
+use leanvm_flock_gas::evm::machine::{self, Opening};
 use leanvm_rec::pi2::contract::{self, Instance, calldata, record_verifier, sample_stream};
 use leanvm_rec::pi2::prover::{self, Setup, claims_hold, open, prove, public_scalars, verify_openings};
 use leanvm_rec::pi2::verifier::Spec;
@@ -133,7 +133,11 @@ fn real_end_to_end() {
         let start = std::time::Instant::now();
         let (v, c, pi1_iv) = real(&name, layout);
         assert_eq!(c.finished.circuit.check(&c.finished.witness, &c.public), Ok(()));
-        let pi1_openings: Vec<Opening> = v.calls.iter().map(|input| contract::pi1_opening(input)).collect();
+        // π1's openings as the block holds them: the vector's claims on the roots π1's prover committed (its
+        // `whir_root`s, from the prover's output; REVIEW-REC.md R1), not on whatever a contract encodes.
+        assert_eq!(v.whir_roots.len(), v.calls.len(), "the vector has the committed roots");
+        let pi1_openings: Vec<Opening> =
+            v.calls.iter().zip(&v.whir_roots).map(|(input, root)| contract::pi1_opening(input, root)).collect();
         let circuit = adapt::adapt(&c.finished.circuit);
         let witness = adapt::witness(&c.finished.witness);
         let (public_input, values) = adapt::public_values(&c.public);
@@ -197,6 +201,26 @@ fn real_end_to_end() {
         let (accepted, made) = contract::run(&inst, &recorded, &data, &block);
         assert!(accepted, "the contract accepts π2's proof of π1-rec's real proof");
         assert_eq!(made, expected, "the nine claims in eight calls");
+        // REVIEW-REC.md R1, the regression. The block attests π1's `C1`, `C2` calls (their words the stream's), not
+        // those calls with the word before R1 (each half of it reversed: on this stream, the hash as it is, which
+        // names another root); and with π1's openings on those other roots, the contract rejects.
+        let pcs = contract::block(&inst, &block);
+        for (k, call) in made[..2].iter().enumerate() {
+            let word: [u8; 32] = call[..32].try_into().expect("a root word");
+            let mut old = call.clone();
+            old[..32].copy_from_slice(&machine::root_word(&word));
+            assert!(pcs.attests(call), "π1's call {k} is attested");
+            assert!(!pcs.attests(&old), "π1's call {k} with the word before R1 is not");
+        }
+        let elsewhere: Vec<Opening> = block
+            .iter()
+            .enumerate()
+            .map(|(k, o)| match k {
+                0 | 1 => Opening { root: machine::root_word(&o.root), ..o.clone() },
+                _ => o.clone(),
+            })
+            .collect();
+        assert!(!contract::run(&inst, &recorded, &data, &elsewhere).0, "π1's openings on other roots: rejected");
         // A flipped byte anywhere: the public input, π1's roots, its elements, W's and Q's roots, every value sent.
         let (w_at, q_at) = (recorded.roots_at[2], recorded.roots_at[3]);
         let values_at = q_at + 32;

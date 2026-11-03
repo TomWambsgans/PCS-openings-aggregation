@@ -13,8 +13,10 @@
 //! it once, the setup's reuses `W`'s digits.
 //!
 //! **One ABI for the eight calls** (REVIEW-REC.md M1): `machine.rs`'s, `root word, layout word, k, k × (point,
-//! value)`. Every root word is `PCS_OPEN`'s (`s_0 · 2^128 + s_1`, each half of the hash reversed: π1's roots are in
-//! calldata so, and the setup roots are constants so); every layout word names its stack (π1's
+//! value)`. Every root word is `PCS_OPEN`'s (`s_0 · 2^128 + s_1`, the two WHIR scalars of the root: each 16-byte half
+//! of the hash reversed). π1's roots are in calldata so, as π1's stream carries them (its prover sends a root as its
+//! two scalars, REVIEW-REC.md R1), π2's `W` and `Q` likewise, and the setup roots are constants so (the root word of
+//! π1's setup hash, of π2's setup root); every layout word names its stack (π1's
 //! `leanvm_univariate::contract::layout_word`, π2's `prover::layout_word`: the code, the variables, the words placed).
 //! A precompile is a registry keyed by the layout word ([`registry`]): π1's five layouts are checked by
 //! `leanvm_univariate`'s opening, π2's three by `quotient::opening`, and `Q`'s two claims travel in one call, as one
@@ -179,13 +181,12 @@ pub fn openings(inst: &Instance, reduced: &Reduced<E>, roots: &[Hash; 2]) -> Vec
     ]
 }
 
-/// A `PCS_OPEN` input of π1's own contract (`leanvm_univariate`'s vectors: the root word the hash as it is, the
-/// layout word π1's, its variables at byte 24) as the opening it names.
-pub fn pi1_opening(input: &[u8]) -> Opening {
-    let mut x = input.to_vec();
-    let raw: [u8; 32] = x[..32].try_into().expect("a root word");
-    x[..32].copy_from_slice(&machine::root_word(&raw));
-    decode(&x, |layout| Some(layout[24] as usize)).expect("π1's call is well formed")
+/// π1's opening of the claims of a `PCS_OPEN` input of π1's own contract (`leanvm_univariate`'s vectors: the layout
+/// word π1's, its variables at byte 24) on the commitment whose root the prover committed, `root` (the vector's
+/// `whir_root`, from the prover's output): what a block's precompile holds, whatever word 0 of the input says.
+pub fn pi1_opening(input: &[u8], root: &Hash) -> Opening {
+    let opening = decode(input, |layout| Some(layout[24] as usize)).expect("π1's call is well formed");
+    Opening { root: *root, ..opening }
 }
 
 /// The openings a block must hold for the contract to accept `stream`: π1's (its calls the Rust verifier's reduction

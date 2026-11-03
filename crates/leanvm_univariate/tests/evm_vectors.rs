@@ -20,7 +20,7 @@
 mod vectors;
 
 use leanvm_flock_gas::evm::codegen::word;
-use leanvm_flock_gas::evm::machine::{PcsOpen, call};
+use leanvm_flock_gas::evm::machine::{PcsOpen, call, root_of_word};
 use leanvm_univariate::Claims;
 use leanvm_univariate::contract::{compile_verifier, record_verifier};
 use vectors::{PROGRAM_IV, Vector, blake2s_of, deployable, read};
@@ -66,6 +66,20 @@ fn replay(v: Vector) {
         assert_eq!(outcome.pcs_calls, v.calls, "{} {build}: the calls are the recorded inputs", v.config);
         assert_eq!(outcome.execution, gas, "{} {build}: the gas of execution", v.config);
         println!("{} {build}: accepts, {gas} gas of execution, {} PCS_OPEN calls", v.config, v.calls.len());
+    }
+    // The roots the calls name (`crates/leanvm_rec/REVIEW-REC.md`, R1), against the vector's committed roots (its
+    // `whir_root`s, the prover's): `C1`'s and `C2`'s words, the stream's bytes, are their `PCS_OPEN` root words
+    // (`machine.rs` decodes them to those roots); the setup roots' words are the hashes as they are, which π2's
+    // contract passes as their root words (`pi1_abi`).
+    assert_eq!(v.whir_roots.len(), v.calls.len(), "{}: the vector has the committed roots", v.config);
+    for (k, (input, root)) in v.calls.iter().zip(&v.whir_roots).enumerate() {
+        let word: [u8; 32] = input[..32].try_into().expect("a root word");
+        match k {
+            0 | 1 => assert_eq!(&root_of_word(&word), root, "{}: call {k}'s word is its root's", v.config),
+            _ => assert_eq!(&word, root, "{}: call {k}'s word is the setup's hash", v.config),
+        }
+        let abi: [u8; 32] = vectors::pi1_abi(input)[..32].try_into().expect("a root word");
+        assert_eq!(&root_of_word(&abi), root, "{}: call {k} in machine.rs's ABI is of its root", v.config);
     }
 
     // Mutations, each of which both builds must revert on.

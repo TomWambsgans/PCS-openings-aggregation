@@ -11,7 +11,8 @@
 //!   limbs (the first is injective on `K³`, the second for all but one `γ`), as the interface's `Σ γ^l L_l` does: its
 //!   `Circuit::check` compares the limbs.
 //! - The public data: π1's roots (32 bytes each, as `PCS_OPEN`'s root words: each 16-byte half of the hash reversed,
-//!   REVIEW-REC.md M1), then its claims' elements (24 bytes each); the statement is the public input the seed hashes.
+//!   REVIEW-REC.md M1, which π1's stream carries as they are, R1), then its claims' elements (24 bytes each); the
+//!   statement is the public input the seed hashes.
 
 use leanvm_flock_gas::field::K;
 use primitives::field::{F64, F192};

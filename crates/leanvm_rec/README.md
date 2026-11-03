@@ -67,7 +67,9 @@ challenges' zero bytes. The execution (29,832) is the same in both.
 
 What the tests check:
 - **End to end.** π1-rec3's real proof, then π2's proof, then the contract accepts, with `PCS_OPEN` (a decoding
-  mock with a registry of layout words) attesting all 7 claims. 18 flipped calldata bytes are each rejected.
-- **The circuit.** Every pull equals its push on the real streams and on mutated and random ones. π1's five calls
-  rebuilt from π2's ports equal the vector's.
+  mock with a registry of layout words) attesting all 7 claims, π1's on the roots π1's prover committed (the
+  vector's `whir_root`s, not any contract's words: `REVIEW-REC.md` R1). 18 flipped calldata bytes are each rejected,
+  and so are π1's openings held on other roots.
+- **The circuit.** Every pull equals its push on the real streams and on mutated and random ones. π1's calls
+  rebuilt from π2's ports equal the vector's, and decode to the committed roots; the word before R1 does not.
 - **The contract.** It equals the Rust verifier word for word.

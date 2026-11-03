@@ -61,6 +61,49 @@ The mock (`leanvm_flock_gas/src/evm/machine.rs:88-95`) attests raw byte strings 
   `tests/review_pcs_contract.rs`'s `decode()` already does this for π2's three calls: decoded as `crates/evm`'s ABI,
   they verify under `quotient::opening::verify`, and `Q`'s call carries k = 2.
 
+### R1 (follow-up to M1, completeness). π1's stream carried its roots as hashes, which its contract passed as root words
+
+*Found after M1's fix, by the Lean composition (`formal/RecStatement`, `formal/RecCircuit`): the root π2's call names
+for `C1` (`rootOfWord (pcsWord …)`, `digestOfBytes32 raw`) was not the root π1-rec3's verifier opens
+(`UniStatement.rootOf (halves raw)`, `raw` the stream's 32 bytes). Fixed on branch `fix-pi1-root`.*
+
+**What.** Three readings of π1's 32 stream bytes `raw` for `C1` (and `C2`) disagreed:
+
+| | the root they name |
+|---|---|
+| π1's prover (`prove::halves`, before) | `raw` is the hash `h` as it is; its WHIR opening's first two scalars are `hash_to_scalars(h)` |
+| π1's verifier, contract and `formal/UniStatement` (`rootOf (halves raw)`) | `raw` is the root word: its two big-endian halves are the opening's first two scalars, so the root is `root_word(raw)` |
+| π2 after M1 (`root_word(raw)` in calldata) | `raw` is the hash: right for the prover's commitments, not what π1's own contract or its Lean statement say |
+
+On the real π1-rec3 proof: `C1`'s commitment is `f30c504d…b05f` (its WHIR opening's first two scalars are that hash's);
+the stream carried `f30c504d…b05f`; π1's contract passed it as the word, which `machine.rs` decodes to the root
+`b25c056f…cef8`, a root nobody committed; π2 passed `b25c056f…cef8`, which decodes to `f30c504d…b05f`.
+
+**Impact.** Soundness: none (every reading is a fixed bijection of bound bytes). Completeness at a real precompile:
+π1's own contract asked to open `C1`, `C2` at roots that were not their commitments. π2's calls were right for the
+prover's commitments, but then π2 did not make π1's contract's calls (the composition's statement), and its tests could
+not tell: the vector's `pcs_open` lines were π1's contract's words (byte-string mock), which `pi1_opening` reinterpreted.
+
+**Fix** (at the source: π1's prover streams what its verifier reads):
+
+- `leanvm_univariate::prover::prove::halves` sends a root as its two WHIR scalars (`hash_to_scalars`), as π2's prover
+  sends `W` and `Q`: the stream's 32 bytes are the root word, `root_word(h)`. π1's contract's `C1`, `C2` words then
+  decode to the commitments, and `UniStatement.rootOf (halves raw)` is the commitment, unchanged.
+- π2's circuit packs a root's limbs from the stream's bytes as they are (`circuit::compile`, big-endian words of bytes
+  `24 − 8l`), and its calls pass π1's stream root words as π1's contract does; a setup root's word stays
+  `root_word` of the hash π1's contract holds. π2's calldata carries the same words as before.
+- π1's setup roots: π1's own contract still holds `F`, `A0`, `B0` as hashes and passes them as its root words, which
+  `machine.rs` reads as other roots. π2 is not affected (it passes `root_word(F)`); π1's contract deployed alone needs
+  `Word::Const(root_word(..))` (free), and `formal/RecGraph`'s emitted graph and `UniStatement`'s reading of the
+  setup's constant would follow.
+
+**Tests.** The vectors record each call's committed root (`whir_root`, from the prover's output: each opening's root,
+whose `hash_to_scalars` `prove_real` checks are the WHIR opening's first two scalars). `prove_real` checks that π1's
+contract's `C1`, `C2` words decode to them; `tests/circuit.rs` (every vector, every layout) that π2's calls decode to
+them and that the pre-R1 word (`root_word` of the stream's word: the hash as it is) names another root; `real_end_to_end`
+registers π1's openings on them (`contract::pi1_opening(input, root)`), and checks that the pre-R1 words are not
+attested and that π1's openings on the other roots make the contract reject.
+
 ### L1 (low, setup hazard). Nothing on the verifier's side guarantees that no formula reads a hole
 
 **What.** PI2.md §4.1 leaves the holes (the ports' own positions) out of the pulls. A hole's value is then
