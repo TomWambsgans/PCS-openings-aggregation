@@ -33,11 +33,15 @@ named inputs; the files:
 |---|---|
 | `Basic.lean` | π2's outcome's fields; `W`'s candidates and their witness values as π2's extractor reads them; `pi1GraphAcceptsB_iff`; `recExtractFrom2_of_mem` (one accepted candidate suffices). |
 | `Part1.lean` | `CallsPure`, `Pi2Extraction`, `Pi2Layers`; **`recKnowledgeSoundness2_of_layers`**. |
-| `Circuit.lean` | `Pi2Layers.circuit` from RecCircuit's `pi1rec3_end` and `CircuitBridge`; `compile_ok` from the compiler's run on the emitted graph and `GraphsAgree`. |
+| `Circuit.lean` | `Pi2Layers.circuit` from RecCircuit's `pi1rec3_end` and `CircuitBridge`; `compile_ok` from the compiler's run on the emitted graph and `GraphsAgree`; `Pi1RootWordOk` (the root-word fix's named dependence). |
 | `Numbers.lean` | **`pi2Bound`** (`ε2`), `pi2_rounds_le` (RecPiop's three rounds times their lists, at most `2^-140.60`), **`pi2Bound_le_bits`** (`≤ 2^-64` for `Q ≤ 2^64`). |
 | `Part2.lean` | the derived adversaries (`hazardAdversary`, `pi1Adversary`), the three events, `ExperimentsAgree`, `HazardCoupling`, `Pi1Coupling`; **`recKnowledgeSoundness_of_part1`**. |
 | `Complete.lean` | `CompletenessAgree`, `CompletenessPi1Coupling`; **`recCompleteness_of_part1`**. |
-| `End.lean` | **`recKnowledgeSoundness2_real`**, **`recKnowledgeSoundness_end`**, **`recCompleteness_end`**. |
+| `Layers.lean` | `Pi2FsLayer` (π2's Fiat–Shamir layer, open), `Pi2Tables` (the tables' layer, open), `Pi2Circuits`, `Pi2Facts`; `pi2Piop` (`RecPiop.piop` per setup), `hbind_of`, `indep_K`, `satisfies_congr`; **`pi2Extraction_of_layers`**, `pi2Layers_of`. |
+| `Holds.lean`, `Chan.lean`, `Pi2Run.lean`, `CallsPure.lean` | postconditions in any lawful monad (`Holds`), the channel's reads (`Reads`), π2's run's public data independent of the permutation (`runWith_post`); **`callsPure`**. |
+| `Rpm.lean`, `Couplings.lean` | the logging lemmas, eager comparisons per permutation; **`experimentsAgree`**, **`hazardCoupling`**, **`pi1Coupling`** (under `Pi1OpeningsAgree`). |
+| `RpmC.lean`, `Pi1Decode.lean`, `CompleteCouplings.lean`, `RunShape.lean` | eager comparisons, π1's call bytes decoded back; **`completenessAgree`**, **`completenessPi1Coupling`**, **`pi1RunShape`**. |
+| `End.lean` | **`recKnowledgeSoundness2_real`**, **`recKnowledgeSoundness_end`**, `recKnowledgeSoundness_end_real`, **`recCompleteness_end`**. |
 
 ## The statements' fixes (in `RecStatement/Security.lean`, found by this composition)
 
@@ -52,3 +56,12 @@ named inputs; the files:
    at `Q`, and π1-rec3's extractor would read a transcript that holds them, not π2's adversary's.
 3. **π2's completeness is for π1-rec3's prover, on honest statements.** Stated for every `P1`, a `P1` of unbounded
    queries can grind its proof (the graph still accepting) until π2's honest run hits a degenerate challenge (`all = 0`).
+
+## The root-word finding
+
+π2's stream carries π1's `C1`, `C2` roots as `rootWordOfBytes` of π1's stream bytes (each 16-byte half reversed): the
+real vectors' π2 stream starts `b25c056f…cef8`, π1's `C1` root is `f30c504d…b05f`. The contract decodes that word to
+`digestOfBytes32 raw`, while π1-rec3's verifier and WHIR open at `rootOf (halves raw) = rootOfWord raw` (evaluated).
+So `Pi1GraphAccepts`'s roots disagree on honest proofs, and the contract opens π1's commitments at other digests. The fix
+(option (a), branch `fix-pi1-root`) makes π1's calls' word 0 decode to π1-rec3's root; the theorems name it
+`Pi1RootWordOk`.
