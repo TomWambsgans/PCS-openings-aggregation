@@ -472,4 +472,427 @@ theorem tableItems_ok {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
   · exact ⟨_, hr, rfl, wP_dvd_of_vanish (by omega) _ fun i hi ↦ copy_vanish hH hS hC htab hB hc hslot hi⟩
 
 
+/-! ### The public lines -/
+
+theorem pointE_one : pointE 1 = 1 := by
+  rw [← Domain.omega_basisE]
+  exact Heap.omega_one Domain.basisE (by norm_num)
+
+theorem ofLane_zero : K.ofLane 0 = 0 := by decide
+
+/-- `eK w` is the word in `K`, embedded. -/
+theorem eK_eq_ofK (w : UInt64) : eK w = ofK (K.ofLane w) := by
+  show E.ofLimbs (K.ofLane w) (K.ofLane 0) (K.ofLane 0) = _
+  rw [ofLane_zero]
+  exact (Primitives.F192.ofF64_eq _).symm
+
+theorem publicWords_getD (tr : Trace) {k : ℕ} (hk : k < 4) :
+    (publicWordsOf tr.publicInput).getD k 0 = ofK (publicK tr k) := by
+  unfold publicWordsOf
+  rw [List.getD_eq_getElem _ _ (by simpa using hk), List.getElem_map, List.getElem_range, eK_eq_ofK]
+  rfl
+
+theorem logMemory_pos {tr : Trace} (hH : TraceHonest tr) : 1 ≤ tr.shape.logMemory := by
+  have h := hH.valid.2
+  simp only [Shape.validate, Bool.not_eq_true', Bool.or_eq_false_iff, decide_eq_false_iff_not] at h
+  omega
+
+/-- **A public line vanishes on `V_1`** when the memory's cells `0`, `1` hold its two values. -/
+theorem public_dvd {tr : Trace} (hH : TraceHonest tr) (hS : Small tr) {k : ℕ} (hk : k < 4) (low high : E)
+    (h0 : ofK ((tr.memory.getD k #[]).getD 0 0) = low) (h1 : ofK ((tr.memory.getD k #[]).getD 1 0) = high) :
+    Domain.wP 1 ∣ (colPolyK tr.shape.logMemory (tr.memory.getD k #[]) + pC low + pX * pC (low + high)).toPoly := by
+  have hlm := logMemory_pos hH
+  have h2 : 2 ≤ 2 ^ tr.shape.logMemory := by
+    calc 2 = 2 ^ 1 := rfl
+      _ ≤ 2 ^ tr.shape.logMemory := Nat.pow_le_pow_right (by norm_num) hlm
+  have hsize := hH.memorySize.2 k hk
+  refine wP_dvd_of_vanish (by norm_num) _ fun i hi ↦ ?_
+  rw [tp_add, tp_add, tp_mul, tp_C, tp_C, tp_X, Polynomial.eval_add, Polynomial.eval_add, Polynomial.eval_mul,
+    Polynomial.eval_C, Polynomial.eval_C, Polynomial.eval_X, ← pEval_eq,
+    pEval_colPolyK_pointE hS.memory _ hsize (by omega)]
+  have hc2 : ∀ x : E, x + x = 0 := fun x ↦ CharTwo.add_self_eq_zero x
+  rcases (by omega : i = 0 ∨ i = 1) with rfl | rfl
+  · rw [h0, Domain.pointE_zero, zero_mul, add_zero, hc2]
+  · rw [h1, pointE_one, one_mul]
+    linear_combination (hc2 low) + (hc2 high)
+
+/-- **The public lines vanish on `V_1`**, the memory's cells `0`, `1` being the public input's words. -/
+theorem publicItems_ok {tr : Trace} (hH : TraceHonest tr) (hS : Small tr) :
+    ∀ it ∈ publicItems tr (publicWordsOf tr.publicInput), ItemOK tr.shape.constraintVars it := by
+  have h1 : 1 ≤ tr.shape.constraintVars := le_trans (logMemory_pos hH) (logMemory_le_constraintVars tr)
+  obtain ⟨p00, p01, p10, p11, p20, p21⟩ := hH.publicLines
+  intro it hit
+  simp only [publicItems, show List.range 3 = [0, 1, 2] from rfl, List.zip_cons_cons, List.zip_nil_right,
+    List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil, or_false] at hit
+  rcases hit with rfl | rfl | rfl
+  · refine ⟨1, h1, rfl, public_dvd hH hS (by norm_num) _ _ ?_ ?_⟩
+    · rw [p00, publicWords_getD tr (by norm_num)]
+    · rw [p01, publicWords_getD tr (by norm_num)]
+  · refine ⟨1, h1, rfl, public_dvd hH hS (by norm_num) _ _ ?_ ?_⟩
+    · rw [p10, publicWords_getD tr (by norm_num)]
+    · rw [p11, publicWords_getD tr (by norm_num)]
+  · refine ⟨1, h1, rfl, public_dvd hH hS (by norm_num) _ _ ?_ ?_⟩
+    · rw [p20, Domain.embed_zero]
+    · rw [p21, Domain.embed_zero]
+
+/-! ### The quotient divides exactly -/
+
+/-- **Every constraint of the batch vanishes on its domain.** -/
+theorem numItems_ok {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
+    (hC : Domain.CoordinateFunctionalsBasis (tr.height opBlake2s)) :
+    ∀ it ∈ numItems tr (publicWordsOf tr.publicInput), ItemOK tr.shape.constraintVars it := by
+  intro it hit
+  rcases List.mem_append.mp hit with h | h
+  · obtain ⟨table, htab, hit'⟩ := List.mem_flatMap.mp h
+    exact tableItems_ok hH hS hC htab it hit'
+  · exact publicItems_ok hH hS it h
+
+/-- **`w_{r_W}` divides the constraints' numerator** of an honest trace. -/
+theorem numerator_dvd {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
+    (hC : Domain.CoordinateFunctionalsBasis (tr.height opBlake2s)) (gamma : E) :
+    Domain.wP tr.shape.constraintVars ∣ (constraintNumerator tr gamma (publicWordsOf tr.publicInput)).toPoly := by
+  rw [constraintNumerator_eq]
+  exact foldl_addItem_dvd gamma _ _ (0, 1) (by rw [tp_zero]; exact dvd_zero _) (numItems_ok hH hS hC)
+
+/-- **The constraint quotient divides exactly**: `Q_W · w_{r_W} = N`. -/
+theorem constraintQuotient_mul {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
+    (hC : Domain.CoordinateFunctionalsBasis (tr.height opBlake2s)) (gamma : E) :
+    (constraintQuotient tr gamma (publicWordsOf tr.publicInput)).toPoly * Domain.wP tr.shape.constraintVars =
+      (constraintNumerator tr gamma (publicWordsOf tr.publicInput)).toPoly := by
+  unfold constraintQuotient
+  rw [toPoly_divM _ _ (wPoly_monic _), wPoly_toPoly]
+  have h := modByMonic_add_div (constraintNumerator tr gamma (publicWordsOf tr.publicInput)).toPoly
+    (Domain.wP tr.shape.constraintVars)
+  rw [(modByMonic_eq_zero_iff_dvd (Domain.wP_monic _)).mpr (numerator_dvd hH hS hC gamma), zero_add] at h
+  rw [mul_comm]
+  exact h
+
+
+/-! ### The degree -/
+
+/-- `Shape.constraintDegree`'s step over the tables. -/
+def degStep (shape : Shape) (d : ℕ) (table : Table) : ℕ :=
+  let r := shape.heights.getD table.opcode 0
+  let n := 2 ^ r
+  let d := if table.opcode = opJump then max d (degree n 2) else d
+  let d := max d (degree ((n - 1) * (1 + table.countColumns.length)) n)
+  if table.opcode = opBlake2s then max d (degree (r * (n / 2)) n) else d
+
+theorem constraintDegree_eq (shape : Shape) :
+    shape.constraintDegree = max (tables.foldl (degStep shape) 0) (degree (2 ^ shape.logMemory) 3) := rfl
+
+theorem foldl_ge {α : Type} (f : ℕ → α → ℕ) (hmono : ∀ d x, d ≤ f d x) :
+    ∀ (l : List α) (d : ℕ), d ≤ l.foldl f d
+  | [], _ => le_rfl
+  | x :: xs, d => le_trans (hmono d x) (foldl_ge f hmono xs (f d x))
+
+theorem foldl_comp_le {α : Type} (f : ℕ → α → ℕ) (hmono : ∀ d x, d ≤ f d x) (c : α → ℕ)
+    (hc : ∀ d x, c x ≤ f d x) : ∀ (l : List α) (d : ℕ), ∀ x ∈ l, c x ≤ l.foldl f d
+  | [], _, _, h => absurd h (List.not_mem_nil)
+  | y :: ys, d, x, h => by
+    rcases List.mem_cons.mp h with rfl | h
+    · exact le_trans (hc d x) (foldl_ge f hmono ys _)
+    · exact foldl_comp_le f hmono c hc ys _ x h
+
+theorem degStep_mono (shape : Shape) (d : ℕ) (table : Table) : d ≤ degStep shape d table := by
+  unfold degStep
+  dsimp only
+  split_ifs <;> omega
+
+/-- **The constraint degree bounds each table's quotient degrees** (JUMP's, the counters', BLAKE2S's copies'). -/
+theorem le_constraintDegree (shape : Shape) {table : Table} (htab : table ∈ tables) :
+    (table.opcode = opJump → degree (2 ^ shape.heights.getD table.opcode 0) 2 ≤ shape.constraintDegree) ∧
+    degree ((2 ^ shape.heights.getD table.opcode 0 - 1) * (1 + table.countColumns.length))
+      (2 ^ shape.heights.getD table.opcode 0) ≤ shape.constraintDegree ∧
+    (table.opcode = opBlake2s → degree (shape.heights.getD table.opcode 0 * (2 ^ shape.heights.getD table.opcode 0 / 2))
+      (2 ^ shape.heights.getD table.opcode 0) ≤ shape.constraintDegree) := by
+  rw [constraintDegree_eq]
+  have key : ∀ c : Table → ℕ, (∀ d x, c x ≤ degStep shape d x) →
+      c table ≤ max (tables.foldl (degStep shape) 0) (degree (2 ^ shape.logMemory) 3) := fun c hc ↦
+    le_trans (foldl_comp_le (degStep shape) (degStep_mono shape) c hc tables 0 table htab) (le_max_left _ _)
+  refine ⟨fun hJ ↦ ?_, ?_, fun hB ↦ ?_⟩
+  · have := key (fun x ↦ if x.opcode = opJump then degree (2 ^ shape.heights.getD x.opcode 0) 2 else 0)
+      (fun d x ↦ by unfold degStep; dsimp only; split_ifs <;> omega)
+    simpa [hJ] using this
+  · exact key (fun x ↦ degree ((2 ^ shape.heights.getD x.opcode 0 - 1) * (1 + x.countColumns.length))
+      (2 ^ shape.heights.getD x.opcode 0)) (fun d x ↦ by unfold degStep; dsimp only; split_ifs <;> omega)
+  · have := key (fun x ↦ if x.opcode = opBlake2s then
+      degree (shape.heights.getD x.opcode 0 * (2 ^ shape.heights.getD x.opcode 0 / 2))
+        (2 ^ shape.heights.getD x.opcode 0) else 0)
+      (fun d x ↦ by unfold degStep; dsimp only; split_ifs <;> omega)
+    simpa [hB] using this
+
+theorem public_le_constraintDegree (shape : Shape) : degree (2 ^ shape.logMemory) 3 ≤ shape.constraintDegree := by
+  rw [constraintDegree_eq]
+  exact le_max_right _ _
+
+theorem tablePolys_natDegree (tr : Trace) (t c : ℕ) :
+    ((tablePolys tr t).getD c 0).toPoly.natDegree < 2 ^ tr.height t := by
+  by_cases hc : c < (tables.getD t default).width
+  · rw [tablePolys_getD tr t hc]
+    exact colPolyK_natDegree_lt _ _
+  · rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_none (by rw [tablePolys, Array.size_ofFn]; omega),
+      Option.getD_none, tp_zero, natDegree_zero]
+    exact Nat.two_pow_pos _
+
+theorem natDegree_foldl_mul {α : Type} (l : List α) (f : α → Poly) (B : ℕ)
+    (hf : ∀ x, (f x).toPoly.natDegree ≤ B) : ∀ z : Poly,
+      (l.foldl (fun p c ↦ p * f c) z).toPoly.natDegree ≤ z.toPoly.natDegree + l.length * B := by
+  induction l with
+  | nil => intro z; simp
+  | cons x xs ih =>
+    intro z
+    rw [List.foldl_cons]
+    refine le_trans (ih _) ?_
+    rw [tp_mul, List.length_cons]
+    have := natDegree_mul_le (p := z.toPoly) (q := (f x).toPoly)
+    have := hf x
+    nlinarith
+
+theorem natDegree_coordFold (F : Poly → K × ℕ → Poly)
+    (hF : ∀ acc a mm, (F acc (a, mm)).toPoly.natDegree ≤ max acc.toPoly.natDegree (2 ^ mm)) (B : ℕ) :
+    ∀ (as : List K) (ms : List ℕ) (acc : Poly), (∀ m ∈ ms, 2 ^ m ≤ B) →
+      ((as.zip ms).foldl F acc).toPoly.natDegree ≤ max acc.toPoly.natDegree B
+  | [], _, acc, _ => by simp
+  | _ :: _, [], acc, _ => by simp
+  | a :: as, m :: ms, acc, hB => by
+    rw [List.zip_cons_cons, List.foldl_cons]
+    refine le_trans (natDegree_coordFold F hF B as ms _ fun x hx ↦ hB x (List.mem_cons_of_mem _ hx)) ?_
+    have h1 := hF acc a m
+    have h2 := hB m (by simp)
+    omega
+
+/-- `y_l = Σ_m a_{l,m} X^(2^m)` has degree at most `2^(r−1)`. -/
+theorem coordinateP_natDegree (r : ℕ) {l : ℕ} (hl : l < r) :
+    (coordinateP (coordinateFunctionals r) l).toPoly.natDegree ≤ 2 ^ (r - 1) := by
+  unfold coordinateP
+  refine le_trans (natDegree_coordFold _ ?_ (2 ^ (r - 1)) _ _ 0 ?_) ?_
+  · intro acc a mm
+    show (acc + pC (ofK a) * pX ^ (2 ^ mm)).toPoly.natDegree ≤ _
+    rw [tp_add, tp_mul, tp_C, tp_pow, tp_X]
+    refine le_trans (natDegree_add_le _ _) (max_le_max le_rfl ?_)
+    refine le_trans (natDegree_C_mul_le _ _) ?_
+    rw [natDegree_X_pow]
+  · intro m hm
+    rw [List.mem_range, coordinateFunctionals_row_size r hl] at hm
+    exact Nat.pow_le_pow_right (by norm_num) (by omega)
+  · rw [tp_zero, natDegree_zero]
+    simp
+
+theorem natDegree_mleP : ∀ (pt : List Poly) (vals : Array Poly) (D : ℕ),
+    (∀ k, (vals.getD k 0).toPoly.natDegree ≤ D) →
+      (mleP vals pt).toPoly.natDegree ≤ D + (pt.map fun p ↦ p.toPoly.natDegree).sum
+  | [], vals, D, h => by rw [mleP_nil]; simpa using h 0
+  | r :: rs, vals, D, h => by
+    rw [mleP_cons, List.map_cons, List.sum_cons, ← Nat.add_assoc]
+    refine natDegree_mleP rs _ _ fun k ↦ ?_
+    by_cases hk : k < vals.size / 2
+    · rw [E2ECompleteness.getD_ofFn' _ hk]
+      show (vals.getD (2 * k) 0 + r * (vals.getD (2 * k) 0 + vals.getD (2 * k + 1) 0)).toPoly.natDegree ≤ _
+      rw [tp_add, tp_mul, tp_add]
+      have h1 := h (2 * k)
+      have h2 := h (2 * k + 1)
+      have h3 := natDegree_add_le (vals.getD (2 * k) 0).toPoly (vals.getD (2 * k + 1) 0).toPoly
+      have h4 := natDegree_mul_le (p := r.toPoly)
+        (q := (vals.getD (2 * k) 0).toPoly + (vals.getD (2 * k + 1) 0).toPoly)
+      have h5 := natDegree_add_le (vals.getD (2 * k) 0).toPoly
+        (r.toPoly * ((vals.getD (2 * k) 0).toPoly + (vals.getD (2 * k + 1) 0).toPoly))
+      omega
+    · rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_none (by simp; omega), Option.getD_none, tp_zero,
+        natDegree_zero]
+      exact Nat.zero_le _
+
+/-- **The copy's degree**: `deg(copy + ℓ) ≤ max(2^r − 1, r 2^(r−1))`. -/
+theorem copyPoly_natDegree (tr : Trace) (table : Table) (c slot : ℕ) :
+    (copyPoly tr table c slot).toPoly.natDegree ≤
+      max (2 ^ tr.height table.opcode - 1) (tr.height table.opcode * 2 ^ (tr.height table.opcode - 1)) := by
+  unfold copyPoly
+  rw [tp_add]
+  refine le_trans (natDegree_add_le _ _) (max_le_max (by
+    have := tablePolys_natDegree tr table.opcode c; omega) ?_)
+  refine le_trans (natDegree_mleP _ _ 0 fun k ↦ ?_) ?_
+  · by_cases hk : k < 2 ^ tr.height table.opcode
+    · rw [E2ECompleteness.getD_ofFn' _ hk, tp_C, natDegree_C]
+    · rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_none (by simp; omega), Option.getD_none, tp_zero,
+        natDegree_zero]
+  · rw [Nat.zero_add, List.map_map]
+    refine le_trans (List.sum_le_length_nsmul _ (2 ^ (tr.height table.opcode - 1)) fun x hx ↦ ?_) ?_
+    · obtain ⟨l, hl, rfl⟩ := List.mem_map.mp hx
+      exact coordinateP_natDegree _ (List.mem_range.mp hl)
+    · simp
+
+/-- A constraint of degree at most `D + 2^r` on `V_r`, lifted, has degree at most `D + 2^{r_W}`. -/
+theorem item_natDegree {M : Poly} {r rW D : ℕ} (hr : r ≤ rW) (hM : M.toPoly.natDegree ≤ D + 2 ^ r) :
+    (M * liftP r rW).toPoly.natDegree ≤ D + 2 ^ rW := by
+  rw [tp_mul]
+  have := natDegree_mul_le (p := M.toPoly) (q := (liftP r rW).toPoly)
+  rw [liftP_natDegree hr] at this
+  have : 2 ^ r ≤ 2 ^ rW := Nat.pow_le_pow_right (by norm_num) hr
+  omega
+
+/-- **Every table constraint, lifted, has degree at most `D + 2^{r_W}`.** -/
+theorem tableItems_deg (tr : Trace) {table : Table} (htab : table ∈ tables) :
+    ∀ it ∈ tableItems tr table, (it.1 * it.2).toPoly.natDegree ≤ tr.shape.constraintDegree + 2 ^ tr.shape.constraintVars := by
+  have hr := height_le_constraintVars tr table.opcode
+  obtain ⟨hJD, hCD, hBD⟩ := le_constraintDegree tr.shape htab
+  have hn := Nat.one_le_two_pow (n := tr.height table.opcode)
+  have hcol : ∀ c, ((tablePolys tr table.opcode).getD c 0).toPoly.natDegree ≤ 2 ^ tr.height table.opcode - 1 :=
+    fun c ↦ by have := tablePolys_natDegree tr table.opcode c; omega
+  intro it hit
+  rcases mem_tableItems hit with ⟨hJ, rfl | rfl⟩ | rfl | ⟨hB, c, hc, slot, hslot, rfl⟩
+  · refine item_natDegree hr ?_
+    have h1 := hJD hJ
+    unfold UniStatement.degree at h1
+    unfold colP
+    rw [tp_add, tp_mul]
+    have := natDegree_add_le ((tablePolys tr table.opcode).getD (colIdx table.columns "b") 0).toPoly
+      (((tablePolys tr table.opcode).getD (colIdx table.columns "v_cond") 0).toPoly *
+        ((tablePolys tr table.opcode).getD (colIdx table.columns "w") 0).toPoly)
+    have := natDegree_mul_le (p := ((tablePolys tr table.opcode).getD (colIdx table.columns "v_cond") 0).toPoly)
+      (q := ((tablePolys tr table.opcode).getD (colIdx table.columns "w") 0).toPoly)
+    have := hcol (colIdx table.columns "b")
+    have := hcol (colIdx table.columns "v_cond")
+    have := hcol (colIdx table.columns "w")
+    unfold Trace.height at *
+    omega
+  · refine item_natDegree hr ?_
+    have h1 := hJD hJ
+    unfold UniStatement.degree at h1
+    unfold colP
+    rw [tp_mul, tp_add, tp_one]
+    have := natDegree_add_le ((tablePolys tr table.opcode).getD (colIdx table.columns "b") 0).toPoly 1
+    have := natDegree_mul_le (p := ((tablePolys tr table.opcode).getD (colIdx table.columns "v_cond") 0).toPoly)
+      (q := ((tablePolys tr table.opcode).getD (colIdx table.columns "b") 0).toPoly + 1)
+    have := hcol (colIdx table.columns "b")
+    have := hcol (colIdx table.columns "v_cond")
+    rw [natDegree_one] at *
+    unfold Trace.height at *
+    omega
+  · refine item_natDegree hr ?_
+    unfold UniStatement.degree at hCD
+    unfold counterPoly
+    rw [tp_add, tp_one]
+    have h1 := natDegree_foldl_mul table.countColumns (fun c ↦ (tablePolys tr table.opcode).getD c 0)
+      (2 ^ tr.height table.opcode - 1) hcol (colPolyK (tr.height table.opcode) (inverseColumn tr table.opcode))
+    have h2 := colPolyK_natDegree_lt (tr.height table.opcode) (inverseColumn tr table.opcode)
+    have h3 := natDegree_add_le (table.countColumns.foldl (fun p c ↦ p * (tablePolys tr table.opcode).getD c 0)
+      (colPolyK (tr.height table.opcode) (inverseColumn tr table.opcode))).toPoly 1
+    rw [natDegree_one] at h3
+    have h4 : (2 ^ tr.height table.opcode - 1) * (1 + table.countColumns.length) =
+        (2 ^ tr.height table.opcode - 1) + table.countColumns.length * (2 ^ tr.height table.opcode - 1) := by ring
+    unfold Trace.height at *
+    omega
+  · refine item_natDegree hr ?_
+    show (copyPoly tr table c slot).toPoly.natDegree ≤ _
+    have h1 := hBD hB
+    unfold UniStatement.degree at h1
+    have h2 := copyPoly_natDegree tr table c slot
+    have h3 : tr.height table.opcode * 2 ^ (tr.height table.opcode - 1) =
+        tr.height table.opcode * (2 ^ tr.height table.opcode / 2) := by
+      rcases Nat.eq_zero_or_pos (tr.height table.opcode) with h0 | hpos
+      · rw [h0]; simp
+      · congr 1
+        rw [show tr.height table.opcode = tr.height table.opcode - 1 + 1 by omega, pow_succ,
+          Nat.mul_div_cancel _ (by norm_num), Nat.add_sub_cancel]
+    unfold Trace.height at *
+    omega
+
+/-- **Every public line, lifted, has degree at most `D + 2^{r_W}`.** -/
+theorem publicItems_deg (tr : Trace) (words : List E) :
+    ∀ it ∈ publicItems tr words, (it.1 * it.2).toPoly.natDegree ≤
+      tr.shape.constraintDegree + 2 ^ tr.shape.constraintVars := by
+  have hD := public_le_constraintDegree tr.shape
+  unfold UniStatement.degree at hD
+  have hr : 1 ≤ tr.shape.constraintVars ∨ tr.shape.constraintVars = 0 := by omega
+  intro it hit
+  obtain ⟨x, -, rfl⟩ := List.mem_map.mp hit
+  dsimp only
+  rw [tp_mul]
+  refine le_trans natDegree_mul_le ?_
+  rw [tp_add, tp_add, tp_mul, tp_C, tp_C, tp_X]
+  have h1 := colPolyK_natDegree_lt tr.shape.logMemory (tr.memory.getD x.2 #[])
+  have h2 := natDegree_add_le (colPolyK tr.shape.logMemory (tr.memory.getD x.2 #[])).toPoly (C x.1.1)
+  have h3 := natDegree_add_le ((colPolyK tr.shape.logMemory (tr.memory.getD x.2 #[])).toPoly + C x.1.1)
+    (X * C (x.1.1 + x.1.2))
+  have h4 := natDegree_mul_le (p := (X : E[X])) (q := C (x.1.1 + x.1.2))
+  rw [natDegree_C] at h2 h4
+  rw [natDegree_X] at h4
+  rcases hr with hr | hr
+  · rw [liftP_natDegree hr]
+    have : 2 ≤ 2 ^ tr.shape.constraintVars := by
+      calc 2 = 2 ^ 1 := rfl
+        _ ≤ 2 ^ tr.shape.constraintVars := Nat.pow_le_pow_right (by norm_num) hr
+    omega
+  · have hlm := logMemory_le_constraintVars tr
+    rw [hr] at hlm ⊢
+    have h0 : 2 ^ tr.shape.logMemory = 1 := by rw [show tr.shape.logMemory = 0 by omega]; rfl
+    have hl : (liftP 1 0).toPoly = 1 := by
+      rw [liftP_toPoly]
+      simp
+    rw [hl, natDegree_one]
+    omega
+
+theorem foldl_addItem_deg (gamma : E) (B : ℕ) : ∀ (items : List Item) (s : Poly × E),
+    s.1.toPoly.natDegree ≤ B → (∀ it ∈ items, (it.1 * it.2).toPoly.natDegree ≤ B) →
+      (items.foldl (addItem gamma) s).1.toPoly.natDegree ≤ B
+  | [], _, h, _ => h
+  | it :: rest, s, h, hits => by
+    rw [List.foldl_cons]
+    refine foldl_addItem_deg gamma B rest _ ?_ (fun x hx ↦ hits x (List.mem_cons_of_mem _ hx))
+    show (s.1 + pC s.2 * it.1 * it.2).toPoly.natDegree ≤ B
+    rw [tp_add, mul_assoc, tp_mul, tp_C]
+    refine le_trans (natDegree_add_le _ _) (max_le h (le_trans (natDegree_C_mul_le _ _) (hits it (by simp))))
+
+/-- **The numerator's degree is at most `D + 2^{r_W}`.** -/
+theorem numerator_natDegree_le (tr : Trace) (gamma : E) (words : List E) :
+    (constraintNumerator tr gamma words).toPoly.natDegree ≤ tr.shape.constraintDegree + 2 ^ tr.shape.constraintVars := by
+  rw [constraintNumerator_eq]
+  refine foldl_addItem_deg gamma _ _ (0, 1) (by rw [tp_zero, natDegree_zero]; exact Nat.zero_le _) fun it hit ↦ ?_
+  rcases List.mem_append.mp hit with h | h
+  · obtain ⟨table, htab, hit'⟩ := List.mem_flatMap.mp h
+    exact tableItems_deg tr htab it hit'
+  · exact publicItems_deg tr words it h
+
+/-- **The constraint quotient's degree is at most `Shape.constraintDegree`.** -/
+theorem constraintQuotient_natDegree_le {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
+    (hC : Domain.CoordinateFunctionalsBasis (tr.height opBlake2s)) (gamma : E) :
+    (constraintQuotient tr gamma (publicWordsOf tr.publicInput)).toPoly.natDegree ≤ tr.shape.constraintDegree := by
+  have hmul := constraintQuotient_mul hH hS hC gamma
+  have hN := numerator_natDegree_le tr gamma (publicWordsOf tr.publicInput)
+  by_cases hQ : (constraintQuotient tr gamma (publicWordsOf tr.publicInput)).toPoly = 0
+  · rw [hQ, natDegree_zero]
+    exact Nat.zero_le _
+  · rw [← hmul, mul_comm, (Domain.wP_monic _).natDegree_mul' hQ, Domain.wP_natDegree] at hN
+    omega
+
+/-- **The constraint quotient fits its chunks** `chunks (D + 1)`: its degree is below `Σ 2^e`. -/
+theorem constraintQuotient_fits {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
+    (hC : Domain.CoordinateFunctionalsBasis (tr.height opBlake2s)) (gamma : E) :
+    (constraintQuotient tr gamma (publicWordsOf tr.publicInput)).toPoly.natDegree <
+      ((chunks (tr.shape.constraintDegree + 1)).map (2 ^ ·)).sum := by
+  have h1 := constraintQuotient_natDegree_le hH hS hC gamma
+  have h2 := (chunks_spec (n := tr.shape.constraintDegree + 1) (by omega)).2.1
+  omega
+
+
 end UniComplete.AlgC
+
+/-- info: 'UniComplete.AlgC.constraintNumerator_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.AlgC.constraintNumerator_eq
+
+/-- info: 'UniComplete.AlgC.numerator_dvd' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.AlgC.numerator_dvd
+
+/-- info: 'UniComplete.AlgC.constraintQuotient_mul' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.AlgC.constraintQuotient_mul
+
+/-- info: 'UniComplete.AlgC.constraintQuotient_natDegree_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.AlgC.constraintQuotient_natDegree_le
+
+/-- info: 'UniComplete.AlgC.constraintQuotient_fits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.AlgC.constraintQuotient_fits

@@ -16,3 +16,4 @@ import UniComplete.AlgCBasis
 import UniComplete.AlgCChunks
 import UniComplete.AlgCRun
 import UniComplete.AlgCTerm
+import UniComplete.AlgCQuot
