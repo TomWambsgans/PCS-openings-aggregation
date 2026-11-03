@@ -33,6 +33,15 @@ open UniStatement LeanVM.Parameters LeanVM.Semantics FlockSound.Uni
 /-- The tables' values at `t`. -/
 def tablesReads : ℕ := (tables.map tableReads).sum
 
+/-- **The row counts in range** (what `readCounts`' range checks accept, iteration 2's F1): six
+counts, each at most `2^r` for its table's height `r`. -/
+def CountsInRange (heights rows : List ℕ) : Prop :=
+  rows.length = 6 ∧ ∀ j < 6, rows.getD j 0 ≤ 2 ^ heights.getD j 0
+
+instance (heights rows : List ℕ) : Decidable (CountsInRange heights rows) := by
+  unfold CountsInRange
+  infer_instance
+
 /-- **The values at `t`**: the tables', the memory's final counts, address and pull fingerprint,
 the bytecode's final counts and pull fingerprint, `T(t)` and `Q_W(t)`. -/
 def valsCount : ℕ := tablesReads + 7

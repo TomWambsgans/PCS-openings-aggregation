@@ -89,6 +89,8 @@ theorem idsHyps_ref : IdsHyps D (busBound D.shape) where
   lvAux := lvAux D (c1Limbs _)
   lvBusCount := lvBusCount D
   heapGood := by rw [hS]; exact heapGood_reference
+  zbNe := zBad_ne_zero D.shape (c1Reading_ref D hS).beta (c1Reading_ref D hS).functionals
+    (by rw [hS, reference_eq]; decide)
 
 include hS in
 /-- **The reductions, proved from what remains.** -/
@@ -121,7 +123,7 @@ theorem uniKnowledgeSoundness_ref (D : Deployment) (hS : D.shape = reference)
     (hFs : FsLayer D hFlock (nVOf D.shape) (batchVars D.shape) C)
     (hncv : ncvOf D.shape ≤ 100)
     (hFl : ∀ j, hFlock.err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
-    (hdeg : d ≤ 2 ^ 32) (hrel : max n 1 + 2 ≤ 2 ^ 32) :
+    (hdeg : d ≤ 2 ^ 31) (hrel : max n 1 + 2 ≤ 2 ^ 32) :
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
@@ -131,7 +133,13 @@ theorem uniKnowledgeSoundness_ref (D : Deployment) (hS : D.shape = reference)
       show 4 * busBound D.shape + ncvOf D.shape ≤ 2 ^ 32
       rw [hS] at hncv ⊢
       omega)
-    hFl hdeg hrel
+    hFl (by
+      show d + zBadDeg D.shape ≤ 2 ^ 32
+      have h18 : D.shape.heights.getD opBlake2s 0 = 18 := by rw [hS, reference_eq]; decide
+      unfold zBadDeg
+      rw [Eval.coordinateFunctionals_size, h18]
+      have h2 : (2 : ℕ) ^ (18 + 1) + 2 ^ 31 ≤ 2 ^ 32 := by norm_num
+      omega) hrel
 
 end UniSound.Ids
 

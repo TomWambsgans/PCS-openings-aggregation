@@ -19,7 +19,7 @@ rounds' errors at most `e₃₂ = 2^32 / |E|`, from
 * **`hFs : FsLayer …`** — the Fiat–Shamir layer (`Fs.lean`): `ListChainK`'s closed
   random-permutation theorem for the univariate transcript, openings, setup and extractor;
 * the numbers: `errMain`, Flock's rounds' errors at most `2^32 / |E|`, the identities' degrees
-  at most `2^32` in all, at most `2^32 − 2` relations on a commitment.
+  and the merge polynomial's at most `2^32` in all, at most `2^32 − 2` relations on a commitment.
 
 The protocol is `uniPiop hFlock I` (`PiopSound.lean`, proved): its states' last one follows from the
 verifier's checks with true claims (`hlink_uniPiop`, from `hFin`), its first is the relation
@@ -153,7 +153,7 @@ theorem hlink_uniPiop (C : UniCode D hFlock I.nV I.V) (hFin : UniFinal D hFlock 
 numbers. -/
 theorem uniErr_le (hMain : I.errMain ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
     (hFl : ∀ j, hFlock.err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
-    (hdeg : I.degSum ≤ 2 ^ 32) (hrel : I.nRel + 2 ≤ 2 ^ 32) (j : ℕ) :
+    (hdeg : I.degSum + I.degBad ≤ 2 ^ 32) (hrel : I.nRel + 2 ≤ 2 ^ 32) (j : ℕ) :
     uniErr hFlock I j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
   unfold uniErr
   split_ifs
@@ -175,7 +175,7 @@ theorem uniKnowledgeSoundness (hFlock : FlockSound κ) (I : UniIds D hFlock)
     (hFs : FsLayer D hFlock I.nV I.V C)
     (hMain : I.errMain ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
     (hFl : ∀ j, hFlock.err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
-    (hdeg : I.degSum ≤ 2 ^ 32) (hrel : I.nRel + 2 ≤ 2 ^ 32) :
+    (hdeg : I.degSum + I.degBad ≤ 2 ^ 32) (hrel : I.nRel + 2 ≤ 2 ^ 32) :
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) :=
   hFs (uniPiop hFlock I) _ (uniErr_le hFlock I hMain hFl hdeg hrel) (hpre_uniPiop hFlock I)
     (hlink_uniPiop hFlock I C hFin)
@@ -269,7 +269,7 @@ theorem uniKnowledgeSoundness_bits (hFlock : FlockSound κ) (I : UniIds D hFlock
     (hFs : FsLayer D hFlock I.nV I.V C)
     (hMain : I.errMain ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
     (hFl : ∀ j, hFlock.err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
-    (hdeg : I.degSum ≤ 2 ^ 32) (hrel : I.nRel + 2 ≤ 2 ^ 32) :
+    (hdeg : I.degSum + I.degBad ≤ 2 ^ 32) (hrel : I.nRel + 2 ≤ 2 ^ 32) :
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
@@ -283,7 +283,7 @@ theorem uniKnowledgeSoundness_bus (hFlock : FlockSound κ) (B : BusModel D κ)
     (hFin : UniFinal D hFlock (UniIds.ofBus hFlock B J) C) (hFs : FsLayer D hFlock J.nV J.V C)
     (hB : 4 * B.N + B.ncv ≤ 2 ^ 32)
     (hFl : ∀ j, hFlock.err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
-    (hdeg : J.degSum ≤ 2 ^ 32) (hrel : J.nRel + 2 ≤ 2 ^ 32) :
+    (hdeg : J.degSum + J.degBad ≤ 2 ^ 32) (hrel : J.nRel + 2 ≤ 2 ^ 32) :
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=

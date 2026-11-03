@@ -65,6 +65,8 @@ structure IdsHyps (D : Deployment) (N : ℕ) : Prop where
   lvAux : LvAux D
   lvBusCount : LvBusCount D N
   heapGood : HeapGood D.shape
+  /-- `Z_bad` is nonzero (`Main.lean`'s `zBad_ne_zero`, from the coordinate functionals). -/
+  zbNe : ∀ p0, zBad D.shape p0 ≠ 0
 
 /-- **The reductions not yet proved here**, at the degrees' bound `d` and the relations' `n`. -/
 structure IdsGaps (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (d n : ℕ) : Prop where
@@ -178,6 +180,43 @@ theorem prodOf_vars (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (s : USt) (
   unfold prodOf
   split_ifs <;> rfl
 
+theorem natDegree_listSum_le (l : List (Polynomial E)) (n : ℕ) (h : ∀ p ∈ l, p.natDegree ≤ n) :
+    l.sum.natDegree ≤ n := by
+  induction l with
+  | nil => simp
+  | cons p l ih =>
+    rw [List.sum_cons]
+    exact (Polynomial.natDegree_add_le _ _).trans
+      (max_le (h p (List.mem_cons_self ..)) (ih fun q hq ↦ h q (List.mem_cons_of_mem _ hq)))
+
+/-- A coordinate functional's degree: at most `2^m` for `m` of its coefficients. -/
+theorem natDegree_yP_le (a : Array (Array K)) (l : ℕ) : (yP a l).natDegree ≤ 2 ^ a.size := by
+  unfold yP
+  refine natDegree_listSum_le _ _ fun p hp ↦ ?_
+  obtain ⟨m, hm, rfl⟩ := List.mem_map.mp hp
+  rw [List.mem_range] at hm
+  exact (Polynomial.natDegree_C_mul_X_pow_le _ _).trans
+    (Nat.pow_le_pow_right (by norm_num) hm.le)
+
+/-- The merge polynomial's degree bound: `2^(h_B + 1)` (`coordinateFunctionals h_B` has `h_B` rows,
+`Eval.lean`'s `coordinateFunctionals_size`). -/
+def zBadDeg (S : Shape) : ℕ := 2 ^ ((coordinateFunctionals (S.heights.getD opBlake2s 0)).size + 1)
+
+/-- **`Z_bad`'s degree** is at most `zBadDeg`. -/
+theorem natDegree_zBad_le (S : Shape) (p0 : E) : (zBad S p0).natDegree ≤ zBadDeg S := by
+  unfold zBad zBadDeg
+  have hy := natDegree_yP_le (coordinateFunctionals (S.heights.getD opBlake2s 0)) 0
+  have h1 : 1 ≤ 2 ^ (coordinateFunctionals (S.heights.getD opBlake2s 0)).size := Nat.one_le_two_pow
+  refine (Polynomial.natDegree_mul_le).trans ?_
+  have ha := (Polynomial.natDegree_add_le
+    (yP (coordinateFunctionals (S.heights.getD opBlake2s 0)) 0) Polynomial.X).trans
+      (max_le hy (Polynomial.natDegree_X_le.trans h1))
+  have hb := (Polynomial.natDegree_add_le
+    (yP (coordinateFunctionals (S.heights.getD opBlake2s 0)) 0) (Polynomial.C p0)).trans
+      (max_le hy (by rw [Polynomial.natDegree_C]; exact Nat.zero_le _))
+  rw [pow_succ]
+  omega
+
 /-! ## The models -/
 
 /-- The values the stream sends at `t`: each table's sent columns and sent fingerprints, then the
@@ -216,6 +255,10 @@ noncomputable def idsRestOf (D : Deployment) (N : ℕ) (h : IdsHyps D N)
   degSum := d
   deg_le := g.degBound
   main_of_polys s c1 ch fd c2 hP := g.mainOfPolys s c1 ch fd c2 hP
+  zb fd := zBad D.shape ((Fl.prog.out fd []).1.getD 0 0)
+  zb_ne _ := h.zbNe _
+  degBad := zBadDeg D.shape
+  zb_deg _ := natDegree_zBad_le D.shape _
   diffs := diffsOf D Fl
   nRel := max n 1
   diffs_len := diffsOf_len D Fl n g.relCount
@@ -239,7 +282,7 @@ theorem uniKnowledgeSoundness_ids (D : Deployment) (N : ℕ) (h : IdsHyps D N)
     (hFs : FsLayer D hFlock (nVOf D.shape) (batchVars D.shape) C)
     (hB : 4 * N + ncvOf D.shape ≤ 2 ^ 32)
     (hFl : ∀ j, hFlock.err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
-    (hdeg : d ≤ 2 ^ 32) (hrel : max n 1 + 2 ≤ 2 ^ 32) :
+    (hdeg : d + zBadDeg D.shape ≤ 2 ^ 32) (hrel : max n 1 + 2 ≤ 2 ^ 32) :
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=

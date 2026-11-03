@@ -31,11 +31,12 @@ candidates `c1`, `c2` of `C1`'s and `C2`'s roots (stacks, `Stk`):
 * after `t`: **some values make every relation true** at `t` (`diffs`, all zero), Flock's checks
   and matrices as before;
 * after `ρ, λ`: the **batch's target is the sum** `Σ_u g(u)` (`ProdSum.T []`);
-* after each sumcheck round: the claim is the partial sum (`SumState`).
+* after each sumcheck round: the claim is the partial sum (`SumState`);
+* from `t` on, each of these **or `t` a root of the merge polynomial** (`zb`).
 
 **The errors** (`uniErr`): round `0` the bus and the constraints' batching (`errMain`: `4N/|E|`
 and the `γ` term, `mainSound`); Flock's rounds Flock's (`FlockSound.err`); `t` Schwartz–Zippel for
-every identity (`degSum / |E|`, the sum of the identities' degrees); `ρ, λ` the two combinations
+every identity and the merge polynomial (`(degSum + degBad) / |E|`, the sum of their degrees); `ρ, λ` the two combinations
 (`(nRel − 1 + 2) / |E|`); each sumcheck round `2 / |E|`. `uniPiop_sound` proves each.
 
 **The identity model** (`UniIds`): what the states are made of and the facts the rounds need,
@@ -110,6 +111,10 @@ def uniRounds (flockRounds : List Compose.RoundSpec) (nV V : ℕ) : List Compose
   (`fd` Flock's transcript, drawn before `C2`: the identities may read its point);
   `main_of_polys`: all zero, the bus and constraint state holds; `deg_le`: their degrees sum to at
   most `degSum`.
+* `zb fd`: **the merge polynomial** (nonzero, of degree at most `degBad`): at its roots `t` the batch
+  may read a claim's weight at a merged point where it is not multilinear (`combine` merging a point
+  into a longer one), so the states after `t` are `zb(t) = 0 ∨ …`, and `t`'s error counts its roots
+  with the identities' (`(degSum + degBad) / |E|`).
 * `diffs … t vals`: for each commitment, each of its relations' `Σ terms + value` at `t` with the
   values `vals` (zero when the relation holds; the verifier's relations, in `combine`'s order),
   and as a fourth entry the pending reduction's `Σ G L̂ ŝ + claim`; `diffs_eval`: all zero, every
@@ -137,6 +142,10 @@ structure UniIds (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) where
   degSum : ℕ
   deg_le : ∀ s c1 ch fd c2, ((polys s c1 ch fd c2).map Polynomial.natDegree).sum ≤ degSum
   main_of_polys : ∀ s c1 ch fd c2, (∀ P ∈ polys s c1 ch fd c2, P = 0) → MainOK s c1 ch
+  zb : Done → Polynomial E
+  zb_ne : ∀ fd, zb fd ≠ 0
+  degBad : ℕ
+  zb_deg : ∀ fd, (zb fd).natDegree ≤ degBad
   diffs : USt → Stk → List E → Done → Stk → E → List E → List (List E)
   nRel : ℕ
   diffs_len : ∀ s c1 ch fd c2 t vals, ∀ d ∈ diffs s c1 ch fd c2 t vals, d.length ≤ nRel
@@ -274,6 +283,7 @@ def uniS (s : USt) (q : Op Stk) : Prop :=
           Fl.S (I.qf c1) (fdOf Fl.prog.rounds.length q)
     else ∃ c2, (rd q (Fl.prog.rounds.length + 1)).1.1 = some c2 ∧
       FlockDone Fl (fdOf Fl.prog.rounds.length q) ∧
+      ((I.zb (fdOf Fl.prog.rounds.length q)).eval ((rd q (Fl.prog.rounds.length + 1)).2.headD 0) = 0 ∨
       if q.length = Fl.prog.rounds.length + 2 then
         ∃ vals, ∀ d ∈ I.diffs s c1 (rd q 0).2 (fdOf Fl.prog.rounds.length q) c2
           ((rd q (Fl.prog.rounds.length + 1)).2.headD 0) vals, ∀ x ∈ d, x = 0
@@ -288,7 +298,7 @@ def uniS (s : USt) (q : Op Stk) : Prop :=
             (rd q (Fl.prog.rounds.length + 2)).1.2
             ((rd q (Fl.prog.rounds.length + 2)).2.headD 0)
             ((rd q (Fl.prog.rounds.length + 2)).2.getD 1 0))
-          (brOf Fl.prog.rounds.length q)
+          (brOf Fl.prog.rounds.length q))
 
 /-- **The state before a round's challenges**: before round `0`, the relation of `C1`'s candidate;
 before `t`, the identities as polynomials for `C2`'s candidate and Flock's end; else the state
@@ -311,7 +321,8 @@ def uniPost (s : USt) (p : Op Stk) (m : Option Stk × List E) (c : List E) : Pro
 noncomputable def uniErr (j : ℕ) : ℝ≥0∞ :=
   if j = 0 then I.errMain
   else if j ≤ Fl.prog.rounds.length then Fl.err (j - 1)
-  else if j = Fl.prog.rounds.length + 1 then (I.degSum : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)
+  else if j = Fl.prog.rounds.length + 1 then
+    ((I.degSum + I.degBad : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)
   else if j = Fl.prog.rounds.length + 2 then
     ((I.nRel - 1 + (4 - 1) : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)
   else ((2 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)

@@ -133,11 +133,14 @@ structure UniCode (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ) 
 (`ClaimsHold`: the stacks' point claims, `A0`'s and `B0`'s at the pending reduction's terminal) make
 the batching sumcheck's last claim the identity model's partial sum at its point (`SumState` after
 the `V` rounds: `weightAt` the multilinear extension of the cube's weights, the stacks zero-extended,
-the pending term `(a + α b) L̂(ρ) ŝ(σ)` its product's value). -/
+the pending term `(a + α b) L̂(ρ) ŝ(σ)` its product's value), unless `t` is a root of the merge
+polynomial (`I.zb`, where a weight need not be multilinear). -/
 def UniFinal (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (I : UniIds D Fl)
     (C : UniCode D Fl I.nV I.V) : Prop :=
   ∀ (s : USt) done tl c1 c2, DoneFits (uniRounds Fl.prog.rounds I.nV I.V) done → tl.length = 5 →
     (C.prog s.1 s.2).ZerosVanish done tl → ClaimsHold D ((C.prog s.1 s.2).out done tl) c1 c2 →
+      (I.zb (fdOf Fl.prog.rounds.length (openedOf Fl.prog.rounds.length c1 c2 done))).eval
+          ((rd (openedOf Fl.prog.rounds.length c1 c2 done) (Fl.prog.rounds.length + 1)).2.headD 0) = 0 ∨
       SumState (I.prod s c1 (rd (openedOf Fl.prog.rounds.length c1 c2 done) 0).2
           (fdOf Fl.prog.rounds.length (openedOf Fl.prog.rounds.length c1 c2 done)) c2
           ((rd (openedOf Fl.prog.rounds.length c1 c2 done) (Fl.prog.rounds.length + 1)).2.headD 0)

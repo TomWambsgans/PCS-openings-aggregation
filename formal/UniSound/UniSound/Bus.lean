@@ -201,6 +201,10 @@ structure UniIdsRest (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (B : BusMo
   degSum : ℕ
   deg_le : ∀ s c1 ch fd c2, ((polys s c1 ch fd c2).map Polynomial.natDegree).sum ≤ degSum
   main_of_polys : ∀ s c1 ch fd c2, (∀ P ∈ polys s c1 ch fd c2, P = 0) → B.MainOK s c1 ch
+  zb : Done → Polynomial E
+  zb_ne : ∀ fd, zb fd ≠ 0
+  degBad : ℕ
+  zb_deg : ∀ fd, (zb fd).natDegree ≤ degBad
   diffs : USt → Stk → List E → Done → Stk → E → List E → List (List E)
   nRel : ℕ
   diffs_len : ∀ s c1 ch fd c2 t vals, ∀ d ∈ diffs s c1 ch fd c2 t vals, d.length ≤ nRel
@@ -234,6 +238,10 @@ noncomputable def UniIds.ofBus {D : Deployment} {κ : ℕ} (Fl : FlockSound κ) 
   degSum := J.degSum
   deg_le := J.deg_le
   main_of_polys := J.main_of_polys
+  zb := J.zb
+  zb_ne := J.zb_ne
+  degBad := J.degBad
+  zb_deg := J.zb_deg
   diffs := J.diffs
   nRel := J.nRel
   diffs_len := J.diffs_len

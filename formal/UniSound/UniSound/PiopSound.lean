@@ -7,7 +7,7 @@ import UniSound.Piop
 **`uniPiop Fl I`**: the states `uniPre`, `uniPost` and the errors `uniErr` of `Piop.lean` form a
 `RbrPiop` on the main line's rounds (`uniRounds`), for the Flock phase `Fl` and any identity model
 `I`: each round's soundness from its lemma (`mainSound`; Flock's `step`; Schwartz–Zippel,
-`prEvent_root_le`; the two combinations, `prEvent_twoLevel_le`; the sumcheck's rounds,
+`prEvent_root_le`, for the identities and the merge polynomial `zb`; the two combinations, `prEvent_twoLevel_le`; the sumcheck's rounds,
 `SumOracle.step_sound`), and `pre_post` from `main_of_polys` and Flock's `finish` at the boundary
 of `C2`'s round.
 -/
@@ -135,11 +135,12 @@ theorem uniSound_flock (j : ℕ) (h1 : 1 ≤ j) (h2 : j ≤ Fl.prog.rounds.lengt
       show j = (j - 1) + 1 by omega] at hfits
     exact doneFits_take_succ _ (j - 1) (by omega) _ _ hfits
 
-/-- **`C2`'s round, the point `t`**: Schwartz–Zippel for every identity. -/
+/-- **`C2`'s round, the point `t`**: Schwartz–Zippel for every identity and the merge
+polynomial. -/
 theorem uniSound_c2 (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.length + 1)
     (m : Option Stk × List E) :
     Pr{let c ← Compose.draws E 1}[¬ uniPre Fl I s p m ∧ uniPost Fl I s p m c] ≤
-      (I.degSum : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
+      ((I.degSum + I.degBad : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
   have hpre : uniPre Fl I s p m = ∃ c1 c2, (rd p 0).1.1 = some c1 ∧ m.1 = some c2 ∧
       (∀ P ∈ I.polys s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2, P = 0) ∧
       FlockEndHolds (I.qf c1) (Fl.prog.out (fdOf Fl.prog.rounds.length p) []) ∧
@@ -166,11 +167,15 @@ theorem uniSound_c2 (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.lengt
     rw [hx, hm] at hc2
     cases hc2
   have hb : Pr{let c ← Compose.draws E 1}[∃ P ∈ I.polys s c1 (rd p 0).2
-      (fdOf Fl.prog.rounds.length p) c2, P ≠ 0 ∧ P.eval (c.headD 0) = 0] ≤
-      (I.degSum : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) :=
-    (prEvent_root_le (I.polys s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2)).trans
-      (ENNReal.div_le_div_right (Nat.cast_le.mpr
-        (I.deg_le s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2)) _)
+      (fdOf Fl.prog.rounds.length p) c2 ++ [I.zb (fdOf Fl.prog.rounds.length p)], P ≠ 0 ∧
+        P.eval (c.headD 0) = 0] ≤
+      ((I.degSum + I.degBad : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
+    refine (prEvent_root_le (I.polys s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2 ++
+      [I.zb (fdOf Fl.prog.rounds.length p)])).trans
+        (ENNReal.div_le_div_right (Nat.cast_le.mpr ?_) _)
+    rw [List.map_append, List.sum_append, List.map_singleton, List.sum_singleton]
+    exact Nat.add_le_add (I.deg_le s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2)
+      (I.zb_deg _)
   refine (prEvent_mono _ _ _ ?_).trans hb
   rintro c ⟨hn, hpost⟩
   obtain ⟨c1', hc1, hpost⟩ := hpost
@@ -181,6 +186,9 @@ theorem uniSound_c2 (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.lengt
   rw [hx, hm] at hc2
   cases hc2
   rw [ite_eq_left (by simp; omega)] at hrest
+  rcases hrest with hzb | hrest
+  · rw [hfd, hx] at hzb
+    exact ⟨_, List.mem_append_right _ (List.mem_singleton_self _), I.zb_ne _, hzb⟩
   obtain ⟨vals, hz⟩ := hrest
   rw [rd_append_lt _ _ 0 hlt, hfd, hx] at hz
   rw [hfd] at hDone
@@ -190,7 +198,7 @@ theorem uniSound_c2 (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.lengt
   by_contra hno
   refine hn ⟨c1, c2, rfl, rfl, fun P hP => ?_, hEnd, hPend, hDone⟩
   by_contra hP0
-  exact hno ⟨P, hP, hP0, hev P hP⟩
+  exact hno ⟨P, List.mem_append_left _ hP, hP0, hev P hP⟩
 
 /-- **The values' round, `ρ` and `λ`**: the two combinations. -/
 theorem uniSound_vals (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.length + 2)
@@ -218,6 +226,19 @@ theorem uniSound_vals (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.len
     obtain ⟨c2', hc2, -⟩ := hpost
     rw [rd_append_lt _ _ _ hlt1, h2] at hc2
     cases hc2
+  by_cases hzb : (I.zb (fdOf Fl.prog.rounds.length p)).eval
+      ((rd p (Fl.prog.rounds.length + 1)).2.headD 0) = 0
+  · refine prEvent_le_of_forall_not _ _ _ fun c ⟨hn, hpost⟩ => hn ?_
+    obtain ⟨c1', hc1, hpost⟩ := hpost
+    rw [rd_append_lt _ _ 0 hlt, h0] at hc1
+    cases hc1
+    rw [ite_eq_right (by simp; omega)] at hpost
+    obtain ⟨c2', hc2, hDone, -⟩ := hpost
+    rw [rd_append_lt _ _ _ hlt1, h2] at hc2
+    cases hc2
+    refine ⟨c1, h0, ?_⟩
+    rw [ite_eq_right (by omega)]
+    exact ⟨c2, h2, by rwa [hfd] at hDone, Or.inl hzb⟩
   by_cases hbad : ∃ d ∈ I.diffs s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2
       ((rd p (Fl.prog.rounds.length + 1)).2.headD 0) m.2, ∃ x ∈ d, x ≠ 0
   · have hb := prEvent_twoLevel_le (I.diffs s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2
@@ -236,6 +257,9 @@ theorem uniSound_vals (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.len
     rw [rd_append_lt _ _ _ hlt1, h2] at hc2
     cases hc2
     rw [ite_eq_right (by simp; omega)] at hrest
+    rcases hrest with hz | hrest
+    · rw [rd_append_lt _ _ _ hlt1, hfd] at hz
+      exact absurd hz hzb
     rw [hbr, rd_append_lt _ _ 0 hlt, rd_append_lt _ _ _ hlt1, hfd, hx] at hrest
     unfold SumState claimAfter pointAfter at hrest
     simp only [List.map_nil] at hrest
@@ -251,7 +275,7 @@ theorem uniSound_vals (s : USt) (p : Op Stk) (hp : p.length = Fl.prog.rounds.len
     cases hc2
     refine ⟨c1, h0, ?_⟩
     rw [ite_eq_right (by omega)]
-    refine ⟨c2, h2, by rwa [hfd] at hDone, ?_⟩
+    refine ⟨c2, h2, by rwa [hfd] at hDone, Or.inr ?_⟩
     rw [ite_eq_left hp]
     refine ⟨m.2, fun d hd x hx => ?_⟩
     by_contra hx0
@@ -283,6 +307,19 @@ theorem uniSound_batch (j : ℕ) (h1 : Fl.prog.rounds.length + 3 ≤ j)
     obtain ⟨c2', hc2, -⟩ := hpost
     rw [rd_append_lt _ _ _ hlt1, hc2'] at hc2
     cases hc2
+  by_cases hzb : (I.zb (fdOf Fl.prog.rounds.length p)).eval
+      ((rd p (Fl.prog.rounds.length + 1)).2.headD 0) = 0
+  · refine prEvent_le_of_forall_not _ _ _ fun c ⟨hn, hpost⟩ => hn ?_
+    obtain ⟨c1', hc1, hpost⟩ := hpost
+    rw [rd_append_lt _ _ 0 hlt, h0] at hc1
+    cases hc1
+    rw [ite_eq_right (by simp; omega)] at hpost
+    obtain ⟨c2', hc2, hDone, -⟩ := hpost
+    rw [rd_append_lt _ _ _ hlt1, hc2'] at hc2
+    cases hc2
+    refine ⟨c1, h0, ?_⟩
+    rw [ite_eq_right (by omega)]
+    exact ⟨c2, hc2', by rwa [hfd] at hDone, Or.inl hzb⟩
   set O := (I.prod s c1 (rd p 0).2 (fdOf Fl.prog.rounds.length p) c2
     ((rd p (Fl.prog.rounds.length + 1)).2.headD 0) (rd p (Fl.prog.rounds.length + 2)).1.2
     ((rd p (Fl.prog.rounds.length + 2)).2.headD 0)
@@ -307,10 +344,13 @@ theorem uniSound_batch (j : ℕ) (h1 : Fl.prog.rounds.length + 3 ≤ j)
   rw [rd_append_lt _ _ _ hlt1, hc2'] at hc2
   cases hc2
   rw [ite_eq_right (by simp; omega)] at hrest
+  rcases hrest with hz | hrest
+  · rw [rd_append_lt _ _ _ hlt1, hfd] at hz
+    exact absurd hz hzb
   rw [hbr, rd_append_lt _ _ 0 hlt, rd_append_lt _ _ _ hlt1, rd_append_lt _ _ _ hlt2, hfd] at hrest
   refine ⟨fun hS => hn ⟨c1, h0, ?_⟩, hrest⟩
   rw [ite_eq_right (by omega)]
-  refine ⟨c2, hc2', by rwa [hfd] at hDone, ?_⟩
+  refine ⟨c2, hc2', by rwa [hfd] at hDone, Or.inr ?_⟩
   rw [ite_eq_right (by omega)]
   exact hS
 

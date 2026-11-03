@@ -278,15 +278,26 @@ noncomputable def batchProd (s : USt) (c1 : Stk) (ch : List E) (fd : Done) (c2 :
 def batchTargetOf (s : USt) (ch : List E) (fd : Done) (t : E) (vals : List E) (rho lam : E) : E :=
   targetOf (runClaims D Fl s ch fd t vals rho).1 lam (Fl.prog.out fd []).2.2
 
-/-- **The weights are multilinear at the batch's point**: each run claim's weight there is the fold
-of its values on the cube (`weightAt` the multilinear extension of the cube's weights). See the
-module's docstring: false when a `q_flock` slot term's point is merged into a longer one. -/
-def WeightMle : Prop :=
+/-- **The weights are multilinear at the batch's point** off the roots of the merge polynomial `Z`:
+each run claim's weight there is the fold of its values on the cube (`weightAt` the multilinear
+extension of the cube's weights), for counts in range, a completed Flock transcript, `6` challenges
+in round `0` and `valsCount` values. See the module's docstring: false when a `q_flock` slot term's
+point is merged into a longer one, which `Z(t) ≠ 0` excludes. -/
+def WeightMle (Z : Done → Polynomial E) : Prop :=
   ∀ (s : USt) (ch : List E) (fd : Done) (t : E) (vals : List E) (rho : E) (r : List E),
+    CountsInRange D.shape.heights s.2 → DoneFits Fl.prog.rounds fd → ch.length = 6 →
+      vals.length = valsCount → (Z fd).eval t ≠ 0 →
     r.length = varsOf (layoutsOf D.shape) → ∀ x ∈ (runClaims D Fl s ch fd t vals rho).1,
       foldAll (fun u => weightAt x.2 (layoutOf (layoutsOf D.shape) x.1)
           (bitsE u (varsOf (layoutsOf D.shape))) (runClaims D Fl s ch fd t vals rho).2) r 0 =
         weightAt x.2 (layoutOf (layoutsOf D.shape) x.1) r (runClaims D Fl s ch fd t vals rho).2
+
+/-- **The chain program's checks give the counts in range**: on every completed transcript of
+`mainProg`, its zeros vanishing makes the statement's row counts the ones `readCounts` accepts. -/
+def CountsZero : Prop :=
+  ∀ (input : Vector UInt8 32) (rows : List ℕ) (done : Done) (tl : List E),
+    DoneFits (uniRounds Fl.prog.rounds valsCount (varsOf (layoutsOf D.shape))) done →
+      (mainProg D Fl input rows).ZerosVanish done tl → CountsInRange D.shape.heights rows
 
 /-- **Flock's pending reduction has its shape** on every completed Flock transcript: the skip's
 `2^k` weights, the 64 slices sent, its points inside `A0`'s variables, at most `15` rounds. -/
@@ -322,19 +333,25 @@ theorem brOf_openedOf (nF : ℕ) (c1 c2 : Stk) (pre brs : Done) (h : pre.length 
   simp only [List.map_map, Function.comp_def]
   exact map_zipIdx_fst (fun y : UMsg × List E => (y.1.2, y.2)) brs _
 
+/-- **The identity model's batch is the verifier's** where the transcript fits (the counts in range,
+a completed Flock transcript, `6` challenges in round `0`, `valsCount` values). -/
+def BatchIsVerifiers (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (I : UniIds D Fl) : Prop :=
+  ∀ s c1 ch fd c2 t vals rho lam, CountsInRange D.shape.heights s.2 → DoneFits Fl.prog.rounds fd →
+    ch.length = 6 → vals.length = valsCount →
+      I.prod s c1 ch fd c2 t vals rho lam = batchProd D Fl s c1 ch fd c2 t vals rho lam ∧
+        I.target s c1 ch fd c2 t vals rho lam = batchTargetOf D Fl s ch fd t vals rho lam
+
 /-- **The last link** (`UniFinal`), for the identity model whose batch is the verifier's. -/
 theorem uniFinal (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hκ : D.shape.heights.getD opBlake2s 0 = κ)
     (I : UniIds D Fl) (hnV : I.nV = valsCount) (hV : I.V = varsOf (layoutsOf D.shape))
-    (hprod : ∀ s c1 ch fd c2 t vals rho lam,
-      I.prod s c1 ch fd c2 t vals rho lam = batchProd D Fl s c1 ch fd c2 t vals rho lam)
-    (htarget : ∀ s c1 ch fd c2 t vals rho lam,
-      I.target s c1 ch fd c2 t vals rho lam = batchTargetOf D Fl s ch fd t vals rho lam)
-    (hW : WeightMle D Fl) (hsmall : LayoutVarsSmall D) (hpend : FlockPendingShaped Fl) :
+    (hbatch : BatchIsVerifiers D Fl I) (hW : WeightMle D Fl I.zb) (hsmall : LayoutVarsSmall D)
+    (hpend : FlockPendingShaped Fl) (hcount : CountsZero D Fl) :
     UniFinal D Fl I (uniCodeAt D Fl hκ I.nV I.V hnV hV) := by
   intro s done tl c1 c2 hd htl hz hc
   change (mainProg D Fl s.1 s.2).ZerosVanish done tl at hz
   change ClaimsHold D ((mainProg D Fl s.1 s.2).out done tl) c1 c2 at hc
   rw [hnV, hV] at hd
+  have hcf : CountsInRange D.shape.heights s.2 := hcount s.1 s.2 done tl hd hz
   simp only [uniRounds] at hd
   obtain ⟨d012, brs, rfl, h012, hbr⟩ := doneFits_append_split _ _ _ hd
   obtain ⟨d01, d23, rfl, h01, h23⟩ := doneFits_append_split _ _ _ h012
@@ -362,8 +379,15 @@ theorem uniFinal (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hκ : D.shape
     simp only [List.append_assoc, List.cons_append, List.nil_append, List.drop_one, List.tail_cons]
     rw [List.take_left' hGl]
     exact doneFits_noRoot_eq _ _ Fl.rounds_root hG
-  rw [hr0, hfd, hr2, hr3, brOf_openedOf _ _ _ _ _ hpre, hprod, htarget]
-  simp only []
+  rw [hr0, hfd, hr2, hr3, brOf_openedOf _ _ _ _ _ hpre]
+  by_cases hzb : (I.zb G).eval (x2.2.headD 0) = 0
+  · exact Or.inl hzb
+  refine Or.inr ?_
+  have hch : x0.2.length = 6 := h0.2.1
+  have hvl : x3.1.2.length = valsCount := h23.2.2.1.2
+  obtain ⟨hprod, htarget⟩ := hbatch s c1 x0.2 G c2 (x2.2.headD 0) x3.1.2 (x3.2.headD 0) (x3.2.getD 1 0)
+    hcf hG hch hvl
+  rw [hprod, htarget]
   -- The program's zeros and result at this transcript.
   have e : [x0] ++ G ++ [x2, x3] ++ brs = [x0] ++ G ++ [x2] ++ [x3] ++ brs := by simp
   rw [e] at hz hc
@@ -389,7 +413,7 @@ theorem uniFinal (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hκ : D.shape
       rfl
     have h1 := hc.2 mc (key _ hmc)
     rwa [(matrixWordVars D.shape).1, (matrixWordVars D.shape).2] at h1
-  · exact hW s x0.2 G (x2.2.headD 0) x3.1.2 (x3.2.headD 0) _
+  · exact hW s x0.2 G (x2.2.headD 0) x3.1.2 (x3.2.headD 0) _ hcf hG hch hvl hzb
       (by rw [length_pointAfter]; simp [roundsOf, hbl])
 
 /-! ## The end theorem with the code-level links in place -/
@@ -403,20 +427,18 @@ verifier's (`batchProd`, `batchTargetOf`); under `WeightMle`, `LayoutVarsSmall`,
 theorem uniKnowledgeSoundness_code {D : Deployment} {κ : ℕ} (hFlock : FlockSound κ)
     (hκ : D.shape.heights.getD opBlake2s 0 = κ) (B : BusModel D κ) (J : UniIdsRest D hFlock B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
-    (hprod : ∀ s c1 ch fd c2 t vals rho lam,
-      J.prod s c1 ch fd c2 t vals rho lam = batchProd D hFlock s c1 ch fd c2 t vals rho lam)
-    (htarget : ∀ s c1 ch fd c2 t vals rho lam,
-      J.target s c1 ch fd c2 t vals rho lam = batchTargetOf D hFlock s ch fd t vals rho lam)
-    (hW : WeightMle D hFlock) (hsmall : LayoutVarsSmall D) (hpend : FlockPendingShaped hFlock)
+    (hbatch : BatchIsVerifiers D hFlock (UniIds.ofBus hFlock B J))
+    (hW : WeightMle D hFlock J.zb) (hsmall : LayoutVarsSmall D) (hpend : FlockPendingShaped hFlock)
+    (hcount : CountsZero D hFlock)
     (hFs : FsLayer D hFlock J.nV J.V (uniCodeAt D hFlock hκ J.nV J.V hnV hV))
     (hB : 4 * B.N + B.ncv ≤ 2 ^ 32)
     (hFl : ∀ j, hFlock.err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
-    (hdeg : J.degSum ≤ 2 ^ 32) (hrel : J.nRel + 2 ≤ 2 ^ 32) :
+    (hdeg : J.degSum + J.degBad ≤ 2 ^ 32) (hrel : J.nRel + 2 ≤ 2 ^ 32) :
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
   uniKnowledgeSoundness_bus hFlock B J (uniCodeAt D hFlock hκ J.nV J.V hnV hV)
-    (uniFinal D hFlock hκ (UniIds.ofBus hFlock B J) hnV hV hprod htarget hW hsmall hpend) hFs hB hFl hdeg
-    hrel
+    (uniFinal D hFlock hκ (UniIds.ofBus hFlock B J) hnV hV hbatch hW hsmall hpend hcount) hFs hB hFl
+    hdeg hrel
 
 end UniSound
