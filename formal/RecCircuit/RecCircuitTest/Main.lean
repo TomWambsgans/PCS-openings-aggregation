@@ -1,5 +1,5 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
-import RecCircuit.Compile
+import RecCircuit.Check
 
 /-!
 # The differential runner: the Lean compiler against the Rust's
@@ -168,7 +168,7 @@ def main (args : List String) : IO UInt32 := do
     | .error e => IO.eprintln s!"parse: {e}"; return 2
     | .ok r =>
       let t0 ← IO.monoMsNow
-      match compileRaw r with
+      match compile r with
       | .error e => IO.eprintln s!"the compiler rejects the graph: {e}"; return 1
       | .ok c =>
         let t1 ← IO.monoMsNow

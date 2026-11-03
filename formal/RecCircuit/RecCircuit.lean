@@ -6,6 +6,7 @@ import RecCircuit.Layout
 import RecCircuit.Templates
 import RecCircuit.Expand
 import RecCircuit.Compile
+import RecCircuit.Check
 
 /-!
 # π2's circuit, formally (`crates/leanvm_rec/src/circuit`)

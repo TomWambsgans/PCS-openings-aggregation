@@ -115,10 +115,15 @@ structure Compiled where
   digests : Array (Option (Array Val))
   /-- Each stream bit's free bit (`none`: not hashed), and each public-input bit's. -/
   bitSelf : Array (Option Val)
+  /-- A first-block stream bit's copy, and each public-input bit's. -/
+  bitCopy : Array (Option Val)
   publicSelf : Array Val
+  publicCopy : Array Val
   /-- The never-hashed reads: offset and their three free limbs. -/
   freeReads : Array (ℕ × Array Val)
   statementLimb : Array Val
+  /-- Each root's four limbs (as its port carries them). -/
+  rootLimbs : Array (Array Val)
   /-- The zero checks' nodes (mapped), the calls' element nodes (by element index). -/
   zero : List ℕ
   elementNodes : Array ℕ
@@ -322,12 +327,14 @@ def compileM (r : Recorded) (g : Array Node) (map : Array ℕ) : BM Compiled := 
   portOf statementLimb .statement
   let mut rootOf : List (ℕ × ℕ) := []
   let mut nRoots := 0
+  let mut rootLimbs : Array (Array Val) := #[]
   for at_ in r.rootsAt do
     need ((List.range 32).all fun i => hashed.getD (at_ + i) false) "a root is hashed"
     let mut rl : Array Val := #[]
     for first in [16, 24, 0, 8] do
       rl := rl.push (← pack (leBits streamBit (at_ + first) 8))
     rootOf := rootOf ++ [(at_, nRoots)]
+    rootLimbs := rootLimbs.push rl
     portOf rl (.root nRoots)
     nRoots := nRoots + 1
   let mut elementNodes : Array ℕ := #[]
@@ -365,8 +372,8 @@ def compileM (r : Recorded) (g : Array Node) (map : Array ℕ) : BM Compiled := 
     portOf ((limbs.getD (elementNodes.getD e 0) none).getD #[]) (.element e)
   modify fun s => { s with calls := circuitCalls }
   let (circuit, view) ← finish
-  return ⟨circuit, view, ← get, g, map, live, limbs, digests, bitSelf, publicSelf, freeReads, statementLimb, zero,
-    elementNodes⟩
+  return ⟨circuit, view, ← get, g, map, live, limbs, digests, bitSelf, bitCopy, publicSelf, publicCopy, freeReads,
+    statementLimb, rootLimbs, zero, elementNodes⟩
 
 end Builder
 

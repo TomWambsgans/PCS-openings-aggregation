@@ -77,13 +77,11 @@ def xor (a b : Val) : BM Val := do
 def PI (i : ℕ) : ℕ := keccakPi i
 
 /-- `χ_(x')` on a χ row's cells, `b_i = c_i + c_(5+i)` (`keccak16::chi`). -/
-def chiB (x : ℕ) : PolyBuilder := Id.run do
-  let (x1, x2) := ((x + 1) % 5, (x + 2) % 5)
-  let mut p := (PolyBuilder.mk []).linear x 1 |>.linear (5 + x) 1 |>.linear x2 1 |>.linear (5 + x2) 1
-  for a in [x1, 5 + x1] do
-    for c in [x2, 5 + x2] do
-      p := p.addQuadratic a c 1
-  return p
+def chiB (x : ℕ) : PolyBuilder :=
+  -- The Rust's loops `for a in [x1, 5 + x1] { for c in [x2, 5 + x2] { add_quadratic(a, c) } }`, unrolled.
+  (((((((((PolyBuilder.mk []).linear x 1).linear (5 + x) 1).linear ((x + 2) % 5) 1).linear (5 + (x + 2) % 5) 1)
+    |>.addQuadratic ((x + 1) % 5) ((x + 2) % 5) 1) |>.addQuadratic ((x + 1) % 5) (5 + (x + 2) % 5) 1)
+    |>.addQuadratic (5 + (x + 1) % 5) ((x + 2) % 5) 1) |>.addQuadratic (5 + (x + 1) % 5) (5 + (x + 2) % 5) 1)
 
 /-- A D unit's slot at `s`: `c_s + c_(s+1)`. -/
 def dUnit (s : ℕ) : Formula := .expr ((PolyBuilder.mk []).linear s 1 |>.linear (s + 1) 1).build
