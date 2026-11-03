@@ -9,6 +9,7 @@ import RecCompose.CallsPure
 import RecCompose.Couplings
 import RecCompose.CompleteCouplings
 import RecCompose.RunShape
+import RecCompose.OpeningsAgree
 
 /-!
 # The end theorems
@@ -70,12 +71,13 @@ theorem recKnowledgeSoundness2_real (D : RecDeployment) (hD : D.Real) (C : Pi2Ci
 /-- **The recursive verifier is knowledge sound end to end**, against leanVM 42422001's relation, at the real
 deployment: `RecKnowledgeSoundness D pi2Bound ε1 εh` for every `ε1`, `εh`, i.e. under `Pi1GraphIsVerifier`,
 `Pi1FsKeccak ε1` and `Pi1HazardKeccak εh`, error `pi2Bound Q + ε1 Q + εh Q`. The couplings are proved
-(`experimentsAgree`, `hazardCoupling`, `pi1Coupling`, `callsPure`) but for `Pi1OpeningsAgree` (π1-rec3's verifier's
-three openings are the contract's, structurally; open). -/
+(`experimentsAgree`, `hazardCoupling`, `pi1Coupling`, `callsPure`, `pi1OpeningsAgree` with `pi1RunShape` and
+`pi1CallsShape_data`) but for `Pi1RunOpenings` (π1-rec3's run's openings are three point claims in order; open). -/
 theorem recKnowledgeSoundness_end (D : RecDeployment) (hD : D.Real) (L : Pi2Layers D pi2Bound)
-    (hagree : Pi1OpeningsAgree D) (ε1 εh : ℕ → ℝ≥0∞) : RecKnowledgeSoundness D pi2Bound ε1 εh :=
+    (hO : Pi1RunOpenings) (ε1 εh : ℕ → ℝ≥0∞) : RecKnowledgeSoundness D pi2Bound ε1 εh :=
   recKnowledgeSoundness_of_part1 (recKnowledgeSoundness2_of_real D hD L).1 (experimentsAgree D) (hazardCoupling D)
-    (pi1Coupling D (callsPure D) hagree) ε1 εh
+    (pi1Coupling D (callsPure D)
+      (pi1OpeningsAgree D hD.2.2.1 pi1RunShape hO (pi1CallsShape_data D hD.2.1))) ε1 εh
 
 /-- **The end theorem from π2's named inputs**: `recKnowledgeSoundness_end` with π2's layers assembled from the compiled
 circuit, its facts, the tables' layer, π2's Fiat–Shamir layer and the bridge from RecCircuit's end theorem. -/
@@ -83,8 +85,8 @@ theorem recKnowledgeSoundness_end_real (D : RecDeployment) (hD : D.Real) (C : Pi
     (T : Pi2Tables D C) (hfs : Pi2FsLayer D) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
     (_hroot : Pi1RootWordOk)
     (hb : CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream))
-    (hagree : Pi1OpeningsAgree D) (ε1 εh : ℕ → ℝ≥0∞) : RecKnowledgeSoundness D pi2Bound ε1 εh :=
-  recKnowledgeSoundness_end D hD (pi2Layers_of C Fa T hfs (pi2CircuitAccepts_of_bridge C Fa hroots hg hb)) hagree
+    (hO : Pi1RunOpenings) (ε1 εh : ℕ → ℝ≥0∞) : RecKnowledgeSoundness D pi2Bound ε1 εh :=
+  recKnowledgeSoundness_end D hD (pi2Layers_of C Fa T hfs (pi2CircuitAccepts_of_bridge C Fa hroots hg hb)) hO
     ε1 εh
 
 /-- **The recursive verifier is complete end to end**, for π1-rec3's prover then π2's: `RecCompleteness D P1 P2 δ1 δh
