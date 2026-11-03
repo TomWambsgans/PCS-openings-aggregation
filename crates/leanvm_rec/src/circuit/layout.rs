@@ -119,6 +119,12 @@ pub struct Stats {
     /// Positions by kind: forwards placed, slots (ends), free-end slots, dead or unplaced, ports.
     pub forwards_placed: usize,
     pub forwards_unplaced: usize,
+    /// Rows in blocks, padding included.
+    pub rows_in_blocks: usize,
+    /// The verifier's formulas: over every (region, role) with a selector, its terms (linear + quadratic), and its
+    /// products.
+    pub formula_terms: usize,
+    pub formula_products: usize,
 }
 
 impl Stats {
@@ -350,7 +356,10 @@ impl Builder {
             match self.formula(row, role) {
                 Formula::Forward => forwards[v as usize].push(p as u32),
                 Formula::Expr(_) => {
-                    assert_ne!(self.producer[v as usize], FREE, "free value {v} placed at slot ({row}, {role})");
+                    assert_ne!(
+                        self.producer[v as usize], FREE,
+                        "free value {v} placed at slot ({row}, {role})"
+                    );
                     assert_eq!(
                         slot_end[v as usize], NONE,
                         "value {v} placed at two slots (the second at ({row}, {role}))"
@@ -446,8 +455,9 @@ impl Builder {
         for &r in &self.row_region {
             count[r as usize] += 1;
         }
+        let padded = pad_counts(&count, &self.regions, self.log_width);
         let mut wanted: Vec<(u8, u16)> = Vec::new();
-        for (r, &c) in count.iter().enumerate() {
+        for (r, &c) in padded.iter().enumerate() {
             for bit in 0..usize::BITS as u8 {
                 if c >> bit & 1 == 1 {
                     wanted.push((bit, r as u16));
@@ -507,8 +517,7 @@ impl Builder {
         let mut free_ends: Vec<u32> = Vec::new();
         for p in 0..rows * w {
             let (row, role) = ((p / w) as u32, p % w);
-            if matches!(self.formula(row, role), Formula::Expr(_)) && self.cell[p] == NONE && self.produced[p] != NONE
-            {
+            if matches!(self.formula(row, role), Formula::Expr(_)) && self.cell[p] == NONE && self.produced[p] != NONE {
                 free_ends.push(p as u32);
             }
         }
@@ -602,6 +611,20 @@ impl Builder {
             calls: std::mem::take(&mut self.calls),
         };
         stats.pairs = circuit.pairs().len();
+        stats.rows_in_blocks = padded.iter().sum();
+        let used: std::collections::BTreeSet<u16> = circuit.blocks.iter().map(|b| b.region).collect();
+        for &r in &used {
+            for f in &circuit.regions[r as usize].roles {
+                match f {
+                    Formula::Forward => {}
+                    Formula::Expr(p) => {
+                        stats.formula_terms += p.linear.len() + p.quadratic.len();
+                        stats.formula_products += p.quadratic.len();
+                    }
+                    Formula::Port(l) => stats.formula_terms += l.len(),
+                }
+            }
+        }
         Finished {
             circuit,
             witness,
@@ -610,6 +633,58 @@ impl Builder {
             row_map,
         }
     }
+}
+
+/// The smallest count `≥ c` with at most `k` binary digits.
+pub fn pad(c: usize, k: u32) -> usize {
+    if c.count_ones() <= k {
+        return c;
+    }
+    let mut kept = 0usize;
+    let mut low = 0usize;
+    for bit in (0..usize::BITS).rev() {
+        if c >> bit & 1 == 1 && kept.count_ones() < k {
+            kept |= 1 << bit;
+            low = 1 << bit;
+        }
+    }
+    kept + low
+}
+
+/// Each region's rows padded with empty rows to fewer blocks (fewer selector pairs), within the `2^L` rows the
+/// unpadded layout needs: greedily, the region whose next binary digit saves the most rows per added pair. Port
+/// regions are not padded (their rows are the holes).
+pub fn pad_counts(count: &[usize], regions: &[Region], _log_width: u8) -> Vec<usize> {
+    let total: usize = count.iter().sum();
+    let budget = total.max(1).next_power_of_two();
+    let roles: Vec<usize> = regions
+        .iter()
+        .map(|r| r.roles.iter().filter(|f| **f != Formula::Forward).count())
+        .collect();
+    let port = |r: usize| regions[r].roles.iter().any(|f| matches!(f, Formula::Port(_)));
+    let mut k: Vec<u32> = count
+        .iter()
+        .enumerate()
+        .map(|(r, &c)| {
+            if port(r) || roles[r] == 0 {
+                c.count_ones()
+            } else {
+                c.count_ones().min(1)
+            }
+        })
+        .collect();
+    let rows = |k: &[u32]| -> usize { count.iter().zip(k).map(|(&c, &k)| pad(c, k)).sum() };
+    while rows(&k) > budget {
+        let best = (0..count.len())
+            .filter(|&r| k[r] < count[r].count_ones())
+            .max_by(|&a, &b| {
+                let gain = |r: usize| (pad(count[r], k[r]) - pad(count[r], k[r] + 1)) as f64 / roles[r].max(1) as f64;
+                gain(a).total_cmp(&gain(b))
+            })
+            .expect("the unpadded layout fits");
+        k[best] += 1;
+    }
+    count.iter().zip(&k).map(|(&c, &k)| pad(c, k)).collect()
 }
 
 /// Units of `size` consecutive roles, packed `per_row` to a row of one region: the next free unit.

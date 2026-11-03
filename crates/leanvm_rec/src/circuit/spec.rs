@@ -234,11 +234,23 @@ pub struct Circuit {
 pub enum Failure {
     Shape(String),
     /// Position `i`'s push `P_i` is not its target `σ_i`'s pull.
-    Push { position: u32, target: u32, push: K, pull: K },
+    Push {
+        position: u32,
+        target: u32,
+        push: K,
+        pull: K,
+    },
     /// A hole's pull is not zero.
-    Hole { position: u32 },
+    Hole {
+        position: u32,
+    },
     /// Port `J`'s limb `l` is not the public one.
-    Public { port: u32, limb: u32, circuit: K, public: K },
+    Public {
+        port: u32,
+        limb: u32,
+        circuit: K,
+        public: K,
+    },
 }
 
 impl Circuit {
@@ -324,7 +336,10 @@ impl Circuit {
 
     /// The public fingerprints `F_J`.
     pub fn public_fingerprints(&self, public: &PublicInputs, gamma: E) -> Vec<E> {
-        self.public_limbs(public).iter().map(|l| fingerprint(l, gamma)).collect()
+        self.public_limbs(public)
+            .iter()
+            .map(|l| fingerprint(l, gamma))
+            .collect()
     }
 
     /// `π1`'s `PCS_OPEN` inputs from the public inputs.
@@ -444,7 +459,11 @@ impl Circuit {
                 unreachable!()
             };
             if limbs.len() != p.source.limbs() {
-                return bad(format!("port {j} has {} limbs, its source {}", limbs.len(), p.source.limbs()));
+                return bad(format!(
+                    "port {j} has {} limbs, its source {}",
+                    limbs.len(),
+                    p.source.limbs()
+                ));
             }
         }
         let mut hit = vec![false; n + self.ports.len()];
@@ -454,7 +473,13 @@ impl Circuit {
             if s >= n + self.ports.len() || (s >= n) != expected_outside {
                 return bad(format!("σ({i}) = {s} is out of range or not its port's tag"));
             }
-            if expected_outside && s != n + self.ports.iter().position(|p| p.position as usize == i).expect("a port") {
+            if expected_outside
+                && s != n + self
+                    .ports
+                    .iter()
+                    .position(|p| p.position as usize == i)
+                    .expect("a port")
+            {
                 return bad(format!("σ({i}) = {s} is not its port's tag"));
             }
             if std::mem::replace(&mut hit[s], true) {

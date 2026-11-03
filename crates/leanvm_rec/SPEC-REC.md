@@ -2,8 +2,10 @@
 
 # Recursion: an EVM verifier for leanVM 42422001 near 100K gas
 
-**Status: milestone R1 done (measure, size, specify); R2 step 1 done (π1-rec in code, §1.4, §7).** Branch `leanvm-rec`,
-from `leanvm-univariate` @ 29d3095; π1-rec on `leanvm-rec-pi1`.
+**Status: milestone R1 done (measure, size, specify); R2 step 1 done (π1-rec in code, §1.4, §7); R2 steps 2–6 done
+(π2's circuit compiled and its witness on the real proofs, §10: D16v × π1-rec is `2^24` positions, 85.7% used).**
+Branch `leanvm-rec`, from `leanvm-univariate` @ 29d3095; π1-rec on `leanvm-rec-pi1`; π2's circuit on
+`leanvm-rec-circuit`.
 No Lean for now (the user's instruction: no proofs until the gas is close to 100K). Every number is marked:
 
 - **measured**: by `crates/leanvm_rec`'s tests on h1, or by the univariate crate's revm runs;
@@ -414,6 +416,9 @@ That is 57 elements and 13 zero checks.
 `F_J = c₀ + γc₁ + γ²c₂` there (`+ γ³c₃` for a root's or the public input's fourth limb), and the verifier adds `1/(α + F_J + βτ_J)` to the sum's target. That is 70 fractions
 in one batched inversion.
 
+**Measured (§10.4, 2–3):** the row counts need not be public (67 fractions), and the ports' positions are holes of `σ`
+(nothing pushes to them), whose pulls (0) are in the target too: 3 coset sums.
+
 **Not the alternative.** `crates/quotient` adds the public weight inside `h`'s identity: `(h + weight·w)·d·d'`. Here
 that would raise `q` to `5N` (an `18N`-word table, `2^28.17`). The outside tags keep the identity at `5N`.
 
@@ -660,7 +665,150 @@ adds 9 claims' worth.
   - π1-rec's real proof and its gas (§1.4);
   - `crates/quotient`'s rows and words (§2.1);
   - today's gas (`crates/leanvm_univariate`, SPEC.md §13).
-- **Modelled:** everything about π2:
-  - its positions, words, values, soundness and gas;
+  - π2's circuit, its witness on the real proofs and its counts (§10);
+- **Modelled:** everything else about π2:
+  - its words, values, soundness and gas;
   - π1-rec's soundness;
   - the prover's cost.
+
+## 10. R2: π2's circuit, measured (steps 2–6)
+
+Branch `leanvm-rec-circuit`, `crates/leanvm_rec/src/circuit/`. Measured on h1 by `tests/circuit.rs`, on the real
+1,000-signature proofs: π1-rec's `main_line_rec`, and the main line's `main_line`.
+
+```sh
+cargo test --release -p leanvm_rec --test circuit -- --nocapture --test-threads 1   # 4 configurations, about 190 s
+cargo test --release -p leanvm_rec --lib                                           # templates, packings, spec
+```
+
+### 10.1 What exists
+
+| module | what |
+|---|---|
+| `spec.rs` | **the PIOP's interface** (committed first, `adb3e6f`): rows of `W = 2^log_width` positions; region blocks of `W` role formulas (`Forward`, `Expr`: degree ≤ 2, `K` coefficients, no constant term; `Port`: `Σ γ^l` limbs); `σ` as tag indices (a position, or `N + J` for port `J`); `κ` sparse; the ports and their `Source`s; `π1`'s call words. `Circuit::check` checks every pull against its push, the holes and the public limbs; `example()` is a toy for the PIOP's tests |
+| `layout.rs` | the framework: values placed at cells, `σ` derived, the invariant checked, blocks placed and padded, the witness |
+| `keccak.rs` | D32v's Keccak-f; Keccak-256's sponge (padding, later blocks by XOR units, the digest); constants |
+| `keccak16.rs` | D16v's Keccak-f (`k0`, `k1`, `kd`, `kprep`) |
+| `units.rs` | free bits, packings, `E` units, ports |
+| `compile.rs` | `Recorded` → circuit and witness; `pi2(recorded, Layout::D16v / D32v, inputs)` |
+
+### 10.2 The tests (all pass)
+
+- **The templates on random inputs** (lib): Keccak-256 of 9 messages (0–300 bytes, multi-block) in each layout.
+  - Every pull equals its push, and the digests are `revm`'s `keccak256`.
+  - 20 changed words at wired positions are each caught.
+  - Packings of 1- to 64-bit words, sparse ones included, are their words.
+  - D16v measures 8,184 rows a permutation.
+- **The real proofs** (`tests/circuit.rs`, each of π1-rec and the main line, in each layout):
+  - `Circuit::check` holds: every pull equals its push, the holes are 0, every port's limbs are the public ones.
+  - The circuit's calls on its public inputs are exactly the vector's 5 `PCS_OPEN` inputs, and the public inputs read
+    back from them are the circuit's.
+  - Every Keccak-256 digest (80; 104 on the main line) and every live element's limbs (12,545) equal
+    `eval::evaluate`'s.
+  - Mutations are caught:
+    - a changed statement byte, element limb or root byte (`Failure::Public`);
+    - 30 changed witness words at wired positions;
+    - a flipped stream byte: its witness, which holds the formulas, gives other public limbs. `σ` and `κ` do not
+      change: the circuit depends on the recorded graph only.
+  - The counts are asserted: `N`, the fill's bounds, Keccak-f's positions a permutation, at most two blocks a region.
+
+### 10.3 The counts (measured)
+
+| | **π1-rec, D16v** | π1-rec, D32v | main line, D16v | **main line, D32v** |
+|---|---:|---:|---:|---:|
+| `N` | **`2^24`** | `2^23` | `2^25` | **`2^23`** |
+| positions used | **14,370,656 (85.7%)** | 5,810,496 (69.3%) | 17,518,080 (52.2%) | 7,044,160 (84.0%) |
+| Keccak-f (positions a permutation × permutations) | 130,944 × 107 | 51,200 × 107 | 130,944 × 131 | 51,200 × 131 |
+| the rest | 359,648 | 332,096 | 364,416 | 336,960 |
+| rows used / in blocks (padding) / `N/W` | 898,166 / 986,179 / 1,048,576 | 181,578 / 196,035 / 262,144 | | |
+| `Q = 15N` (SPEC's `h` and `q`) | **`2^27.91` ≤ `2^28`** | `2^26.91` | `2^28.91` ✗ | `2^26.91` |
+| regions / blocks / **selector pairs** | 14 / 18 / **120** | 14 / 16 / 267 | 14 / 15 / 85 | 14 / 16 / 267 |
+| the verifier's formulas: terms / products | 322 / 124 | 1,240 / 312 | 322 / 124 | 1,240 / 312 |
+| ports (fractions) / hole cosets | 67 / 3 | 67 / 3 | 67 / 3 | 67 / 3 |
+
+The rest, π1-rec in D16v:
+
+| part | positions |
+|---|---:|
+| free bits: 55,872 a self-loop and a copy (the stream's 6,952 hashed bytes, the public input) | 111,744 |
+| `E` units (products 2,275 rows, sums 2,212, forwarded 2,682) | 114,704 |
+| packings (`pack` 4,452 rows, `pack-top4` 373) | 77,200 |
+| later blocks' XORs | 54,928 |
+| ports | 1,072 |
+
+SPEC §2.4.5 modelled 14.35M positions (86%) for D16v × π1-rec; measured, 14.37M (85.7%). **Decision: D16v × π1-rec**
+is π2's layout. It fits `2^24` with 2.4M positions (14%) to spare, and `Q` is 6% under `2^28`. **D32v** is measured as
+the fallback: it fits `2^23` on either π1, π1-rec at 69% and the main line at 84%. D16v on the main line needs `2^25`,
+whose `Q` exceeds `2^28`.
+
+**What D32v costs the verifier.** D32v's Keccak rows have 25–30 expression roles. Each is a formula of about 19 terms,
+evaluated at `t` on the row's cells permuted by its role (`v_(k⊕c)`), so it shares nothing across roles. That gives
+1,240 formula terms and 267 selector pairs, against D16v's 322 and 120. With about 6 operations a pair, D32v's push
+side is roughly 2,850 operations, against D16v's 1,040. At 13.85 gas an operation that is about 25K gas more, beyond
+§6's model.
+
+### 10.4 Decisions and deviations from §2.3–§2.6
+
+1. **The balancing is automatic.** Each value is placed at its readers: forwards, and at most one expression slot
+   (its end).
+   - A value with no slot placement ends at a **free end**: a slot whose pull nothing places and no formula of its
+     row reads.
+   - A slot whose push nothing asks for, but whose pull is placed, pushes **junk**.
+   - Every non-port slot produces one value and every placed slot ends one. So the values without an end and the
+     free ends are equally many, and any matching closes every chain.
+   - Examples: the last call's unused lanes, round 23's `C_24`, and bits read only by forwards.
+   - A slot with neither a placed pull nor a requested push is **dead**: a self-loop of 0, and its formula must
+     vanish on its row.
+   - The invariant, checked by `Builder::finish`:
+     - a value is placed at most at one slot, and a free value at none;
+     - every cell a live formula reads is placed (an end is read by its row; nothing live reads a free end or an
+       unplaced forward);
+     - every placed cell is read by some formula of its row.
+2. **The public side has holes (a correction to §2.4.6).**
+   - A push to an outside tag leaves its position's tag unpushed: `σ` has as many holes as ports, and their pulls
+     must be in the target too.
+   - The holes are the ports' own positions, with pull 0. A port is the last role of a port row, and the port rows
+     are blocks, so the holes are cosets.
+   - The target is `Σ_J 1/D(F_J, τ_J) + Σ_holes 1/D(0, ω_h)`. Each coset's sum is `Z_U'/(β·Z_U(α/β + c))`, a short
+     linearized recursion; there are 3 cosets.
+3. **The row counts are not public.** They are stream bytes hashed by π1's transcript, and nothing on chain reads
+   them.
+   - The ports: the statement (4 limbs), the 2 roots (4 limbs), the calls' 51 distinct elements and the 13 zero
+     checks (3 limbs). That is 67 fractions instead of 70.
+   - The calls' constant words stay constants.
+4. **ι by `κ`:** `κ` is allowed at any expression slot, and the formulas have no constant term.
+   - D16v: no `K0a/K0b` split; `κ = RC_j[z]` at `k0` roles 0 and 5.
+   - D32v: at the 7 roles whose push holds `A[0,0]`.
+5. **D16v's Keccak-f is 130,944 positions a permutation** (SPEC: 130,736).
+   - `kprep` is 160 rows: two `C_0` units of 5 forwards and a sum, and two D units. The input ends at round 0's χ
+     slot, so its `kprep` reads are forwards.
+   - `kd` is 344 rows, with the D units drawn from a pool (`k0`'s, `kprep`'s, then `kd`'s).
+   - Every round's rows are made first.
+6. **Constants live in the Keccak rows' spare roles**: D16v's `k1` role 15; D32v's roles 30–31 and the last round's
+   25–31. A spare is an expression slot pushing 0, dead when unused. So there is no constants region.
+7. **D32v's rounds:** `prep` (θ of the input), and `prep-first` for a first block, whose capacity lanes are not
+   read. Then 23 `round`s (χ, ι, the next θ), and `last` (χ and ι only).
+8. **`E` units:**
+   - The operand that ends at the unit is the one with fewer uses left.
+   - A unit where neither operand can end (each ends once) forwards both and has three more slots: 9 positions
+     instead of 6.
+   - Squares are products with `b = a`.
+   - The limbs of a statement word, integer or bit field are fresh zero constants beyond the low one.
+9. **Packings** are Horner by 15-bit windows from the top: `pack` is `acc·x^15 + Σ b_i x^i`, and `pack-top4` is a
+   64-bit limb's top 4 bits. Absent bits read a shared zero, and a wider top window starts from a fresh zero. This
+   replaces §2.4.3's five row types by offset.
+10. **Free bits:** every bit is a self-loop with a copy (one region). A bit at a first block's slot uses the copy;
+    the others leave it junk.
+11. **Reads never hashed** (the batch's 5 end values, 15 limbs) are **free values**: cycles of forwards, any word,
+    bound by the ports.
+12. **Blocks are padded.** Each region's rows are padded with empty rows to one or two binary digits, within the `N`
+    the unpadded layout needs, taking first the region whose next digit saves the most rows a pair. Port regions are
+    not padded. With 6, 8 and 10, the pairs fall from 756 to 120 (D16v) and from 1,678 to 267 (D32v).
+13. **The witness generator evaluates the circuit's own formulas**, from the free inputs (bits, never-hashed limbs).
+    `eval::evaluate` is the reference it is checked against (every digest and element), rather than its source.
+
+### 10.5 For R3
+
+- The PIOP builds on `spec.rs`: `pi2(recorded, Layout::D16v, inputs)` gives the circuit, the witness and the public
+  inputs. `σ` and `κ` depend on the graph only.
+- The verifier's push side is 120 selector pairs and 322 formula terms, plus 67 public fractions and 3 hole cosets.

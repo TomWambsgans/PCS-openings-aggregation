@@ -64,13 +64,19 @@ pub(super) fn check_keccak<P: Permutation>(log_width: u8, make: impl FnOnce(&mut
         .map(|&len| (0..len).map(|_| xorshift(&mut seed) as u8).collect())
         .collect();
     let (f, digests) = hash_all(log_width, make, &messages);
-    assert_eq!(f.circuit.check(&f.witness, &no_public()), Ok(()), "every pull equals its push");
+    assert_eq!(
+        f.circuit.check(&f.witness, &no_public()),
+        Ok(()),
+        "every pull equals its push"
+    );
     for (m, d) in messages.iter().zip(&digests) {
         assert_eq!(digest_bytes(&f, d), keccak256(m), "the digest of {} bytes", m.len());
     }
     println!("{:?}", f.stats);
     // A changed word at any wired position (not a self-loop no formula reads) is caught.
-    let wired: Vec<usize> = (0..f.stats.positions_used).filter(|&i| f.circuit.sigma[i] as usize != i).collect();
+    let wired: Vec<usize> = (0..f.stats.positions_used)
+        .filter(|&i| f.circuit.sigma[i] as usize != i)
+        .collect();
     for k in 0..20 {
         let mut w = f.witness.clone();
         let i = wired[(xorshift(&mut seed) as usize) % wired.len()];
@@ -100,7 +106,7 @@ fn packings_are_the_words() {
     let mut seed = 7u64;
     for log_width in [4u8, 5] {
         let mut b = Builder::new(log_width);
-        let mut consts = super::keccak::Constants::new(&mut b);
+        let mut consts = super::keccak::Constants::new();
         let mut bools = Bools::new(&mut b);
         let mut packer = Packer::new(&mut b);
         let mut expected = Vec::new();
@@ -129,9 +135,8 @@ fn d16_keccak256_on_random_inputs() {
     check_keccak(4, D16::new);
 }
 
-/// D16v's rows a permutation (SPEC-REC.md §2.4.1): 1,536 `k0`, 6,144 `k1`, 160 `kprep`, and `kd` for the D units the
-/// `k0` and `kprep` rows lack: 368 for the first permutation (round 23's 192 `k0` units are left over), 344 in the
-/// steady state. So 8,184 rows, 130,944 positions.
+/// D16v's rows a permutation (SPEC-REC.md §2.4.1): 1,536 `k0`, 6,144 `k1`, 160 `kprep`, and 344 `kd` for the D units
+/// the `k0` and `kprep` rows lack. So 8,184 rows, 130,944 positions.
 #[test]
 fn d16_rows_a_permutation() {
     let perms = 4;
@@ -141,10 +146,10 @@ fn d16_rows_a_permutation() {
     assert_eq!(rows("keccak16/k0"), 1536 * perms);
     assert_eq!(rows("keccak16/k1"), 6144 * perms);
     assert_eq!(rows("keccak16/kprep"), 160 * perms);
-    assert_eq!(rows("keccak16/kd"), 368 + 344 * (perms - 1));
+    assert_eq!(rows("keccak16/kd"), 344 * perms);
     let steady = 1536 + 6144 + 160 + 344;
     assert_eq!((steady, 16 * steady), (8184, 130_944));
-    // The first block's capacity: 512 known zeros a permutation, one fresh constant each (32 rows of 16).
-    assert!(rows("const") >= 32 * perms);
+    // The constants (padding, the first block's capacity) are in `k1`'s spare role: no rows of their own.
+    assert_eq!(rows("const"), 0);
     println!("{:?}", f.stats);
 }

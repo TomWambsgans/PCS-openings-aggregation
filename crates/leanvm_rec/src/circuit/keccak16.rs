@@ -11,15 +11,15 @@
 //! | region | rows a round | roles |
 //! |---|---:|---|
 //! | `k0` (plane 0) | 64 | 0–4: `A_j[x', 0] = χ_(x')` (+`RC` by `κ` at role 0); 5–9: `P_0[x'] = χ_(x')` (+`RC` at 5), the `D_j` cells ending here; 10–15: three D units |
-//! | `k1` (planes 1–4) | 256 | 0–4: `A_j[x', y'] = χ_(x')`; 5–9: forwards of `D_j`; 10–14: `P_(y') = P_(y'−1) + χ_(x')`, ending `P_(y'−1)`; 15: unused |
+//! | `k1` (planes 1–4) | 256 | 0–4: `A_j[x', y'] = χ_(x')`; 5–9: forwards of `D_j`; 10–14: `P_(y') = P_(y'−1) + χ_(x')`, ending `P_(y'−1)`; 15: a spare slot (a constant, or dead) |
 //! | `kd` | 344 a permutation | eight D units |
 //! | `kprep` | 160 a permutation | two `C_0` units (5 forwards of the input's column, a slot pushing their sum, its pull a free end); two D units |
 //!
 //! A **D unit** (2 roles): a slot pulling `C[x−1][z]` (its end) and pushing `D[x][z] = C[x−1][z] + C[x+1][z−1]`, and a
 //! forward of `C[x+1][z−1]`. `C_(j+1) = P_4` of round `j`, `C_0` is `kprep`'s. D units come from a pool kept across
-//! permutations: the `k0` rows' as they are made, `kprep`'s, then new `kd` rows. Round 23's `P_4` is junk (the
-//! framework ends it at free ends). A known-zero input (`None`, the first block's capacity) is a fresh constant 0:
-//! the round-0 χ slot ends it, a `kprep` forward reads it.
+//! permutations: the `k0` rows' (all made first), `kprep`'s, then new `kd` rows. Round 23's `P_4` is junk (the
+//! framework ends it at free ends). A constant input bit (the first block's padding and capacity) is a fresh constant,
+//! in a `k1` row's spare role 15: the round-0 χ slot ends it, a `kprep` forward reads it.
 //!
 //! The chains balance: `A_(j−1)` ends at its χ row (fan-out 1, the partial sums recompute χ where it is produced);
 //! `D_j[x][z]` feeds the 5 lanes `(x, y)`, whose planes `2x + 3y` are distinct, so it is forwarded through four `k1`
@@ -31,7 +31,7 @@ use std::collections::VecDeque;
 
 use leanvm_flock_gas::field::K;
 
-use super::keccak::{Constants, PI, Permutation, RC, RHO};
+use super::keccak::{Bit, Constants, PI, Permutation, RC, RHO, spare};
 use super::layout::{Builder, PolyBuilder, Value, forwards};
 use super::spec::Formula;
 
@@ -43,7 +43,6 @@ pub struct D16 {
     kprep: u16,
     /// Free D units: `(row, slot role)`, the forward at the next role.
     pool: VecDeque<(u32, usize)>,
-    constants: Option<Constants>,
 }
 
 /// `χ_(x')` on a χ row's cells: `b_i = c_i + c_(5+i)`.
@@ -85,6 +84,7 @@ impl D16 {
             p.add_linear(10 + x, 1);
             k1[10 + x] = Formula::Expr(p.build());
         }
+        k1[15] = spare();
         let mut kd = forwards(16);
         for u in 0..8 {
             kd[2 * u] = d_unit(2 * u);
@@ -106,8 +106,20 @@ impl D16 {
             kd: b.region("keccak16/kd", kd),
             kprep: b.region("keccak16/kprep", kprep),
             pool: VecDeque::new(),
-            constants: None,
         }
+    }
+
+    /// A round's rows: 64 `k0` (their D units to the pool), 4 × 64 `k1` (their spare role to the constants).
+    fn round_rows(&mut self, b: &mut Builder, constants: &mut Constants) -> (Vec<u32>, Vec<Vec<u32>>) {
+        let k0: Vec<u32> = (0..64).map(|_| b.row(self.k0)).collect();
+        let k1: Vec<Vec<u32>> = (1..5).map(|_| (0..64).map(|_| b.row(self.k1)).collect()).collect();
+        for &row in &k0 {
+            self.pool.extend((0..3).map(|u| (row, 10 + 2 * u)));
+        }
+        for &row in k1.iter().flatten() {
+            constants.offer(row, 15);
+        }
+        (k0, k1)
     }
 
     /// `D[x][z] = C[x−1][z] + C[x+1][z−1]` for every `(x, z)`, in units from the pool.
@@ -133,13 +145,18 @@ impl D16 {
 }
 
 impl Permutation for D16 {
-    fn permute(&mut self, b: &mut Builder, input: &[Option<Value>]) -> Vec<Value> {
+    fn permute(&mut self, b: &mut Builder, constants: &mut Constants, input: &[Bit]) -> Vec<Value> {
         assert_eq!(input.len(), 1600);
+        // Every round's rows first: their k1 rows' spare role 15 holds the input's constants, their k0 rows' D units
+        // are in the pool from the start.
+        let mut rounds: Vec<(Vec<u32>, Vec<Vec<u32>>)> = (0..24).map(|_| self.round_rows(b, constants)).collect();
+        rounds.reverse();
         let mut a: Vec<Value> = input
             .iter()
-            .map(|v| match *v {
-                Some(v) => v,
-                None => self.constants.get_or_insert_with(|| Constants::new(b)).fresh(b, K(0)),
+            .map(|&x| match x {
+                Bit::V(v) => v,
+                Bit::Zero => constants.fresh(b, K(0)),
+                Bit::One => constants.fresh(b, K(1)),
             })
             .collect();
 
@@ -162,11 +179,7 @@ impl Permutation for D16 {
 
         // Where lane `l`'s bit `z` is read: plane `π(l) / 5`, cell `π(l) mod 5`, slice `z + ρ_l`.
         for (j, &rc) in RC.iter().enumerate() {
-            let k0: Vec<u32> = (0..64).map(|_| b.row(self.k0)).collect();
-            let k1: Vec<Vec<u32>> = (1..5).map(|_| (0..64).map(|_| b.row(self.k1)).collect()).collect();
-            for &row in &k0 {
-                self.pool.extend((0..3).map(|u| (row, 10 + 2 * u)));
-            }
+            let (k0, k1) = rounds.pop().expect("a round's rows");
             let row_of = |plane: usize, z: usize| if plane == 0 { k0[z] } else { k1[plane - 1][z] };
             for l in 0..25 {
                 let (xp, yp) = (PI[l] % 5, PI[l] / 5);

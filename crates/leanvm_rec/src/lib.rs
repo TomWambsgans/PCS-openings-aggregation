@@ -1,6 +1,6 @@
 // Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
-//! Recursion for the univariate leanVM 42422001 verifier (`SPEC-REC.md`), milestone R1: what the outer proof `π2`
-//! must prove, measured on the inner verifier's recorded graph.
+//! Recursion for the univariate leanVM 42422001 verifier (`SPEC-REC.md`): what the outer proof `π2` must prove,
+//! measured on the inner verifier's recorded graph (milestone R1), and `π2`'s circuit compiled from it (R2).
 //!
 //! `π1` is `crates/leanvm_univariate`'s proof. Its verifier, run on the recorder's symbol, is a graph
 //! (`leanvm_flock_gas::evm::record`): the stream's reads, the Keccak-256 chain, `E`'s additions and products, the
@@ -11,6 +11,8 @@
 //! - [`eval`]: the graph evaluated on a real proof's calldata, every node's value: the witness `π2`'s prover starts
 //!   from, checked against the recorded `PCS_OPEN` inputs of the committed test vectors (π1-rec's among them).
 //! - [`fs`]: `π1`'s Fiat–Shamir shapes, the graph `π1-rec` (`leanvm_univariate::FLOCK_REC`) must record.
+//! - [`circuit`]: `π2`'s circuit (D16v or D32v) and its witness, compiled from the graph; `circuit::spec` is the
+//!   PIOP's interface (SPEC-REC.md §10).
 
 #![forbid(unsafe_code)]
 
