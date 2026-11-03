@@ -178,8 +178,6 @@ fn sccs(d: &Deps) -> (Vec<u32>, usize) {
 enum Kind {
     /// No cycle: determined by what it reads.
     Determined,
-    /// A hole read by something.
-    Hole,
     /// A cycle of forwards (any word).
     FreeValue(usize),
     /// One `b²` slot on a cycle of forwards (a bit).
@@ -194,7 +192,15 @@ fn review_free_inputs() {
     deep(|| {
         let layout = layout_of_env();
         let (v, recorded, iv, stream) = setup("main_line_rec");
-        let c = pi2(&recorded, layout, &Inputs { iv, public: v.public, stream: &stream });
+        let c = pi2(
+            &recorded,
+            layout,
+            &Inputs {
+                iv,
+                public: v.public,
+                stream: &stream,
+            },
+        );
         let circuit = &c.finished.circuit;
         let (n, w) = (circuit.n(), circuit.width());
         let row_regions = circuit.row_regions();
@@ -217,7 +223,11 @@ fn review_free_inputs() {
         }
         let name_of = |p: u32| -> (String, usize) {
             let r = row_regions[p as usize / w];
-            let region = if r == u16::MAX { "(none)".to_string() } else { circuit.regions[r as usize].name.clone() };
+            let region = if r == u16::MAX {
+                "(none)".to_string()
+            } else {
+                circuit.regions[r as usize].name.clone()
+            };
             (region, p as usize % w)
         };
         let classify = |k: usize| -> Kind {
@@ -262,25 +272,36 @@ fn review_free_inputs() {
                 Kind::FreeValue(s) => format!("free value (cycle of {s})"),
                 Kind::Bit => "bit".into(),
                 Kind::Other(e) => format!("other {e:?}"),
-                Kind::Hole => unreachable!(),
             };
             *overall.entry(key).or_default() += 1;
             kinds[k] = Some(kind);
         }
-        println!("{layout:?}: N = 2^{}, {comps} components; cyclic ones overall:", circuit.log_n);
+        println!(
+            "{layout:?}: N = 2^{}, {comps} components; cyclic ones overall:",
+            circuit.log_n
+        );
         let mut sorted: Vec<(&String, &usize)> = overall.iter().collect();
         sorted.sort_by(|a, b| b.1.cmp(a.1));
-        let others: usize = sorted.iter().filter(|(k, _)| k.starts_with("other")).map(|(_, c)| **c).sum();
+        let others: usize = sorted
+            .iter()
+            .filter(|(k, _)| k.starts_with("other"))
+            .map(|(_, c)| **c)
+            .sum();
         for (k, count) in sorted.iter().take(25) {
             println!("  {count:>8}  {k}");
         }
-        println!("  ({others} 'other' components, in {} kinds)", sorted.iter().filter(|(k, _)| k.starts_with("other")).count());
+        println!(
+            "  ({others} 'other' components, in {} kinds)",
+            sorted.iter().filter(|(k, _)| k.starts_with("other")).count()
+        );
 
         // The ports' backward closure.
         let mut relevant = vec![false; n];
         let mut todo: Vec<u32> = Vec::new();
         for p in &circuit.ports {
-            let Formula::Port(limbs) = circuit.formula(&row_regions, p.position as usize) else { unreachable!() };
+            let Formula::Port(limbs) = circuit.formula(&row_regions, p.position as usize) else {
+                unreachable!()
+            };
             let row = p.position as usize & !(w - 1);
             for &l in limbs {
                 let cell = (row + l as usize) as u32;
@@ -323,7 +344,7 @@ fn review_free_inputs() {
                     bad.push(format!("component {k}: {e:?}"));
                     format!("other {e:?}")
                 }
-                Some(Kind::Determined | Kind::Hole) => unreachable!(),
+                Some(Kind::Determined) => unreachable!(),
             };
             *in_closure.entry(key).or_default() += 1;
         }
@@ -335,14 +356,24 @@ fn review_free_inputs() {
         println!("  holes read: {holes_read}");
         println!(
             "compiler's counts: free bits {:?} (alone, with a copy), free values {}, stream {} B",
-            c.free_bits, c.finished.stats.free_values, stream.len()
+            c.free_bits,
+            c.finished.stats.free_values,
+            stream.len()
         );
         for b in bad.iter().take(20) {
             println!("  BAD: {b}");
         }
-        assert!(bad.is_empty(), "{} unexpected free inputs in the ports' closure", bad.len());
+        assert!(
+            bad.is_empty(),
+            "{} unexpected free inputs in the ports' closure",
+            bad.len()
+        );
         let bits = in_closure.get("bit").copied().unwrap_or(0);
-        assert_eq!(bits, c.free_bits[0] + c.free_bits[1], "every free bit, and only those, reaches a port");
+        assert_eq!(
+            bits,
+            c.free_bits[0] + c.free_bits[1],
+            "every free bit, and only those, reaches a port"
+        );
 
         // Booleanity, for every satisfying witness: a cell is a bit if it is on a `b = b²` cycle, a forward of a bit,
         // or the push of a formula with coefficients 1 on bits plus κ ∈ {0, 1} (GF(2)'s operations stay in GF(2)).
@@ -360,7 +391,9 @@ fn review_free_inputs() {
                     Def::Hole => false,
                     Def::Forward => bit[d.edges[d.offsets[j] as usize] as usize],
                     Def::Expr(p) => {
-                        let Formula::Expr(poly) = circuit.formula(&row_regions, p as usize) else { unreachable!() };
+                        let Formula::Expr(poly) = circuit.formula(&row_regions, p as usize) else {
+                            unreachable!()
+                        };
                         kappa[p as usize].0 <= 1
                             && poly.linear.iter().all(|&(_, k)| k == K(1))
                             && poly.quadratic.iter().all(|&(_, _, k)| k == K(1))
@@ -380,13 +413,19 @@ fn review_free_inputs() {
             if target >= n || !relevant[target] {
                 continue;
             }
-            let Formula::Expr(poly) = circuit.formula(&row_regions, p) else { continue };
+            let Formula::Expr(poly) = circuit.formula(&row_regions, p) else {
+                continue;
+            };
             let (region, role) = name_of(p as u32);
             let row = p & !(w - 1);
             let cells: Vec<usize> = if region.starts_with("keccak") || region == "xor" || region == "bit+copy" {
                 poly.reads().map(|c| c as usize).collect()
             } else if region == "pack" || region.starts_with("pack-top") {
-                poly.linear.iter().filter(|&&(_, k)| k.0 < 1 << 15).map(|&(c, _)| c as usize).collect()
+                poly.linear
+                    .iter()
+                    .filter(|&&(_, k)| k.0 < 1 << 15)
+                    .map(|&(c, _)| c as usize)
+                    .collect()
             } else {
                 continue;
             };
@@ -397,11 +436,17 @@ fn review_free_inputs() {
                 }
             }
         }
-        println!("booleanity: slots checked by region {checked:?}; {} reads not bits", not_bits.len());
+        println!(
+            "booleanity: slots checked by region {checked:?}; {} reads not bits",
+            not_bits.len()
+        );
         for b in not_bits.iter().take(20) {
             println!("  BAD: {b}");
         }
-        assert!(not_bits.is_empty(), "a bit formula reads a cell that may hold a non-bit");
+        assert!(
+            not_bits.is_empty(),
+            "a bit formula reads a cell that may hold a non-bit"
+        );
     });
 }
 
@@ -431,7 +476,9 @@ fn port_limbs(c: &spec::Circuit, w: &[K]) -> Vec<Vec<u64>> {
     c.ports
         .iter()
         .map(|p| {
-            let Formula::Port(limbs) = c.formula(&row_regions, p.position as usize) else { unreachable!() };
+            let Formula::Port(limbs) = c.formula(&row_regions, p.position as usize) else {
+                unreachable!()
+            };
             let row = p.position as usize & !(c.width() - 1);
             limbs.iter().map(|&l| w[row + l as usize].0).collect()
         })
@@ -482,7 +529,9 @@ fn differential(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 
         let want: Vec<u64> = match p.source {
             Source::Statement => {
                 seen[0] += 1;
-                (0..4).map(|k| u64::from_be_bytes(public[8 * k..8 * k + 8].try_into().unwrap())).collect()
+                (0..4)
+                    .map(|k| u64::from_be_bytes(public[8 * k..8 * k + 8].try_into().unwrap()))
+                    .collect()
             }
             Source::Root(i) => {
                 seen[1] += 1;
@@ -503,8 +552,16 @@ fn differential(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 
         };
         assert_eq!(l, &want, "{label}: port {:?}", p.source);
     }
-    assert_eq!(zero_at, zero_nonconst.len(), "{label}: every non-constant zero check has a port");
-    assert_eq!(seen[2], elements.len(), "{label}: every element of the calls has a port");
+    assert_eq!(
+        zero_at,
+        zero_nonconst.len(),
+        "{label}: every non-constant zero check has a port"
+    );
+    assert_eq!(
+        seen[2],
+        elements.len(),
+        "{label}: every element of the calls has a port"
+    );
     let nonzero_checks = zero_nonconst.iter().filter(|x| **x != E::default()).count();
     println!(
         "  {label}: internal pushes hold; ports (statement {}, roots {}, elements {}, zero checks {}) = π1's graph on this stream; {} of its zero checks fail",
@@ -533,7 +590,14 @@ fn review_mutated_streams() {
             let mut m = stream.clone();
             let at = xorshift(&mut s) as usize % m.len();
             m[at] ^= 1 << (xorshift(&mut s) % 8);
-            differential(&recorded, layout, iv, v.public, &m, &format!("bit flipped in byte {at}"));
+            differential(
+                &recorded,
+                layout,
+                iv,
+                v.public,
+                &m,
+                &format!("bit flipped in byte {at}"),
+            );
         }
         // 300 random bytes changed.
         let mut m = stream.clone();

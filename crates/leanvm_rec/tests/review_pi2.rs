@@ -19,7 +19,9 @@ static ALLOC: bench::Jemalloc = bench::Jemalloc;
 use leanvm_rec::circuit::spec::{self, Failure};
 use leanvm_rec::pi2::adapt;
 use leanvm_rec::pi2::circuit::{Circuit, Lin};
-use leanvm_rec::pi2::prover::{self, PublicValue, Setup, claims_hold, open, prove_with, public_scalars, verify_openings};
+use leanvm_rec::pi2::prover::{
+    self, PublicValue, Setup, claims_hold, open, prove_with, public_scalars, verify_openings,
+};
 use leanvm_rec::pi2::verifier::Spec;
 use primitives::field::{F64, F192};
 
@@ -32,7 +34,13 @@ fn padded_example(log_n: u8) -> (spec::Circuit, spec::Witness, spec::PublicInput
     c.sigma = c
         .sigma
         .iter()
-        .map(|&s| if (s as usize) < old { s } else { s - old as u32 + n as u32 })
+        .map(|&s| {
+            if (s as usize) < old {
+                s
+            } else {
+                s - old as u32 + n as u32
+            }
+        })
         .chain(old as u32..n as u32)
         .collect();
     c.log_n = log_n;
@@ -84,7 +92,10 @@ fn review_hole_read_is_forgeable() {
     let _ = Lin::default();
     circuit.formulas.push(formula);
     circuit.pairs[port_pair].formula = circuit.formulas.len() - 1;
-    assert!(circuit.validate().is_err(), "validate refuses a formula reading a pull-less cell");
+    assert!(
+        circuit.validate().is_err(),
+        "validate refuses a formula reading a pull-less cell"
+    );
     // The public element is now whatever the hole holds (plus Y, Y² parts from cells 2 and 4): put the target's limb
     // 0 in the hole, the original cell 0 left as it is.
     let (public_input, mut values) = adapt::public_values(&public);
