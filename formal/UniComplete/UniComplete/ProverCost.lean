@@ -19,6 +19,7 @@ open UniStatement
 namespace UniComplete.Cost
 
 open E2ECompleteness.Cost (QC qc_pure qc_H_le qc_commitWithH treeCost)
+open Bounds (batchVarsBound valuesBound)
 
 /-! ## Wire lengths -/
 
@@ -225,5 +226,110 @@ theorem wc_batchRounds (lambda : E) (vars : ℕ) (st : BatchState) :
     rw [hb, hr]; omega) (by omega) (by omega)
 
 end Calculus
+
+/-! ## The stream -/
+
+theorem qc_commitReal (c : Commitment) (vars : ℕ) (stack : Array K) :
+    QC (commitReal callKeccak256 c vars stack) (treeCost vars) :=
+  (qc_commitWithH vars stack).bind_le (fun _ ↦ qc_pure _ 0) le_rfl
+
+/-- **What the openings and the verifier need of the stream**: its bytes are the writer's; its point claims have
+at most `V` coordinates, the matrices' claim at most `V + pF`. -/
+def StreamOK (V pF : ℕ) (out : CoreOut) (s : Wr) : Prop :=
+  out.stream = s.stream ∧ (∀ x ∈ out.claims, x.2.1.length ≤ V) ∧
+    ∀ mc, out.matrices = some mc → mc.point.length ≤ V + pF
+
+/-- **The stream's blocks beyond its bytes**: `C1`'s and `C2`'s trees, the challenges (`α ∈ E^4`, `β`, `γ`, `t`,
+`ρ`, `λ`, one per batching round), Flock's. -/
+def streamBlocks (shape : Shape) (kF : ℕ) : ℕ :=
+  treeCost (c1Layout shape).vars + 6 + kF + treeCost (((layoutsOf shape).lookup .c2).getD default).vars + 3 +
+    batchVarsBound shape
+
+/-- **The stream's bytes**: the row counts, the two roots, Flock's, the values at `t`, the batching rounds' two
+scalars each, the three claims' values, the matrices' two. -/
+def streamBytes (shape : Shape) (rows wF : ℕ) : ℕ :=
+  4 * rows + 64 + wF + 24 * valuesBound + 72 + 48 * batchVarsBound shape + 48
+
+theorem length_combined (f : Commitment → Option (Commitment × Combined)) :
+    (commitments.filterMap f).length ≤ 3 :=
+  (List.length_filterMap_le _ _).trans (by decide)
+
+theorem length_claims {α : Type} (f : Commitment → Option (Commitment × Combined)) (g : Commitment × Combined → α)
+    (h : α → E) : 24 * (((commitments.filterMap f).map g).map h).length ≤ 72 := by
+  simp only [List.length_map]
+  have := length_combined f
+  omega
+
+theorem length_matrixClaim (p : Flock.Pending) (r : List E) (a b : E) :
+    (p.matrixClaim r a b).point.length ≤ r.length + (p.rowLow.length + p.chiIn.length + p.chiInPrime.length) := by
+  simp only [Flock.Pending.matrixClaim, List.length_append, List.length_take, List.length_drop]
+  omega
+
+/-- **The stream's cost** (Flock's main line), given Flock's prover's at its `log_n`. -/
+theorem wc_proveStreamWith (flock : FlockProver (OracleComp KeccakCalls)) (kF wF pF : ℕ) (variant : Flock.Variant)
+    (tr : Trace)
+    (hF : WC (flock (blake2sR1csLogSize + tr.shape.heights.getD opBlake2s 0) variant tr.qflock) kF wF
+      fun out _ ↦ out.pending.rowLow.length + out.pending.chiIn.length + out.pending.chiInPrime.length ≤ pF) :
+    WC (proveStreamWith callKeccak256 (commitReal callKeccak256) flock (.flock variant) tr)
+      (streamBlocks tr.shape kF) (streamBytes tr.shape tr.rows.length wF) (StreamOK (batchVarsBound tr.shape) pF) := by
+  unfold proveStreamWith streamBlocks streamBytes
+  refine wc_seq (wc_forIn_list (k := 0) (w := 4) _ _ _ fun _ _ ↦ wc_seq (wc_sendInteger _ 4)
+    (fun _ _ _ ↦ wc_mono (wc_pure _) le_rfl le_rfl fun _ _ _ ↦ trivial) le_rfl le_rfl)
+    (fun _ _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq (wc_lift (qc_commitReal _ _ _)) (fun committed1 _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq (wc_sendRoot _) (fun _ _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq (wc_samplesW 4) (fun alphas _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq wc_sampleW (fun beta _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq wc_sampleW (fun gamma _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq (wc_map some hF) (fun flockOut _ hfo ↦ ?_) (by omega) (by omega)
+  refine wc_seq (wc_lift (qc_commitReal _ _ _)) (fun committed2 _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq (wc_sendRoot _) (fun _ _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq wc_sampleW (fun t _ _ ↦ ?_) (by omega) (by omega)
+  have ha := Bounds.atT_facts tr (c2DataOf tr (eqKernel alphas) beta gamma) alphas beta gamma t flockOut
+  have hvars := Bounds.batchVars_atT tr (c2DataOf tr (eqKernel alphas) beta gamma) alphas beta gamma t flockOut
+  refine wc_seq (wc_mono (wc_sendScalars _) le_rfl (Nat.mul_le_mul_left 24 ha.values) fun _ _ h ↦ h)
+    (fun _ _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq wc_sampleW (fun rho _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq wc_sampleW (fun lambda _ _ ↦ ?_) (by omega) (by omega)
+  refine wc_seq (wc_mono (wc_batchRounds _ _ _) hvars (Nat.mul_le_mul_left 48 hvars) fun r _ h ↦ h)
+    (fun r _ hr ↦ ?_) (by omega) (by omega)
+  refine wc_seq (wc_mono (wc_sendScalars _) le_rfl (length_claims _ _ _) fun _ _ h ↦ h)
+    (fun _ _ _ ↦ ?_) (by omega) (by omega)
+  simp only [List.length_nil, Nat.zero_add] at hr
+  dsimp only
+  split
+  next p snd heq =>
+    refine wc_seq (wc_mono (k' := 0) (w' := 48) (wc_sendScalars _) le_rfl (by simp) fun _ _ h ↦ h)
+      (fun _ _ _ ↦ ?_) (by omega) (by omega)
+    refine wc_seq (wc_pure _) (fun m _ hm ↦ ?_) (Nat.zero_le _) (Nat.zero_le _)
+    subst hm
+    refine wc_mono (wc_get_pure _ _ fun s ↦ ⟨rfl, ?_, ?_⟩) (Nat.zero_le _) (Nat.zero_le _) fun _ _ h ↦ h
+    · intro x hx
+      rw [List.mem_map] at hx
+      obtain ⟨⟨c, cl⟩, _, rfl⟩ := hx
+      dsimp only
+      rw [List.length_take]
+      omega
+    · intro mc hmc
+      cases hmc
+      obtain ⟨out, rfl, hout⟩ := hfo
+      rw [ha.pending] at heq
+      simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at heq
+      obtain ⟨rfl, rfl⟩ := heq
+      have := length_matrixClaim out.pending r
+        (multilinearEval (List.map ofK (flockMatrixStack true).toList) (out.pending.matrixClaim r 0 0).point)
+        (multilinearEval (List.map ofK (flockMatrixStack false).toList) (out.pending.matrixClaim r 0 0).point)
+      omega
+  next heq =>
+    refine wc_seq (wc_pure _) (fun m _ hm ↦ ?_) (Nat.zero_le _) (Nat.zero_le _)
+    subst hm
+    refine wc_mono (wc_get_pure _ _ fun s ↦ ⟨rfl, ?_, fun mc hmc ↦ by cases hmc⟩) (Nat.zero_le _) (Nat.zero_le _)
+      fun _ _ h ↦ h
+    intro x hx
+    rw [List.mem_map] at hx
+    obtain ⟨⟨c, cl⟩, _, rfl⟩ := hx
+    dsimp only
+    rw [List.length_take]
+    omega
 
 end UniComplete.Cost
