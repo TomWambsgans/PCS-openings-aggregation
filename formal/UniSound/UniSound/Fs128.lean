@@ -134,6 +134,48 @@ theorem uniBound128_le_bits (Q : ℕ) (hQ : Q ≤ 2 ^ 64) :
     _ = (2 : ℝ≥0∞)⁻¹ ^ 64 := by
         rw [Nat.cast_pow, Nat.cast_ofNat, show (256 : ℕ) = 192 + 64 from rfl, two_pow_div_two_pow]
 
+/-- **The composed bound is at most `uniBound128`**: the openings' term at `N + QV` queries, the seed's
+pair and the chain's at `N`, the permutation's at `QS 2^32 + Q + 2^80 + 8` calls, `N` the two-oracle
+game's queries (the setup's three trees, the adversary and the IV, the chain, the five openings). -/
+theorem le_uniBound128 (e : ℝ≥0∞) (Q QS nQ SQO nRf QV : ℕ) (hQS : QS ≤ 3 * 2 ^ 24)
+    (hnQ : nQ ≤ 2 ^ 10) (hSQO : SQO ≤ 5 * 10122) (hr : nRf ≤ 6) (hQV : QV ≤ 10122) (d p m : ℝ≥0∞)
+    (hd : d ≤ ((QS + (QS + Q + 1) + nQ + SQO + QV : ℕ) : ℝ≥0∞) *
+      (269 * (2 : ℝ≥0∞)⁻¹ ^ 137 +
+        ((5 * (QS + (QS + Q + 1) + nQ + SQO + QV) : ℕ) : ℝ≥0∞) / 2 ^ 256))
+    (hp : p ≤ ((2 * (QS + (QS + Q + 1) + nQ + SQO) ^ 2 : ℕ) : ℝ≥0∞) / 2 ^ 256)
+    (hm : m ≤ ((9952 ^ 2 : ℕ) : ℝ≥0∞) * e) :
+    d + p + ((QS + (QS + Q + 1) + nQ + SQO : ℕ) : ℝ≥0∞) *
+        (m + (((nRf + 2) * (QS + (QS + Q + 1) + nQ + SQO) : ℕ) : ℝ≥0∞) / 2 ^ 256) +
+      ((QS * 2 ^ 32 + Q + (2 ^ 80 + 8) : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 ≤ uniBound128 e Q := by
+  have h33 : (2 : ℕ) ^ 33 = 8589934592 := by norm_num
+  have h24 : (2 : ℕ) ^ 24 = 16777216 := by norm_num
+  have h10 : (2 : ℕ) ^ 10 = 1024 := by norm_num
+  have hN : QS + (QS + Q + 1) + nQ + SQO ≤ uniN Q := by unfold uniN; omega
+  have hNV : QS + (QS + Q + 1) + nQ + SQO + QV ≤ uniN Q := by unfold uniN; omega
+  have b1 : d ≤ (uniN Q : ℝ≥0∞) * (269 * (2 : ℝ≥0∞)⁻¹ ^ 137 + ((5 * uniN Q : ℕ) : ℝ≥0∞) / 2 ^ 256) :=
+    hd.trans (mul_le_mul' (Nat.cast_le.mpr hNV)
+      (add_le_add le_rfl (le256 (Nat.mul_le_mul_left 5 hNV))))
+  have b2 : p ≤ ((2 * uniN Q ^ 2 : ℕ) : ℝ≥0∞) / 2 ^ 256 :=
+    hp.trans (le256 (Nat.mul_le_mul_left 2 (Nat.pow_le_pow_left hN 2)))
+  have b3 : ((QS + (QS + Q + 1) + nQ + SQO : ℕ) : ℝ≥0∞) *
+        (m + (((nRf + 2) * (QS + (QS + Q + 1) + nQ + SQO) : ℕ) : ℝ≥0∞) / 2 ^ 256) ≤
+      (uniN Q : ℝ≥0∞) * (((9952 ^ 2 : ℕ) : ℝ≥0∞) * e + ((8 * uniN Q : ℕ) : ℝ≥0∞) / 2 ^ 256) :=
+    mul_le_mul' (Nat.cast_le.mpr hN) (add_le_add hm (le256 (Nat.mul_le_mul (by omega) hN)))
+  have b4 : ((QS * 2 ^ 32 + Q + (2 ^ 80 + 8) : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 ≤
+      ((2 ^ 81 + Q : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 := by
+    refine ENNReal.div_le_div_right (pow_le_pow_left₀ bot_le (Nat.cast_le.mpr ?_) 2) _
+    have h32 : QS * 2 ^ 32 ≤ 3 * 2 ^ 24 * 2 ^ 32 := Nat.mul_le_mul_right _ hQS
+    have h81 : (3 : ℕ) * 2 ^ 24 * 2 ^ 32 + (2 ^ 80 + 8) ≤ 2 ^ 81 := by norm_num
+    calc QS * 2 ^ 32 + Q + (2 ^ 80 + 8) = (QS * 2 ^ 32 + (2 ^ 80 + 8)) + Q := by ring
+      _ ≤ 2 ^ 81 + Q := Nat.add_le_add_right ((Nat.add_le_add_right h32 _).trans h81) Q
+  unfold uniBound128
+  calc _ ≤ (uniN Q : ℝ≥0∞) * (269 * (2 : ℝ≥0∞)⁻¹ ^ 137 + ((5 * uniN Q : ℕ) : ℝ≥0∞) / 2 ^ 256) +
+        ((2 * uniN Q ^ 2 : ℕ) : ℝ≥0∞) / 2 ^ 256 +
+        (uniN Q : ℝ≥0∞) * (((9952 ^ 2 : ℕ) : ℝ≥0∞) * e + ((8 * uniN Q : ℕ) : ℝ≥0∞) / 2 ^ 256) +
+        ((2 ^ 81 + Q : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 :=
+      add_le_add (add_le_add (add_le_add b1 b2) b3) b4
+    _ = _ := by ring
+
 end Bits
 
 /-! ## The seed is `name ‖ iv ‖ input`, the IV an answer the adversary asked -/
@@ -192,3 +234,7 @@ end UniSound
 /-- info: 'UniSound.uniBound128_le_bits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.uniBound128_le_bits
+
+/-- info: 'UniSound.le_uniBound128' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.le_uniBound128
