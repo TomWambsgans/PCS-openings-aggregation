@@ -19,6 +19,7 @@ import UniComplete.SyncBasic
 import UniComplete.Domain
 import UniComplete.VerifierHDuplex
 import UniComplete.VerifierHCost
+import UniComplete.Combine
 import UniComplete.Reference
 import UniComplete.VerifierAccept
 import UniComplete.Mapping
