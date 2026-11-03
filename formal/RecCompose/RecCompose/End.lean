@@ -5,6 +5,7 @@ import RecCompose.Complete
 import RecCompose.Numbers
 import RecCompose.Layers
 import RecCompose.Circuit
+import RecCompose.CallsPure
 
 /-!
 # The end theorems
@@ -45,31 +46,29 @@ theorem pi2CircuitAccepts_of_bridge (C : Pi2Circuits D) (Fa : Pi2Facts D C)
 /-- **π2's part at the real deployment, `ε2 = pi2Bound`**: if the contract accepts, π2's extractor outputs π1's stream
 on which π1-rec3's recorded graph run with Keccak-f[1600] accepts, its three calls the contract's, but with
 probability `pi2Bound Q`, at most `2^-64` for `Q ≤ 2^64`. From π2's layers (`Pi2Layers`, built by `pi2Layers_of`). -/
-theorem recKnowledgeSoundness2_of_real (D : RecDeployment) (_hD : D.Real) (L : Pi2Layers D pi2Bound)
-    (hpure : CallsPure D) :
+theorem recKnowledgeSoundness2_of_real (D : RecDeployment) (_hD : D.Real) (L : Pi2Layers D pi2Bound) :
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 :=
-  ⟨recKnowledgeSoundness2_of_layers L hpure, pi2Bound_le_bits⟩
+  ⟨recKnowledgeSoundness2_of_layers L (callsPure D), pi2Bound_le_bits⟩
 
 /-- **π2's part at the real deployment, from its named inputs**: the compiled circuit (`C`: the Lean compiler's run on
 π1-rec3's graph at every π1 IV, at the emitted graph's roots; `hg`, the graphs agree, a run), its facts (`Fa`: `SpecOf`,
 validity, the shape, the ports), the tables' layer (`T`, open), π2's Fiat–Shamir layer (`hfs`, open), the bridge from
-RecCircuit's end theorem (`hb`, open) and the calldata's π1 openings (`hpure`): `RecKnowledgeSoundness2 D pi2Bound`,
+RecCircuit's end theorem (`hb`, open); the calldata's π1 openings are the contract's (`callsPure`, proved):
+`RecKnowledgeSoundness2 D pi2Bound`,
 `pi2Bound Q ≤ 2^-64` for `Q ≤ 2^64`. -/
 theorem recKnowledgeSoundness2_real (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa : Pi2Facts D C)
     (T : Pi2Tables D C) (hfs : Pi2FsLayer D) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
-    (hb : CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream))
-    (hpure : CallsPure D) :
+    (hb : CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream)) :
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 :=
-  recKnowledgeSoundness2_of_real D hD
-    (pi2Layers_of C Fa T hfs (pi2CircuitAccepts_of_bridge C Fa hroots hg hb)) hpure
+  recKnowledgeSoundness2_of_real D hD (pi2Layers_of C Fa T hfs (pi2CircuitAccepts_of_bridge C Fa hroots hg hb))
 
 /-- **The recursive verifier is knowledge sound end to end**, against leanVM 42422001's relation, at the real
 deployment: `RecKnowledgeSoundness D pi2Bound ε1 εh` for every `ε1`, `εh`, i.e. under `Pi1GraphIsVerifier`,
 `Pi1FsKeccak ε1` and `Pi1HazardKeccak εh`, error `pi2Bound Q + ε1 Q + εh Q`. -/
 theorem recKnowledgeSoundness_end (D : RecDeployment) (hD : D.Real) (L : Pi2Layers D pi2Bound)
-    (hpure : CallsPure D) (hE : ExperimentsAgree D) (hH : HazardCoupling D) (hP : Pi1Coupling D)
+    (hE : ExperimentsAgree D) (hH : HazardCoupling D) (hP : Pi1Coupling D)
     (ε1 εh : ℕ → ℝ≥0∞) : RecKnowledgeSoundness D pi2Bound ε1 εh :=
-  recKnowledgeSoundness_of_part1 (recKnowledgeSoundness2_of_real D hD L hpure).1 hE hH hP ε1 εh
+  recKnowledgeSoundness_of_part1 (recKnowledgeSoundness2_of_real D hD L).1 hE hH hP ε1 εh
 
 /-- **The recursive verifier is complete end to end**, for π1-rec3's prover then π2's: `RecCompleteness D P1 P2 δ1 δh
 δ2` for every `δ1`, `δh`, i.e. under `Pi1GraphIsVerifier`, `Pi1CompletenessKeccak δ1` and `Pi1HazardKeccakHonest δh`,
