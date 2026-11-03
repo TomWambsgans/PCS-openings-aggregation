@@ -483,4 +483,205 @@ theorem steps_fix (H : List UInt8 → m Bytes32) :
 
 end Steps
 
+/-! ## A chain program on a stream of the bytes it reads -/
+
+/-- The channel after a round: its message read, its zeros `zs` collected, its samples answered
+`sts`. -/
+def roundChan (c : Chan) (r : RoundSpec) (zs : List E) (sts : List Bytes32) : Chan :=
+  sampChan (collectZ { c with cursor := c.cursor + (if r.root then 32 else 0) + 24 * r.nv } zs) sts
+
+theorem foldl_push_toList (zs : List E) :
+    ∀ (arr : Array E), (zs.foldl Array.push arr).toList = arr.toList ++ zs := by
+  intro arr
+  simp
+
+theorem roundChan_data (c : Chan) (r : RoundSpec) (zs : List E) (sts : List Bytes32) :
+    (roundChan c r zs sts).data = c.data := rfl
+
+theorem roundChan_cursor (c : Chan) (r : RoundSpec) (zs : List E) (sts : List Bytes32) :
+    (roundChan c r zs sts).cursor = c.cursor + roundBytes r := by
+  simp only [roundChan, sampChan, collectZ, roundBytes, Nat.add_assoc]
+
+theorem roundChan_state (c : Chan) (r : RoundSpec) (zs : List E) (sts : List Bytes32) :
+    toB (roundChan c r zs sts).state = sts.getLastD (toB c.state) := by
+  simp only [roundChan, sampChan, collectZ, toB_ofB]
+
+theorem preOf_roundChan (c : Chan) (r : RoundSpec) (zs : List E) (sts : List Bytes32) :
+    preOf (roundChan c r zs sts) = [] := preOf_self _ rfl
+
+theorem roundChan_zeros (c : Chan) (r : RoundSpec) (zs : List E) (sts : List Bytes32) :
+    (roundChan c r zs sts).zeros.toList = c.zeros.toList ++ zs := by
+  simp only [roundChan, sampChan, collectZ, foldl_push_toList]
+
+theorem preOf_round (c : Chan) (r : RoundSpec) (zs : List E) (hab : c.absorbed ≤ c.cursor) :
+    preOf (collectZ { c with cursor := c.cursor + (if r.root then 32 else 0) + 24 * r.nv } zs) =
+      preOf c ++ bytesAt c.data c.cursor (roundBytes r) := by
+  simp only [preOf, collectZ, toList_extract_eq]
+  rw [show c.cursor + (if r.root then 32 else 0) + 24 * r.nv - c.absorbed =
+      (c.cursor - c.absorbed) + roundBytes r by unfold roundBytes; omega,
+    bytesAt_add_of c.data (show c.absorbed + (c.cursor - c.absorbed) = c.cursor by omega)]
+
+section Monad
+
+variable {m : Type → Type} [Monad m] [LawfulMonad m]
+
+/-- **A round of a chain program**: its root and scalars the stream's (`msgOf`), its zeros
+collected, its samples the chain's steps on the bytes not yet absorbed then nothing. -/
+theorem round_bind {β : Type} (F : KeccakState → m KeccakState) (r : RoundSpec)
+    (Z : UMsg → List E) (K : UMsg → List E → ChanM m β) (c : Chan) (hab : c.absorbed ≤ c.cursor)
+    (hsz : c.cursor + roundBytes r ≤ c.data.size) :
+    (do
+      let root ← rootRead (m := m) r.root
+      let vals ← nextScalars (m := m) r.nv
+      ChainProg.requireZeros (Z (root, vals))
+      let chs ← samples F (r.ns + 1)
+      K (root, vals) chs).run.run c =
+    steps (kB F) (toB c.state)
+        ((preOf c ++ bytesAt c.data c.cursor (roundBytes r)) :: List.replicate r.ns []) >>= fun sts =>
+      (K (msgOf c.data c.cursor r) (sts.map (chalL uLimbs))).run.run
+        (roundChan c r (Z (msgOf c.data c.cursor r)) sts) := by
+  unfold roundBytes at hsz
+  rw [run_bind_ok (rootRead_ok r.root c (by omega))]
+  rw [run_bind_ok (nextScalars_ok r.nv { c with cursor := c.cursor + (if r.root then 32 else 0) }
+    (by dsimp only; omega))]
+  rw [run_bind_ok (requireZeros_run _ _), samples_succ_bind, ← preOf_round c r _ hab]
+  rfl
+
+/-- **The channel and transcript after the rounds**, from the hash answers. -/
+def runOut {α : Type} (P : ChainProg α) : List RoundSpec → Done → Chan → List Bytes32 → Done × Chan
+  | [], done, c, _ => (done, c)
+  | r :: rs, done, c, sts =>
+    runOut P rs (done ++ [(msgOf c.data c.cursor r, (sts.take (r.ns + 1)).map (chalL uLimbs))])
+      (roundChan c r (P.zeros done (msgOf c.data c.cursor r)) (sts.take (r.ns + 1)))
+      (sts.drop (r.ns + 1))
+
+theorem length_round_steps (pre : List UInt8) (n : ℕ) :
+    (pre :: List.replicate n ([] : List UInt8)).length = n + 1 := by simp
+
+/-- **The rounds of a chain program**, on a stream holding their bytes: the chain's steps on
+`wAbs`, the transcript and channel `runOut`. -/
+theorem runRounds_run {α : Type} (P : ChainProg α) (F : KeccakState → m KeccakState) :
+    ∀ (rs : List RoundSpec) (done : Done) (c : Chan), c.absorbed ≤ c.cursor →
+      c.cursor + roundsBytes rs ≤ c.data.size →
+      (P.runRounds F rs done).run.run c =
+        (fun sts => (Except.ok (runOut P rs done c sts).1, (runOut P rs done c sts).2)) <$>
+          steps (kB F) (toB c.state) (wAbs c.data c.cursor (preOf c) rs)
+  | [], done, c, _, _ => by
+    simp only [ChainProg.runRounds, wAbs, steps, map_pure, runOut]
+    rfl
+  | r :: rs, done, c, hab, hsz => by
+    simp only [roundsBytes] at hsz
+    rw [runRounds_cons]
+    refine (round_bind F r (P.zeros done) (fun msg chs => P.runRounds F rs (done ++ [(msg, chs)])) c
+      hab (by omega)).trans ?_
+    have IH : ∀ sts : List Bytes32,
+        (P.runRounds F rs (done ++ [(msgOf c.data c.cursor r, sts.map (chalL uLimbs))])).run.run
+            (roundChan c r (P.zeros done (msgOf c.data c.cursor r)) sts) =
+          (fun sts' => (Except.ok (runOut P rs (done ++ [(msgOf c.data c.cursor r,
+              sts.map (chalL uLimbs))]) (roundChan c r (P.zeros done (msgOf c.data c.cursor r)) sts) sts').1,
+            (runOut P rs (done ++ [(msgOf c.data c.cursor r, sts.map (chalL uLimbs))])
+              (roundChan c r (P.zeros done (msgOf c.data c.cursor r)) sts) sts').2)) <$>
+            steps (kB F) (sts.getLastD (toB c.state))
+              (wAbs c.data (c.cursor + roundBytes r) [] rs) := by
+      intro sts
+      rw [runRounds_run P F rs _ _ (le_of_eq rfl) (by rw [roundChan_cursor, roundChan_data]; omega),
+        roundChan_state, roundChan_data, roundChan_cursor, preOf_roundChan]
+    simp only [IH]
+    rw [wAbs, ← List.cons_append, steps_append, map_bind]
+    rw [steps_fix (kB F) (toB c.state) ((preOf c ++ bytesAt c.data c.cursor (roundBytes r)) ::
+      List.replicate r.ns []), length_round_steps, bind_map_left, bind_map_left]
+    congr 1
+    funext l
+    rw [Functor.map_map]
+    congr 1
+    funext sts'
+    have hl := length_fixB (r.ns + 1) l
+    simp only [runOut, List.take_left' hl, List.drop_left' hl]
+
+/-- The program's result and channel, from the hash answers. -/
+def progOut {α : Type} (P : ChainProg α) (c : Chan) (sts : List Bytes32) : Except UniError α × Chan :=
+  (.ok (P.out (runOut P P.rounds [] c sts).1
+      (scalarsAt (runOut P P.rounds [] c sts).2.data (runOut P P.rounds [] c sts).2.cursor P.tail)),
+    collectZ { (runOut P P.rounds [] c sts).2 with
+      cursor := (runOut P P.rounds [] c sts).2.cursor + 24 * P.tail }
+      (P.tailZeros (runOut P P.rounds [] c sts).1
+        (scalarsAt (runOut P P.rounds [] c sts).2.data (runOut P P.rounds [] c sts).2.cursor P.tail)))
+
+theorem runOut_data {α : Type} (P : ChainProg α) :
+    ∀ (rs : List RoundSpec) (done : Done) (c : Chan) (sts : List Bytes32),
+      (runOut P rs done c sts).2.data = c.data
+  | [], _, _, _ => rfl
+  | r :: rs, done, c, sts => by
+    rw [runOut, runOut_data P rs, roundChan_data]
+
+theorem runOut_cursor {α : Type} (P : ChainProg α) :
+    ∀ (rs : List RoundSpec) (done : Done) (c : Chan) (sts : List Bytes32),
+      (runOut P rs done c sts).2.cursor = c.cursor + roundsBytes rs
+  | [], _, _, _ => rfl
+  | r :: rs, done, c, sts => by
+    rw [runOut, runOut_cursor P rs, roundChan_cursor, roundsBytes, Nat.add_assoc]
+
+theorem runOut_done {α : Type} (P : ChainProg α) :
+    ∀ (rs : List RoundSpec) (done : Done) (c : Chan) (sts : List Bytes32),
+      (runOut P rs done c sts).1 =
+        done ++ (msgsAt c.data c.cursor rs).zip (groupK rs (sts.map (chalL uLimbs)))
+  | [], _, _, _ => by simp [runOut, msgsAt]
+  | r :: rs, done, c, sts => by
+    rw [runOut, runOut_done P rs, roundChan_data, roundChan_cursor, msgsAt_cons, groupK]
+    simp [List.map_take, List.map_drop]
+
+/-- **The zeros the rounds collect**, each round's given the transcript before it. -/
+def zerosFrom {α : Type} (P : ChainProg α) : Done → Done → List E
+  | _, [] => []
+  | d, x :: xs => P.zeros d x.1 ++ zerosFrom P (d ++ [x]) xs
+
+theorem runOut_zeros {α : Type} (P : ChainProg α) :
+    ∀ (rs : List RoundSpec) (done : Done) (c : Chan) (sts : List Bytes32),
+      (runOut P rs done c sts).2.zeros.toList = c.zeros.toList ++
+        zerosFrom P done ((msgsAt c.data c.cursor rs).zip (groupK rs (sts.map (chalL uLimbs))))
+  | [], _, _, _ => by simp [runOut, msgsAt, zerosFrom]
+  | r :: rs, done, c, sts => by
+    rw [runOut, runOut_zeros P rs, roundChan_data, roundChan_cursor, roundChan_zeros, msgsAt_cons,
+      groupK]
+    simp [zerosFrom, List.map_take, List.map_drop]
+
+theorem zerosFrom_iff {α : Type} (P : ChainProg α) : ∀ (d N : Done),
+    (∀ z ∈ zerosFrom P d N, z = 0) ↔
+      ∀ j (h : j < N.length), ∀ z ∈ P.zeros (d ++ N.take j) (N[j]'h).1, z = 0
+  | d, [] => by simp [zerosFrom]
+  | d, x :: N => by
+    simp only [zerosFrom, List.mem_append]
+    constructor
+    · intro h j hj z hz
+      cases j with
+      | zero => exact h z (Or.inl (by simpa using hz))
+      | succ j =>
+        have h2 := (zerosFrom_iff P (d ++ [x]) N).mp (fun z hz => h z (Or.inr hz)) j
+          (by simpa using hj) z (by simpa using hz)
+        exact h2
+    · intro h z hz
+      rcases hz with hz | hz
+      · exact h 0 (by simp) z (by simpa using hz)
+      · refine (zerosFrom_iff P (d ++ [x]) N).mpr (fun j hj z hz => ?_) z hz
+        exact h (j + 1) (by simpa using hj) z (by simpa using hz)
+
+/-- **A chain program on a stream holding its bytes** (its rounds' and its tail's, from the
+cursor): the chain's steps on `wAbs`, its result and channel `progOut`. -/
+theorem progRun {α : Type} (P : ChainProg α) (F : KeccakState → m KeccakState) (c : Chan)
+    (hab : c.absorbed ≤ c.cursor)
+    (hsz : c.cursor + roundsBytes P.rounds + 24 * P.tail ≤ c.data.size) :
+    (P.run F).run.run c =
+      progOut P c <$> steps (kB F) (toB c.state) (wAbs c.data c.cursor (preOf c) P.rounds) := by
+  simp only [ChainProg.run, ExceptT.run_bind, StateT.run_bind,
+    runRounds_run P F P.rounds [] c hab (by omega), bind_map_left]
+  rw [map_eq_bind_pure_comp]
+  congr 1
+  funext sts
+  rw [nextScalars_ok P.tail _ (by rw [runOut_cursor, runOut_data]; omega)]
+  simp only [pure_bind, StateT.run_bind, requireZeros_run, ExceptT.run_pure, StateT.run_pure,
+    Function.comp_apply]
+  rfl
+
+end Monad
+
 end UniSound
