@@ -2,6 +2,7 @@
 -- (`formal/UniStatement/UniStatement/Run.lean`), the chain `Compose.ChainSpecU.chain`
 -- (`formal/Compose/Compose/ListChainU.lean`).
 import UniSound.FsCouple
+import UniSound.FinalLink
 
 /-!
 # The verifier bridge's two halves: the walk is the chain, then the openings
@@ -77,6 +78,24 @@ def UniWalkReject : Prop :=
     ∀ o ∈ support (runWith Common.queryPermutation D.shape π.iv.toList π.input.toList
       π.proof.stream (.flock flockMain) .point), o.accepts = false
 
+/-- **The chain program's result names the roots the stream carries** at rounds `0` (`C1`) and
+`nF + 1` (`C2`). -/
+def UniOutRoots : Prop :=
+  ∀ (π : UPf) (ch : List (List E)),
+    (uOut D Fl nV V C π ch).roots =
+      (((uDone (uRounds Fl nV V) π ch).getD 0 default).1.1.getD default,
+        ((uDone (uRounds Fl nV V) π ch).getD (Fl.prog.rounds.length + 1) default).1.1.getD default)
+
 end Walk
 
+/-- The main line's chain program names them (`mainOut`). -/
+theorem uniOutRoots_uniCodeAt (D : Deployment) {κ : ℕ} (Fl : FlockSound κ)
+    (hκ : D.shape.heights.getD opBlake2s 0 = κ) (nV V : ℕ) (hnV : nV = valsCount)
+    (hV : V = varsOf (layoutsOf D.shape)) :
+    UniOutRoots D Fl nV V (uniCodeAt D Fl hκ nV V hnV hV) := fun _ _ => rfl
+
 end UniSound
+
+/-- info: 'UniSound.uniOutRoots_uniCodeAt' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniOutRoots_uniCodeAt
