@@ -119,4 +119,142 @@ theorem c1P_eval_absent (D : Deployment) (c : Stk) (col : Column) (v x : ℕ)
   rw [hl, c1Layout_eq, hl]
   simp [mleK_empty]
 
+/-! ## How the heap is read -/
+
+/-- **The setup's bytecode tuple at `(α, ω_x)`**: `Σ_s eq(α, s)` times slot `s`'s value at instruction `x`. -/
+def BcTupleEval (D : Deployment) : Prop :=
+  ∀ (ch : List E) (x : ℕ), x < 2 ^ D.shape.logBytecode →
+    (suP D.shape (setupStk D) .bytecodeTuple
+        (fun l ↦ if l < 4 then C ((alphasOf ch).getD l 0) else digitP (l - 4))).eval (pointE x) =
+      ∑ s : Fin 16, (eqKernel (alphasOf ch)).getD s.val 0 * ofK (slotVal D s.val x)
+
+/-- **The bridges the heap's reading rests on.** -/
+structure HeapReading (D : Deployment) : Prop where
+  c1 : C1Reading D
+  absent : ∀ o < 6, ∀ i, (tables.getD o default).width ≤ i → (layoutOf D.shape .c1).limbs (.table o i) = []
+  heap : HeapGood D.shape
+  zAct : ZActZero
+  eqk : EqKernelLagrange
+  gpowK : GpowInK
+  tablesF : TablesFacts
+  setupLimbs : SetupLimbs D.shape
+  setupAligned : LayoutAligned (layoutOf D.shape .setup)
+  setupVars : (layoutOf D.shape .setup).vars ≤ batchVars D.shape
+  hB2 : 2 ≤ D.shape.heights.getD opBlake2s 0
+  heightsLt : ∀ o < 6, D.shape.heights.getD o 0 < 24
+  bcTuple : BcTupleEval D
+
+theorem eK_eq (w : UInt64) : eK w = ofK (K.ofLane w) := by
+  unfold eK eNew
+  rw [ofLimbs_eq, show K.ofLane 0 = 0 from rfl, ofK_zero]
+  ring
+
+theorem toK_ofK (a : K) : toK (ofK a) = a := by unfold toK; simp
+
+/-- A table column of `C1` at `ω_x`, present or absent. -/
+theorem c1Col_eval (D : Deployment) (hr : HeapReading D) (c : Stk) (o : ℕ) (ho : o < 6) (i x : ℕ)
+    (hx : x < 2 ^ D.shape.heights.getD o 0) :
+    (c1P D.shape c (.table o i)).eval (pointE x) = ofK (c1Row D c o x i) := by
+  unfold c1Row
+  by_cases hi : i < (tables.getD o default).width
+  · obtain ⟨off, hl⟩ := hr.c1.limbs.1 o ho i hi
+    exact c1P_eval_pointE D hr.c1.beta hr.c1.aligned hr.c1.vars c _ _ off x hl
+      ((height_le_rW D.shape o).trans hr.c1.rW) hx
+  · exact c1P_eval_absent D c _ _ x (hr.absent o ho i (by omega))
+
+/-! ## The blocks -/
+
+/-- The weights `eq(α, s)`. -/
+noncomputable abbrev wt (ch : List E) (s : ℕ) : E := (eqKernel (alphasOf ch)).getD s 0
+
+theorem fp_memTupleK (hE : EqKernelLagrange) (D : Deployment) (c : Stk) (ch : List E) (cnt : K) (x : ℕ) :
+    Heap.fp (fun i ↦ ch.getD i.val 0) (ch.getD 4 0) (memTupleK D c cnt x) =
+      ch.getD 4 0 + wt ch 0 * ofK (toK sepMem) + wt ch 1 * ofK (suVal D .address D.shape.logMemory x) +
+        wt ch 2 * ofK cnt + wt ch 3 * ofK (c1Val D c (.memory 0) D.shape.logMemory x) +
+        wt ch 4 * ofK (c1Val D c (.memory 1) D.shape.logMemory x) +
+        wt ch 5 * ofK (c1Val D c (.memory 2) D.shape.logMemory x) := by
+  rw [fp_eq hE]
+  unfold memTupleK
+  simp only [Vector.get_ofFn]
+  rw [sum_fin16 (fun s ↦ wt ch s * ofK (if s = 0 then toK sepMem
+    else if s = 1 then suVal D .address D.shape.logMemory x
+    else if s = 2 then cnt
+    else if s < 6 then c1Val D c (.memory (s - 3)) D.shape.logMemory x else 0))]
+  simp (config := {decide := true}) only [Finset.sum_range_succ, Finset.sum_range_zero, zero_add,
+    ite_true, ite_false, ofK_zero, mul_zero, add_zero, Nat.reduceSub]
+  ring
+
+theorem fp_bcTupleK (hE : EqKernelLagrange) (D : Deployment) (ch : List E) (cnt : K) (x : ℕ) :
+    Heap.fp (fun i ↦ ch.getD i.val 0) (ch.getD 4 0) (bcTupleK D cnt x) =
+      ch.getD 4 0 + ∑ s : Fin 16, wt ch s.val * ofK (slotVal D s.val x) + wt ch 2 * ofK cnt := by
+  rw [fp_eq hE]
+  unfold bcTupleK
+  simp only [Vector.get_ofFn, ofK_add, mul_add, Finset.sum_add_distrib]
+  rw [add_assoc]
+  congr 2
+  rw [sum_fin16 (fun s ↦ wt ch s * ofK (if s = 2 then cnt else 0))]
+  simp (config := {decide := true}) only [Finset.sum_range_succ, Finset.sum_range_zero, zero_add,
+    ite_true, ite_false, ofK_zero, mul_zero, add_zero]
+
+theorem pointE_shift_zero {k r : ℕ} (hk : k < 2 ^ r) : pointE (k >>> r) = 0 := by
+  rw [Nat.shiftRight_eq_div_pow, Nat.div_eq_of_lt hk, pointE_zero]
+
+theorem fpProd_single {τ : Type} (f : τ → E) (a : τ) : Heap.fpProd f [a] = f a := by
+  simp [Heap.fpProd]
+
+section Blocks
+
+variable (D : Deployment) (hr : HeapReading D) (c1 c2 : Stk) (s : USt) (ch : List E) (b : Block) (i : ℕ)
+
+include hr in
+/-- The restriction at `ω_k`. -/
+theorem restr_eval (hal : 2 ^ b.r ∣ b.position) {k : ℕ} (hk : k < 2 ^ b.r)
+    (hpk : b.position + k < 2 ^ 24) :
+    (c2P D.shape c2 .heap (mixP b)).eval (pointE k) = heapT D.shape c2 (b.position + k) :=
+  c2P_eval_congr _ _ _ _ _ _ _ fun l ↦ mixP_eval_pointE hr.c1.beta b hal hk hpk l
+
+include hr in
+/-- **A table's block from its leaf identity.** -/
+theorem tableHolds (hfit : CountsFit D.shape s.2) (t : ℕ) (hb : b.leaves = .table t) (ht : t < 6)
+    (hrb : b.r = D.shape.heights.getD t 0) (hal : 2 ^ b.r ∣ b.position) (hpos : b.position + 2 ^ b.r ≤ 2 ^ 24)
+    (hP : blockP D.shape c1 c2 (stackFor D c1 c2 .setup) s.2 (alphasOf ch) (betaOf ch) b i = 0) :
+    (blockK D c1 s.2 b).Holds (Heap.fp (fun j ↦ ch.getD j.val 0) (ch.getD 4 0)) (heapT D.shape c2)
+      b.position := by
+  intro k hk
+  have hbk : blockK D c1 s.2 b = tableBlockK D c1 s.2 b t := by unfold blockK; rw [hb]
+  rw [hbk]
+  unfold blockP at hP
+  rw [hb] at hP
+  simp only at hP
+  rw [leaf_form] at hP
+  have hk' : k < 2 ^ b.r := hk
+  have hk24 : k < 2 ^ 24 := by omega
+  have hw : (digitP b.r).eval (pointE k) = 0 := by
+    rw [eval_digitP_pointE hr.c1.beta _ hk24, pointE_shift_zero hk']
+  have hw' : (derivative (digitP b.r)).eval (pointE k) = 1 := by rw [derivative_digitP, eval_one]
+  have hR := restr_eval D hr c2 b hal hk' (by omega)
+  have hcols : ∀ j, (c1P D.shape c1 (.table (tables.getD t default).opcode j)).eval (pointE k) =
+      ofK (c1Row D c1 t k j) := by
+    intro j
+    rw [tables_opcode t ht]
+    exact c1Col_eval D hr c1 t ht j k (hrb ▸ hk')
+  have hfacts := hr.tablesF _ (tables_mem t ht)
+  have hcount : s.2.getD t 0 ≤ 2 ^ b.r := hrb ▸ hfit.2 t ht
+  have hZ := hr.zAct hr.c1.beta (s.2.getD t 0) b.r k (hrb ▸ hr.heightsLt t ht) hcount hk'
+  unfold tableBlockK
+  simp only
+  by_cases ha : isActive k (s.2.getD t 0) b.r = true
+  · simp only [ha, ite_true]
+    have hA := active_of_leaf _ _ _ _ (pointE k) hP hw hw' (hZ.mpr ha)
+    rw [Polynomial.eval_add, Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_mul, hZ.mpr ha,
+      mul_zero, add_zero, hR, pullP_eval hr.eqk _ hfacts.1 hfacts.2 _ _ _ hcols ch,
+      pushP_eval hr.eqk _ hfacts.1 hfacts.2 _ _ _ hcols ch] at hA
+    exact CharTwo.add_eq_zero.mp hA
+  · simp only [ha, Bool.false_eq_true, ite_false]
+    have h1 := padding_of_leaf _ _ _ _ (pointE k) hP hw (fun h0 ↦ ha (hZ.mp h0))
+    rw [hR] at h1
+    simp [Heap.fpProd, h1]
+
+end Blocks
+
 end UniSound.Ids
