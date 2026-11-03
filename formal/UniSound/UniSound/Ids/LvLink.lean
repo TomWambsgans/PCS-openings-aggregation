@@ -9,7 +9,8 @@ import Lv42.Arithmetization.Completeness.Satisfied
 # Lv42's relation on `C1`'s Lv42 stack, from the verifier's checks on `C1`
 
 The bridges of `Bridges.lean` about Lv42 (`LvReadBack`, `LvConstraints`, `LvAux`, `LvBusCount`),
-proved for every deployment:
+proved for every deployment `D` (`lvAux` and the `q_flock` readings take `C1Limbs D.shape`, of which
+they use only `q_flock`'s one block; nothing else is assumed):
 
 * **`rowPosition` stays in its table** (`rowPosition_lt`): Lv42's row `x < 2^⌈log₂ count⌉` sits at
   `C1`'s row `rowPosition count r x < 2^r`, whatever the count (no range check is needed): a non-full
@@ -17,7 +18,22 @@ proved for every deployment:
 * **Reading** (`lvReadBack`, `limb_lv42Stack`, `table_lv42Stack`, `mem_lv42Stack`,
   `flock_lv42Stack`): a committed column of `lv42Stack` read back through Lv42's layout is
   `lv42Column`'s (Lv42's `column_committed`, then the stack's block is its column, as Lv42's
-  `column_stackOf`); a `BLAKE2S` limb `k` at row `x` is `QFLOCK`'s cell `cubeIndex (slot k) x`.
+  `column_stackOf`); a `BLAKE2S` limb `k` at row `x` is `QFLOCK`'s cell `cubeIndex (slot k) x`, which
+  is `C1`'s word `qfOff + slot k + 256 · rowPosition x` (`limb_lv42Stack_qf`), so where the copies
+  hold every cell of a `BLAKE2S` row is `C1`'s (`blake2sRow_lv42Stack`).
+* **The tables agree** (by `decide +kernel` on the tables, none of them shape-sized): the count columns
+  (`counts_eq`: Lv42's are exactly the verifier's `cnt…` columns, in order), the widths
+  (`widths_eq`), `JUMP`'s `b, v_cond, w` at `13, 5, 12` (`jump_idx`, Lv42's `JumpRow` order with the
+  witnesses `w, b` last), the limbs' slots (`slots_agree`: `qflockSlot` of column `9 + k`'s name is
+  `blake2sFlockSpec.slot k`), the flush counts (`pushes_eq`, `pulls_eq`: `5, 5, 3, 5, 5, 11` a side).
+* **`lvConstraints`**: `ConstraintsVanish` from `JUMP`'s two constraints (Lv42's `jump_constraints_iff`
+  on a row read by its cells, `jump_constraintsHold`; the other tables have none), `CountsNonzero` from
+  the counters' `z·Πc = 1`, `PublicLinesHold` from the public lines (`publicInputOf` and
+  `publicWordsOf` read the same big-endian words). The counts' range (`CountsFit`) is not used.
+* **`lvAux`**: Lv42's region's block `t` (of `2^τ_5`) is `q_flock`'s block `rowPosition (rows 5) h_B t`,
+  cell for cell, so Flock's predicate on all `2^h_B` blocks gives the region's.
+* **`lvBusCount`** at `busBound` (the verifier's flush counts times `2^h_j`, plus `2^lm + 2^lb + 1`
+  for the boundary); `busBound reference = 10,878,977` (`busBound_reference`).
 -/
 
 namespace UniSound.Ids
@@ -472,6 +488,28 @@ theorem limb_lv42Stack_qf (D : Deployment) (hL : C1Limbs D.shape) (rows : List �
       (((blake2sFlockSpec.slot k).val + 256 * x.val) / 256))) = _
   rw [e1, e2, Nat.add_assoc]
 
+/-- **Every cell of a `BLAKE2S` row of `C1`'s Lv42 stack is `C1`'s**, where the limb copies hold (as
+`RowConstraints.copies`, `CopiesOf`): a committed cell by `row_lv42Stack`, a limb as `q_flock`'s slot
+(`limb_lv42Stack_qf`), which the copies equate with `C1`'s copy column of the limb (`slots_agree`). -/
+theorem blake2sRow_lv42Stack (D : Deployment) (hL : C1Limbs D.shape) (rows : List ℕ) (c : Stk)
+    (hcopies : ∀ x < 2 ^ D.shape.heights.getD opBlake2s 0, ∀ col slot,
+      qflockSlot (blake2sColumns.getD col "") = some slot →
+        c1Val D c (.table opBlake2s col) (D.shape.heights.getD opBlake2s 0) x =
+          c (qfOff D + slot + 256 * x))
+    (x : Fin (2 ^ (D.sizes rows).τ 5)) (i : Fin (Lv42.Protocol.LeanIsa.width (opIdx 5))) :
+    (D.inst rows).row (lv42Stack D.prog (D.sizes rows) D.shape c) (opIdx 5) x i =
+      c1Val D c (.table opBlake2s i.val) (D.shape.heights.getD opBlake2s 0)
+        (rowPosition (rows.getD 5 0) (D.shape.heights.getD opBlake2s 0) x.val) := by
+  by_cases hl : IsLimb ⟨opIdx 5, i⟩
+  · have h9 : 9 ≤ i.val := hl.2.1
+    have h27 : i.val < 27 := hl.2.2
+    have hi : i = ⟨9 + (i.val - 9), by omega⟩ := Fin.ext (by simp only; omega)
+    rw [hi]
+    refine (limb_lv42Stack_qf D hL rows c ⟨i.val - 9, by omega⟩ x).trans ?_
+    exact (hcopies _ (rowPosition_lt (count := rows.getD 5 0) x.isLt) (9 + (i.val - 9)) _
+      (slots_agree ⟨i.val - 9, by omega⟩)).symm
+  · exact row_lv42Stack D rows c 5 x i hl
+
 /-! ## Flock's region -/
 
 /-- A batch's block depends only on its cells: blocks `t`, `t'` of two batches agree when every
@@ -630,6 +668,10 @@ theorem busBound_reference : 4 * busBound reference + 100 ≤ 2 ^ 32 := by
 /-- info: 'UniSound.Ids.limb_lv42Stack_qf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms limb_lv42Stack_qf
+
+/-- info: 'UniSound.Ids.blake2sRow_lv42Stack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms blake2sRow_lv42Stack
 
 /-- info: 'UniSound.Ids.lvBusCount' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
