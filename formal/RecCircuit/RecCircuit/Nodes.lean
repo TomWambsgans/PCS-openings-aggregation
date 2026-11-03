@@ -459,6 +459,111 @@ theorem inv_input_hashed (hc : c.Checked r) (G : c.ctx.Good w) (hw : c.circuit.S
         Primitives.F64.ofNat_zero]
       rfl
 
+/-! ## Never-hashed reads -/
+
+theorem freeReads_parts (h : c.freeReadsOk r.graph.streamLen = true) :
+    (∀ a < c.freeReads.size, (c.freeReads.getD a default).2.size = 3 ∧
+      (c.freeReads.getD a default).1 + 24 ≤ r.graph.streamLen ∧
+      ∀ k < 192, c.bitSelf.getD (8 * (c.freeReads.getD a default).1 + k) none = none) ∧
+    (∀ a < c.freeReads.size, ∀ b < c.freeReads.size, a = b ∨
+      (c.freeReads.getD a default).1 + 24 ≤ (c.freeReads.getD b default).1 ∨
+      (c.freeReads.getD b default).1 + 24 ≤ (c.freeReads.getD a default).1) := by
+  unfold freeReadsOk at h
+  simp only [Bool.and_eq_true, Array.all_eq_true, beq_iff_eq, decide_eq_true_eq] at h
+  obtain ⟨h1, h2⟩ := h
+  refine ⟨fun a ha => ?_, fun a ha b hb => ?_⟩
+  · have := h1 a ha
+    have hg : c.freeReads.getD a default = c.freeReads[a] := by simp [Array.getD_eq_getD_getElem?, ha]
+    rw [hg]
+    obtain ⟨⟨hs, hb⟩, hn⟩ := this
+    exact ⟨hs, hb, fun k hk => by simpa using allBelow_spec hn k hk⟩
+  · have := allBelow_spec (allBelow_spec h2 a ha) b hb
+    simpa [Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq, or_assoc] using this
+
+/-- A byte of a never-hashed read is found in it. -/
+theorem find_free (hc : c.Checked r) {a : ℕ} (ha : a < c.freeReads.size) {i : ℕ}
+    (hi : (c.freeReads.getD a default).1 ≤ i ∧ i < (c.freeReads.getD a default).1 + 24) :
+    c.freeReads.find? (fun e => e.1 ≤ i && i < e.1 + 24) = some (c.freeReads.getD a default) := by
+  have hdis := (freeReads_parts hc.free).2
+  have hmem : c.freeReads.getD a default ∈ c.freeReads := Ctx.getD_mem _ ha
+  have hsome : (c.freeReads.find? (fun e => e.1 ≤ i && i < e.1 + 24)).isSome := by
+    rw [Array.find?_isSome]; exact ⟨_, hmem, by simpa using hi⟩
+  obtain ⟨y, hy⟩ := Option.isSome_iff_exists.mp hsome
+  rw [hy]
+  have hpy := Array.find?_some hy
+  have hym := Array.mem_of_find?_eq_some hy
+  obtain ⟨b, hb, rfl⟩ := Array.mem_iff_getElem.mp hym
+  have hgb : c.freeReads.getD b default = c.freeReads[b] := by simp [Array.getD_eq_getD_getElem?, hb]
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hpy
+  rcases hdis a ha b hb with rfl | h | h
+  · rw [hgb]
+  · rw [hgb] at h; omega
+  · rw [hgb] at h; omega
+
+/-- The decoded bytes of a never-hashed read are its free limbs' big-endian words. -/
+theorem free_word (hc : c.Checked r) {a : ℕ} (ha : a < c.freeReads.size) (m : ℕ) (hm : m < 3) :
+    beNat (slice (c.streamW r w) ((c.freeReads.getD a default).1 + 8 * m) 8) =
+      (F64.toU64 (c.ctx.val w ((c.freeReads.getD a default).2.getD (2 - m) NONE))).toNat := by
+  obtain ⟨_, hb, hnone⟩ := (freeReads_parts hc.free).1 a ha
+  set off := (c.freeReads.getD a default).1
+  set X := (F64.toU64 (c.ctx.val w ((c.freeReads.getD a default).2.getD (2 - m) NONE))).toNat
+  have hX : X < 2 ^ 64 := UInt64.toNat_lt _
+  apply Nat.eq_of_testBit_eq
+  intro e
+  rw [beNat_testBit, slice_length _ _ _ (by rw [streamW_length]; omega)]
+  by_cases he : e < 64
+  · simp only [show e < 8 * 8 by omega, decide_true, Bool.true_and]
+    rw [slice_getD _ _ _ _ (by omega)]
+    set i := off + 8 * m + (8 - 1 - e / 8)
+    have hiL : i < r.graph.streamLen := by omega
+    -- The decoder's byte `i`: not hashed, found in this read.
+    have hns : (c.bitSelf.getD (8 * i) none).isSome = false := by
+      have := hnone (8 * (i - off)) (by omega)
+      rw [show 8 * off + 8 * (i - off) = 8 * i by omega] at this
+      simp [this]
+    have hf := find_free hc ha (i := i) ⟨by omega, by omega⟩
+    simp only [streamW, decodeStream, List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range hiL,
+      Option.map_some, Option.getD_some, hns, Bool.false_eq_true, ite_false]
+    rw [hf]
+    simp only
+    have hk : i - off = 8 * m + (7 - e / 8) := by omega
+    rw [hk, show (8 * m + (7 - e / 8)) / 8 = m by omega, show (8 * m + (7 - e / 8)) % 8 = 7 - e / 8 by omega,
+      show 7 - (7 - e / 8) = e / 8 by omega]
+    rw [Nat.toUInt8, UInt8.toNat_ofNat_of_lt' (by simp [UInt8.size]; omega)]
+    rw [show (256 : ℕ) = 2 ^ 8 by norm_num, Nat.testBit_mod_two_pow, Nat.testBit_div_two_pow]
+    simp only [Nat.mod_lt _ (show 8 > 0 by norm_num), decide_true, Bool.true_and]
+    congr 1; omega
+  · simp only [show ¬ e < 8 * 8 by omega, decide_false, Bool.false_and]
+    exact (Nat.testBit_eq_false_of_lt (lt_of_lt_of_le hX (Nat.pow_le_pow_right (by norm_num) (by omega)))).symm
+
+theorem inv_input_free (hc : c.Checked r) (hw : c.circuit.Satisfied w) {id : ℕ}
+    (hid : id < c.nodes.size) (hl : c.live.getD id false = true) {off len : ℕ}
+    (hnode : c.nodes.getD id default = .input off len)
+    (hfree : (c.freeReads.any fun e => e.1 == off && e.2 == c.limbsOf id) = true) : c.ElemInv r w id := by
+  have hok := hc.nodes id hid hl
+  simp only [nodeOk, hnode, hfree, ite_true, Bool.and_eq_true, beq_iff_eq] at hok
+  obtain ⟨hs, h24⟩ := hok
+  subst h24
+  obtain ⟨a, ha, hpa⟩ := Array.any_eq_true.mp hfree
+  simp only [Bool.and_eq_true, beq_iff_eq] at hpa
+  have hg : c.freeReads.getD a default = c.freeReads[a] := by simp [Array.getD_eq_getD_getElem?, ha]
+  have hoff : (c.freeReads.getD a default).1 = off := by rw [hg]; exact hpa.1
+  have hls : (c.freeReads.getD a default).2 = c.limbsOf id := by rw [hg]; exact hpa.2
+  refine ⟨hs, ?_⟩
+  rw [valsW_step hc hid hl, hnode]
+  simp only [Graph.step, Value.toE, inputValue]
+  rw [if_pos trivial, elemOfNats, slice_slice _ _ _ _ _ (by norm_num : 16 + 8 ≤ 24),
+    slice_slice _ _ _ _ _ (by norm_num : 8 + 8 ≤ 24), slice_slice _ _ _ _ _ (by norm_num : 0 + 8 ≤ 24)]
+  simp only [Nat.add_zero]
+  have w2 := free_word (w := w) hc ha 2 (by norm_num)
+  have w1 := free_word (w := w) hc ha 1 (by norm_num)
+  have w0 := free_word (w := w) hc ha 0 (by norm_num)
+  rw [hoff, hls] at w2 w1 w0
+  simp only [Nat.mul_zero, Nat.add_zero, show 8 * 2 = 16 by rfl, show 8 * 1 = 8 by rfl,
+    show (2 : ℕ) - 2 = 0 from rfl, show (2 : ℕ) - 1 = 1 from rfl, show (2 : ℕ) - 0 = 2 from rfl] at w2 w1 w0
+  rw [w2, w1, w0, ← F64.ofU64_eq_ofNat, ← F64.ofU64_eq_ofNat, ← F64.ofU64_eq_ofNat, F64.ofU64_toU64,
+    F64.ofU64_toU64, F64.ofU64_toU64]
+
 end Compiled
 
 end RecCircuit

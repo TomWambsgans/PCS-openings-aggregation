@@ -302,6 +302,11 @@ def arithOk (X : Ctx) (op : Op) (out lx ly : Array ℕ) : Bool :=
         else (A == lx.toList && B == ly.toList) || (A == ly.toList && B == lx.toList)))
   out.size == 3 && lx.size == 3 && ly.size == 3 && (try_ 0 || try_ 6)
 
+/-- A bit field's bits (`compile.rs`'s `field`): the read's big-endian bits at exponents `shift..shift + width`,
+shifted down. -/
+def bitField (sb : ℕ → ℕ) (off len shift width : ℕ) : List (ℕ × ℕ) :=
+  (beBits sb off len).filterMap fun t => if shift ≤ t.1 && t.1 < shift + width then some (t.1 - shift, t.2) else none
+
 /-- A node whose value is a Keccak state. -/
 def isStateNode : Node → Bool
   | .seed | .hash .. => true
@@ -338,8 +343,7 @@ def nodeOk (X : Ctx) (iv : List UInt8) (packOf : Array (Option ℕ)) (id : ℕ) 
   | .bits v shift width =>
     match c.nodes.getD v default with
     | .input off len =>
-      let field := (beBits sb off len).filterMap fun (e, x) =>
-        if shift ≤ e && e < shift + width then some (e - shift, x) else none
+      let field := bitField sb off len shift width
       len ≤ 8 && l.size == 3 && X.constOk (L 1) 0 && X.constOk (L 2) 0 &&
       (List.range (8 * len)).all (fun k => (c.bitSelf.getD (8 * off + k) none).isSome) &&
       (match field with
