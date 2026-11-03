@@ -92,6 +92,13 @@ theorem experiment_eq (hc : ProverCommutes flock D) (input : Vector UInt8 32) (r
 
 /-! ## The staged form -/
 
+/-- **The prover before the bus challenges commutes with simulation** (its trees, IV and seed only hash). -/
+theorem simulateQ_proverA {r : Type → Type} [Monad r] [LawfulMonad r] (impl : QueryImpl KeccakCalls r)
+    (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) :
+    simulateQ impl (proverA callKeccak256 D input rows q) = proverA (implH impl) D input rows q := by
+  simp only [proverA, setupTreesOf, contractIvOf, seedOf, simulateQ_bind, simulateQ_pure,
+    E2ECompleteness.simulateQ_commitWithH, simulateQ_queryH]
+
 /-- **The experiment's stages**: `A` the setup and the prover before the bus challenges, `C` the prover after them
 and the verdict. -/
 def stagedU (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) : UniStaged where
