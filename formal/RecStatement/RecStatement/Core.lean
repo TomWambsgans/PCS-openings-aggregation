@@ -198,23 +198,27 @@ def publicSide (S : CoreSpec F) (gs pubs : List F) (α β : F) : Option (F × F)
   | side, none => side
   | none, coset => coset
 
-/-- **The pushes' sum and the pull-less groups'** `(A, B, S_n, S_d)`: a group adds `N_g X/D_g` to `A/B`
-(`X = E_g(v_{c ⊕ k_g}) + v_0`; one pair, `X/d`), and a pull-less group `N_g/D_g` to `S_n/S_d`. -/
+/-- **One group's step of the pushes' sum**: a group adds `N_g X/D_g` to `A/B` (`X = E_g(v_{c ⊕ k_g}) + v_0`; one
+pair, `X/d`), and a pull-less group `N_g/D_g` to `S_n/S_d`. -/
+def pushStep (gs cells : List F) (v0 : F) (acc : Option (F × F) × Option (F × F)) (gf : GroupF F × (F × F)) :
+    Option (F × F) × Option (F × F) :=
+  let g := gf.1
+  let nd := gf.2
+  let value := g.formula.eval gs (fun c ↦ cells.getD (c ^^^ g.role) 0) + v0
+  let single := g.pairs.length = 1
+  let term := if single then value else nd.1 * value
+  let ab := match acc.1 with
+    | some (a, b) => some (a * nd.2 + b * term, b * nd.2)
+    | none => some (term, nd.2)
+  let s := if g.pulls then acc.2 else match acc.2 with
+    | some (a, b) => if single then some (a * nd.2 + b, b * nd.2) else some (a * nd.2 + b * nd.1, b * nd.2)
+    | none => some (nd.1, nd.2)
+  (ab, s)
+
+/-- **The pushes' sum and the pull-less groups'** `(A, B, S_n, S_d)` (`pushStep` over the groups). -/
 def pushSums (S : CoreSpec F) (gs cells : List F) (v0 : F) (fracs : List (F × F)) : F × F × F × F :=
-  let step := fun (acc : Option (F × F) × Option (F × F)) (gf : GroupF F × (F × F)) ↦
-    let (g, nd) := gf
-    let value := g.formula.eval gs (fun c ↦ cells.getD (c ^^^ g.role) 0) + v0
-    let single := g.pairs.length = 1
-    let term := if single then value else nd.1 * value
-    let ab := match acc.1 with
-      | some (a, b) => some (a * nd.2 + b * term, b * nd.2)
-      | none => some (term, nd.2)
-    let s := if g.pulls then acc.2 else match acc.2 with
-      | some (a, b) => if single then some (a * nd.2 + b, b * nd.2) else some (a * nd.2 + b * nd.1, b * nd.2)
-      | none => some (nd.1, nd.2)
-    (ab, s)
-  let (ab, s) := (S.groups.zip fracs).foldl step (none, none)
-  ((ab.map (·.1)).getD 0, (ab.map (·.2)).getD 1, (s.map (·.1)).getD 0, (s.map (·.2)).getD 1)
+  let r := (S.groups.zip fracs).foldl (pushStep gs cells v0) (none, none)
+  ((r.1.map (·.1)).getD 0, (r.1.map (·.2)).getD 1, (r.2.map (·.1)).getD 0, (r.2.map (·.2)).getD 1)
 
 /-- **Every value the arithmetic computes**, in the Rust's order. -/
 structure Out (F : Type) where
