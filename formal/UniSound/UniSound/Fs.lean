@@ -192,7 +192,14 @@ Its proof also needs, of the deployment: the five stacks at `2^24 … 2^28` word
 setup, `A0`, `B0`: `WhirShape.large`, lists at most `largeList ≤ 9952`, `QO ≤ 10122`), the setup's
 Keccak-256 calls below `2^26`, the verifier's calls of `π` below `2^80` (`hVπ`), and `uniExtractor`'s
 decoders listing the chain's candidates (`fastStacks`, `uniqueStacks`, `decodeStacks` at `C1`'s
-`2^μ`, against `Compose`'s `tableCode`). -/
+`2^μ`, against `Compose`'s `tableCode`).
+
+**Proved** (`FsProof.lean`'s `fsLayer_of_game`, `FsCost.lean`'s `fsLayer_of_game'`) for a deployment
+whose five layout words name `24 … 28` variables (`UniShapes`; the reference shape's
+`27, 27, 24, 28, 28`), from the chain's `< 2^10` queries, every round's `≤ 2^30` scalars, and one
+hypothesis, the coupling `UniGameLe`: the univariate experiment is dominated by the composed game
+(`Compose.rpmGameS` of the setup's three trees, `Compose.ListChainU`'s chain over the univariate
+encoding, the five openings), the event read through `uniExtractor`'s candidates. -/
 def FsLayer (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ) (C : UniCode D Fl nV V) :
     Prop :=
   ∀ (R : RbrPiop (uniRounds Fl.prog.rounds nV V) USt Stk) (e : ℝ≥0∞), (∀ j, R.err j ≤ e) →
