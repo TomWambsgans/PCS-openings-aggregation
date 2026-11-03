@@ -3,6 +3,7 @@
 -- `tag_walk`) and `crates/leanvm_rec/src/pi2/circuit.rs` (`coset_constants`, `vanishing`, `pair_constants`,
 -- `Circuit::max_gamma`), branch `leanvm-rec` @ 2b22581. The Cantor basis is `formal/UniStatement`'s (`beta`, `point`).
 import RecStatement.Basic
+import RecStatement.Core
 
 /-!
 # What the verifier is built from (`Spec::of`)
@@ -43,12 +44,8 @@ def pairConstants (p : Pair) (r : ℕ) (e : List K) : K × K :=
 def normalisedConstants (e : List K) : List K :=
   (e.foldl (fun (acc : List K × K) x ↦ (acc.1 ++ [acc.2 * x⁻¹], acc.2 * x)) ([], 1)).1
 
-/-- **`subspace_coefficients(k)`**: the coefficients `a_i` of `w_k = s^k = Σ_{i ≤ k} a_i X^(2^i)`, low first:
-`s(Σ a_i X^(2^i)) = Σ a_i² X^(2^(i+1)) + Σ a_i X^(2^i)`. -/
-def subspaceCoefficients (k : ℕ) : List K :=
-  (List.range k).foldl (fun a _ ↦
-    (List.range (a.length + 1)).map fun i ↦
-      (if i = 0 then 0 else a.getD (i - 1) 0 * a.getD (i - 1) 0) + a.getD i 0) [1]
+/-- **`subspace_coefficients(k)`** in `K` (`subspaceCoeffsF`). -/
+def subspaceCoefficients (k : ℕ) : List K := subspaceCoeffsF k
 
 /-- A pair as the verifier needs it (`SpecPair`): its block's rows' log `s` and `Ẑ_s(c_p)`. -/
 structure SpecPair where

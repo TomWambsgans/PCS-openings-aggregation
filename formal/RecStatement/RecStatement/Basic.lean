@@ -1,7 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. Transcribed from `crates/leanvm_rec/src/pi2/circuit.rs`
 -- (`Coeff`, `Lin`, `Formula`, `Pair`, `Read`, `PublicTerm`, `Circuit`) and `crates/leanvm_rec/src/circuit/spec.rs`
 -- (`CallWord`), branch `leanvm-rec` @ 2b22581.
-import UniStatement.Opening
+import UniStatement.Rec
 
 /-!
 # π2's circuit as its verifier reads it

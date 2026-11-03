@@ -76,19 +76,19 @@ def streamLen (c : Circuit) : ℕ := (c.reads.map (·.bytes)).sum + 64 + 24 * (2
 
 /-! ## π1's contract IV -/
 
-/-- **`variant_bytes(Flock(FLOCK_REC3))`**: `"fs-rec3"`, the skip (`3`), the slices' code (`4`, `TowerWalk`). -/
-def rec3VariantBytes : List UInt8 := "fs-rec3".toUTF8.toList ++ [3, 4]
+/-- **`variant_bytes(Flock(FLOCK_REC3))`**: `"fs-rec3"`, the skip (`3`), the slices' code (`4`, `TowerWalk`)
+(`UniStatement.variantBytes`). -/
+def rec3VariantBytes : List UInt8 := UniStatement.variantBytes (.flock UniStatement.flockMain) .rec3 true
 
 section With
 
 variable {m : Type → Type} [Monad m] (F : KeccakState → m KeccakState)
 
-/-- **`contract_iv_for(shape, Flock(FLOCK_REC3), program_iv, roots)`** over `F`: π1-rec3's contract IV. -/
+/-- **`contract_iv_for(shape, Flock(FLOCK_REC3), program_iv, roots)`** over `F`: π1-rec3's contract IV
+(`UniStatement.contractIvForWith` at π1-rec3's Fiat–Shamir shape and walked terminal). -/
 def pi1IvWith (s : UniStatement.Shape) (programIv : List UInt8) (roots : UniStatement.SetupRoots) :
-    m (List UInt8) := do
-  let d ← keccak256With F (UniStatement.ivTag ++ programIv ++ digestBytes roots.bytecode ++ digestBytes roots.a0 ++
-    digestBytes roots.b0 ++ UniStatement.shapeBytes s ++ (UniStatement.layoutWords s).flatten ++ rec3VariantBytes)
-  return digestBytes d
+    m (List UInt8) :=
+  UniStatement.contractIvForWith F s (.flock UniStatement.flockMain) .rec3 true programIv roots
 
 end With
 

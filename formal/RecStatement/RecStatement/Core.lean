@@ -169,6 +169,14 @@ def walkDens (S : CoreSpec F) (gs pubs : List F) (α β : F) : List F :=
 /-- `x` squared `i` times: `x^(2^i)`. -/
 def sqIter (x : F) (i : ℕ) : F := (fun y ↦ y * y)^[i] x
 
+/-- One step of `subspace_coefficients`: `s(Σ a_i X^(2^i)) = Σ a_i² X^(2^(i+1)) + Σ a_i X^(2^i)`. -/
+def subspaceStep (a : List F) : List F :=
+  (List.range (a.length + 1)).map fun i ↦
+    (if i = 0 then 0 else a.getD (i - 1) 0 * a.getD (i - 1) 0) + a.getD i 0
+
+/-- **`subspace_coefficients(k)`**: the coefficients `a_i` of `w_k = s^k = Σ_{i ≤ k} a_i X^(2^i)`, low first. -/
+def subspaceCoeffsF (k : ℕ) : List F := (List.range k).foldl (fun a _ ↦ subspaceStep a) [1]
+
 /-- `b_rest`: `[β^(2^k − 2^0), …, β^(2^k − 2^(k−1)), 1]`, `b_rest_i = b_rest_{i+1} · β^(2^i)` down from `i = k − 1`. -/
 def bRestList (β : F) (k : ℕ) : List F :=
   (List.range k).reverse.foldl (fun acc i ↦

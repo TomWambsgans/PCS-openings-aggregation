@@ -165,10 +165,9 @@ def iv (pi1Iv digest setupRoot : List UInt8) (logN : ℕ) : List UInt8 :=
 
 /-! ## The run -/
 
-/-- `cantor_beta1()`: `x^((2^64 − 1)/3)`, or it plus one, the one with its low bit clear (`β_1² + β_1 = 1`). -/
-def cantorBeta1 : E :=
-  let g := UniStatement.epow UniStatement.gen ((2 ^ 64 - 1) / 3)
-  if (g.limb 0).lane &&& 1 = 0 then g else g + 1
+/-- `cantor_beta1()`: `x^((2^64 − 1)/3)`, or it plus one, the one with its low bit clear (`β_1² + β_1 = 1`;
+`UniStatement.cantorBeta1`, π1-rec3's). -/
+def cantorBeta1 : E := UniStatement.cantorBeta1
 
 /-- **`pair_point(z)`**: `(z + β_1 (z² + z), z² + z)`. -/
 def pairPoint (z : E) : E × E :=
