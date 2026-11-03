@@ -851,4 +851,129 @@ theorem constraintRelation_eq (shape : Shape) (parts : List TablePart) (publicWo
           rcases qflockSlot (x.1.columns.getD c "") with _ | slot <;> rfl
       · simp only [crStep, ite_eq_right hj, ite_eq_right hb]
 
+/-! ## The constraint relation at `t` -/
+
+/-- Terms' value under `ev`. -/
+def termsVal (ev : Column → List E → E) (terms : Array Term) : E :=
+  (terms.toList.map fun tm ↦ tm.coefficient * ev tm.column tm.point).sum
+
+theorem termsVal_push (ev : Column → List E → E) (terms : Array Term) (tm : Term) :
+    termsVal ev (terms.push tm) = termsVal ev terms + tm.coefficient * ev tm.column tm.point := by
+  simp [termsVal]
+
+theorem powComb_append (a b : List E) (ρ : E) :
+    powComb (a ++ b) ρ = powComb a ρ + ρ ^ a.length * powComb b ρ := by
+  induction a with
+  | nil => simp [powComb_nil]
+  | cons x a ih =>
+    rw [List.cons_append, powComb_cons, powComb_cons, ih, List.length_cons, pow_succ]
+    ring
+
+theorem copyFold_spec (ev : Column → List E → E) (o r : ℕ) (columns : List String) (w y : List E)
+    (lift gamma : E) : ∀ (l : List ℕ) (s : Array Term × E),
+      termsVal ev (l.foldl (copyStep o r columns w y lift gamma) s).1 = termsVal ev s.1 +
+          s.2 * powComb (l.filterMap fun c ↦ (qflockSlot (columns.getD c "")).map fun slot ↦
+            lift * (ev (.table o c) (w.take r) + ev (.qflockSlot slot) y)) gamma ∧
+        (l.foldl (copyStep o r columns w y lift gamma) s).2 =
+          s.2 * gamma ^ (l.filterMap fun c ↦ qflockSlot (columns.getD c "")).length
+  | [], s => by simp [powComb_nil]
+  | c :: l, s => by
+    rw [List.foldl_cons]
+    obtain ⟨ih1, ih2⟩ := copyFold_spec ev o r columns w y lift gamma l (copyStep o r columns w y lift gamma s c)
+    rw [ih1, ih2]
+    simp only [List.filterMap_cons]
+    unfold copyStep
+    rcases qflockSlot (columns.getD c "") with _ | slot
+    · simp only [Option.map_none]
+      trivial
+    · simp only [Option.map_some, termsVal_push, term, powComb_cons, List.length_cons, pow_succ]
+      exact ⟨by ring, by ring⟩
+
+theorem lineFold_spec (S : Shape) (gamma t : E) (w : List E) (ev : Column → List E → E) :
+    ∀ (l : List ((E × E) × ℕ)) (s : E × Array Term × E),
+      (l.foldl (lineStep S gamma t w) s).1 + termsVal ev (l.foldl (lineStep S gamma t w) s).2.1 =
+          s.1 + termsVal ev s.2.1 + s.2.2 * powComb (l.map fun x ↦ vanishingRatio w 1 S.constraintVars *
+            (ev (.memory x.2) (w.take S.logMemory) + x.1.1 + t * (x.1.1 + x.1.2))) gamma ∧
+        (l.foldl (lineStep S gamma t w) s).2.2 = s.2.2 * gamma ^ l.length
+  | [], s => by simp [powComb_nil]
+  | x :: l, s => by
+    rw [List.foldl_cons]
+    obtain ⟨ih1, ih2⟩ := lineFold_spec S gamma t w ev l (lineStep S gamma t w s x)
+    rw [ih1, ih2]
+    simp only [lineStep, termsVal_push, term, List.map_cons, powComb_cons, List.length_cons, pow_succ]
+    exact ⟨by ring, by ring⟩
+
+/-- What the constraint relation's step needs of the evaluation at a table. -/
+structure CrTableOk (S : Shape) (c1 : Stk) (t : E) (w : List E) (ev : Column → List E → E)
+    (tab : Table) (part : TablePart) : Prop where
+  lift : vanishingRatio w (S.heights.getD tab.opcode 0) S.constraintVars =
+    (liftP (S.heights.getD tab.opcode 0) S.constraintVars).eval t
+  col : ∀ c, ev (.table tab.opcode c) (w.take (S.heights.getD tab.opcode 0)) =
+    (c1P S c1 (.table tab.opcode c)).eval t
+  inv : ev (.inverse tab.opcode) (w.take (S.heights.getD tab.opcode 0)) = (c1P S c1 (.inverse tab.opcode)).eval t
+  slot : tab.opcode = opBlake2s → ∀ slot,
+    ev (.qflockSlot slot) (coordinatesAt t (coordinateFunctionals (S.heights.getD tab.opcode 0))) =
+      (slotP S c1 slot).eval t
+  sent : ∀ c ∈ sentColumns tab, part.sent.getD c none = some ((c1P S c1 (.table tab.opcode c)).eval t)
+  jumpSent : tab.opcode = opJump →
+    colIdx tab.columns "b" ∈ sentColumns tab ∧ colIdx tab.columns "v_cond" ∈ sentColumns tab
+
+theorem countColumns_sent (tab : Table) : ∀ c ∈ tab.countColumns, c ∈ sentColumns tab :=
+  fun _ hc ↦ List.mem_append_left _ hc
+
+theorem foldl_mul_getD (f : ℕ → E) (sent : Array (Option E)) :
+    ∀ (l : List ℕ) (a : E), (∀ c ∈ l, sent.getD c none = some (f c)) →
+      l.foldl (fun acc c ↦ acc * (sent.getD c none).getD 0) a = a * (l.map f).prod
+  | [], a, _ => by simp
+  | c :: l, a, h => by
+    rw [List.foldl_cons, foldl_mul_getD f sent l _ fun c' hc' ↦ h c' (List.mem_cons_of_mem _ hc'),
+      h c (List.mem_cons_self ..), Option.getD_some, List.map_cons, List.prod_cons, mul_assoc]
+
+/-- **One table's step of the constraint relation at `t`**: it adds the table's constraints at `t`,
+batched by the powers of `γ` from the current power. -/
+theorem crStep_spec (S : Shape) (c1 : Stk) (gamma t : E) (w : List E) (ev : Column → List E → E)
+    (tab : Table) (part : TablePart) (h : CrTableOk S c1 t w ev tab part) (s : E × Array Term × E × ℕ) :
+    (crStep S gamma t w s (tab, part)).1 + termsVal ev (crStep S gamma t w s (tab, part)).2.1 =
+        s.1 + termsVal ev s.2.1 +
+          s.2.2.1 * powComb ((tableConstraintsP S c1 tab).map fun mw ↦ (mw.1 * mw.2).eval t) gamma ∧
+      (crStep S gamma t w s (tab, part)).2.2.1 = s.2.2.1 * gamma ^ (tableConstraintsP S c1 tab).length := by
+  have hcnt : tab.countColumns.foldl (fun acc c ↦ acc * (part.sent.getD c none).getD 0) 1 =
+      (tab.countColumns.map fun c ↦ (c1P S c1 (.table tab.opcode c)).eval t).prod := by
+    rw [foldl_mul_getD _ _ _ 1 fun c hc ↦ h.sent c (countColumns_sent tab c hc), one_mul]
+  have hprod : ((tab.countColumns.map fun c ↦ c1P S c1 (.table tab.opcode c)).prod).eval t =
+      (tab.countColumns.map fun c ↦ (c1P S c1 (.table tab.opcode c)).eval t).prod := by
+    rw [eval_list_prod_of, List.map_map]
+    rfl
+  have hcopies := copyFold_spec ev tab.opcode (S.heights.getD tab.opcode 0) tab.columns w
+    (coordinatesAt t (coordinateFunctionals (S.heights.getD tab.opcode 0)))
+    ((liftP (S.heights.getD tab.opcode 0) S.constraintVars).eval t) gamma (List.range tab.width)
+  unfold crStep tableConstraintsP
+  dsimp only
+  rw [h.lift]
+  by_cases hj : tab.opcode = opJump
+  · have hb : ¬ tab.opcode = opBlake2s := by rw [hj]; decide
+    obtain ⟨hsb, hsv⟩ := h.jumpSent hj
+    simp only [ite_eq_left hj, ite_eq_right hb, List.append_nil, List.cons_append, List.nil_append,
+      List.map_cons, List.map_nil, List.length_cons, List.length_nil, powComb_cons, powComb_nil,
+      termsVal_push, term, h.sent _ hsb, h.sent _ hsv, Option.getD_some, h.col, h.inv, hcnt,
+      Polynomial.eval_mul, Polynomial.eval_add, Polynomial.eval_one, hprod]
+    constructor <;> ring
+  · by_cases hb : tab.opcode = opBlake2s
+    · simp only [ite_eq_right hj, ite_eq_left hb, List.nil_append, List.cons_append, List.map_cons,
+        List.length_cons, powComb_cons, term, hcnt, Polynomial.eval_mul,
+        Polynomial.eval_add, Polynomial.eval_one, hprod]
+      obtain ⟨hc1, hc2⟩ := hcopies (s.2.1.push ⟨.inverse tab.opcode, w.take (S.heights.getD tab.opcode 0), 0,
+        s.2.2.1 * (liftP (S.heights.getD tab.opcode 0) S.constraintVars).eval t *
+          (tab.countColumns.map fun c ↦ (c1P S c1 (.table tab.opcode c)).eval t).prod⟩, s.2.2.1 * gamma)
+      rw [hc1, hc2, termsVal_push, List.map_filterMap, length_filterMap_map]
+      simp only [Option.map_map, Function.comp_def, Polynomial.eval_add, h.col, h.slot hb, h.inv]
+      constructor
+      · ring
+      · rw [pow_succ]
+        ring
+    · simp only [ite_eq_right hj, ite_eq_right hb, List.nil_append, List.append_nil, List.map_cons,
+        List.map_nil, List.length_cons, List.length_nil, powComb_cons, powComb_nil, termsVal_push, term,
+        h.inv, hcnt, Polynomial.eval_mul, Polynomial.eval_add, Polynomial.eval_one, hprod]
+      constructor <;> ring
+
 end UniSound.Ids.Eval
