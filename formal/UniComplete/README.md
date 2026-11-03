@@ -73,4 +73,24 @@ terminal is zero (`CoreBatch.batchSyncsAt_front`, from `Mapping.honestTrace_hone
 `CoreRun.flockProve_matrixPoint`). The probability layer (`Prob*.lean`) stages the run at the bus challenges and
 at `t` (`ProbSplit`, `ProbStaged`); `CoreRun.front_challenges` identifies the staged challenges with the prover's.
 
-See `UniComplete.lean` for every module.
+The composition: `CoreRun.lean` (the claims' values, Flock's matrices' point, the staged challenges are the
+prover's), `CoreBatch.lean` (`BatchHolds` at the prover's state: the stacks' sizes, Flock's pending matrices in the
+batch's forms, `¬ BadT` as the slot condition, `C2`'s terms covering their columns, every relation at `t`),
+`Core.lean` (`accepts_of_trace`, `coreAccepts_of`, `coreFailsOnlyAtPow`, `badFpCard_reference`), `End.lean`. See
+`UniComplete.lean` for every module.
+
+## What the proof found
+
+* **Quotient sizes.** Every honest run under `RowsFit` fits the quotients' sizes: the tree quotient (`≤ 2^h`), the
+  memory's and bytecode's leaves (`≤ 2^r − 2`), the tables' (they need `leastRows ≤ (M − 1)(n − 1)`, `M ≥ 3`), the
+  constraint quotient (every trace). Counts below a table's `leastRows`, which F1 allows (any count `≤ 2^h`), cannot
+  be proved honestly at that shape class; heights `29–31`, which `Shape.validate` allows, exceed the prover's
+  interpolation (the `28`-vector basis), and such stacks exceed WHIR's `2^28` words anyway.
+* **A completeness gap at `t`.** If `y(t)` is a proper prefix of another point on `C1`, `combine` merges the slot
+  terms with that point's and the honest proof is rejected (the Rust has the same: `dense_weight` truncates,
+  `weight_at` does not). At most `2·2^17` such `t` per Flock point: the `3·2^17/2^192` term.
+* **`t`'s query is `64` bytes**, a Merkle node's length, so its freshness is not by length; it is proved by the chain
+  of challenges and `C2`'s tree never asking a `32`-byte input (`ProbTFresh`).
+* **Costs.** The prover's Keccak-f blocks are below `3·2^46` (the five WHIR openings alone about `2^47.43`), the
+  stream below `2^40` bytes, for a program IV of at most `2^16` bytes.
+* Flock has no bad event; no other prover, verifier or SPEC discrepancy was found.
