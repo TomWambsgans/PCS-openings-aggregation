@@ -58,6 +58,19 @@ UNI_VECTORS=$PWD/all.txt lake env lean ../UniStatement/UniStatementTest/Runner.l
     read as Lv42's stack**, the setup's tables.
 14. [`Security.lean`](UniStatement/Security.lean): the deployment, the setup and its IV, the extractor, the
     experiments, **`UniKnowledgeSoundness`**, **`UniCompleteness`**.
+15. [`Rec.lean`](UniStatement/Rec.lean) (the recursion's inner proofs, `leanvm-rec` 4247e37; not imported by
+    `UniStatement.lean`, so that nothing above is rebuilt): **`FsShape`** (`main`, `rec1`, `rec2`, `rec3`: the Rust's
+    `Main`, `Rec`, `Rec2`, `Rec3`) and **`walk`** (`Slices::TowerWalk`), parameters of `Fs` copies of the functions
+    they change (`Flock.zerocheckFs`, `frontFs`, `verifyFs`, `verifyDeferredFs`, the new `verifyWalkedFs` with
+    `walkedTerminal` and the BLAKE2s circuit's walk `blake2sRowValues`; `batchFs` with the narrow challenges
+    `sampleNarrow` and the paired rounds `sumcheckPairsDrawn`, `pairPoint`, `cantorBeta1`; `reduceWithFs`,
+    `runWithFs`, `runFs`, `verifyWithFs`; the IV for a variant `contractIvForWith`), `main` and no walk the default.
+    At the default each is the original (`…Fs_main`, `reduceWithFs_main`, `runWithFs_main`, `runFs_main`), so the
+    existing statements and proofs keep their meaning. **π1-rec3** (`FLOCK_REC3`, the recursion's) is
+    `runFs reference iv publicInput stream (.flock flockMain) .point .rec3 true`, its IV
+    `contractIvFor reference (.flock flockMain) .rec3 true programIv referenceRoots`, its three calls `pcsCalls`;
+    `formal/RecGraph`'s runner checks it against the Rust verifier and π1-rec3's recorded graph on the real proof
+    (`main_line_rec3.txt`) and 24 mutated and random streams.
 
 ## Rust → Lean
 

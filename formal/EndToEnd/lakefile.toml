@@ -181,6 +181,15 @@ leanOptions = { warningAsError = true }
 name = "RecPiop"
 srcDir = "../RecPiop"
 globs = ["RecPiop", "RecPiop.+"]
+
+# The recursion's inner verifier as a graph (`formal/RecGraph`): π1-rec3's recorded verifier graph
+# (`crates/leanvm_rec/src/lean.rs` writes `RecGraph/Emitted.lean`, data only), its semantics over any permutation
+# (`evalGraph`), and the Lean recorder with "recording commutes with evaluation". The differential runner
+# (`RecGraphTest/Runner.lean`) runs with `lake env lean`, not built.
+[[lean_lib]]
+name = "RecGraph"
+srcDir = "../RecGraph"
+globs = ["RecGraph", "RecGraph.+"]
 leanOptions = { warningAsError = true }
 
 # π2's verifier (`crates/leanvm_rec`, `PI2.md` §2, §8–§9, branch `leanvm-rec` @ 2b22581), `formal/RecStatement`:
