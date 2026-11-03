@@ -71,7 +71,7 @@ def candAt (nF : ℕ) (c1 c2 : Stk) (j : ℕ) : Option Stk :=
   if j = 0 then some c1 else if j = nF + 1 then some c2 else none
 
 theorem opened_eq_zipIdx (nF : ℕ) (c1 c2 : Stk) : ∀ (ums : List UMsg) (ch : List (List E))
-    (cs : List (Option Stk)) (k : ℕ), ch.length = ums.length → cs.length = ums.length →
+    (cs : List (Option Stk)) (k : ℕ), ums.length ≤ ch.length → cs.length = ums.length →
     (∀ i (h : i < cs.length), cs[i] = candAt nF c1 c2 (k + i)) →
     opened cs (ums.map toRMsg) ch =
       ((ums.zip ch).zipIdx k).map fun x : (UMsg × List E) × ℕ =>
@@ -80,7 +80,7 @@ theorem opened_eq_zipIdx (nF : ℕ) (c1 c2 : Stk) : ∀ (ums : List UMsg) (ch : 
   | u :: us, c :: chs, c0 :: cs', k, hch, hcs, hc => by
     simp only [List.map_cons, opened, List.headD_cons, List.tail_cons, List.zip_cons_cons,
       List.zipIdx_cons, List.cons.injEq]
-    refine ⟨?_, opened_eq_zipIdx nF c1 c2 us chs cs' (k + 1) (by simpa using hch)
+    refine ⟨?_, opened_eq_zipIdx nF c1 c2 us chs cs' (k + 1) (by simp at hch; omega)
       (by simpa using hcs) fun i h => ?_⟩
     · have := hc 0 (by simp)
       simp only [List.getElem_cons_zero, Nat.add_zero] at this
@@ -93,7 +93,7 @@ theorem opened_eq_zipIdx (nF : ℕ) (c1 c2 : Stk) : ∀ (ums : List UMsg) (ch : 
   | _ :: _, _ :: _, [], _, _, h, _ => by simp at h
 
 theorem opened_eq_openedOf (nF : ℕ) (c1 c2 : Stk) (ums : List UMsg) (ch : List (List E))
-    (cs : List (Option Stk)) (hch : ch.length = ums.length) (hcs : cs.length = ums.length)
+    (cs : List (Option Stk)) (hch : ums.length ≤ ch.length) (hcs : cs.length = ums.length)
     (hc : ∀ i (h : i < cs.length), cs[i] = candAt nF c1 c2 i) :
     opened cs (ums.map toRMsg) ch = openedOf nF c1 c2 (ums.zip ch) := by
   rw [opened_eq_zipIdx nF c1 c2 ums ch cs 0 hch hcs (fun i h => by rw [hc i h, Nat.zero_add])]
