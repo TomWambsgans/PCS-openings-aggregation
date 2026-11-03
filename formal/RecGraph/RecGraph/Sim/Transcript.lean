@@ -251,15 +251,15 @@ def drawCh (fs : FsShape) (count : Nat) : Nat :=
 theorem sim_drawRun_squares (st : RecState) (count : Nat) :
     Sim π iv publicInput stream st (if count = 0 then pure [] else do let c ← Pi1.sample; Pi1.squares c count)
       (if count = 0 then pure [] else do let c ← UniStatement.sample (Fp π); pure (UniStatement.squares c count))
-      0 (if count = 0 then 0 else 1) (fun st' a b ↦ RpL π iv publicInput stream st' a b) := by
+      0 (if count = 0 then 0 else 1) (fun st' a b ↦ RpL π iv publicInput stream st' a b ∧ b.length = count) := by
   refine Sim.of_good fun hg ↦ ?_
   by_cases h0 : count = 0
   · simp only [h0, ↓reduceIte]
-    exact Sim.pure_of_pstep (PStep.refl st hg) List.Forall₂.nil
+    exact Sim.pure_of_pstep (PStep.refl st hg) ⟨List.Forall₂.nil, rfl⟩
   · simp only [h0, ↓reduceIte]
     refine Sim.cast (n := 0 + 0) (ch := 1 + 0) rfl rfl ?_
     exact Sim.bind (sim_sample π iv publicInput stream st) fun st1 a x hg1 _ ⟨hx, _⟩ ↦
-      Sim.of_psim (squares_psim st1 hg1 hx count)
+      Sim.of_psim ((squares_psim st1 hg1 hx count).mono fun _ _ _ h ↦ ⟨h, by rw [squares_eq]; simp⟩)
 
 /-- **`FsShape::draw(channel, count)`**: the run of challenges. -/
 theorem sim_drawRun (st : RecState) (fs : FsShape) (count : Nat) :
@@ -267,9 +267,15 @@ theorem sim_drawRun (st : RecState) (fs : FsShape) (count : Nat) :
       (fun st' a b ↦ RpL π iv publicInput stream st' a b) := by
   cases fs with
   | main => exact (sim_samples π iv publicInput stream st count).mono fun _ _ _ _ _ h ↦ h.1
-  | rec1 => exact sim_drawRun_squares st count
-  | rec2 => exact sim_drawRun_squares st count
-  | rec3 => exact sim_drawRun_squares st count
+  | rec1 => exact (sim_drawRun_squares st count).mono fun _ _ _ _ _ h ↦ h.1
+  | rec2 => exact (sim_drawRun_squares st count).mono fun _ _ _ _ _ h ↦ h.1
+  | rec3 => exact (sim_drawRun_squares st count).mono fun _ _ _ _ _ h ↦ h.1
+
+/-- `FsShape::Rec3`'s draw: one challenge, its squares, `count` of them. -/
+theorem sim_drawRun_rec3 (st : RecState) (count : Nat) :
+    Sim π iv publicInput stream st (Pi1.drawRun .rec3 count) (UniStatement.drawRun (Fp π) .rec3 count) 0
+      (if count = 0 then 0 else 1) (fun st' a b ↦ RpL π iv publicInput stream st' a b ∧ b.length = count) :=
+  sim_drawRun_squares st count
 
 /-! ## The row counts -/
 
@@ -284,17 +290,19 @@ theorem bitsValue_eK (k s w : Nat) (hk : k < 2 ^ 64) : bitsValue (eK (UInt64.ofN
 bits `0..=r`. -/
 theorem sim_countBits (st : RecState) (heights : List Nat) :
     Sim π iv publicInput stream st (Pi1.countBits heights) (UniStatement.countBits (m := Id) heights)
-      (4 * heights.length) 0 (fun st' a b ↦ List.Forall₂ (RpL π iv publicInput stream st') a b) := by
+      (4 * heights.length) 0 (fun st' a b ↦ List.Forall₂ (RpL π iv publicInput stream st') a b ∧
+        List.Forall₂ (fun bs r ↦ bs.length = r + 1) b heights) := by
   refine Sim.of_good fun hg ↦ ?_
   unfold Pi1.countBits UniStatement.countBits
   refine Sim.cast ?_ ?_ ((Sim.forIn_list st heights heights
-    (fun _ st (s : Array (List Nat)) (t : Array (List E)) ↦
-      List.Forall₂ (RpL π iv publicInput stream st) s.toList t.toList)
-    (fun _ ↦ 4) (fun _ ↦ 0) _ _ rfl ?_ st #[] #[] hg (Grows.refl st) List.Forall₂.nil).map
-      (f := fun s ↦ s.toList) (g := fun t ↦ t.toList) fun _ _ _ _ _ h ↦ h)
+    (fun i st (s : Array (List Nat)) (t : Array (List E)) ↦
+      List.Forall₂ (RpL π iv publicInput stream st) s.toList t.toList ∧
+        List.Forall₂ (fun bs r ↦ bs.length = r + 1) t.toList (heights.take i))
+    (fun _ ↦ 4) (fun _ ↦ 0) _ _ rfl ?_ st #[] #[] hg (Grows.refl st) ⟨List.Forall₂.nil, by simp⟩).map
+      (f := fun s ↦ s.toList) (g := fun t ↦ t.toList) fun _ _ _ _ _ h ↦ ⟨h.1, by simpa using h.2⟩)
   · rw [sum_const_range, Nat.mul_comm]
   · simp
-  · intro i hi _ st' s t hg' _ hI
+  · intro i hi _ st' s t hg' _ ⟨hI, hlen⟩
     refine Sim.cast (n := 4 + 0) (ch := 0 + 0) rfl rfl ?_
     refine Sim.bind (sim_nextInteger π iv publicInput stream st' 4 (by norm_num)) fun st1 cnt k hg1 hgr1 ⟨hcnt, hk⟩ ↦ ?_
     have hk64 : k < 2 ^ 64 := lt_of_lt_of_le hk (by norm_num)
@@ -324,8 +332,10 @@ theorem sim_countBits (st : RecState) (heights : List Nat) :
         PSim.pure hst10.good ⟨_, rfl, by rw [Array.toList_push, map_range_succ]; exact (hJ.pgrow hst9.good hst10).snoc hx⟩
     · rw [Array.toList_push, Array.toList_push]
       simp only [List.length_range', Nat.sub_zero] at hbs
-      exact List.rel_append ((hI.imp fun _ _ h ↦ h.grow π iv publicInput stream hg'.inv.kinv
-        (hgr1.trans hgr17)).imp fun _ _ h ↦ h.pgrow hg7 hst8) (List.Forall₂.cons hbs List.Forall₂.nil)
+      refine ⟨List.rel_append ((hI.imp fun _ _ h ↦ h.grow π iv publicInput stream hg'.inv.kinv
+        (hgr1.trans hgr17)).imp fun _ _ h ↦ h.pgrow hg7 hst8) (List.Forall₂.cons hbs List.Forall₂.nil), ?_⟩
+      rw [List.take_add_one, List.getElem?_eq_getElem hi]
+      exact List.rel_append hlen (List.Forall₂.cons (by simp) List.Forall₂.nil)
 
 /-! ## The end of the stream -/
 

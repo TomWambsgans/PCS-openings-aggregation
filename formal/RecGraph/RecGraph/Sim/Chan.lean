@@ -171,12 +171,71 @@ theorem chIds_lt {st : RecState} {i : Nat} (h : i ∈ chIds st) : i < st.nodes.s
   obtain ⟨⟨n, j⟩, ⟨hm, _⟩, rfl⟩ := h
   exact List.mem_range.mp (List.of_mem_zip hm).2
 
+/-! ## The recorder's cursor only moves forward -/
+
+theorem op_cursor_le (st : RecState) (o : Op) : st.cursor ≤ (st.op o).2.cursor := by
+  have hn : ∀ (s : RecState) (n : Node), (s.new n).2.cursor = s.cursor := fun s n ↦ (new_fields s n).1
+  cases o with
+  | constant x => exact le_of_eq (hn st _).symm
+  | statement k => exact le_of_eq (hn st _).symm
+  | input len =>
+    show st.cursor ≤ (st.input len).2.cursor
+    simp [RecState.input]
+  | sample narrow =>
+    show st.cursor ≤ (st.sample narrow).2.cursor
+    rw [sample_eq, hn]
+    unfold afterHash
+    rw [hn]
+  | add a b =>
+    show st.cursor ≤ (st.add a b).2.cursor
+    unfold RecState.add RecState.constant
+    split
+    · exact le_of_eq (hn st _).symm
+    · split
+      · exact le_refl _
+      · split
+        · exact le_refl _
+        · split
+          · exact le_of_eq (hn st _).symm
+          · exact le_of_eq (hn st _).symm
+  | mul a b =>
+    show st.cursor ≤ (st.mul a b).2.cursor
+    unfold RecState.mul RecState.constant
+    split
+    · exact le_of_eq (hn st _).symm
+    · split
+      · exact le_of_eq (hn st _).symm
+      · split
+        · exact le_refl _
+        · split
+          · exact le_refl _
+          · exact le_of_eq (hn st _).symm
+  | bits v s w =>
+    show st.cursor ≤ (st.bits v s w).2.cursor
+    unfold RecState.bits RecState.constant
+    split
+    · exact le_of_eq (hn st _).symm
+    · exact le_of_eq (hn st _).symm
+  | ringWeight p o m =>
+    show st.cursor ≤ (st.ringWeight p o m).2.cursor
+    unfold RecState.ringWeight
+    rw [hn]
+
+/-- **Recording a program never moves the cursor back.** -/
+theorem record_cursor_le {α : Type} (p : Prog α) (st : RecState) : st.cursor ≤ (p.record st).2.cursor := by
+  induction p generalizing st with
+  | pure a => exact le_refl _
+  | op o k ih => exact le_trans (op_cursor_le st o) (ih _ _)
+  | zero v k ih => exact ih { st with zero := st.zero.push v }
+  | nonzero v k ih => exact ih { st with nonzero := st.nonzero.push v }
+
 section Judgment
 
 variable (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8)
 
 /-- **Program part `p` from `st` simulates `UniStatement`'s `u`**, reading `n` bytes and drawing `ch` challenges,
-outputs related by `R`: from every channel coupled with `st`, its cursor in the stream. -/
+outputs related by `R`: from every channel coupled with `st`, its cursor in the stream. When the stream is too short,
+`u` fails and the recorded part reads past the stream's end. -/
 def Sim (st : RecState) {α β : Type} (p : Prog α) (u : ChanM Id β) (n ch : Nat)
     (R : RecState → α → β → Prop) : Prop :=
   ∀ c, Couple π iv publicInput stream st c → c.cursor ≤ c.data.size →
@@ -184,7 +243,7 @@ def Sim (st : RecState) {α β : Type} (p : Prog α) (u : ChanM Id β) (n ch : N
       ∃ b c', (u.run).run c = (.ok b, c') ∧ Couple π iv publicInput stream (p.record st).2 c' ∧
         c'.cursor = c.cursor + n ∧ c'.challenges.size = c.challenges.size + ch ∧
         Grows st (p.record st).2 ∧ R (p.record st).2 (p.record st).1 b) ∧
-    (c.data.size < c.cursor + n → ∃ e c', (u.run).run c = (.error e, c'))
+    (c.data.size < c.cursor + n → (∃ e c', (u.run).run c = (.error e, c')) ∧ c.data.size < (p.record st).2.cursor)
 
 /-- **A pure program part**: a pure step, its output related to `b` by `R`. -/
 def PSim (st : RecState) {α β : Type} (p : Prog α) (b : β) (R : RecState → α → β → Prop) : Prop :=
@@ -211,13 +270,13 @@ theorem Sim.bind {st : RecState} {α β γ δ : Type} {p : Prog α} {u : ChanM I
     exact ⟨b2, c2, by rw [run_bind_ok f hu, hu2], hc2, by rw [hcur2, hcur, Nat.add_assoc],
       by rw [hch2, hch, Nat.add_assoc], hg.trans hg2, hS⟩
   · by_cases h : c.data.size < c.cursor + n
-    · obtain ⟨e, c', hu⟩ := hf1 h
-      exact ⟨e, c', run_bind_error f hu⟩
+    · obtain ⟨⟨e, c', hu⟩, hlt⟩ := hf1 h
+      exact ⟨⟨e, c', run_bind_error f hu⟩, lt_of_lt_of_le hlt (record_cursor_le _ _)⟩
     · obtain ⟨b, c', hu, hc', hcur, _, hg, hR⟩ := hs1 (by omega)
       have hd : c'.data = c.data := hc'.data.trans hc.data.symm
       obtain ⟨_, hf2⟩ := h2 _ _ _ hc'.good hg hR c' hc' (by rw [hd, hcur]; omega)
-      obtain ⟨e, c2, hu2⟩ := hf2 (by rw [hd, hcur]; omega)
-      exact ⟨e, c2, by rw [run_bind_ok f hu, hu2]⟩
+      obtain ⟨⟨e, c2, hu2⟩, hlt⟩ := hf2 (by rw [hd, hcur]; omega)
+      exact ⟨⟨e, c2, by rw [run_bind_ok f hu, hu2]⟩, by rw [← hd]; exact hlt⟩
 
 /-- **A pure part against `pure`**: no byte read, no challenge drawn. -/
 theorem Sim.pure_of_pstep {st : RecState} {α β : Type} {p : Prog α} {b : β} {R : RecState → α → β → Prop}
@@ -498,8 +557,12 @@ theorem sim_input (st : RecState) (len : Nat) :
         st'.cursor = st.cursor + len ∧ st'.nodes[i]? = some (.input st.cursor len) ∧
         Rp π iv publicInput stream st' i (inputValue b len)) := by
   intro c hc hle
-  refine ⟨fun hr ↦ ?_, fun hr ↦ ⟨_, _, takeBytes_fail len c hr⟩⟩
   obtain ⟨g1, g2, g3, g4, g5, g6, g7, g8⟩ := input_step π iv publicInput stream st hc.good len
+  refine ⟨fun hr ↦ ?_, fun hr ↦ ⟨⟨_, _, takeBytes_fail len c hr⟩, ?_⟩⟩
+  swap
+  · show c.data.size < (st.input len).2.cursor
+    rw [g3, ← hc.cursor]
+    exact hr
   have hb : c.data.extract c.cursor (c.cursor + len) = stream.extract st.cursor (st.cursor + len) := by
     rw [hc.data, hc.cursor]
   refine ⟨_, _, takeBytes_run len c hr, ?_, rfl, (Nat.add_zero _).symm, g2, hb, ?_, g3, ?_, by rw [hb]; exact g8⟩
