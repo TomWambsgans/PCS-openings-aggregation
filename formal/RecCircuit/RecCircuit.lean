@@ -18,6 +18,8 @@ import RecCircuit.Nodes
 import RecCircuit.Ports
 import RecCircuit.Piop
 import RecCircuit.Sound
+import RecCircuit.Agree
+import RecCircuit.SoundRG
 
 /-!
 # π2's circuit, formally (`crates/leanvm_rec/src/circuit`)
@@ -77,3 +79,27 @@ ones.
 /-- info: 'RecCircuit.Ctx.gate_val' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCircuit.Ctx.gate_val
+
+/-- info: 'RecCircuit.Compiled.agree' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.agree
+
+/-- info: 'RecCircuit.step_corr' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.step_corr
+
+/-- info: 'RecCircuit.Compiled.compile_sound_statement' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_statement
+
+/-- info: 'RecCircuit.Compiled.compile_sound_root' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_root
+
+/-- info: 'RecCircuit.Compiled.compile_sound_element' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_element
+
+/-- info: 'RecCircuit.Compiled.compile_sound_zero_rg' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_zero_rg
