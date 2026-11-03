@@ -6,8 +6,9 @@ import RecCircuit.Agree
 
 With `agree` (this library's semantics is `RecGraph`'s on every live node of the expanded graph), the end theorem's
 ports read against `RecGraph.evalNodes` of the original graph (`rgVals`, over Keccak-f[1600]), given one named
-obligation in `RecGraph`'s semantics only, **`ExpandSound`**: the expansion (`compile.rs`'s `expand`) keeps every live
-node's value, the expanded graph's `RecGraph` value at a node's image being the original graph's value of the node.
+obligation in `RecGraph`'s semantics only, **`ExpandSound`**: the expansion (`compile.rs`'s `expand`) keeps every
+node's element, the expanded graph's `RecGraph` element at a node's image being the original graph's element of the
+node (`ExpandProof.lean` proves it for every accepted graph, `expandSound`).
 
 * `compile_sound_statement`: the statement port carries the public input's four words as `RecGraph` reads them
   (`beWordAt`, the `statement` nodes' values);
@@ -22,11 +23,11 @@ namespace RecCircuit
 
 open Primitives LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash UniStatement
 
-/-- **The named obligation, in `RecGraph`'s semantics only**: at every original node whose image is live, the
-expanded graph's value (`RecGraph`'s, `Compiled.rgX`) is the original graph's (`rgVals`). -/
+/-- **The expansion's obligation, in `RecGraph`'s semantics only**: at every original node, the expanded graph's element
+(`RecGraph`'s, `Compiled.rgX`) at the node's image is the original graph's (`rgVals`). -/
 def ExpandSound (g : RecGraph.Graph) (c : Compiled) : Prop :=
-  ∀ (iv pub stream : List UInt8), ∀ id < g.nodes.size, c.live.getD (c.map.getD id 0) false = true →
-    (c.rgX iv pub stream)[c.map.getD id 0]? = (rgVals g iv pub stream)[id]?
+  ∀ (iv pub stream : List UInt8), ∀ id < g.nodes.size,
+    RecGraph.valE (c.rgX iv pub stream) (c.map.getD id 0) = RecGraph.valE (rgVals g iv pub stream) id
 
 namespace Compiled
 
@@ -41,9 +42,9 @@ theorem elem_rg (hc : c.Checked (ofRG g rootsAt iv)) (hE : ExpandSound g c) (w :
     streamW_length k hk hlk
   have hiv : (ofRG g rootsAt iv).iv = iv := rfl
   rw [hiv] at hb hcorr
-  have hs := hE iv (c.pubW w) (c.streamW (ofRG g rootsAt iv) w) id hid (by rw [hmap]; exact hlk)
-  rw [hmap, hb] at hs
-  exact Corr.toE hcorr hs.symm
+  have hs := hE iv (c.pubW w) (c.streamW (ofRG g rootsAt iv) w) id hid
+  rw [hmap] at hs
+  exact (Corr.toE hcorr hb).trans hs
 
 /-- **The statement port carries the public input's words as `RecGraph` reads them.** -/
 theorem compile_sound_statement (hc : compile (ofRG g rootsAt iv) = .ok c) {pub : ℕ → List F192} {w : ℕ → K}

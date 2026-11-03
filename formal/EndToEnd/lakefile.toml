@@ -201,6 +201,12 @@ name = "RecCircuit"
 srcDir = "../RecCircuit"
 globs = ["RecCircuit", "RecCircuit.+"]
 
+# The differential runners' parser and printer (`RecCircuitTest/Parse.lean`).
+[[lean_lib]]
+name = "RecCircuitTest"
+srcDir = "../RecCircuit"
+roots = ["RecCircuitTest.Parse"]
+
 # The differential runner of `formal/RecCircuit` against the Rust compiler (`RecCircuitTest/Main.lean`).
 [[lean_exe]]
 name = "rec-circuit-diff"
@@ -218,3 +224,9 @@ name = "RecStatement"
 srcDir = "../RecStatement"
 globs = ["RecStatement", "RecStatement.+"]
 leanOptions = { warningAsError = true }
+
+# The compiler on `RecGraph.Emitted.graph` itself, against the Rust's circuit for π1-rec3 (`RecCircuitTest/Emitted.lean`).
+[[lean_exe]]
+name = "rec-circuit-emitted"
+srcDir = "../RecCircuit"
+root = "RecCircuitTest.Emitted"

@@ -1,102 +1,141 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. Transcribed from `crates/leanvm_rec/src/circuit/compile.rs`
--- (`expand`) and `crates/leanvm_flock_gas/src/evm/record.rs` (`Sym`: hash-consing, its constant folding).
+-- (`expand`), on `formal/RecGraph`'s recorder (`RecGraph.RecState`, the transcription of `record.rs`'s `Sym`:
+-- hash-consing, constant folding, `x + 0`, `x · 1`, `x · 0`, `x + x` simplified, operands ordered).
 import RecCircuit.Graph
-import Std.Data.HashMap
+import RecGraph.Record
 
 /-!
 # The graph, expanded (`compile::expand`)
 
 The graph replayed on the recorder's symbol with every ring-switch weight computed (`ring_tower::weight_at` on
-symbols), so that every node is a read, a hash, a challenge, a bit field, a constant, a sum or a product. The symbol is
-`record::Sym`: one node per distinct operation (hash-consed), sums and products of constants folded, `x + 0`, `x · 1`,
-`x · 0`, `x + x` simplified, operands ordered.
+symbols, `weightSym`), so that every node is a read, a hash, a challenge, a bit field, a constant, a sum or a product.
+The symbol is `RecGraph`'s `RecState` (`record.rs`'s `Sym`, which `RecGraph` proves sound: `add_val`, `mul_val`,
+`bits_val`, `new_val`). The replay starts from `RecState.start`, which holds the seed: π1's recorder makes the seed
+first (`Recorder::new`), so node 0 must be the seed, and then the replay is the Rust's from an empty graph.
+
+The Rust panics, and so does this transcription (`Except.error`), on a bit field of a constant that is not an integer
+(`E::bits` asserts it). It also refuses a ring weight whose map is not `towerStages = 6` long (`ring_tower::STAGES`;
+`RecGraph`'s `Flock.towerWeightAt` reads six stages).
 -/
 
 namespace RecCircuit
 
-open Primitives
+open Primitives LeanVM.Parameters UniStatement
 
-/-- The recorder's graph under construction. -/
-structure Rec where
-  nodes : Array Node := #[]
-  index : Std.HashMap Node ℕ := {}
+/-- `RecGraph`'s node as this library's (the same constructors). -/
+def ofRGNode : RecGraph.Node → Node
+  | .const a b d => .const a b d
+  | .statement k => .statement k
+  | .input o l => .input o l
+  | .add a b => .add a b
+  | .mul a b => .mul a b
+  | .seed => .seed
+  | .hash s f t => .hash s f t
+  | .low h => .low h
+  | .narrow h => .narrow h
+  | .bits v s w => .bits v s w
+  | .ringWeight k n => .ringWeight k n
 
-abbrev RM := StateT Rec (Except String)
+/-- This library's node as `RecGraph`'s. -/
+def toRGNode : Node → RecGraph.Node
+  | .const a b d => .const a b d
+  | .statement k => .statement k
+  | .input o l => .input o l
+  | .add a b => .add a b
+  | .mul a b => .mul a b
+  | .seed => .seed
+  | .hash s f t => .hash s f t
+  | .low h => .low h
+  | .narrow h => .narrow h
+  | .bits v s w => .bits v s w
+  | .ringWeight k n => .ringWeight k n
 
-namespace Sym
+theorem toRG_ofRG (n : RecGraph.Node) : toRGNode (ofRGNode n) = n := by cases n <;> rfl
 
-/-- `Sym::new`: the node's index, the existing one if it was recorded before. -/
-def new (node : Node) : RM ℕ := do
-  let s ← get
-  match s.index.get? node with
-  | some id => return id
-  | none =>
-    let id := s.nodes.size
-    modify fun s => { s with nodes := s.nodes.push node, index := s.index.insert node id }
-    return id
+theorem ofRG_toRG (n : Node) : ofRGNode (toRGNode n) = n := by cases n <;> rfl
 
-def constant (x : F192) : RM ℕ := new (.const x.c0 x.c1 x.c2)
+/-! ## `ring_tower::weight_at` on symbols -/
 
-def value (id : ℕ) : RM (Option F192) := do
-  match (← get).nodes.getD id default with
-  | .const c0 c1 c2 => return some (F192.new c0 c1 c2)
-  | _ => return none
+/-- The recorder's state monad. -/
+abbrev SM := StateM RecGraph.RecState
 
-def add (a b : ℕ) : RM ℕ := do
-  match ← value a, ← value b with
-  | some x, some y => constant (x + y)
-  | some x, _ => if x = 0 then return b else if a = b then constant 0 else new (.add (min a b) (max a b))
-  | _, some y => if y = 0 then return a else if a = b then constant 0 else new (.add (min a b) (max a b))
-  | none, none => if a = b then constant 0 else new (.add (min a b) (max a b))
+def symAdd (a b : ℕ) : SM ℕ := fun st => st.add a b
+def symMul (a b : ℕ) : SM ℕ := fun st => st.mul a b
+def symOne : SM ℕ := fun st => st.constant 1
 
-def mul (a b : ℕ) : RM ℕ := do
-  match ← value a, ← value b with
-  | some x, some y => constant (x * y)
-  | va, vb =>
-    if va = some 0 || vb = some 0 then constant 0
-    else if va = some 1 then return b
-    else if vb = some 1 then return a
-    else new (.mul (min a b) (max a b))
+/-- **`weight_at` on symbols** (`Scalar for Sym`): the Rust's operations, in its order (`weightAtM`). -/
+def weightSym (point onePlusR map : List ℕ) : SM ℕ := weightAtM symAdd symMul symOne 0 point onePlusR map
 
-/-- `E::bits` on a constant (the Rust asserts an integer scalar). -/
-def eBits (x : F192) (shift width : ℕ) : Except String F192 :=
-  if x.c1 = 0 ∧ x.c2 = 0 ∧ shift < 64 then
-    let mask : UInt64 := if width ≥ 64 then 0xFFFFFFFFFFFFFFFF else (1 <<< width.toUInt64) - 1
-    pure (F192.new ((x.c0 >>> shift.toUInt64) &&& mask) 0 0)
-  else throw "bit field of a non-integer constant"
+/-- `weight_at` on symbols, run on the recorder: the weight's symbol and the recorder after it. -/
+def weightRun (st : RecGraph.RecState) (point onePlusR map : List ℕ) : ℕ × RecGraph.RecState :=
+  (weightSym point onePlusR map).run st
 
-def bits (v shift width : ℕ) : RM ℕ := do
-  match ← value v with
-  | some x => constant (← liftM (eBits x shift width))
-  | none => new (.bits v shift (min width 255))
-where
-  liftM {α : Type} (e : Except String α) : RM α := match e with
-    | .ok a => pure a
-    | .error m => throw m
+/-! ## The graph's types -/
 
-end Sym
+/-- A state node (the seed, a hash): what a hash, a challenge and a narrow challenge read. -/
+def Node.isState : Node → Bool
+  | .seed | .hash .. => true
+  | _ => false
+
+/-- **Node `i` is well typed**: it reads only earlier nodes; a hash, a challenge and a narrow challenge read a state;
+a sum, a product, a bit field and a ring weight read elements; a ring weight's kernel has `2n + 6` operands (the
+point's `n` coordinates, `1 + r`'s `n`, the map's `towerStages = 6` stages). -/
+def Graph.typedAt (g : Graph) (i : ℕ) : Node → Bool
+  | .add a b | .mul a b => a < i && b < i && !(g.nodes.getD a default).isState && !(g.nodes.getD b default).isState
+  | .bits v _ _ => v < i && !(g.nodes.getD v default).isState
+  | .hash s _ _ | .low s | .narrow s => s < i && (g.nodes.getD s default).isState
+  | .ringWeight k n => (g.kernels.getD k []).all (fun a => a < i && !(g.nodes.getD a default).isState) &&
+      (g.kernels.getD k []).length == 2 * n + 6
+  | _ => true
+
+/-- The checks and the calls name nodes of the graph. -/
+def Graph.outputsIn (g : Graph) : Bool :=
+  (g.zero ++ g.nonzero).all (· < g.nodes.size) &&
+    g.calls.all (·.all fun w => match w with | .node id => decide (id < g.nodes.size) | _ => true)
+
+/-- **The graph is well typed**: node 0 is the seed (π1's recorder makes it first, `Recorder::new`), every node is
+well typed, and the checks and the calls name nodes. -/
+def Graph.typed (g : Graph) : Bool :=
+  g.nodes.getD 0 default == .seed && (List.range g.nodes.size).all (fun i => g.typedAt i (g.nodes.getD i default)) &&
+    g.outputsIn
+
+/-! ## The expansion -/
+
+/-- One original node replayed (`expand`'s loop body): its image and the recorder after it. -/
+def expandNode (kernels : Array (List ℕ)) (map : Array ℕ) (st : RecGraph.RecState) (node : Node) :
+    Except String (ℕ × RecGraph.RecState) :=
+  let m := fun id => map.getD id 0
+  match node with
+  | .const c0 c1 c2 => pure (st.constant (eNew c0 c1 c2))
+  | .statement _ | .input _ _ | .seed => pure (st.new (toRGNode node))
+  | .add a b => pure (st.add (m a) (m b))
+  | .mul a b => pure (st.mul (m a) (m b))
+  | .hash s f t => pure (st.new (.hash (m s) f t))
+  | .low h => pure (st.new (.low (m h)))
+  | .narrow h => pure (st.new (.narrow (m h)))
+  | .bits v shift width =>
+    match st.constAt (m v) with
+    | some x =>
+      if F192.c1 x = 0 ∧ F192.c2 x = 0 ∧ shift < 64 then pure (st.bits (m v) shift width)
+      else throw "bit field of a non-integer constant"
+    | none => pure (st.bits (m v) shift width)
+  | .ringWeight k n =>
+    let ops := (kernels.getD k []).map m
+    if ops.length = 2 * n + 6 then pure (weightRun st (ops.take n) ((ops.drop n).take n) (ops.drop (2 * n)))
+    else throw "a ring weight's map has 6 stages"
+
+/-- The replay of a list of nodes. -/
+def expandList (kernels : Array (List ℕ)) :
+    List Node → RecGraph.RecState × Array ℕ → Except String (RecGraph.RecState × Array ℕ)
+  | [], acc => pure acc
+  | n :: ns, (st, map) => do
+    let (i, st') ← expandNode kernels map st n
+    expandList kernels ns (st', map.push i)
 
 /-- **The graph replayed with every ring-switch kernel expanded, and each original node's image** (`expand`). -/
 def expand (g : Graph) : Except String (Array Node × Array ℕ) := do
-  let run : RM (Array ℕ) := do
-    let mut map : Array ℕ := #[]
-    for node in g.nodes do
-      let m := fun (id : ℕ) => map.getD id 0
-      let s ← match node with
-        | .const c0 c1 c2 => Sym.constant (F192.new c0 c1 c2)
-        | .statement _ | .input _ _ | .seed => Sym.new node
-        | .add a b => Sym.add (m a) (m b)
-        | .mul a b => Sym.mul (m a) (m b)
-        | .hash s f t => Sym.new (.hash (m s) f t)
-        | .low h => Sym.new (.low (m h))
-        | .narrow h => Sym.new (.narrow (m h))
-        | .bits v shift width => Sym.bits (m v) shift width
-        | .ringWeight k n => do
-          let ops := (g.kernels.getD k []).map m
-          weightAtM Sym.add Sym.mul (Sym.constant 1) 0 (ops.take n) ((ops.drop n).take n) (ops.drop (2 * n))
-      map := map.push s
-    return map
-  let (map, r) ← run.run {}
-  return (r.nodes, map)
+  if g.nodes.getD 0 default != .seed then throw "node 0 is the seed (Recorder::new)"
+  let (st, map) ← expandList g.kernels g.nodes.toList (RecGraph.RecState.start, #[])
+  return (st.nodes.map ofRGNode, map)
 
 end RecCircuit
