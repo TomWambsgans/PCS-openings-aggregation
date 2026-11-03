@@ -18,9 +18,7 @@ use super::spec::{Formula, Source};
 
 /// Free bits.
 pub struct Bools {
-    /// Self-loops only (values all of whose other placements are forwards).
-    alone: Units,
-    /// A self-loop and its copy.
+    /// A self-loop and its copy (a bit that needs no copy leaves it junk: one region, fewer selectors).
     copied: Units,
 }
 
@@ -28,7 +26,6 @@ impl Bools {
     pub fn new(b: &mut Builder) -> Self {
         let w = b.width();
         let square = |c: usize| Formula::Expr(PolyBuilder::new().quadratic(c, c, 1).build());
-        let alone = b.region("bit", (0..w).map(square).collect());
         let copied = b.region(
             "bit+copy",
             (0..w)
@@ -42,16 +39,13 @@ impl Bools {
                 .collect(),
         );
         Self {
-            alone: Units::new(alone, 1, w),
             copied: Units::new(copied, 2, w / 2),
         }
     }
 
     /// A free bit: its value (ended at its own self-loop).
     pub fn bit(&mut self, b: &mut Builder, bit: bool) -> Value {
-        let (row, role) = self.alone.next(b);
-        let v = b.produce_given(row, role, K(bit as u64));
-        b.place(row, role, v);
+        let (v, _junk) = self.bit_and_copy(b, bit);
         v
     }
 
@@ -66,11 +60,15 @@ impl Bools {
 
 /// Packings of bits into a `K` word.
 pub struct Packer {
-    /// The top window, by its width `k`: `Σ_(i<k) b_i x^i`.
-    top: Vec<Option<Units>>,
+    /// The top window of at most [`TOP`] bits: `Σ_(i<4) b_i x^i`.
+    top: Units,
     next: Units,
     zero: Option<Value>,
 }
+
+/// The top window's width (a 64-bit limb's: `64 = 4 + 4·15`). A wider top window is a `pack` unit whose accumulator
+/// is a fresh zero.
+pub const TOP: usize = 4;
 
 /// Horner's window.
 pub const WINDOW: usize = 15;
@@ -88,30 +86,22 @@ impl Packer {
             roles[base + 15] = Formula::Expr(p.build());
         }
         let next = b.region("pack", roles);
+        let size = TOP + 1;
+        let mut roles = forwards(w);
+        for u in 0..w / size {
+            let base = size * u;
+            let mut p = PolyBuilder::new();
+            for i in 0..TOP {
+                p.add_linear(base + i, 1 << i);
+            }
+            roles[base + TOP] = Formula::Expr(p.build());
+        }
+        let top = b.region(&format!("pack-top{TOP}"), roles);
         Self {
-            top: (0..=WINDOW).map(|_| None).collect(),
+            top: Units::new(top, size, w / size),
             next: Units::new(next, 16, w / 16),
             zero: None,
         }
-    }
-
-    fn top_units(&mut self, b: &mut Builder, k: usize) -> &mut Units {
-        if self.top[k].is_none() {
-            let w = b.width();
-            let size = k + 1;
-            let mut roles = forwards(w);
-            for u in 0..w / size {
-                let base = size * u;
-                let mut p = PolyBuilder::new();
-                for i in 0..k {
-                    p.add_linear(base + i, 1 << i);
-                }
-                roles[base + k] = Formula::Expr(p.build());
-            }
-            let r = b.region(&format!("pack-top{k}"), roles);
-            self.top[k] = Some(Units::new(r, size, w / size));
-        }
-        self.top[k].as_mut().expect("just made")
     }
 
     /// `Σ b x^e` over `(e, b)`, exponents distinct and below 64; absent exponents in a window read a shared zero.
@@ -124,20 +114,32 @@ impl Packer {
         }
         let top_e = bits.iter().map(|&(e, _)| e).max().expect("a bit");
         let t_top = top_e / WINDOW;
-        if (0..=top_e).any(|e| at[e].is_none()) && self.zero.is_none() {
+        let top_k = top_e - WINDOW * t_top + 1;
+        // The windows' cells: absent exponents (and a short top window's) read a shared zero, at forwards.
+        let k_of = |t: usize| if t == t_top && top_k <= TOP { TOP } else { WINDOW };
+        if (0..=t_top).any(|t| (0..k_of(t)).any(|i| at.get(WINDOW * t + i).copied().flatten().is_none()))
+            && self.zero.is_none()
+        {
             self.zero = Some(consts.fresh(b, K(0)));
         }
         let mut acc: Option<Value> = None;
         for t in (0..=t_top).rev() {
             let lo = WINDOW * t;
-            let k = if t == t_top { top_e - lo + 1 } else { WINDOW };
+            let k = k_of(t);
             let cells: Vec<Value> = (0..k)
-                .map(|i| at[lo + i].or(self.zero).expect("a zero when a bit is absent"))
+                .map(|i| at.get(lo + i).copied().flatten().or(self.zero).expect("a zero when a bit is absent"))
                 .collect();
             let (row, base, acc_role) = match acc {
+                None if k == TOP => {
+                    let (row, base) = self.top.next(b);
+                    (row, base, base + TOP)
+                }
                 None => {
-                    let (row, base) = self.top_units(b, k).next(b);
-                    (row, base, base + k)
+                    // A wide top window: a `pack` unit from a fresh zero (it ends at the accumulator's slot).
+                    let (row, base) = self.next.next(b);
+                    let zero = consts.fresh(b, K(0));
+                    b.place(row, base + 15, zero);
+                    (row, base, base + 15)
                 }
                 Some(prev) => {
                     let (row, base) = self.next.next(b);
@@ -199,13 +201,13 @@ fn op_polys(op: Op, ra: [usize; 3], rb: [usize; 3]) -> [PolyBuilder; 3] {
     c
 }
 
-/// `E` units.
+/// `E` units: products and sums (a square is the product with itself, so one region fewer).
 pub struct Arith {
-    /// Slot operand ended at the unit: by op.
-    ended: [Units; 3],
+    /// Slot operand ended at the unit: product, sum.
+    ended: [Units; 2],
     /// Both operands forwarded, three more slots.
-    forwarded: [Units; 3],
-    /// Units by kind, for the counts.
+    forwarded: [Units; 2],
+    /// Units by op (mul, add, square), slot operand ended / both forwarded.
     pub counts: [[usize; 2]; 3],
 }
 
@@ -220,32 +222,28 @@ fn op_index(op: Op) -> usize {
 impl Arith {
     pub fn new(b: &mut Builder) -> Self {
         let w = b.width();
-        let names = ["mul", "add", "square"];
+        let names = ["mul", "add"];
+        let ops = [Op::Mul, Op::Add];
         let ended = std::array::from_fn(|k| {
-            let op = [Op::Mul, Op::Add, Op::Square][k];
-            let size = if op == Op::Square { 3 } else { 6 };
+            let size = 6;
             let mut roles = forwards(w);
             for u in 0..w / size {
                 let base = size * u;
-                let ra = [base, base + 1, base + 2];
-                let rb = if op == Op::Square { ra } else { [base + 3, base + 4, base + 5] };
-                for (l, p) in op_polys(op, ra, rb).into_iter().enumerate() {
+                let (ra, rb) = ([base, base + 1, base + 2], [base + 3, base + 4, base + 5]);
+                for (l, p) in op_polys(ops[k], ra, rb).into_iter().enumerate() {
                     roles[base + l] = Formula::Expr(p.build());
                 }
             }
             Units::new(b.region(&format!("e-{}", names[k]), roles), size, w / size)
         });
         let forwarded = std::array::from_fn(|k| {
-            let op = [Op::Mul, Op::Add, Op::Square][k];
-            let size = if op == Op::Square { 6 } else { 9 };
-            let operands = size - 3;
+            let size = 9;
             let mut roles = forwards(w);
             for u in 0..w / size {
                 let base = size * u;
-                let ra = [base, base + 1, base + 2];
-                let rb = if op == Op::Square { ra } else { [base + 3, base + 4, base + 5] };
-                for (l, p) in op_polys(op, ra, rb).into_iter().enumerate() {
-                    roles[base + operands + l] = Formula::Expr(p.build());
+                let (ra, rb) = ([base, base + 1, base + 2], [base + 3, base + 4, base + 5]);
+                for (l, p) in op_polys(ops[k], ra, rb).into_iter().enumerate() {
+                    roles[base + 6 + l] = Formula::Expr(p.build());
                 }
             }
             Units::new(b.region(&format!("e-{}-fwd", names[k]), roles), size, w / size)
@@ -257,32 +255,22 @@ impl Arith {
         }
     }
 
-    /// `op(a, b)` (`b` ignored for a square). With `end_a`, `a`'s limbs end here (they must have no other slot);
-    /// otherwise both operands are forwarded.
+    /// `op(a, b)` (`b` ignored for a square, which is `a·a`). With `end_a`, `a`'s limbs end here (they must have no
+    /// other slot); otherwise both operands are forwarded.
     pub fn op(&mut self, bld: &mut Builder, op: Op, a: Limbs, b: Limbs, end_a: bool) -> Limbs {
-        let k = op_index(op);
-        self.counts[k][!end_a as usize] += 1;
-        let square = op == Op::Square;
-        if end_a {
-            let (row, base) = self.ended[k].next(bld);
-            for l in 0..3 {
-                bld.place(row, base + l, a[l]);
-                if !square {
-                    bld.place(row, base + 3 + l, b[l]);
-                }
-            }
-            std::array::from_fn(|l| bld.produce(row, base + l))
-        } else {
-            let (row, base) = self.forwarded[k].next(bld);
-            let operands = if square { 3 } else { 6 };
-            for l in 0..3 {
-                bld.place(row, base + l, a[l]);
-                if !square {
-                    bld.place(row, base + 3 + l, b[l]);
-                }
-            }
-            std::array::from_fn(|l| bld.produce(row, base + operands + l))
+        self.counts[op_index(op)][!end_a as usize] += 1;
+        let (k, b) = match op {
+            Op::Mul => (0, b),
+            Op::Square => (0, a),
+            Op::Add => (1, b),
+        };
+        let (units, slots) = if end_a { (&mut self.ended[k], 0) } else { (&mut self.forwarded[k], 6) };
+        let (row, base) = units.next(bld);
+        for l in 0..3 {
+            bld.place(row, base + l, a[l]);
+            bld.place(row, base + 3 + l, b[l]);
         }
+        std::array::from_fn(|l| bld.produce(row, base + slots + l))
     }
 }
 

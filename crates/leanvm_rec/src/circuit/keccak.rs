@@ -69,29 +69,67 @@ pub const RATE_BITS: usize = 64 * RATE_LANES;
 
 /// Keccak-f\[1600\] in rows.
 pub trait Permutation {
-    /// The permutation of `input` (index `64·lane + z`); `None` is a known zero. Returns the output's 1600 values.
-    fn permute(&mut self, b: &mut Builder, input: &[Option<Value>]) -> Vec<Value>;
+    /// The permutation of `input` (index `64·lane + z`), whose constant bits it makes from `constants` (after
+    /// offering its rows' spare slots to it). Returns the output's 1600 values.
+    fn permute(&mut self, b: &mut Builder, constants: &mut Constants, input: &[Bit]) -> Vec<Value>;
 }
 
-/// Fresh constants: one expression slot each, pushing `κ` (its pull is a free end).
+/// Fresh constants: one expression slot each, pushing `κ` (its pull is a free end). The slots are other regions'
+/// spare roles (formula 0) when offered, else rows of their own.
 pub struct Constants {
-    units: Units,
+    units: Option<Units>,
+    spare: Vec<(u32, usize)>,
+    /// Constants made, and the rows of their own.
+    pub made: usize,
+    pub own_rows: usize,
+}
+
+/// A spare role: an expression slot pushing 0, which a constant may take (`κ`) or which stays dead.
+pub fn spare() -> Formula {
+    Formula::Expr(Poly::default())
 }
 
 impl Constants {
-    pub fn new(b: &mut Builder) -> Self {
-        let w = b.width();
-        let r = b.region("const", (0..w).map(|_| Formula::Expr(Poly::default())).collect());
+    pub fn new() -> Self {
         Self {
-            units: Units::new(r, 1, w),
+            units: None,
+            spare: Vec::new(),
+            made: 0,
+            own_rows: 0,
         }
+    }
+
+    /// Offer a spare role (its formula [`spare`]).
+    pub fn offer(&mut self, row: u32, role: usize) {
+        self.spare.push((row, role));
     }
 
     /// A new value of word `k`.
     pub fn fresh(&mut self, b: &mut Builder, k: K) -> Value {
-        let (row, role) = self.units.next(b);
+        self.made += 1;
+        let (row, role) = match self.spare.pop() {
+            Some(slot) => slot,
+            None => {
+                let units = self.units.get_or_insert_with(|| {
+                    let w = b.width();
+                    let r = b.region("const", (0..w).map(|_| spare()).collect());
+                    Units::new(r, 1, w)
+                });
+                let (row, role) = units.next(b);
+                if role == 0 {
+                    self.own_rows += 1;
+                }
+                (row, role)
+            }
+        };
         b.set_kappa(row, role, k);
         b.produce(row, role)
+    }
+}
+
+impl Default for Constants {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -146,12 +184,14 @@ impl D32 {
             for x in 0..5 {
                 roles[C_ROLE + x] = Formula::Expr(c(x).build());
             }
+            roles[30] = spare();
+            roles[31] = spare();
             roles
         };
         let prep = b.region("keccak32/prep", theta(&|l| identity(l, false)));
         let prep_first = b.region("keccak32/prep-first", theta(&|l| identity(l, l >= 25 - 8)));
         let round = b.region("keccak32/round", theta(&chi));
-        let mut last = forwards(32);
+        let mut last: Vec<Formula> = (0..32).map(|_| spare()).collect();
         for (l, role) in last.iter_mut().enumerate().take(25) {
             *role = Formula::Expr(chi(l).build());
         }
@@ -171,21 +211,36 @@ impl D32 {
 }
 
 impl Permutation for D32 {
-    fn permute(&mut self, b: &mut Builder, input: &[Option<Value>]) -> Vec<Value> {
+    fn permute(&mut self, b: &mut Builder, constants: &mut Constants, input: &[Bit]) -> Vec<Value> {
         assert_eq!(input.len(), 1600);
-        let capacity_zero = input[64 * RATE_LANES..].iter().all(Option::is_none);
+        let capacity_zero = input[64 * RATE_LANES..].iter().all(|&x| x == Bit::Zero);
         let region = if capacity_zero { self.prep_first } else { self.prep };
-        let mut constants: Option<Constants> = None;
-        // The preparation round: lane bits in place.
+        // Every round's rows first, their spare roles offered to the constants (the input's among them).
         let rows: Vec<u32> = (0..64).map(|_| b.row(region)).collect();
+        let mut rounds: Vec<Vec<u32>> = (0..24)
+            .map(|j| (0..64).map(|_| b.row(if j == 23 { self.last } else { self.round })).collect())
+            .collect();
+        for &row in &rows {
+            constants.offer(row, 30);
+            constants.offer(row, 31);
+        }
+        for (j, round) in rounds.iter().enumerate() {
+            for &row in round {
+                for role in if j == 23 { 25..32 } else { 30..32 } {
+                    constants.offer(row, role);
+                }
+            }
+        }
+        rounds.reverse();
         for l in 0..25 {
             if capacity_zero && l >= RATE_LANES {
                 continue;
             }
             for z in 0..64 {
                 let v = match input[64 * l + z] {
-                    Some(v) => v,
-                    None => constants.get_or_insert_with(|| Constants::new(b)).fresh(b, K(0)),
+                    Bit::V(v) => v,
+                    Bit::Zero => constants.fresh(b, K(0)),
+                    Bit::One => constants.fresh(b, K(1)),
                 };
                 b.place(rows[z], l, v);
             }
@@ -193,7 +248,7 @@ impl Permutation for D32 {
         let mut pushed = self.theta_round(b, &rows, None);
         for (j, &rc) in RC.iter().enumerate() {
             let last = j == 23;
-            let rows: Vec<u32> = (0..64).map(|_| b.row(if last { self.last } else { self.round })).collect();
+            let rows = rounds.pop().expect("a round's rows");
             // ρ and π: lane `l`'s bit `z` goes to row `z + ρ_l`, role `π_l`.
             for l in 0..25 {
                 for (z, &v) in pushed[l].iter().enumerate() {
@@ -295,14 +350,10 @@ impl<P: Permutation> Sponge<P> {
     pub fn new(b: &mut Builder, permutation: P) -> Self {
         Self {
             permutation,
-            constants: Constants::new(b),
+            constants: Constants::new(),
             xors: Xors::new(b),
             permutations: 0,
         }
-    }
-
-    fn constant(&mut self, b: &mut Builder, bit: bool) -> Value {
-        self.constants.fresh(b, K(bit as u64))
     }
 
     /// Keccak-256 of `message` (bits in byte order, low bit first): the digest's 256 bits, likewise.
@@ -322,32 +373,28 @@ impl<P: Permutation> Sponge<P> {
         };
         let mut state: Vec<Value> = Vec::new();
         for block in 0..blocks {
-            let mut input: Vec<Option<Value>> = vec![None; 1600];
+            let mut input: Vec<Bit> = vec![Bit::Zero; 1600];
             for (i, slot) in input.iter_mut().enumerate().take(RATE_BITS) {
                 let bit = bit_of(block * RATE_BITS + i);
-                *slot = Some(if block == 0 {
-                    match bit {
-                        Bit::V(v) => v,
-                        Bit::Zero => self.constant(b, false),
-                        Bit::One => self.constant(b, true),
-                    }
+                *slot = if block == 0 {
+                    bit
                 } else {
-                    match bit {
+                    Bit::V(match bit {
                         Bit::V(v) => self.xors.xor(b, state[i], v),
                         Bit::Zero => state[i],
                         Bit::One => {
-                            let one = self.constant(b, true);
+                            let one = self.constants.fresh(b, K(1));
                             self.xors.xor(b, state[i], one)
                         }
-                    }
-                });
+                    })
+                };
             }
             if block > 0 {
                 for i in RATE_BITS..1600 {
-                    input[i] = Some(state[i]);
+                    input[i] = Bit::V(state[i]);
                 }
             }
-            state = self.permutation.permute(b, &input);
+            state = self.permutation.permute(b, &mut self.constants, &input);
             self.permutations += 1;
         }
         state[..256].to_vec()

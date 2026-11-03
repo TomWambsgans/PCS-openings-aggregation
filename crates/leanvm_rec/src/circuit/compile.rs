@@ -123,7 +123,6 @@ pub fn compile<P: Permutation>(
     let mut sponge = Sponge::new(&mut b, permutation);
     let mut bools = Bools::new(&mut b);
     let mut packer = Packer::new(&mut b);
-    let mut consts = Constants::new(&mut b);
     let mut arith = Arith::new(&mut b);
     let mut ports = Ports::new(&mut b);
 
@@ -207,7 +206,7 @@ pub fn compile<P: Permutation>(
 
     // The statement's limbs (its four big-endian words), packed once.
     let statement_limb: Vec<Value> = (0..4)
-        .map(|k| packer.pack(&mut b, &mut consts, &be_bits(&|i| public_self[i], 8 * k, 8)))
+        .map(|k| packer.pack(&mut b, &mut sponge.constants, &be_bits(&|i| public_self[i], 8 * k, 8)))
         .collect();
     let mut packings = 4;
 
@@ -236,11 +235,11 @@ pub fn compile<P: Permutation>(
         let zero_pair = |b: &mut Builder, consts: &mut Constants| [consts.fresh(b, K(0)), consts.fresh(b, K(0))];
         let (l, can_end): (Limbs, bool) = match *node {
             Node::Const([c0, c1, c2]) => (
-                [c0, c1, c2].map(|c| consts.fresh(&mut b, K(c))),
+                [c0, c1, c2].map(|c| sponge.constants.fresh(&mut b, K(c))),
                 true,
             ),
             Node::Statement(k) => {
-                let [z1, z2] = zero_pair(&mut b, &mut consts);
+                let [z1, z2] = zero_pair(&mut b, &mut sponge.constants);
                 ([statement_limb[k as usize], z1, z2], true)
             }
             Node::Input { offset, len } => {
@@ -263,17 +262,17 @@ pub fn compile<P: Permutation>(
                 } else {
                     packings += 1;
                     let mut pack = |first: usize, n: usize| {
-                        packer.pack(&mut b, &mut consts, &be_bits(&stream_bit, first, n))
+                        packer.pack(&mut b, &mut sponge.constants, &be_bits(&stream_bit, first, n))
                     };
                     match len {
                         24 => ([pack(offset + 16, 8), pack(offset + 8, 8), pack(offset, 8)], true),
                         16 => {
                             let (c0, c1) = (pack(offset + 8, 8), pack(offset, 8));
-                            ([c0, c1, consts.fresh(&mut b, K(0))], true)
+                            ([c0, c1, sponge.constants.fresh(&mut b, K(0))], true)
                         }
                         _ => {
                             let c0 = pack(offset, len);
-                            let [z1, z2] = zero_pair(&mut b, &mut consts);
+                            let [z1, z2] = zero_pair(&mut b, &mut sponge.constants);
                             ([c0, z1, z2], true)
                         }
                     }
@@ -286,9 +285,9 @@ pub fn compile<P: Permutation>(
                 let mut limb = |i: usize, b: &mut Builder, consts: &mut Constants| {
                     packer.pack(b, consts, &be_bits(&digest_bit, 24 - 8 * i, 8))
                 };
-                let l0 = limb(0, &mut b, &mut consts);
-                let l1 = limb(1, &mut b, &mut consts);
-                let l2 = limb(2, &mut b, &mut consts);
+                let l0 = limb(0, &mut b, &mut sponge.constants);
+                let l1 = limb(1, &mut b, &mut sponge.constants);
+                let l2 = limb(2, &mut b, &mut sponge.constants);
                 ([l0, l1, l2], true)
             }
             Node::Bits(v, shift, width) => {
@@ -301,14 +300,14 @@ pub fn compile<P: Permutation>(
                     .filter(|&(e, _)| e >= shift as usize && e < shift as usize + width as usize)
                     .map(|(e, v)| (e - shift as usize, v))
                     .collect();
-                let [z1, z2] = zero_pair(&mut b, &mut consts);
+                let [z1, z2] = zero_pair(&mut b, &mut sponge.constants);
                 match field.len() {
-                    0 => ([consts.fresh(&mut b, K(0)), z1, z2], true),
+                    0 => ([sponge.constants.fresh(&mut b, K(0)), z1, z2], true),
                     // One bit: the bit itself, which ends at its own self-loop.
                     1 if field[0].0 == 0 => ([field[0].1, z1, z2], false),
                     _ => {
                         packings += 1;
-                        ([packer.pack(&mut b, &mut consts, &field), z1, z2], true)
+                        ([packer.pack(&mut b, &mut sponge.constants, &field), z1, z2], true)
                     }
                 }
             }
@@ -354,7 +353,7 @@ pub fn compile<P: Permutation>(
     for &at in &recorded.roots_at {
         assert!(hashed[at..at + 32].iter().all(|&h| h), "a root is hashed");
         let root_limbs: Vec<Value> = (0..4)
-            .map(|l| packer.pack(&mut b, &mut consts, &be_bits(&stream_bit, at + 24 - 8 * l, 8)))
+            .map(|l| packer.pack(&mut b, &mut sponge.constants, &be_bits(&stream_bit, at + 24 - 8 * l, 8)))
             .collect();
         packings += 1;
         root_of.insert(at, roots.len() as u32);
