@@ -1609,6 +1609,219 @@ theorem ev_slot (j : ℕ) (y : List E) (Y : ℕ → Polynomial E)
   rw [hm]
   exact inner_slot _ _ _ c1 j y t Y hb hY
 
+/-- The relations' input. -/
+abbrev inpOf : RelInput := relInput D s ch (Fl.prog.out fd []) t vals
+
+/-- **Every relation holds** that is untwisted on one commitment. -/
+def HoldAll : Prop :=
+  ∀ r ∈ relsAt D Fl s ch fd t vals, ∀ c, (∀ tm ∈ r.terms, tm.twist = 0 ∧ tm.column.commitment = c) →
+    RelHolds (evOf D Fl s c1 ch fd c2 t vals) r
+
+/-- A point some relation on a commitment reads a term at. -/
+def IsPt (c : Commitment) (p : List E) : Prop :=
+  ∃ r ∈ relsAt D Fl s ch fd t vals, r.commitment = c ∧ ∃ tm ∈ r.terms, tm.point = p
+
+theorem w_length : (inpOf D Fl s ch fd t vals).w.length = nDigits D.shape :=
+  digits_length t _ (by omega)
+
+theorem w_getD (l : ℕ) (hl : l < nDigits D.shape) :
+    (inpOf D Fl s ch fd t vals).w.getD l 0 = (digitP l).eval t :=
+  digits_getD t _ l hl
+
+theorem wtake_length (k : ℕ) (hk : k ≤ nDigits D.shape) :
+    ((inpOf D Fl s ch fd t vals).w.take k).length = k := by
+  rw [List.length_take, w_length]; omega
+
+theorem wtake_getD (k : ℕ) (hk : k ≤ nDigits D.shape) (l : ℕ) (hl : l < k) :
+    ((inpOf D Fl s ch fd t vals).w.take k).getD l 0 = (digitP l).eval t := by
+  rw [take_getD _ hl, w_getD D Fl s ch fd t vals l (by omega)]
+
+/-- **A `C1` column at a prefix of the digits** (not a slot): its polynomial at `t`. -/
+theorem ev_c1 (col : Column) (hcol : col.commitment = .c1) (hns : ∀ j, col ≠ .qflockSlot j) (k : ℕ)
+    (hk : k ≤ nDigits D.shape) (hv : c1Vars D.shape col ≤ k)
+    (hp : IsPt D Fl s ch fd t vals .c1 ((inpOf D Fl s ch fd t vals).w.take k)) :
+    evOf D Fl s c1 ch fd c2 t vals col ((inpOf D Fl s ch fd t vals).w.take k) = (c1P D.shape c1 col).eval t := by
+  have h := ev_colPoly D Fl s c1 ch fd c2 t vals col _ digitP hns (by rw [hcol]; exact hp)
+    (by
+      rw [hcol]
+      intro b hb
+      obtain ⟨h1, h2⟩ := c1_limbs D.shape col b hb
+      rw [wtake_length D Fl s ch fd t vals k hk]
+      omega)
+    (by
+      rw [hcol]
+      intro b hb l hl
+      obtain ⟨h1, -⟩ := c1_limbs D.shape col b hb
+      rw [wtake_getD D Fl s ch fd t vals k hk l (by omega)])
+  rw [h]
+  simp only [hcol]
+  rfl
+
+/-- **A `C2` column at a point** whose values at `t` are a polynomial point's: its polynomial at `t`. -/
+theorem ev_c2 (col : Column) (hcol : col.commitment = .c2) (p : List E) (P : ℕ → Polynomial E)
+    (hp : IsPt D Fl s ch fd t vals .c2 p) (hlen : c2Vars D.shape col ≤ p.length)
+    (hP : ∀ l < c2Vars D.shape col, (P l).eval t = p.getD l 0) :
+    evOf D Fl s c1 ch fd c2 t vals col p = (c2P D.shape c2 col P).eval t := by
+  have hns : ∀ j, col ≠ .qflockSlot j := by
+    intro j hj
+    rw [hj] at hcol
+    simp [Column.commitment] at hcol
+  have h := ev_colPoly D Fl s c1 ch fd c2 t vals col p P hns (by rw [hcol]; exact hp)
+    (by
+      rw [hcol]
+      intro b hb
+      obtain ⟨h1, h2⟩ := c2_limbs D.shape col b hb
+      omega)
+    (by
+      rw [hcol]
+      intro b hb l hl
+      obtain ⟨h1, -⟩ := c2_limbs D.shape col b hb
+      exact hP l (by omega))
+  rw [h]
+  simp only [hcol]
+  rfl
+
+/-- **A setup column at a point** whose values at `t` are a polynomial point's. -/
+theorem ev_setup (col : Column) (hcol : col.commitment = .setup) (p : List E) (P : ℕ → Polynomial E)
+    (hp : IsPt D Fl s ch fd t vals .setup p)
+    (hlen : ∀ b ∈ (layoutOf D.shape .setup).limbs col, b.2.1 ≤ p.length)
+    (hP : ∀ b ∈ (layoutOf D.shape .setup).limbs col, ∀ l < b.2.1, (P l).eval t = p.getD l 0) :
+    evOf D Fl s c1 ch fd c2 t vals col p = (suP D.shape (stackFor D c1 c2 .setup) col P).eval t := by
+  have hns : ∀ j, col ≠ .qflockSlot j := by
+    intro j hj
+    rw [hj] at hcol
+    simp [Column.commitment] at hcol
+  have h := ev_colPoly D Fl s c1 ch fd c2 t vals col p P hns (by rw [hcol]; exact hp)
+    (by
+      rw [hcol]
+      intro b hb
+      exact ⟨hlen b hb, (setup_limbs D.shape col b hb).2.2⟩)
+    (by rw [hcol]; exact hP)
+  rw [h]
+  simp only [hcol]
+  rfl
+
+theorem mem_rels_tp {r : Relation} (h : r ∈ (inpOf D Fl s ch fd t vals).tp.2.1) :
+    r ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp [h]
+
+theorem mem_rels_mem {r : Relation} (h : r ∈ (inpOf D Fl s ch fd t vals).memRels) :
+    r ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp [h]
+
+theorem mem_rels_bc {r : Relation} (h : r ∈ (inpOf D Fl s ch fd t vals).bcRels) :
+    r ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp [h]
+
+theorem mem_rels_constraint : (inpOf D Fl s ch fd t vals).constraint.1 ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp
+
+theorem mem_rels_heap {r : Relation} (h : r ∈ (inpOf D Fl s ch fd t vals).heap.1) :
+    r ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp [h]
+
+theorem heap_fst : (inpOf D Fl s ch fd t vals).heap.1 =
+    [Relation.equal .heap ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h) (inpOf D Fl s ch fd t vals).heapValue,
+      ⟨[term .heap (((inpOf D Fl s ch fd t vals).w.drop 1).take D.shape.heap.h)
+          ((inpOf D Fl s ch fd t vals).w.getD 1 0),
+        term .heap (((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h).modify 0 (· + 1))
+          ((inpOf D Fl s ch fd t vals).w.getD 1 0 * (inpOf D Fl s ch fd t vals).heapValue),
+        term (.treeQuotient 0) ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h)
+          ((inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0),
+        term (.treeQuotient 1) [] ((inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0 *
+          (inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0)], 0⟩,
+      ⟨[term .heap ((List.range D.shape.heap.h).map fun l ↦ if l = 0 then (1 : E) else 0)
+        (rootInit (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta)],
+        rootFin D.shape (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta⟩] ++
+    (D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)).map
+      (blockRel D.shape (inpOf D Fl s ch fd t vals).active (inpOf D Fl s ch fd t vals).tp.1
+        (inpOf D Fl s ch fd t vals).memoryPull (inpOf D Fl s ch fd t vals).memoryPush
+        (inpOf D Fl s ch fd t vals).bytecodePull (inpOf D Fl s ch fd t vals).bytecodePush
+        (inpOf D Fl s ch fd t vals).w) ++
+    [⟨quotientTerms .constraintQuotient (chunks ((inpOf D Fl s ch fd t vals).constraint.2 + 1))
+      (inpOf D Fl s ch fd t vals).w 1, (inpOf D Fl s ch fd t vals).constraintValue⟩] :=
+  heapRelations_fst _ _ _ _ _ _ _ _ _ _ _ _ _
+
+theorem h_lt_nDigits : D.shape.heap.h + 1 < nDigits D.shape := by unfold nDigits; omega
+
+theorem rW_lt_nDigits : D.shape.constraintVars + 4 < nDigits D.shape := by unfold nDigits; omega
+
+/-- **The tree's identity at `t`.** -/
+theorem treeP_eval (hold : HoldAll D Fl s c1 ch fd c2 t vals) : (treeP D.shape c2).eval t = 0 := by
+  have hh := heap_fst D Fl s ch fd t vals
+  have hN := h_lt_nDigits D
+  have mT := mem_rels_heap D Fl s ch fd t vals (by
+    rw [hh]; exact List.mem_append_left _ (List.mem_append_left _ (List.mem_cons_self ..)))
+  have mTree := mem_rels_heap D Fl s ch fd t vals (by
+    rw [hh]; exact List.mem_append_left _ (List.mem_append_left _
+      (List.mem_cons_of_mem _ (List.mem_cons_self ..))))
+  have hRT := hold _ mT .c2 (by simp [Relation.equal, term, Column.commitment])
+  have hRtree := hold _ mTree .c2 (by simp [term, Column.commitment])
+  have hT := holds_equal hRT
+  unfold RelHolds at hRtree
+  simp only [term, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero] at hRtree
+  -- The points read at `t`.
+  have hpT : IsPt D Fl s ch fd t vals .c2 ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h) :=
+    ⟨_, mT, rfl, ⟨term .heap _ 1, List.mem_singleton_self _, rfl⟩⟩
+  have hmemTree : ∀ tm ∈ ([term .heap (((inpOf D Fl s ch fd t vals).w.drop 1).take D.shape.heap.h)
+          ((inpOf D Fl s ch fd t vals).w.getD 1 0),
+        term .heap (((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h).modify 0 (· + 1))
+          ((inpOf D Fl s ch fd t vals).w.getD 1 0 * (inpOf D Fl s ch fd t vals).heapValue),
+        term (.treeQuotient 0) ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h)
+          ((inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0),
+        term (.treeQuotient 1) [] ((inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0 *
+          (inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0)] : List Term),
+      IsPt D Fl s ch fd t vals .c2 tm.point := by
+    intro tm htm
+    exact ⟨_, mTree, rfl, tm, htm, rfl⟩
+  have eT := ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl _ digitP hpT
+    (by rw [wtake_length D Fl s ch fd t vals _ (by omega)]; rfl)
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      exact (wtake_getD D Fl s ch fd t vals _ (by omega) l hl).symm)
+  have eS := ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl
+    (((inpOf D Fl s ch fd t vals).w.drop 1).take D.shape.heap.h) (fun l ↦ digitP (l + 1))
+    (hmemTree _ (List.mem_cons_self ..))
+    (by
+      show D.shape.heap.h ≤ _
+      simp only [List.length_take, List.length_drop, w_length]; omega)
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      rw [take_getD _ hl, List.getD_eq_getElem?_getD, List.getElem?_drop, ← List.getD_eq_getElem?_getD,
+        add_comm, w_getD D Fl s ch fd t vals _ (by omega)])
+  have eN := ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl
+    (((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h).modify 0 (· + 1))
+    (fun l ↦ if l = 0 then digitP 0 + 1 else digitP l)
+    (hmemTree _ (List.mem_cons_of_mem _ (List.mem_cons_self ..)))
+    (by
+      show D.shape.heap.h ≤ _
+      rw [List.length_modify, wtake_length D Fl s ch fd t vals _ (by omega)])
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      have hx : ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h)[l]? = some ((digitP l).eval t) := by
+        rw [List.getElem?_eq_getElem (by rw [wtake_length D Fl s ch fd t vals _ (by omega)]; exact hl),
+          ← List.getD_eq_getElem _ 0, wtake_getD D Fl s ch fd t vals _ (by omega) l hl]
+      rw [List.getD_eq_getElem?_getD, List.getElem?_modify, hx]
+      by_cases h0 : l = 0
+      · subst h0
+        simp
+      · simp [h0, Ne.symm h0])
+  have eQ0 := ev_c2 D Fl s c1 ch fd c2 t vals (.treeQuotient 0) rfl _ digitP hpT
+    (by rw [wtake_length D Fl s ch fd t vals _ (by omega)]; rfl)
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      exact (wtake_getD D Fl s ch fd t vals _ (by omega) l hl).symm)
+  have eQ1 := ev_c2 D Fl s c1 ch fd c2 t vals (.treeQuotient 1) rfl [] digitP
+    (hmemTree _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
+      (List.mem_cons_self ..))))) (by simp [c2Vars]) (fun l hl ↦ by simp [c2Vars] at hl)
+  have w1 := w_getD D Fl s ch fd t vals 1 (by omega)
+  have wh := w_getD D Fl s ch fd t vals D.shape.heap.h (by omega)
+  rw [eT] at hT
+  rw [eS, eN, eQ0, eQ1, ← hT, w1, wh] at hRtree
+  unfold treeP
+  simp only [Polynomial.eval_add, Polynomial.eval_mul]
+  linear_combination hRtree
+
 end Ctx
 
 end UniSound.Ids.Eval
