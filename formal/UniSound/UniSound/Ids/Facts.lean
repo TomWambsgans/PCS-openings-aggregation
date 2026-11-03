@@ -344,7 +344,7 @@ theorem good_foldl {α : Type} (step : Flushes → α → Flushes) (h : ∀ f a,
     exact good_foldl step h l (h _ a hi)
 
 /-- Closes the `AllK`/`FormK` goals of the tables' literal tuples. -/
-macro "formk" : tactic => `(tactic| repeat' first
+local macro "formk" : tactic => `(tactic| repeat' first
   | exact allK_nil
   | exact formK_col _ _
   | exact formK_prod _ _ _
