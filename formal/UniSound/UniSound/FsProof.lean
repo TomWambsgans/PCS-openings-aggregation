@@ -556,7 +556,15 @@ calls of `π` and `π⁻¹`, one of at most `Q + 8` calls (the adversary, then t
 the proof the chain reads carries) breaks the composed game (`rpmGameS` of the three trees, the
 chain over the univariate encoding and the five openings, the event read on the setup's log and
 the Keccak-256 evaluations of its permutation transcript) at least as often as the adversary breaks
-the univariate experiment. -/
+the univariate experiment.
+
+**Superseded** by `FsGame.lean`'s `UniGameLeV` (the IV computed by the verifier, as the univariate
+experiment computes it), which `FsCouple.lean` reduces to three bridge facts. This form puts the
+IV's calls of `π` in the adversary's log, which the composed extractor replays
+(`keccakEvaluationsOfTranscript`) and the univariate extractor does not see: a fresh IV answer can
+extend a sponge path to a Merkle node or leaf under `C1`'s root, so the two extractors' words, and
+the events, differ on outcomes of probability about `2^-230`, and the inequality cannot be proved
+outcome by outcome. -/
 def UniGameLe : Prop :=
   ∀ (A : UniAdversary) (Q : ℕ),
     (∀ roots, Common.QueryCostAtMost (A roots) Common.permutationCallCost Q) →
