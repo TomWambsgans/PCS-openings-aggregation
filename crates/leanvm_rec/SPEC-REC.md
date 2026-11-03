@@ -6,8 +6,8 @@
 (π2's circuit compiled and its witness on the real proofs, §10: D16v × π1-rec is `2^24` positions, 85.7% used); R3
 steps 1–3 done (π2's prover, verifier and contract, measured end to end on the real proof, §11 and `PI2.md`: 73,550 at
 `c = 0`, 94,550 with the base); the review (R3 step 4, `REVIEW-REC.md`) found no attack, its fixes are in; the
-optimisation (§12, branch `leanvm-rec-opt`): D16v × π1-rec2, measured end to end on the real proof, **49,534 at
-`c = 0`** (1,292 B, execution 30,182), 70,534 with the base.** §0–§11 are the design before §12; where they differ,
+optimisation (§12, branch `leanvm-rec-opt`): D16v × π1-rec3, measured end to end on the real proof, **44,792 at
+`c = 0`** (980 B, execution 29,832), 65,792 with the base.** §0–§11 are the design before §12; where they differ,
 §12 and `PI2.md` §8–§9 hold.
 Branch `leanvm-rec`, from `leanvm-univariate` @ 29d3095; π1-rec on `leanvm-rec-pi1`; π2's circuit on
 `leanvm-rec-circuit`; π2's PIOP on `leanvm-rec-piop`.
@@ -902,20 +902,21 @@ in `PI2.md` §9.
 | D16v × π1-rec2 (f7a0b28) | 1,292 B (110 zero) | 30,182 | 49,534 | 82,688 | 7 / 6 | 15.88M of `2^24` (94.6%) |
 | **D16v × π1-rec3, now** (§12 item 8) | 980 B (60 zero) | 29,832 | **44,792** | 62,720 | 7 / 6 | 15.93M of `2^24` (94.9%) |
 
-The calldata: the selector 4, the public input 32, π1's roots 64, π1's claims 720 (27 narrow coordinates and 3 values),
-π2's roots 64, π2's 17 values 408. EIP-7623's standard price binds (`16 · 1,182 + 4 · 110 + 30,182`); its floor is
-48,380, so about 1.15K more execution savings would reach it, and below that only calldata counts. Soundness after the
-union bounds: π1-rec2's PIOP 130.0 bits (the narrow batch), π2's 140.6 (`t`), the six WHIR openings 126.4 by a plain
-union (about 129 in the query-bounded model).
+The calldata (π1-rec3): the selector 4, the public input 32, π1's roots 64, π1's claims 408 (14 narrow challenges and 3
+values), π2's roots 64, π2's 17 values 408. EIP-7623's standard price binds (`16 · 920 + 4 · 60 + 29,832`); its floor is
+37,400, so execution counts in full from here down to it: the push side (156 selector pairs in 66 groups, 14.8K) is the
+largest part. Soundness after the union bounds: π1-rec3's PIOP 129.0 bits (the narrow pairs; `t` 142.3), π2's 140.6
+(`t`), the six WHIR openings 126.4 by a plain union (about 129 in the query-bounded model). π2's circuit is at 94.9% of
+`2^24`.
 
 **Dropped or left:**
 
-- **Lever 1(b), the claims' points from 1–3 scalars**: given to the agent on `leanvm-rec-points`. π1-rec2 removes `A0`,
-  `B0` from that problem: the three claims left are at the batch's point. If their point became 1–3 scalars, π1's
-  claims would drop from 720 B to about 120 B.
+- **The claims' point from 1–3 scalars** (lever 1(b)): not possible, by the points agent's analysis (`SPEC-POINTS.md`
+  §2: `q_flock`'s ring switch needs a fresh sumcheck over its 26 variables; DEEP, Gemini, Zeromorph give the
+  coordinates back as values). Its pairs (14 challenges for 27 coordinates) are item 8.
 - **D8v**: Keccak-f does not fit `2^24` in rows of 8 (`PI2.md` §9).
 - **20-byte reads of the narrow coordinates**: 432 gas at the standard price, a read width of its own in π2's stream.
-- **Hand-scheduled kernels for the push side** (14K of the execution: 145 pairs, 66 groups): its generic code is at
-  about 11 gas an operation already; fewer pairs would need slack in `2^24` that π1-rec2 used up (99.7% of the rows
-  are in blocks).
+- **Hand-scheduled kernels for the push side** (14.8K of the execution: 156 pairs, 66 groups): its generic code is at
+  about 11 gas an operation already; fewer pairs would need slack in `2^24` that π1-rec2 and π1-rec3 used up (98–99.7%
+  of the rows are in blocks).
 - **The selector** (4 B, 64 gas): every contract of the repository's codegen takes it.
