@@ -1,8 +1,11 @@
-# Part of this repository. MIT OR Apache-2.0; see NOTICE.md. Review experiment (UniSound's Rec3/Final3.lean).
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md. Review experiment (UniSound's Rec3/Final3.lean,
+# Rec3/Final128_3.lean).
 """Recompute UniSound.uniBound3 exactly (pi1-rec3: three openings) at the rounds' error e = 2^35 / |E| = 2^-157 that
 uniKnowledgeSoundness3_bits states (the narrow pairs' 8 * 2^32 / |E|), from the Lean definitions (formal/UniSound's
 Rec3/Fs3.lean uniBound3, Fs.lean uniN; formal/WhirBridge's LargeSound.lean openingBoundAt), beside the main line's
-uniBound at 2^32 / |E| and pi1-rec3's per-round errors.
+uniBound at 2^32 / |E| and pi1-rec3's per-round errors; and UniSound.uniBound128 (Fs128.lean: the openings charged
+once, at WhirBridge.εExact = 269 / 2^137, so the same for three openings as for five) at the same e = 2^35 / |E|,
+the bound uniKnowledgeSoundness3_128 states (Rec3/Fs128_3.lean's uniBound128_le_bits35: at most 2^-64 at Q <= 2^64).
 
     python3 -I formal/EndToEnd/Review/UniRec3Numbers.py
 """
@@ -33,6 +36,25 @@ print(f"main line  uniBound (5 openings, 2^32/|E|) at Q = 2^64: 2^{lg(bound(5, F
 print(f"pi1-rec3   uniBound3 (3 openings, 2^35/|E|) at Q = 2^64: 2^{lg(bound(3, e35, q)):.4f}")
 assert bound(3, e35, q) <= Fr(1, 2**61)
 assert all(bound(3, e35, 2**k) <= bound(3, e35, 2**(k + 1)) for k in range(64))
+EPS = Fr(269, 2**137)  # WhirBridge.εExact: the exact certified per-group bound
+
+
+def bound128(e, q):
+    """uniBound128 e Q = N (eps + 5 N / 2^256) + N (9952^2 e + 8 N / 2^256) + 2 N^2 / 2^256
+    + (2^81 + Q)^2 / 2^508, N = 2^33 + Q (Fs128.lean; the openings once, whatever their number)."""
+    n = 2**33 + q
+    return (Fr(n) * (EPS + Fr(5 * n, 2**256)) + Fr(n) * (9952**2 * e + Fr(8 * n, 2**256))
+            + Fr(2 * n * n, 2**256) + Fr((2**81 + q) ** 2, 2**508))
+
+
+b128 = bound128(e35, q)
+print(f"pi1-rec3   uniBound128 (openings once, 2^35/|E|) at Q = 2^64: 2^{lg(b128):.4f}, "
+      f"Q / bound = 2^{64 - lg(b128):.2f}")
+assert b128 <= Fr(1, 2**64)
+assert all(bound128(e35, 2**k) <= bound128(e35, 2**(k + 1)) for k in range(64))
+# uniBound128_le_bits35's numerator bound: every term over 2^256 at N <= 2^64 + 2^33, at most 2^192.
+X = 2**64 + 2**33
+assert X * (269 * 2**119 + 5 * X) + X * (9952**2 * 2**35 * 2**64 + 8 * X) + 2 * X * X + 1 <= 2**192
 L = 9952
 # busBound reference (formal/UniSound/UniSound/Ids/LvLink.lean): pushes 5, 5, 3, 5, 5, 11 at heights 18 18 18 18 17 18,
 # memory 2^21, bytecode 2^19.
