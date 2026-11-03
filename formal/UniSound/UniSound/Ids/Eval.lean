@@ -857,6 +857,8 @@ theorem constraintRelation_eq (shape : Shape) (parts : List TablePart) (publicWo
 def termsVal (ev : Column → List E → E) (terms : Array Term) : E :=
   (terms.toList.map fun tm ↦ tm.coefficient * ev tm.column tm.point).sum
 
+theorem termsVal_empty (ev : Column → List E → E) : termsVal ev #[] = 0 := by simp [termsVal]
+
 theorem termsVal_push (ev : Column → List E → E) (terms : Array Term) (tm : Term) :
     termsVal ev (terms.push tm) = termsVal ev terms + tm.coefficient * ev tm.column tm.point := by
   simp [termsVal]
@@ -975,5 +977,68 @@ theorem crStep_spec (S : Shape) (c1 : Stk) (gamma t : E) (w : List E) (ev : Colu
         List.map_nil, List.length_cons, List.length_nil, powComb_cons, powComb_nil, termsVal_push, term,
         h.inv, hcnt, Polynomial.eval_mul, Polynomial.eval_add, Polynomial.eval_one, hprod]
       constructor <;> ring
+
+theorem crFold_spec (S : Shape) (c1 : Stk) (gamma t : E) (w : List E) (ev : Column → List E → E) :
+    ∀ (L : List (Table × TablePart)) (s : E × Array Term × E × ℕ), (∀ x ∈ L, CrTableOk S c1 t w ev x.1 x.2) →
+      (L.foldl (crStep S gamma t w) s).1 + termsVal ev (L.foldl (crStep S gamma t w) s).2.1 =
+          s.1 + termsVal ev s.2.1 + s.2.2.1 * powComb (L.flatMap fun x ↦
+            (tableConstraintsP S c1 x.1).map fun mw ↦ (mw.1 * mw.2).eval t) gamma ∧
+        (L.foldl (crStep S gamma t w) s).2.2.1 = s.2.2.1 * gamma ^ (L.flatMap fun x ↦
+            (tableConstraintsP S c1 x.1).map fun mw ↦ (mw.1 * mw.2).eval t).length
+  | [], s, _ => by simp [powComb_nil]
+  | x :: L, s, h => by
+    rw [List.foldl_cons]
+    obtain ⟨ih1, ih2⟩ := crFold_spec S c1 gamma t w ev L (crStep S gamma t w s x)
+      fun y hy ↦ h y (List.mem_cons_of_mem _ hy)
+    obtain ⟨s1, s2⟩ := crStep_spec S c1 gamma t w ev x.1 x.2 (h x (List.mem_cons_self ..)) s
+    rw [ih1, ih2, s1, s2, List.flatMap_cons, powComb_append, List.length_append, pow_add, List.length_map]
+    constructor <;> ring
+
+theorem flatMap_zip_fst {α β γ : Type} (f : α → List γ) :
+    ∀ (l : List α) (m : List β), l.length ≤ m.length → (l.zip m).flatMap (fun x ↦ f x.1) = l.flatMap f
+  | [], _, _ => rfl
+  | _ :: _, [], h => by simp at h
+  | a :: l, b :: m, h => by
+    rw [List.zip_cons_cons, List.flatMap_cons, List.flatMap_cons,
+      flatMap_zip_fst f l m (by simpa using h)]
+
+/-- **The constraint relation at `t`**: where it holds, the batched constraints at `t` plus
+`Q_W(t) w_{r_W}(t)` vanish. -/
+theorem crOf_holds (S : Shape) (c1 : Stk) (parts : List TablePart) (pw : List E) (gamma t cv : E)
+    (w : List E) (ev : Column → List E → E) (hlen : tables.length ≤ parts.length)
+    (hok : ∀ x ∈ tables.zip parts, CrTableOk S c1 t w ev x.1 x.2)
+    (hmem : ∀ k < 3, ev (.memory k) (w.take S.logMemory) = (c1P S c1 (.memory k)).eval t)
+    (hlift : vanishingRatio w 1 S.constraintVars = (liftP 1 S.constraintVars).eval t)
+    (hh : RelHolds ev (crOf S parts pw gamma t cv w).1) :
+    powComb ((constraintsP S c1 pw).map fun mw ↦ (mw.1 * mw.2).eval t) gamma +
+      cv * w.getD S.constraintVars 0 = 0 := by
+  unfold RelHolds crOf at hh
+  dsimp only at hh
+  obtain ⟨f1, f2⟩ := crFold_spec S c1 gamma t w ev (tables.zip parts) (0, #[], 1, 0) hok
+  generalize (tables.zip parts).foldl (crStep S gamma t w) (0, #[], 1, 0) = s at hh f1 f2
+  obtain ⟨l1, -⟩ := lineFold_spec S gamma t w ev ((linesOf pw).zip (List.range 3)) (s.1, s.2.1, s.2.2.1)
+  generalize ((linesOf pw).zip (List.range 3)).foldl (lineStep S gamma t w) (s.1, s.2.1, s.2.2.1) = s'
+    at hh l1
+  change termsVal ev s'.2.1 + _ = 0 at hh
+  have hl : ((linesOf pw).zip (List.range 3)).map (fun x ↦ vanishingRatio w 1 S.constraintVars *
+      (ev (.memory x.2) (w.take S.logMemory) + x.1.1 + t * (x.1.1 + x.1.2))) =
+      (linesP S c1 pw).map fun mw ↦ (mw.1 * mw.2).eval t := by
+    unfold linesP
+    rw [List.map_map]
+    refine List.map_congr_left fun x hx ↦ ?_
+    have hx3 : x.2 < 3 := List.mem_range.mp (List.of_mem_zip hx).2
+    simp only [Function.comp_apply, Polynomial.eval_mul, Polynomial.eval_add, Polynomial.eval_C,
+      Polynomial.eval_X, hlift, hmem x.2 hx3]
+  rw [hl] at l1
+  dsimp only at f1 f2
+  rw [termsVal_empty] at f1
+  simp only [add_zero, zero_add, one_mul] at f1 f2
+  unfold constraintsP
+  rw [List.map_append, powComb_append, List.map_flatMap,
+    ← flatMap_zip_fst (fun tab ↦ (tableConstraintsP S c1 tab).map fun mw ↦ (mw.1 * mw.2).eval t) tables
+      parts hlen]
+  rw [← f1, ← f2]
+  dsimp only at l1
+  linear_combination hh - l1
 
 end UniSound.Ids.Eval
