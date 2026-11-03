@@ -148,6 +148,9 @@ theorem PH.forIn_rel_range {β γ : Type} (s e : ℕ) (init : β) (f : ℕ → �
 theorem iteT {c : Prop} [Decidable c] {α : Sort _} {a b : α} (h : c) : (if c then a else b) = a :=
   ite_eq_left_of_eq_true _ _ (eq_true h)
 
+theorem ditT {c : Prop} [Decidable c] {α : Sort _} {a : c → α} {b : ¬ c → α} (h : c) : dite c a b = a h := by
+  simp [h]
+
 theorem iteF {c : Prop} [Decidable c] {α : Sort _} {a b : α} (h : ¬ c) : (if c then a else b) = b :=
   ite_eq_right_of_eq_false _ _ (eq_false h)
 
@@ -299,33 +302,53 @@ theorem PH.one {st : RecState} (hg : Good st) :
 
 end Values
 
+/-- `refine PH.bind' t fun st x hs hx ↦ ?_`, then `grow_all hg hs`. -/
+syntax "phg " term " as " ident ident ident ident : tactic
+
 /-! ## Transport along a pure step: `grow_all hg hs` -/
 
 open Lean Elab Tactic Meta in
-/-- `grow_all hg hs` (`hg : Good st`, `hs : PStep st st'`): every hypothesis `Rp … st …`, `RpL … st …`, `RpA … st …`
-is replaced by its transport to `st'`, then `hg` by `Good st'`. -/
+/-- `grow_all hg hs` (`hg : Good st`, `hs : PStep st st'`): every hypothesis `Rp … st …`, `RpL … st …`, `RpA … st …`,
+`RW … st …`, `RpS … st …` is replaced by its transport to `st'` (`*.pgrow`), every `PStep a st` by `PStep a st'`,
+then `hg` by `Good st'`. -/
 elab "grow_all " hg:ident hs:ident : tactic => do
-  let lemmas := [``Rp.pgrow, ``RpL.pgrow, ``RpA.pgrow]
-  let names ← withMainContext do
+  let todo ← withMainContext do
+    let hsType ← instantiateMVars (← inferType (← getLocalDeclFromUserName hs.getId).toExpr)
+    let src := hsType.getAppArgs[0]!
     let lctx ← getLCtx
-    let mut out : Array Name := #[]
+    let mut out : Array (Name × Name) := #[]
     for ldecl in lctx do
       if ldecl.isImplementationDetail then continue
       if ldecl.userName.hasMacroScopes then continue
       if ldecl.userName == hg.getId || ldecl.userName == hs.getId then continue
-      out := out.push ldecl.userName
+      let t ← instantiateMVars ldecl.type
+      let args := t.getAppArgs
+      match t.getAppFn.constName? with
+      | some n =>
+        let lem? : Option (Name × Nat) :=
+          if n == ``Rp then some (``Rp.pgrow, 4)
+          else if n == ``RpL then some (``RpL.pgrow, 4)
+          else if n == ``RpA then some (``RpA.pgrow, 4)
+          else if n == `RecGraph.Sim.RW then some (`RecGraph.Sim.RW.pgrow, 4)
+          else if n == `RecGraph.Sim.RpS then some (`RecGraph.Sim.RpS.pgrow, 4)
+          else if n == ``PStep then some (``PStep.trans, 1)
+          else none
+        match lem? with
+        | some (lem, k) =>
+          if h : k < args.size then
+            if args[k] == src then out := out.push (ldecl.userName, lem)
+        | none => pure ()
+      | none => pure ()
     return out
-  for n in names do
-    for lem in lemmas do
-      let ok ← try
-          evalTactic (← `(tactic| replace $(mkIdent n):ident := $(mkIdent lem) $hg $hs $(mkIdent n)))
-          pure true
-        catch _ => pure false
-      if ok then break
-    let _ ← try
-        evalTactic (← `(tactic| replace $(mkIdent n):ident := PStep.trans $(mkIdent n) $hs))
-        pure true
-      catch _ => pure false
+  for (n, lem) in todo do
+    if lem == ``PStep.trans then
+      evalTactic (← `(tactic| replace $(mkIdent n):ident := PStep.trans $(mkIdent n) $hs))
+    else
+      evalTactic (← `(tactic| replace $(mkIdent n):ident := $(mkIdent lem) $hg $hs $(mkIdent n)))
   evalTactic (← `(tactic| replace $hg:ident := ($hs).good))
+
+macro_rules
+  | `(tactic| phg $t as $st $x $hs $hx) =>
+    `(tactic| (refine PH.bind' $t fun $st $x $hs $hx ↦ ?_; grow_all $(Lean.mkIdent `hg) $hs))
 
 end RecGraph.Sim
