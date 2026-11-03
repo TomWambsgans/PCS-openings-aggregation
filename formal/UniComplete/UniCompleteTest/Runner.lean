@@ -14,6 +14,17 @@ coefficients at its block, evaluated at every row: `basisValue`) and its bytecod
 cross-check does) writes its stream and its stacks; the test compares **the stream byte for byte** and **the three
 stacks word for word** with the vector's, and runs the Lean verifier (`UniStatement.run`) on the Lean stream.
 It throws (so `lean` exits with an error) on any disagreement.
+
+The vectors: `UNI_HONEST_OUT=$PWD/uni_honest.txt cargo test --release -p leanvm_univariate --test review_honest --
+--ignored --nocapture lean_honest_vectors` (the four `… omitted point honest` records of the 20 are the ones
+read). The review's prover writes the same streams as the Rust prover's `prove_tiny` with stand-in roots (that
+test's own cross-check, `leanvm-univariate-prover2`), so the Lean prover agrees with both. A vector's `SHAPE`
+line carries the row counts; the heights are `⌈log₂ rows⌉` (`shapeWith`).
+
+**Result** (h1, `lean-uni-complete`): 4/4 vectors (memory and bytecode `2^4`, `2^5`; 15 to 31 cycles over all six
+tables, DEREF's gated store; Flock omitted, point claims): the stream the same byte for byte (2,896 bytes each),
+`C1`, `C2` and the setup stack the same word for word (`2^15` words each), the Lean verifier accepts; about
+6.5 minutes interpreted (the exact divisions are `Div.lean`'s quadratic long division).
 -/
 
 open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash UniStatement UniComplete
