@@ -2564,4 +2564,46 @@ theorem blockP_eval (hL : TablesLin) (hC : ChunksFit D.shape) (hLb : LbFits D.sh
 
 end Ctx
 
+/-- `BLAKE2S` has at least one row variable (a valid shape with Flock: at least `7`). -/
+theorem hB_pos (D : Deployment) : 1 ≤ D.shape.heights.getD opBlake2s 0 := by
+  have h := D.valid.2
+  unfold Shape.validate at h
+  simp at h
+  rw [List.getD_eq_getElem?_getD]
+  omega
+
 end UniSound.Ids.Eval
+
+namespace UniSound.Ids
+
+open LeanVM.Parameters UniStatement UniSound.Ids.Eval
+
+/-- **The verifier's relations at `t`, all zero, give every identity polynomial at `t`**
+(`DiffsEvalP`), from the heap's layout (`HeapGood`), the tables' flushes as `linearise` reads them
+(`TablesLin`), the quotients' chunks within the digits (`ChunksFit`) and the bytecode within the heap
+(`LbFits`). -/
+theorem diffsEval (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hL : TablesLin) (hC : ChunksFit D.shape)
+    (hLb : LbFits D.shape) (hH : HeapGood D.shape) : DiffsEvalP D Fl := by
+  intro s c1 ch fd c2 t vals hd P hP
+  by_cases hg : CountsFit D.shape s.2 ∧ FlockGood κ (batchVars D.shape) (Fl.prog.out fd [])
+  swap
+  · exfalso
+    have := hd [1] (by unfold diffsOf; rw [ite_eq_right hg]; exact List.mem_singleton_self _) 1
+      (List.mem_singleton_self _)
+    exact one_ne_zero this
+  have hold : HoldAll D Fl s c1 ch fd c2 t vals :=
+    fun r hr c hc ↦ holds_of_diffs D Fl s c1 ch fd c2 t vals hg hd r hr c hc
+  unfold polysOf at hP
+  rw [ite_eq_left hg.1] at hP
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map] at hP
+  rcases hP with (rfl | rfl | rfl) | ⟨⟨b, i⟩, hbi, rfl⟩
+  · exact treeP_eval D Fl s c1 ch fd c2 t vals hold
+  · exact rootP_eval D Fl s c1 ch fd c2 t vals hold
+  · exact wP_eval D Fl s c1 ch fd c2 t vals hL hC (hB_pos D) hold
+  · exact blockP_eval D Fl s c1 ch fd c2 t vals hL hC hLb hH hg.1 hold b i hbi
+
+/-- info: 'UniSound.Ids.diffsEval' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms diffsEval
+
+end UniSound.Ids
