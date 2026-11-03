@@ -2,6 +2,7 @@
 -- `FsOps.lean`, `FsProof.lean` (the setup), `FsGame.lean` (the IV in the verifier) and `FsCouple.lean` (the bridge facts)
 -- to π2's transcript (`formal/RecStatement/RecStatement/Verifier.lean`, `Calls.lean`, `Security.lean`).
 import RecCompose.Layers
+import RecCompose.Pi2Run
 import UniSound.FsGame
 import Compose.ListChainUDoom128S
 
@@ -53,16 +54,6 @@ abbrev pLen : ℕ := 472
 
 /-- The stream's bytes: the public data, `W`'s and `Q`'s roots, the `2^4 + 1` values. -/
 abbrev sLen : ℕ := 944
-
-/-- A big-endian integer of `n` bytes from byte `o` (`nextInteger`). -/
-def intAt (b : Array UInt8) (o n : ℕ) : ℕ := (b.extract o (o + n)).foldl (fun acc x ↦ acc * 256 + x.toNat) 0
-
-/-- **The scalars the public data's reads give**, from byte `o` of the stream (`reduceWith`'s loop). -/
-def pubScalarsAt (b : Array UInt8) : ℕ → List Read → List E
-  | _, [] => []
-  | o, .integer n :: rs => UniStatement.eK (UInt64.ofNat (intAt b o n)) :: pubScalarsAt b (o + n) rs
-  | o, .root :: rs => (UniSound.halvesAt b o).1 :: (UniSound.halvesAt b o).2 :: pubScalarsAt b (o + 32) rs
-  | o, .scalar :: rs => UniSound.scalarAt b o :: pubScalarsAt b (o + 24) rs
 
 /-! ## The chain -/
 
@@ -197,10 +188,9 @@ noncomputable def pi2Spec : ChainSpecU E FSt2 where
 
 /-! ## The protocol on the chain's statement -/
 
-/-- **π2's PIOP statement of a chain statement**: the public input, and the public scalars (the input's four words,
-then the reads' scalars of the public data). -/
-def stOf (s : FSt2) : Pi2St :=
-  (s.2.1, UniStatement.publicWordsOf s.2.1.toList ++ pubScalarsAt s.2.2.toArray 0 cc.reads)
+/-- **π2's PIOP statement of a chain statement**: the public input, and the public scalars (`pi2Pubs`: the input's
+four words, then the reads' scalars of the public data). -/
+def stOf (s : FSt2) : Pi2St := (s.2.1, pi2Pubs (Spec.of cc) s.2.1.toList s.2.2.toArray)
 
 /-- **A protocol on `pi2K` on the chain's statement** (`stOf`; the same rounds). -/
 def liftPiop2 (R : Compose.Piop pi2K Stk) : Compose.Piop pi2Spec.K Stk where
