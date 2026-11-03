@@ -19,3 +19,4 @@ import UniComplete.SyncBasic
 import UniComplete.Domain
 import UniComplete.BatchProofSync
 import UniComplete.BatchProof
+import UniComplete.SyncTable
