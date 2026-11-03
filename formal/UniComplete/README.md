@@ -43,6 +43,34 @@ for word**; the Lean verifier accepts it. 4/4, about 6.5 minutes. For the three 
 prover's `prove_tiny` (branch `leanvm-univariate-prover2`) records, by the first 8 bytes of its Keccak-256 (memory
 and bytecode `2^5, 2^4`, `2^4, 2^5`, `2^5, 2^5`), the Lean prover's stream has the same: 3/3.
 
-## The proof layers
+## The end theorem (`UniComplete/End.lean`)
 
-See `UniComplete.lean` for the modules and `End.lean` for the end theorem and what it assumes.
+```lean
+theorem uniCompleteness_end (D : Deployment) (hD : D.shape = reference) (hiv : D.programIv.length ≤ 2 ^ 16) :
+    UniCompleteness D (uniProverRP flockProveH D) deltaUni
+theorem deltaUni_lt : deltaUni < (2 : ℝ≥0∞)⁻¹ ^ 167
+```
+
+`uniProverRP flockProveH D` is `uniProverWith` over the random permutation's two calls (Keccak-256 as the sponge
+over the permutation, the permutation itself for WHIR's proofs of work), with Flock's honest prover
+(`FlockP.flockProve`). No hypothesis beyond the statement's own (`RowsFit`, `HonestRelation`). The bound is about
+`2^-167.97`:
+
+| term | event | where |
+|---|---|---|
+| `(2^24 − 1)/2^192` | a bus challenge `β` makes a divided fingerprint vanish (≤ `capBound reference = 10,878,976` per `α`) | `Core.badFpCard_reference` |
+| `6/2^256` | the bus challenges' chain meets an earlier query | `ProbChain` |
+| `3·2^17/2^192` | `y(t)` is a proper prefix of another point on `C1` (≤ `2·2^17` such `t`) | `ProbBadT.badTCard_reference` |
+| `2^-200` | `t`'s query is not fresh (below `73·2^28/2^256`) | `ProbTFresh.tQueryFresh_reference` |
+| `2^-304` | an opening's proof of work fails for every nonce below `nonceFuel` | `Core.coreFailsOnlyAtPow`, `ProbGrind` |
+| `rpmError (2^48)` | the permutation as two random oracles, `≤ 2^48` blocks (prover `≤ 3·2^46`) | `FlockCost`, `ProverCost` |
+
+Off the bad events the honest proof is accepted (`Core.coreAccepts_of`, `Core.accepts_of_trace`): the verifier's run
+synchronises with the prover's stream (`SyncVerifier.runWithH_syncs`), every relation at `t` holds and the batch's
+terminal is zero (`CoreBatch.batchSyncsAt_front`, from `Mapping.honestTrace_honest`, `AlgC`, `AlgH`, `FlockP`,
+`Combine`, `BatchProof`), and the five `PCS_OPEN` calls accept WHIR's honest openings (`Whir.pcsOpen_honest` at
+`27, 27, 24, 28, 28` variables; the claims' values, `CoreRun.streamValues`; Flock's matrices' point,
+`CoreRun.flockProve_matrixPoint`). The probability layer (`Prob*.lean`) stages the run at the bus challenges and
+at `t` (`ProbSplit`, `ProbStaged`); `CoreRun.front_challenges` identifies the staged challenges with the prover's.
+
+See `UniComplete.lean` for every module.
