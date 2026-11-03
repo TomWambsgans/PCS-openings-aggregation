@@ -12,3 +12,7 @@ import UniComplete.Honest
 import UniComplete.Setup
 import UniComplete.Whir
 import UniComplete.Domain
+import UniComplete.AlgCBasis
+import UniComplete.AlgCChunks
+import UniComplete.AlgCRun
+import UniComplete.AlgCTerm
