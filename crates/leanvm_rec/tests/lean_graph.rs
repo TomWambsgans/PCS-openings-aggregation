@@ -1,10 +1,10 @@
 // Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
-//! π1-rec's graph as Lean data (`formal/RecGraph`, `leanvm_rec::lean`).
+//! π1-rec3's graph as Lean data (`formal/RecGraph`, `leanvm_rec::lean`).
 //!
 //! - `graph_lean_is_current`: the checked-in `formal/RecGraph/RecGraph/Emitted.lean` is what `lean::render` writes for
-//!   π1-rec's recorded verifier now; `UPDATE_LEAN=1` rewrites it.
+//!   π1-rec3's recorded verifier now; `UPDATE_LEAN=1` rewrites it.
 //! - `lean_vectors` (ignored): `REC_VECTORS_OUT=<path>` writes the vectors of `formal/RecGraph`'s differential runner:
-//!   the real 1,000-signature proof (`crates/leanvm_univariate/tests/vectors/main_line_rec.txt`), its stream with one
+//!   the real 1,000-signature proof (`crates/leanvm_univariate/tests/vectors/main_line_rec3.txt`), its stream with one
 //!   byte flipped at several places, the real stream under other public inputs, and pseudo-random streams
 //!   (`REC_VECTOR_COUNT` of them, default 16), each with the evaluated graph's `PCS_OPEN` inputs and checks and the Rust
 //!   verifier's on `E`.
@@ -30,7 +30,7 @@ fn graph_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../formal/RecGraph/RecGraph/Emitted.lean")
 }
 
-/// The checked-in Lean graph is π1-rec's recorded verifier: `UPDATE_LEAN=1` rewrites it.
+/// The checked-in Lean graph is π1-rec3's recorded verifier: `UPDATE_LEAN=1` rewrites it.
 #[test]
 fn graph_lean_is_current() {
     let rendered = deep(|| render(&recorded()));
@@ -59,14 +59,14 @@ fn lean_vectors() {
     let text = deep(move || {
         let recorded = recorded();
         let file = format!(
-            "{}/../leanvm_univariate/tests/vectors/main_line_rec.txt",
+            "{}/../leanvm_univariate/tests/vectors/main_line_rec3.txt",
             env!("CARGO_MANIFEST_DIR")
         );
         let real = vectors::read(&std::fs::read_to_string(&file).expect("the committed vector"));
-        assert_eq!(real.config, "main_line_rec");
+        assert_eq!(real.config, "main_line_rec3");
         let stream = real.calldata[4 + 32..].to_vec();
         let mut out = String::from(
-            "# formal/RecGraph's differential vectors (crates/leanvm_rec/tests/lean_graph.rs): pi1-rec's graph at the reference shape\n",
+            "# formal/RecGraph's differential vectors (crates/leanvm_rec/tests/lean_graph.rs): pi1-rec3's graph at the reference shape\n",
         );
         out.push_str(&vector("real", &recorded, &real.public, &stream));
         let len = stream.len();

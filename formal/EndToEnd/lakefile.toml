@@ -171,3 +171,13 @@ name = "UniComplete"
 srcDir = "../UniComplete"
 globs = ["UniComplete", "UniComplete.+"]
 leanOptions = { warningAsError = true }
+
+# The recursion's inner verifier as a graph (`formal/RecGraph`): π1-rec3's recorded verifier graph
+# (`crates/leanvm_rec/src/lean.rs` writes `RecGraph/Emitted.lean`, data only), its semantics over any permutation
+# (`evalGraph`), and the Lean recorder with "recording commutes with evaluation". The differential runner
+# (`RecGraphTest/Runner.lean`) runs with `lake env lean`, not built.
+[[lean_lib]]
+name = "RecGraph"
+srcDir = "../RecGraph"
+globs = ["RecGraph", "RecGraph.+"]
+leanOptions = { warningAsError = true }
