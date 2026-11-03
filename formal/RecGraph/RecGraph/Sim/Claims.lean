@@ -1745,6 +1745,171 @@ theorem CombRep.grow {st st' : RecState} (hk : KInv st) (hgr : Grows st st') {L 
     rw [valC_grow π iv publicInput stream hk hgr h.held]
     exact h.weight r map z0 hr⟩
 
+theorem sum_zipIdx_forall₂G {α β : Type} {R : α → β → Prop} (F : α × ℕ → E) (G : β × ℕ → E)
+    (h : ∀ a b k, R a b → F (a, k) = G (b, k)) : ∀ {l : List α} {m : List β}, List.Forall₂ R l m → ∀ n,
+      ((l.zipIdx n).map F).sum = ((m.zipIdx n).map G).sum
+  | _, _, .nil, _ => rfl
+  | _, _, .cons hr hl, n => by
+    rw [List.zipIdx_cons, List.zipIdx_cons, List.map_cons, List.map_cons, List.sum_cons, List.sum_cons, h _ _ n hr,
+      sum_zipIdx_forall₂G F G h hl (n + 1)]
+
+theorem sum_map_forall₂G {α β : Type} {R : α → β → Prop} (F : α → E) (G : β → E)
+    (h : ∀ a b, R a b → F a = G b) : ∀ {l : List α} {m : List β}, List.Forall₂ R l m →
+      (l.map F).sum = (m.map G).sum
+  | _, _, .nil => rfl
+  | _, _, .cons hr hl => by
+    rw [List.map_cons, List.map_cons, List.sum_cons, List.sum_cons, h _ _ hr, sum_map_forall₂G F G h hl]
+
+/-- **Combine and the weights, off the hazard**: for each commitment, the program's combined claim (points compared by
+node) and `UniStatement`'s (by value) have the same value, the same count, and the same weight at every batch point
+of at least every block's variables (the program's by `weight_at`'s grouping, `progW`), when every term has its
+kind and no point extends a slot term's (the merge hazard's absence). -/
+theorem combine_weight {st : RecState} (hg : Good st) {relsS : List RelationS} {rels : List Relation}
+    (hr : RpRels π iv publicInput stream st relsS rels) (c : Commitment) {rhoS : Nat} {ρ : E}
+    (hrho : Rp π iv publicInput stream st rhoS ρ) (L : StackLayout) (hL : LayoutOK L)
+    (hK : ∀ r ∈ mine rels c, ∀ tm ∈ r.terms, TermKind L tm.column tm.point tm.twist)
+    (hself : ∀ r ∈ mine rels c, ∀ tm ∈ r.terms, (∃ j, tm.column = .qflockSlot j) →
+      ∀ r' ∈ mine rels c, ∀ tm' ∈ r'.terms, tm.point.length < tm'.point.length →
+        tm'.point.take tm.point.length ≠ tm.point) :
+    PHc st (Pi1.combine relsS c rhoS) fun out st' ↦
+      OptRel (CombRep π iv publicInput stream st' L) out (combine rels c ρ) := by
+  have hG : List.Forall₂ (RpRelN π iv publicInput stream st) relsS (relsS.map (toG π iv publicInput stream st)) := by
+    rw [List.forall₂_map_right_iff]
+    exact List.forall₂_same.mpr fun r hr' ↦ by
+      obtain ⟨u, -, hu⟩ := forall₂_mem_leftC hr r hr'
+      exact toG_rpRelN π iv publicInput stream hu
+  have hC : List.Forall₂ (Corr π iv publicInput stream st) (relsS.map (toG π iv publicInput stream st)) rels := by
+    rw [List.forall₂_map_left_iff]
+    exact hr.imp fun _ _ h ↦ toG_corr π iv publicInput stream h
+  have hM : List.Forall₂ (Corr π iv publicInput stream st) (mineG (relsS.map (toG π iv publicInput stream st)) c)
+      (mine rels c) :=
+    forall₂_filterC _ _ (fun g u h ↦ by rw [Corr.commitment π iv publicInput stream h]) hC
+  have hlen := List.Forall₂.length_eq hM
+  refine phc_conseq (combine_phc π iv publicInput stream hg hG c hrho) fun out st' hs h ↦ ?_
+  have hk := hg.inv.kinv
+  by_cases he : mine rels c = []
+  · have he' : mineG (relsS.map (toG π iv publicInput stream st)) c = [] := by
+      rw [← List.length_eq_zero_iff, hlen, List.length_eq_zero_iff]
+      exact he
+    have h1 : combine rels c ρ = none := by
+      rw [UniSound.Ids.Weights.combine_eq, ite_eq_left (by rw [he]; rfl)]
+    have h2 : combineG (relsS.map (toG π iv publicInput stream st)) c ρ = none := by
+      rw [Gen.combineG_eq, ite_eq_left (by rw [he']; rfl)]
+    rw [h2] at h
+    rw [h1]
+    cases out with
+    | none => trivial
+    | some _ => exact h.elim
+  · have he' : mineG (relsS.map (toG π iv publicInput stream st)) c ≠ [] := by
+      rw [ne_eq, ← List.length_eq_zero_iff, hlen, List.length_eq_zero_iff]
+      exact he
+    obtain ⟨cG, hcG, hvalG, hFG⟩ := combineEqG _ c ρ he'
+    obtain ⟨cb, hcb, hval, hF⟩ := UniSound.Ids.combineEq rels c ρ he
+    rw [hcG] at h
+    rw [hcb]
+    cases out with
+    | none => exact h.elim
+    | some cS =>
+      obtain ⟨hpts, hterms, hvalue, hrels⟩ := h
+      have hsz := Grows.size_le hs.grows
+      have hMm := forall₂_memC hM
+      -- The points' nodes are held.
+      have hheldP : ∀ q ∈ cG.points, ∀ i ∈ q, i < st.nodes.size := by
+        intro q hq i hi
+        obtain ⟨g, hg', tm, htm, rfl⟩ := combineG_points_mem hcG q hq
+        obtain ⟨u, -, hgu⟩ := forall₂_mem_leftC hM g hg'
+        obtain ⟨v, -, htv⟩ := forall₂_mem_leftC hgu.1 tm htm
+        exact htv.2.2.2.1 i hi
+      have hheld : HeldC st' cS := by
+        refine ⟨fun q hq i hi ↦ lt_of_lt_of_le (hheldP q (hpts ▸ hq) i hi) hsz, fun x hx ↦ ?_, hvalue.1⟩
+        obtain ⟨y, -, hxy⟩ := forall₂_mem_leftC hterms x hx
+        exact hxy.2.2.2.1
+      have hvals : ∀ q ∈ cG.points, q.map (val π iv publicInput stream st') = q.map (val π iv publicInput stream st) :=
+        fun q hq ↦ List.map_congr_left fun i hi ↦ val_grow π iv publicInput stream hk hs.grows (hheldP q hq i hi)
+      refine ⟨hheld, ?_, ?_, ?_⟩
+      · rw [hval, ← sum_zipIdx_forall₂C ρ (fun g : RelG Nat ↦ g.value) (fun u : Relation ↦ u.value)
+          (fun _ _ h ↦ h.2) hM 0, ← hvalG]
+        exact hvalue
+      · rw [hrels, combineG_relations hcG, hlen]
+        rw [UniSound.Ids.Weights.combine_eq, ite_eq_right (by simpa [List.isEmpty_iff] using he)] at hcb
+        rw [← Option.some.inj hcb]
+      · intro r map z0 hrl
+        -- The program's side: the claim over nodes.
+        have hvC : (valC π iv publicInput stream st' cS).terms = cG.terms :=
+          valTm_map π iv publicInput stream hterms
+        have hvP : ∀ p, (valC π iv publicInput stream st' cS).points.getD p [] =
+            (cG.points.getD p []).map (val π iv publicInput stream st') := by
+          intro p
+          show (cS.points.map (·.map (val π iv publicInput stream st'))).getD p
+            ([].map (val π iv publicInput stream st')) = _
+          rw [List.getD_map, hpts]
+        have hP : progW (valC π iv publicInput stream st' cS) L r map z0 =
+            (cG.terms.map fun tm ↦ tm.2.2.2 * termP L r map z0 tm.1
+              ((cG.points.getD tm.2.1 []).map (val π iv publicInput stream st')) tm.2.2.1).sum := by
+          unfold progW
+          rw [hvC]
+          refine congrArg List.sum (List.map_congr_left fun x _ ↦ ?_)
+          rw [hvP]
+        have eG := hFG (fun col q tw ↦ termP L r map z0 col (q.map (val π iv publicInput stream st')) tw)
+        have eF := hF (fun col pt tw ↦ weightAt ⟨[pt], [(col, 0, tw, 1)], 0, 1⟩ L r (some map))
+        have eL := UniSound.Ids.weightAtLinear cb L r (some map)
+        beta_reduce at eG eF
+        rw [hP, eG]
+        rw [eL]
+        refine Eq.trans ?_ eF.symm
+        refine sum_zipIdx_forall₂G _ _ (fun g u k h ↦ ?_) hMm 0
+        obtain ⟨⟨hgt, -⟩, hgm, hum⟩ := h
+        refine congrArg (ρ ^ k * ·) ?_
+        refine sum_map_forall₂G _ _ (fun t v htv ↦ ?_) (forall₂_memC hgt)
+        obtain ⟨⟨hcol, htw, hpt, hheldt, hco⟩, htm, hvm⟩ := htv
+        rw [hco, hcol, htw]
+        refine congrArg (v.coefficient * ·) ?_
+        -- The term's point merged, by node and by value.
+        have hkind := hK u hum v hvm
+        obtain ⟨hpre, g', hg', t', ht', hpt'⟩ := mergedPrefixG _ t.point ⟨g, hgm, t, htm, rfl⟩
+        obtain ⟨u', hu', hgu'⟩ := forall₂_mem_leftC hM g' hg'
+        obtain ⟨v', hv', htv'⟩ := forall₂_mem_leftC hgu'.1 t' ht'
+        set qN := mergedPointG (mineG (relsS.map (toG π iv publicInput stream st)) c) t.point with hqN
+        have hqv : qN.map (val π iv publicInput stream st') = v'.point := by
+          rw [← htv'.2.2.1, ← hpt']
+          exact List.map_congr_left fun i hi ↦ val_grow π iv publicInput stream hk hs.grows (htv'.2.2.2.1 i hi)
+        have hlen' : t.point.length = v.point.length := by rw [← hpt, List.length_map]
+        have hext : v'.point.take v.point.length = v.point := by
+          rw [← hqv, ← List.map_take, ← hlen', hpre, ← hpt]
+          exact List.map_congr_left fun i hi ↦ val_grow π iv publicInput stream hk hs.grows (hheldt i hi)
+        have hslot : (∃ j, v.column = .qflockSlot j) → v'.point = v.point := by
+          intro hj
+          by_contra hne
+          have hle : v.point.length ≤ v'.point.length := by
+            have := congrArg List.length hext
+            rw [List.length_take] at this
+            omega
+          have hlt : v.point.length < v'.point.length := by
+            rcases Nat.lt_or_eq_of_le hle with h | h
+            · exact h
+            · exact absurd ((List.take_of_length_le (by omega)).symm.trans hext) hne
+          exact hself u hum v hvm hj u' hu' v' hv' hlt hext
+        rw [hqv, termP_eq hL r map z0 hrl hkind hext hslot]
+        -- `UniStatement`'s side: its merged point extends the term's, and is the term's for a slot.
+        obtain ⟨hpreE, u2, hu2, v2, hv2, hpt2⟩ := UniSound.Ids.mergedPrefix (mine rels c) v.point ⟨u, hum, v, hvm, rfl⟩
+        have hslotE : (∃ j, v.column = .qflockSlot j) →
+            UniSound.Ids.mergedPoint (mine rels c) v.point = v.point := by
+          intro hj
+          by_contra hne
+          have hle : v.point.length ≤ (UniSound.Ids.mergedPoint (mine rels c) v.point).length := by
+            have := congrArg List.length hpreE
+            rw [List.length_take] at this
+            omega
+          have hlt : v.point.length < (UniSound.Ids.mergedPoint (mine rels c) v.point).length := by
+            rcases Nat.lt_or_eq_of_le hle with h | h
+            · exact h
+            · exact absurd ((List.take_of_length_le (by omega)).symm.trans hpreE) hne
+          exact hself u hum v hvm hj u2 hu2 v2 hv2 (hpt2 ▸ hlt) (hpt2 ▸ hpreE)
+        rw [← termP_eq hL r map z0 hrl (hkind.extend hpreE hslotE) (List.take_of_length_le le_rfl)
+          (fun _ ↦ rfl), termP_eq hL r map z0 hrl hkind hpreE hslotE]
+
+
+
 end CombineWeight
 
 end RecGraph.Sim
