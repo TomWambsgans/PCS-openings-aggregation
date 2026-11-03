@@ -198,7 +198,15 @@ fn real_end_to_end() {
         let (accepted, made) = contract::run(&inst, &recorded, &data, &expected);
         assert!(accepted, "the contract accepts π2's proof of π1-rec's real proof");
         assert_eq!(made, expected, "the nine claims in eight calls");
-        for at in [4, 40, 40 + 64, data.len() - 30, data.len() - 1] {
+        // A flipped byte anywhere: the public input, π1's roots, its elements, W's and Q's roots, every value sent.
+        let (w_at, q_at) = (recorded.roots_at[2], recorded.roots_at[3]);
+        let values_at = q_at + 32;
+        let mut flips = vec![4, 4 + 31, 36 + 5, 36 + 40, 36 + 64, 36 + 64 + 24 * 25 + 11, 36 + w_at - 1];
+        flips.extend([36 + w_at, 36 + w_at + 31, 36 + q_at + 7]);
+        flips.extend((0..spec.values()).step_by(4).map(|k| 36 + values_at + 24 * k + k % 24));
+        flips.extend([data.len() - 48, data.len() - 25, data.len() - 1]);
+        assert!(flips.len() >= 13);
+        for &at in &flips {
             let mut bad = data.clone();
             bad[at] ^= 1;
             assert!(
@@ -208,8 +216,9 @@ fn real_end_to_end() {
         }
         contract::parity(&inst, &recorded, &public_input, &stream);
         println!(
-            "end to end: π1's real proof → π2's proof ({} B of calldata) → the contract accepts, PCS_OPEN attesting its 9 claims",
-            data.len()
+            "end to end: π1's real proof → π2's proof ({} B of calldata) → the contract accepts, PCS_OPEN attesting its 9 claims; {} flipped bytes rejected",
+            data.len(),
+            flips.len()
         );
     });
 }
