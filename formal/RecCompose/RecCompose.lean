@@ -7,6 +7,10 @@ import RecCompose.Numbers
 import RecCompose.End
 import RecCompose.Circuit
 import RecCompose.Layers
+import RecCompose.Holds
+import RecCompose.Chan
+import RecCompose.Pi2Run
+import RecCompose.CallsPure
 
 /-!
 # RecCompose: the recursive verifier's end theorems
