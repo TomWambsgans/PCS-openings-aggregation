@@ -12,7 +12,7 @@ witness's free bits encode (`decodePublic`, `decodeStream`).
 
 namespace RecCircuit
 
-open Primitives PcsCircuit
+open Primitives PcsCircuit LeanVM.Protocol LeanVM.Protocol.KeccakHash
 
 theorem F64.ofNat_zero : F64.ofNat 0 = 0 := by decide
 
@@ -714,6 +714,110 @@ theorem inv_bits (hc : c.Checked r) (G : c.ctx.Good w) (hw : c.circuit.Satisfied
             have := slice_length_le S off len; omega)]; simp [ofBool]
         · simp [hew, ofBool]
   | _ => simp at hok
+
+/-! ## Seeds and hashes -/
+
+theorem arr_getD_append {α : Type} (a b : Array α) (i : ℕ) (d : α) :
+    (a ++ b).getD i d = if i < a.size then a.getD i d else b.getD (i - a.size) d := by
+  simp only [Array.getD_eq_getD_getElem?, Array.getElem?_append]
+  split <;> rfl
+
+theorem constantBits_size (bytes : List UInt8) : (Builder.constantBits bytes).size = 8 * bytes.length := by
+  simp [Builder.constantBits]
+
+theorem constantBits_getD (bytes : List UInt8) (i : ℕ) (hi : i < 8 * bytes.length) :
+    (Builder.constantBits bytes).getD i .zero =
+      if (bytes.getD (i / 8) 0).toNat.testBit (i % 8) then .one else .zero := by
+  simp [Builder.constantBits, Array.getD_eq_getD_getElem?, hi]
+
+theorem bitMeans_const (X : Ctx) (w : ℕ → K) (b : Bool) :
+    Ctx.BitMeans X w (if b then .one else .zero) b := by
+  cases b <;> rfl
+
+theorem bitOf_append_left (A B : List UInt8) (i : ℕ) (h : i / 8 < A.length) : bitOf (A ++ B) i = bitOf A i := by
+  simp [bitOf, List.getD_eq_getElem?_getD, List.getElem?_append_left h]
+
+theorem bitOf_append_right (A B : List UInt8) (i : ℕ) (h : A.length ≤ i / 8) :
+    bitOf (A ++ B) i = bitOf B (i - 8 * A.length) := by
+  simp only [bitOf, List.getD_eq_getElem?_getD, List.getElem?_append_right h]
+  rw [show (i - 8 * A.length) / 8 = i / 8 - A.length by omega, show (i - 8 * A.length) % 8 = i % 8 by omega]
+
+theorem NAME_length : NAME.length = 16 := by decide +kernel
+
+theorem spongeIs_spec {d : Array ℕ} {m : Array Bit} (h : c.spongeIs d m = true) :
+    ∃ sp ∈ c.st.sponges, sp.digest = d ∧ sp.message = m := by
+  unfold spongeIs at h
+  obtain ⟨i, hi, hp⟩ := Array.any_eq_true.mp h
+  simp only [Bool.and_eq_true, beq_iff_eq] at hp
+  exact ⟨_, Array.getElem_mem hi, hp⟩
+
+/-- A message's sponge digest is Keccak-256 of the bytes it means. -/
+theorem digest_of_message (hc : c.Checked r) (G : c.ctx.Good w) {d : Array ℕ} {m : Array Bit} {data : List UInt8}
+    (h : c.spongeIs d m = true) (hsize : m.size = 8 * data.length) (hm : Ctx.MsgOk c.ctx w m (bitOf data)) :
+    ∀ k < 256, c.ctx.val w (d.getD k NONE) = ofBool (bitOf (digestBytes (keccak256 data)) k) := by
+  obtain ⟨sp, hsp, hd, hmsg⟩ := spongeIs_spec h
+  intro k hk
+  have := Ctx.sponge_digest G hc.keccak (hc.sponge sp hsp) (mb := bitOf data) (by rw [hmsg]; exact hm) k hk
+  rw [hd, hmsg, hsize] at this
+  rw [this, keccak256_bits_multi data k hk]
+
+theorem public_copy (hc : c.Checked r) (hw : c.circuit.Satisfied w) {i : ℕ} (hi : i < 256) :
+    c.ctx.val w (c.publicCopy.getD i NONE) = ofBool (bitOf (c.pubW w) i) := by
+  have G := hc.good hw
+  rw [Ctx.copy_val G ((bitsOk_parts hc.bits).2.1 i hi).2, show i = 8 * (i / 8) + i % 8 by omega,
+    public_bit hc hw (by omega) (Nat.mod_lt _ (by norm_num))]
+  simp only [bitOf, pubW]
+  rw [show (8 * (i / 8) + i % 8) / 8 = i / 8 by omega, show (8 * (i / 8) + i % 8) % 8 = i % 8 by omega]
+
+theorem inv_seed (hc : c.Checked r) (hw : c.circuit.Satisfied w) {id : ℕ} (hid : id < c.nodes.size)
+    (hl : c.live.getD id false = true) (hnode : c.nodes.getD id default = .seed) : c.StateInv r w id := by
+  have G := hc.good hw
+  have hok := hc.nodes id hid hl
+  simp only [nodeOk, hnode] at hok
+  split at hok
+  · rename_i d hd
+    simp only [Bool.and_eq_true, beq_iff_eq] at hok
+    obtain ⟨⟨hds, _⟩, hsp⟩ := hok
+    have hiv := (graphOk_parts hc.graph).2.2.2
+    have hpc : c.publicCopy.size = 256 := by
+      have := hc.bits; unfold bitsOk at this; simp only [Bool.and_eq_true, beq_iff_eq] at this; exact this.1.2
+    have hpub : (c.pubW w).length = 32 := decodePublic_length _
+    set data := NAME ++ r.iv ++ c.pubW w
+    have hdl : data.length = 80 := by simp [data, NAME_length, hiv, hpub]
+    have hsize : (c.seedMessage r.iv).size = 8 * data.length := by
+      simp [seedMessage, constantBits_size, NAME_length, hiv, hpc, hdl]
+    have hm : Ctx.MsgOk c.ctx w (c.seedMessage r.iv) (bitOf data) := by
+      intro i hi
+      rw [hsize, hdl] at hi
+      unfold seedMessage
+      rw [arr_getD_append, arr_getD_append, Array.size_append, constantBits_size, constantBits_size, NAME_length, hiv]
+      by_cases h1 : i < 8 * 16
+      · rw [if_pos (by omega), if_pos h1, constantBits_getD _ _ (by rw [NAME_length]; omega),
+          show data = NAME ++ (r.iv ++ c.pubW w) by simp [data], bitOf_append_left _ _ _ (by rw [NAME_length]; omega)]
+        exact bitMeans_const _ _ _
+      · by_cases h2 : i < 8 * 16 + 8 * 32
+        · rw [if_pos (by omega), if_neg h1, constantBits_getD _ _ (by rw [hiv]; omega),
+            show data = NAME ++ (r.iv ++ c.pubW w) by simp [data], bitOf_append_right _ _ _ (by rw [NAME_length]; omega),
+            bitOf_append_left _ _ _ (by rw [NAME_length, hiv]; omega), NAME_length]
+          have e : (i - 8 * 16) / 8 = (i - 8 * 16) / 8 := rfl
+          simp only [bitOf] at *
+          rw [show (i - 8 * 16) / 8 = (i - 8 * 16) / 8 from rfl]
+          exact bitMeans_const _ _ _
+        · rw [if_neg (by omega), Array.getD_eq_getD_getElem?, Array.getElem?_map]
+          have hk : i - (8 * 16 + 8 * 32) < 256 := by omega
+          rw [show (c.publicCopy[i - (8 * 16 + 8 * 32)]?) = some (c.publicCopy.getD (i - (8 * 16 + 8 * 32)) NONE) by
+            simp [Array.getD_eq_getD_getElem?, hpc, hk]]
+          show c.ctx.val w _ = _
+          rw [public_copy hc hw hk, show data = (NAME ++ r.iv) ++ c.pubW w from rfl,
+            bitOf_append_right _ _ _ (by simp [NAME_length, hiv]; omega)]
+          simp [NAME_length, hiv]
+    refine ⟨d, hd, hds, ?_, ?_⟩
+    · rw [valsW_step hc hid hl, hnode]
+      simp [Graph.step, Value.toState, keccakSeed, PcsCircuit.digestBytes_length]
+    · intro k hk
+      rw [digest_of_message hc G hsp hsize hm k hk, valsW_step hc hid hl, hnode]
+      rfl
+  · cases hok
 
 end Compiled
 
