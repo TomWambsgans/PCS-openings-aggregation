@@ -164,7 +164,7 @@ def keccakOk (t : KeccakT) : Bool :=
   allBelow 24 (fun j => allBelow 5 (fun y => allBelow 320 (fun u =>
     let (x, z) := (u / 64, u % 64)
     let cells := chiCells (t.a.getD j #[]) (t.d.getD j #[]) y z
-    let k := if x == 0 && y == 0 then rcBit j z else 0
+    let k := if x == 0 then (if y == 0 then rcBit j z else 0) else 0
     X.gate (A (j + 1) (64 * (x + 5 * y) + z)) (Builder.chiB x).build k cells &&
       (if y == 0 then X.gate (P j 0 u) (Builder.chiB x).build k cells
        else X.gate (P j y u) ((Builder.chiB x).addLinear (10 + x) 1).build 0 (cells ++ [(10 + x, P j (y - 1) u)]))))) &&
