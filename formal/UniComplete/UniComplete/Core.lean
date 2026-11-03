@@ -224,7 +224,111 @@ theorem accepts_of_trace (D : Deployment) (H : List UInt8 → Digest) (F : Kecca
   · simp only [hD, ref_word_b0, hmb, SetupTrees.roots, setupTrees_b0]
     exact ab
 
+/-! ## The three core facts of `Prob.lean` -/
+
+/-- **The batch's hypothesis at the prover's state** (`CoreBatch.lean`'s `batchSyncsAt_front`): for an honest trace
+at the reference shape, with good bus challenges and a good `t`, the batching sumcheck synchronises with a zero
+terminal. -/
+def BatchFront : Prop :=
+  ∀ (H : List UInt8 → Digest) (tr : Trace) (seed : Digest), TraceHonest tr → tr.shape = reference →
+    ¬ BadFp tr (frontOf H (commitReal (m := Id) H) (FlockP.flockProve (m := Id) (Pure.pure ∘ H)) (.flock flockMain)
+        tr (Wr.start seed)).1.alphas
+      (frontOf H (commitReal (m := Id) H) (FlockP.flockProve (m := Id) (Pure.pure ∘ H)) (.flock flockMain) tr
+        (Wr.start seed)).1.beta →
+    (∀ out, (frontOf H (commitReal (m := Id) H) (FlockP.flockProve (m := Id) (Pure.pure ∘ H)) (.flock flockMain) tr
+        (Wr.start seed)).1.flockOut = some out →
+      ¬ Prob.BadT reference out.point
+        (frontOf H (commitReal (m := Id) H) (FlockP.flockProve (m := Id) (Pure.pure ∘ H)) (.flock flockMain) tr
+          (Wr.start seed)).1.t) →
+    BatchSyncsAt H (commitReal (m := Id) H) (FlockP.flockProve (m := Id) (Pure.pure ∘ H)) (.flock flockMain) tr seed
+      (fun _ ↦ 0)
+
+/-- **The stacks' sizes** at the reference shape: `C1`'s and `C2`'s `2^27` words, the setup's `2^24`. -/
+def StackSizes : Prop :=
+  ∀ tr : Trace, TraceHonest tr → tr.shape = reference →
+    (c1Stack tr).size = 2 ^ 27 ∧
+      (∀ alphas beta gamma, (c2DataOf tr (eqKernel alphas) beta gamma).stack.size = 2 ^ 27) ∧
+      (setupStackOf tr).size = 2 ^ 24
+
+/-- **`CoreAccepts` for Flock's honest prover** at the reference shape, given the batch's hypothesis and the
+stacks' sizes. -/
+theorem coreAccepts_of (D : Deployment) (hD : D.shape = reference) (hbatch : BatchFront) (hsizes : StackSizes) :
+    Prob.CoreAccepts D flockProveH := by
+  intro input rows q hfit hrel H F π hπ hbad hbadT
+  have hon : TraceHonest (honestTrace D input rows q) := Mapping.honestTrace_honest D input rows q hfit hrel
+  have href : (honestTrace D input rows q).shape = reference := hD
+  obtain ⟨hα, hβ, hpt, ht⟩ := front_challenges H (FlockP.flockProve (m := Id) (Pure.pure ∘ H)) D input rows q
+  obtain ⟨hs1, hs2, hs3⟩ := hsizes _ hon href
+  refine accepts_of_trace D H F input (honestTrace D input rows q) π hon href rfl rfl
+    (setupStackOf_honestTrace D input rows q) ?_ hs1 hs2 hs3 hπ
+  refine hbatch H _ _ hon href ?_ ?_
+  · rw [hα, hβ]
+    exact hbad
+  · intro out hout
+    rw [hout, Option.map_some, Option.some.injEq] at hpt
+    rw [hpt, ht]
+    have h := hbadT
+    rw [hD] at h
+    exact h
+
+/-- **`proveWith` fails only at an opening**: if it returns `none`, one of the five WHIR openings returned `none`
+(every commitment has a claim, `claims_complete`). -/
+theorem fails_only_at_opening (H : List UInt8 → Digest) (F : KeccakState → KeccakState) (fuel : ℕ)
+    (flock : FlockProver Id) (blake2s : Blake2s) (programIv : List UInt8) (tr : Trace)
+    (hnone : proveWith (m := Id) H F fuel flock blake2s programIv tr = none) :
+    ∃ (L : PcsQuotient.Layout) (tree : LeanVM.Prover.Tree) (stack : Array K) (claims : List PcsQuotient.Claim),
+      E2ECompleteness.proveOpeningWithH (m := Id) H F fuel L tree stack claims = none := by
+  have hf : StreamFacts (commitReal (m := Id) H) flock blake2s tr (streamRun H flock blake2s programIv tr).1 :=
+    streamRun_facts H (commitReal (m := Id) H) _ _ tr _
+  rcases proveWith_eq_none H F _ _ _ _ _ hnone with hmiss | ⟨_, pt, v, -, h⟩ | ⟨_, pt, v, -, h⟩ |
+      ⟨_, pt, v, -, h⟩ | ⟨mc, -, h⟩ | ⟨mc, -, h⟩
+  · exfalso
+    obtain ⟨c, hc, hn⟩ := hmiss
+    have hc' : c ∈ (streamRun H flock blake2s programIv tr).1.claims.map (·.1) := by
+      rw [hf.claims_fst]; exact hc
+    obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hc'
+    exact absurd (by simp : (x.1 == x.1) = true) (List.find?_eq_none.mp hn x hx)
+  all_goals exact ⟨_, _, _, _, h⟩
+
+/-- **The honest prover fails only at an opening** (`Prob.CoreFailsOnlyAtPow`), every shape. -/
+theorem coreFailsOnlyAtPow (D : Deployment) : Prob.CoreFailsOnlyAtPow D flockProveH :=
+  fun _ _ _ _ _ H F _ _ hnone ↦ fails_only_at_opening H F _ _ _ _ _ hnone
+
+/-- **At most `2^24 − 1` bad `β` for each `α`** at the reference shape: one per divided tuple (a fingerprint is `β`
+plus a constant), at most `capBound reference = 10,878,976` of them. -/
+theorem badFpCard_reference (D : Deployment) (hD : D.shape = reference) : Prob.BadFpCard D (2 ^ 24 - 1) := by
+  classical
+  intro input rows q hfit hrel alphas
+  have hon : TraceHonest (honestTrace D input rows q) := Mapping.honestTrace_honest D input rows q hfit hrel
+  refine ⟨((dividedTuples (honestTrace D input rows q)).map fun tau ↦ -fpOf (eqKernel alphas) 0 tau).toFinset,
+    ?_, ?_⟩
+  · have hcap : Mapping.capBound (honestTrace D input rows q).shape = 10878976 := by
+      show Mapping.capBound D.shape = _
+      rw [hD]
+      exact Mapping.capBound_reference
+    calc _ ≤ ((dividedTuples (honestTrace D input rows q)).map fun tau ↦ -fpOf (eqKernel alphas) 0 tau).length :=
+          List.toFinset_card_le _
+      _ = (dividedTuples (honestTrace D input rows q)).length := List.length_map _
+      _ ≤ Mapping.dividedBound (honestTrace D input rows q).shape (honestTrace D input rows q).rows :=
+          Mapping.dividedTuples_length_le _ hon.rowsFit
+      _ ≤ Mapping.capBound (honestTrace D input rows q).shape := Mapping.dividedBound_le _ _ hon.rowsFit
+      _ = 10878976 := hcap
+      _ ≤ 2 ^ 24 - 1 := by norm_num
+  · rintro b ⟨tau, htau, h0⟩
+    rw [Mapping.fpOf_eq] at h0
+    rw [List.mem_toFinset, List.mem_map]
+    exact ⟨tau, htau, neg_eq_of_add_eq_zero_left h0⟩
+
 end UniComplete.Core
 
 /-- info: 'UniComplete.Core.accepts_of_trace' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms UniComplete.Core.accepts_of_trace
+
+/-- info: 'UniComplete.Core.coreAccepts_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.Core.coreAccepts_of
+
+/-- info: 'UniComplete.Core.coreFailsOnlyAtPow' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.Core.coreFailsOnlyAtPow
+
+/-- info: 'UniComplete.Core.badFpCard_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.Core.badFpCard_reference
