@@ -5,6 +5,7 @@ import UniSound.Ids.Deployed
 import UniSound.Ids.LvLink
 import UniSound.Ids.LvRealize
 import UniSound.Ids.Facts
+import UniSound.Ids.Eval
 
 /-!
 # `B` and `J` for the reference deployment
@@ -12,7 +13,7 @@ import UniSound.Ids.Facts
 For a deployment `D` at the reference shape (`UniStatement.reference`: 1,000 signatures, heights
 `18 18 18 18 17 18`, memory `2^21`, bytecode `2^19`), **`busModelRef`** and **`idsRestRef`** are
 `BusModel D 18`-style and `UniIdsRest` models with every bridge of `Bridges.lean` proved but those in
-**`IdsRemaining`**: the relations at `t` give the identities at `t` (`DiffsEvalP`), the identities'
+**`IdsRemaining`**: the identities'
 degrees and the relations' number (`DegBoundP`, `RelCountP`), the table columns absent from `C1`'s
 layout, and the setup's bytecode tuple at the points (`BcTupleEval`).
 
@@ -42,7 +43,6 @@ def NoMerge (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (fd : Done) (t : E)
 
 /-- **What remains** (named hypotheses not proved in this library). -/
 structure IdsRemaining (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (d n : ℕ) : Prop where
-  diffsEval : DiffsEvalP D Fl
   degBound : DegBoundP D Fl d
   relCount : RelCountP D Fl n
   absent : ∀ o < 6, ∀ i, (tables.getD o default).width ≤ i →
@@ -94,7 +94,7 @@ include hS in
 /-- **The reductions, proved from what remains.** -/
 theorem idsGaps_ref (Fl : FlockSound (D.shape.heights.getD opBlake2s 0)) (d n : ℕ)
     (g : IdsRemaining D Fl d n) : IdsGaps D Fl d n where
-  diffsEval := g.diffsEval
+  diffsEval := diffsEvalP_reference D Fl hS
   mainOfPolys := mainOfPolys D Fl (heapReading_ref D hS Fl d n g)
   cvecOk := cvecOk D (c1Reading_ref D hS)
   diffsFlock := diffsFlock D Fl (c1Reading_ref D hS) towerWeight
