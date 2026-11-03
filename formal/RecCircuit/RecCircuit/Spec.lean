@@ -11,8 +11,9 @@ row (`formulaAt`; a row in no block is all forwards). A `port` role's push leave
 PIOP proves (`PI2.md` §1, the pull-less form of `spec.rs`'s (1), (2)). The witness is a function, not an array: the
 theorems never evaluate a circuit.
 
-The semantic lookups follow the Rust's dense columns: `regionOf` is `row_regions` (each block in order fills its
-rows, the last one wins), `kappaAt` is `kappa_column` (the last entry at a position wins).
+The semantic lookups: `regionOf` is the first block covering the row (as `RecPiop.Circuit.blockAt`; the Rust's
+`row_regions` lets the last one win, the same on the disjoint blocks `check_shape` requires), `kappaAt` is
+`kappa_column` (the last entry at a position wins).
 -/
 
 namespace RecCircuit
@@ -136,9 +137,10 @@ def n : ℕ := 2 ^ C.logN
 
 def width : ℕ := 2 ^ C.logWidth
 
-/-- Row `y`'s region (`row_regions`: the blocks in order, each filling its rows). -/
+/-- Row `y`'s region: the first block covering it (`RecPiop.Circuit.blockAt`; the Rust's `row_regions` takes the
+last, the same on disjoint blocks, which `check_shape` requires). -/
 def regionOf (y : ℕ) : Option ℕ :=
-  C.blocks.foldl (fun acc b => if b.row ≤ y ∧ y < b.row + 2 ^ b.logRows then some b.region else acc) none
+  (C.blocks.find? fun b => decide (b.row ≤ y ∧ y < b.row + 2 ^ b.logRows)).map (·.region)
 
 /-- The formula of position `i`'s role (`Circuit::formula`). -/
 def formulaAt (i : ℕ) : Formula :=
