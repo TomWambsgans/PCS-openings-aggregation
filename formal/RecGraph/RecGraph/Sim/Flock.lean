@@ -1,7 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import RecGraph.Sim.FlockTerminal
 import RecGraph.Sim.FlockTower
-import RecGraph.Sim.ComposeBase
+import RecGraph.Sim.ComposeSpec
 
 /-!
 # Flock with the walked terminal, simulated: `Pi1.verifyWalked` against `UniStatement.Flock.verifyWalkedFs`
@@ -14,7 +14,8 @@ At π1-rec3's shape (`log_n = 32`, `flockMain`: a skip of 3, the slices in tower
 * `front_sim`: `α`, the lincheck's claim, its 8 rounds, the 64 slices;
 * `ringEnd_sim`: the map's six challenges, the target (`towerTarget_ph`);
 * `verifyWalked_sim`: the front, the walked terminal (`walkedTerminal_ph`) against the lincheck's last claim, a zero,
-  the ring switch's end.
+  the ring switch's end; `flockSpec` (`ComposeSpec.FlockSpec`) is it, for every permutation, IV, public input and
+  stream.
 
 The bytes (3552) and the challenges (46) are counted from the definitions. The challenge nodes are tracked
 (`Sim.chIds_len`, `sim_sumcheckDrawn_ch`): the 40th challenge of the part (index 39) is the lincheck's last round, the
@@ -116,7 +117,6 @@ theorem sim_sumcheckDrawn_ch (st : RecState) {claim : Nat} {c : E} (count : Nat)
       exact ((hpt.grow π iv publicInput stream hg'.inv.kinv (hgr1.trans hgr2)).snoc hz).pgrow hg2 hst3
     · rw [hst3.chal, hzc, hL1, hch, Array.toList_push, List.append_assoc]
 
--- BEGIN ZC
 
 theorem squares_length (x : E) (n : ℕ) : (UniStatement.squares x n).length = n := by
   rw [squares_eq]; simp
@@ -224,9 +224,7 @@ theorem zerocheck_sim (st : RecState) :
         ∃ L, chIds st' = chIds st ++ L ∧ L.length = 31) :=
   (zerocheck_sim0 st).chIds_len
 
--- END ZC
 
--- BEGIN FRONT
 
 /-- `next_scalars(count)`, its length. -/
 theorem sim_nextScalars_len (st : RecState) (count : Nat) :
@@ -366,8 +364,92 @@ theorem front_sim (st : RecState) :
     · rw [getD_39 _ _ _ hL1l]
       exact (head_rev_append _ _ hlin).symm
 
--- END FRONT
+
+
+/-- **`ring_end`** (tower order): the map's six challenges, then the target. -/
+theorem ringEnd_sim (st : RecState) {s : List Sym} {S : List E} (hs : RpL' st s S) (hS : S.length = Flock.kBits) :
+    Sim π iv publicInput stream st (Pi1.ringEnd s) (Flock.ringEnd (Fp π) flockMain S) 0 6
+      (fun st' a b ↦ (∃ mapE tgtE, b = .ring mapE tgtE ∧ RpL' st' a.1 mapE ∧ Rp' st' a.2 tgtE) ∧
+        ∃ L, chIds st' = chIds st ++ L ∧ L.length = 6) := by
+  refine Sim.of_good fun hg ↦ ?_
+  unfold Pi1.ringEnd Flock.ringEnd
+  dsimp only
+  refine Sim.cast (n := 0 + 0) (ch := 6 + 0) rfl rfl ?_
+  refine Sim.bind (sim_samples π iv publicInput stream st 6).chIds_len
+    fun st1 m mU hg1 hgr1 ⟨⟨hm, hmc⟩, L, hL, hLl⟩ ↦ ?_
+  have hmlen : mU.length = Flock.towerStages := by
+    rw [hmc] at hL
+    rw [← hm.length, List.append_cancel_left hL, hLl]; rfl
+  rw [iteT (show flockMain.slices = Flock.Slices.tower from rfl)]
+  refine Sim.pbind' (PH.psim (R := Rp π iv publicInput stream)
+    (towerTarget_ph hg1 (hs.grow π iv publicInput stream hg.inv.kinv hgr1) hm hS hmlen)) fun st2 t hs2 ht ↦ ?_
+  generalize Flock.towerTarget S mU = TT at ht ⊢
+  refine Sim.pure_of_pstep (PStep.refl st2 hs2.good) ?_
+  refine ⟨⟨mU, TT, rfl, hm.pgrow hg1 hs2, ht⟩, m, ?_, ?_⟩
+  · show chIds st2 = _
+    rw [hs2.chal, hmc]
+  · rw [hmc] at hL
+    rw [List.append_cancel_left hL, hLl]
+
+theorem rowLowWeights_len (z : E) (RL : List E) (h : RL.length = 3) :
+    (Flock.rowLowWeights (some z) RL).2.length ≤ 64 := by
+  unfold Flock.rowLowWeights
+  simp [List.length_flatMap, lagrangeWeights_eq, eqKernel_size, h, Flock.packing]
+
+/-- **`verify_walked(32, flockMain, rec3)`**: the front, the terminal against the walk (its zero), the ring switch's
+end: Flock's point (26 coordinates), the map and the target; 3552 bytes, 46 challenges, the 40th Flock's point's first
+coordinate. -/
+theorem verifyWalked_sim (st : RecState) :
+    Sim π iv publicInput stream st (Pi1.verifyWalked 32 flockMain .rec3)
+      (UniStatement.Flock.verifyWalkedFs (Fp π) 32 flockMain .rec3) 3552 46
+      (fun st' a b ↦ RpL' st' a.1 b.1 ∧ b.1.length = 26 ∧
+        (∃ mapE tgtE, b.2 = .ring mapE tgtE ∧ RpL' st' a.2.1 mapE ∧ Rp' st' a.2.2 tgtE) ∧
+        val π iv publicInput stream st' ((chIds st').getD ((chIds st).length + 39) 0) = b.1.headD 0) := by
+  refine Sim.of_good fun hg ↦ ?_
+  unfold Pi1.verifyWalked Flock.verifyWalkedFs
+  dsimp only
+  refine Sim.cast (n := 3552 + (0 + (0 + 0))) (ch := 40 + (0 + (6 + 0))) rfl rfl ?_
+  refine Sim.bind (front_sim st) fun st1 fr f hg1 hgr1 ⟨hF, L, hL, hLl, hL39⟩ ↦ ?_
+  obtain ⟨S, hS1, hS2, hS3⟩ := hF.slices
+  obtain ⟨z, hz⟩ := hF.zSome
+  rw [hS1, Option.getD_some]
+  have hLW := rowLowWeights_len z f.rowLow hF.rowLowLen
+  rw [← hz] at hLW
+  refine Sim.pbind' (PH.psim (R := Rp π iv publicInput stream)
+    (walkedTerminal_ph hg1 hF.zSkip hF.rowLow hF.chiIn hF.chiInPrime hS2 hF.alpha hF.chiInLen hS3 hLW))
+    fun st2 t hs2 ht ↦ ?_
+  generalize Flock.walkedTerminal f.zSkip f.rowLow f.chiIn f.chiInPrime S f.alpha = WT at ht ⊢
+  have hF2 := hF.grow hg1 hs2.grows
+  refine Sim.pbind' (PSim.add hs2.good ht hF2.rLc) fun st3 v hs3 hv ↦ ?_
+  refine Sim.bind (sim_requireZero π iv publicInput stream st3 v _ hv) fun st4 _ _ hg4 hgr4 ⟨_, hn4⟩ ↦ ?_
+  have hgr14 := hs2.grows.trans (hs3.grows.trans hgr4)
+  refine Sim.bind (ringEnd_sim st4 (hS2.grow π iv publicInput stream hg1.inv.kinv hgr14) hS3)
+    fun st5 r rU hg5 hgr5 ⟨hr, Lm, hLm, hLml⟩ ↦ ?_
+  obtain ⟨mapE, tgtE, hrU, hmap, htgt⟩ := hr
+  refine Sim.pure_of_pstep (PStep.refl st5 hg5) ?_
+  have hpt := hF.point.grow π iv publicInput stream hg1.inv.kinv (hgr14.trans hgr5)
+  refine ⟨hpt, hF.pointLen, ⟨mapE, tgtE, hrU, hmap, htgt⟩, ?_⟩
+  show val π iv publicInput stream st5 ((chIds st5).getD ((chIds st).length + 39) 0) = f.point.headD 0
+  have hc : chIds st5 = chIds st ++ (L ++ Lm) := by
+    rw [hLm, chIds_of_nodes hn4, hs3.chal, hs2.chal, hL, List.append_assoc]
+  rw [hc, List.getD_append_right _ _ _ _ (by omega), show (chIds st).length + 39 - (chIds st).length = 39 by omega,
+    List.getD_append _ _ _ _ (by omega), hL39]
+  have key : ∀ (l : List Sym) (l' : List E), RpL' st5 l l' → l'.length = 26 →
+      val π iv publicInput stream st5 (l.headD 0) = l'.headD 0 := by
+    intro l l' h hl
+    cases h with
+    | nil => simp at hl
+    | cons hab _ => exact hab.2
+  exact key _ _ hpt hF.pointLen
+
 
 end Flock
+
+/-- **Flock, as the composition assumes it** (`ComposeSpec.FlockSpec`). -/
+theorem flockSpec : FlockSpec := fun _ _ _ _ st ↦ verifyWalked_sim st
+
+/-- info: 'RecGraph.Sim.flockSpec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms flockSpec
 
 end RecGraph.Sim
