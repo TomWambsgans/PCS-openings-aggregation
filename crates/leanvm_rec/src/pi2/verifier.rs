@@ -40,14 +40,17 @@ pub const NAME: [u8; 16] = *b"leanvm-rec-pi2v1";
 #[derive(Clone, Copy, Debug)]
 pub struct SpecPair {
     pub log_rows: usize,
+    /// `Ẑ_s(c_p)`, the block's normalised vanishing polynomial ([`Spec::c`]) at the coset's base.
     pub z: F64,
 }
 
-/// The pairs of one role and one formula: their indicators are summed before the formula's value multiplies them.
+/// The pairs of one role and one formula (pulling, or all pull-less): the sum of their indicators multiplies the
+/// formula's value, and is one fraction `N_g / D_g` (`D_g` the product of the pairs' denominators).
 #[derive(Clone, Debug)]
 pub struct Group {
     pub role: usize,
     pub formula: Formula,
+    pub pulls: bool,
     pub pairs: Vec<usize>,
 }
 
@@ -60,12 +63,25 @@ pub struct Spec {
     pub groups: Vec<Group>,
     /// The pull-less pairs.
     pub pull_less: Vec<usize>,
-    /// `e_1, …` ([`coset_constants`]), and the normalisations `Π_{j ≤ s} e_j` by block size `s`.
-    pub e: Vec<F64>,
-    pub norms: Vec<F64>,
+    /// The normalised vanishing polynomials `Ẑ_s = Z_{U_s} / Π_{j ≤ s} e_j` (linear coefficient 1):
+    /// `Ẑ_s(x) = Ẑ_{s-1}(x) + c_s Ẑ_{s-1}(x)^2`, `c_s = Π_{j < s} e_j / e_s`; this is `c_1, …`. Then
+    /// `I_p(x) = Z_V(x) / (Ẑ_s(x) + Ẑ_s(c_p))`.
+    pub c: Vec<F64>,
     pub reads: Vec<Read>,
     pub public: Vec<PublicTerm>,
     pub max_gamma: usize,
+}
+
+/// `Ẑ_s`'s recursion constants `c_1 … c_count`.
+pub fn normalised_constants(e: &[F64]) -> Vec<F64> {
+    let mut norm = F64::ONE;
+    e.iter()
+        .map(|&x| {
+            let c = norm * x.inv();
+            norm *= x;
+            c
+        })
+        .collect()
 }
 
 impl Spec {
@@ -75,34 +91,37 @@ impl Spec {
         let pairs: Vec<SpecPair> = circuit
             .pairs
             .iter()
-            .map(|p| SpecPair {
-                log_rows: p.log_rows,
-                z: pair_constants(p, r, &e).0,
+            .map(|p| {
+                let (z, norm) = pair_constants(p, r, &e);
+                SpecPair {
+                    log_rows: p.log_rows,
+                    z: z * norm.inv(),
+                }
             })
             .collect();
         let mut groups: Vec<Group> = Vec::new();
         for (index, p) in circuit.pairs.iter().enumerate() {
             let formula = &circuit.formulas[p.formula];
-            match groups.iter_mut().find(|g| g.role == p.role && g.formula == *formula) {
+            match groups
+                .iter_mut()
+                .find(|g| g.role == p.role && g.pulls == p.pulls && g.formula == *formula)
+            {
                 Some(g) => g.pairs.push(index),
                 None => groups.push(Group {
                     role: p.role,
                     formula: formula.clone(),
+                    pulls: p.pulls,
                     pairs: vec![index],
                 }),
             }
         }
-        let norms = (0..=m - r)
-            .map(|s| e[..s].iter().fold(F64::ONE, |acc, &x| acc * x))
-            .collect();
         Self {
             log_n: m,
             log_row: r,
             pairs,
             groups,
             pull_less: (0..circuit.pairs.len()).filter(|&p| !circuit.pairs[p].pulls).collect(),
-            e,
-            norms,
+            c: normalised_constants(&e),
             reads: circuit.reads.clone(),
             public: circuit.public.clone(),
             max_gamma: circuit.max_gamma(),
@@ -236,7 +255,7 @@ pub fn reduce<S: Scalar, C: Channel<S>>(
     let w = {
         let _phase = enter("pi2: digits");
         let mut w = vec![t];
-        for l in 0..m + 1 {
+        for l in 0..m + 2 {
             let x = w[l];
             w.push(x.square() + x);
         }
@@ -261,80 +280,83 @@ pub fn reduce<S: Scalar, C: Channel<S>>(
     };
     let v0 = cells[0];
 
-    // `Z_{U_s}(t)` for every block size.
+    // `Ẑ_s(t)` for every block size.
     let zt = {
         let _phase = enter("pi2: indicators (block vanishing polynomials)");
         let mut zt = vec![t];
         for s in 1..=spec.max_log_rows() {
             let z = zt[s - 1];
-            zt.push(z.square() + base::<S>(spec.e[s - 1]) * z);
+            zt.push(z + base::<S>(spec.c[s - 1]) * z.square());
         }
         zt
     };
 
-    let gammas = leanvm_flock_gas::scalar::powers(gamma, spec.max_gamma + 1);
-    let (pair_dens, public_dens) = {
-        let _phase = enter("pi2: indicators (denominators)");
-        let pairs: Vec<S> = spec.pairs.iter().map(|p| zt[p.log_rows] + base::<S>(p.z)).collect();
-        let _public = enter("pi2: public side (fingerprints)");
-        let public: Vec<S> = spec
-            .public
-            .iter()
-            .map(|term| alpha + lin(&term.value, &|c| public[c], &gammas) + beta * base::<S>(point(term.tag as usize)))
-            .collect();
-        (pairs, public)
+    // Each group's indicators, summed: `Σ_p 1/d_p = N_g / D_g`, by `N ← N d + D`, `D ← D d`; the public side's sum
+    // likewise. `Z_V(t) = w_m` multiplies every indicator: it is factored out.
+    let fraction = |dens: &mut dyn Iterator<Item = S>| -> (S, S) {
+        let first = dens.next().expect("a denominator");
+        dens.fold((one, first), |(n, d), x| (n * x + d, d * x))
     };
-    let mut dens = pair_dens;
-    dens.extend(public_dens);
-    dens.extend((0..m + 2).map(|l| one + w[l]));
-    dens.push(w[m]);
+    let groups: Vec<(S, S)> = {
+        let _phase = enter("pi2: indicators (denominators)");
+        spec.groups
+            .iter()
+            .map(|g| {
+                fraction(
+                    &mut g
+                        .pairs
+                        .iter()
+                        .map(|&p| zt[spec.pairs[p].log_rows] + base::<S>(spec.pairs[p].z)),
+                )
+            })
+            .collect()
+    };
+    let gammas = leanvm_flock_gas::scalar::powers(gamma, spec.max_gamma + 1);
+    let public_side = {
+        let _phase = enter("pi2: public side (fingerprints)");
+        (!spec.public.is_empty()).then(|| {
+            fraction(&mut spec.public.iter().map(|term| {
+                alpha + lin(&term.value, &|c| public[c], &gammas) + beta * base::<S>(point(term.tag as usize))
+            }))
+        })
+    };
+
+    // One inversion: of every group's denominator, the public side's, and the digits `w_0 … w_{m+2}`.
+    let mut dens: Vec<S> = groups.iter().map(|&(_, d)| d).collect();
+    dens.extend(public_side.map(|(_, d)| d));
+    dens.extend(w.iter().copied());
     let invs = {
         let _phase = enter("pi2: batched inversion");
         batch_inverse(channel, &dens)?
     };
-    let (n_pairs, n_public) = (spec.pairs.len(), spec.public.len());
-    let (pair_invs, rest) = invs.split_at(n_pairs);
-    let (public_invs, rest) = rest.split_at(n_public);
-    let (digit_invs, wm_inv) = rest.split_at(m + 2);
-    let wm_inv = wm_inv[0];
+    let (group_invs, rest) = invs.split_at(spec.groups.len());
+    let (public_inv, w_invs) = rest.split_at(public_side.is_some() as usize);
 
-    let indicators: Vec<S> = {
-        let _phase = enter("pi2: indicators (products)");
-        let mut scaled = vec![None; m - r + 1];
-        spec.pairs
-            .iter()
-            .zip(pair_invs)
-            .map(|(p, &inv)| {
-                let scale = *scaled[p.log_rows].get_or_insert_with(|| w[m] * base::<S>(spec.norms[p.log_rows]));
-                scale * inv
-            })
-            .collect()
-    };
-
-    let p_t = {
+    let (p_t, one_s) = {
         let _phase = enter("pi2: push formulas");
-        let mut selected = S::zero();
-        let mut pushed = S::zero();
-        for group in &spec.groups {
-            let sum = group.pairs.iter().fold(S::zero(), |acc, &p| acc + indicators[p]);
+        let (mut pushed, mut pull_less) = (S::zero(), S::zero());
+        for ((group, &(numerator, _)), &inv) in spec.groups.iter().zip(&groups).zip(group_invs) {
+            let sum = numerator * inv;
             let value = formula(&group.formula, &|c| cells[c ^ group.role], &gammas);
-            selected += sum;
-            pushed += sum * value;
+            pushed += sum * (value + v0);
+            if !group.pulls {
+                pull_less += sum;
+            }
         }
-        v0 + v0 * selected + pushed + kappa_t
+        (v0 + w[m] * pushed + kappa_t, w[m] * pull_less)
     };
-    let one_s = spec.pull_less.iter().fold(S::zero(), |acc, &p| acc + indicators[p]);
 
     let _phase = enter("pi2: identity and claims");
     let d_pull = alpha + v0 + beta * t;
     let d_push = alpha + p_t + beta * sigma_t;
-    let target = public_invs.iter().fold(S::zero(), |acc, &x| acc + x);
-    let q_t = ((one + one_s) * d_push + d_pull + h_t * d_pull * d_push) * wm_inv;
+    let target = public_side.map_or(S::zero(), |(numerator, _)| numerator * public_inv[0]);
+    let q_t = ((one + one_s) * d_push + d_pull + h_t * d_pull * d_push) * w_invs[m];
 
+    // `1/(1 + w_l) = 1/w_l + 1/w_{l+1}` (as `w_{l+1} = w_l (1 + w_l)`); their product telescopes to `t / w_{m+2}`.
     let ([y0, y1], scale) = extension();
     let (y0, y1, scale) = (ext::<S>(y0), ext::<S>(y1), ext::<S>(scale));
-    let u: Vec<S> = digit_invs.iter().map(|&x| one + x).collect();
-    let digits_scale = digit_invs.iter().fold(one, |acc, &x| acc * x);
+    let u: Vec<S> = (0..m + 2).map(|l| one + w_invs[l] + w_invs[l + 1]).collect();
+    let digits_scale = t * w_invs[m + 2];
     let quotient_value = scale * digits_scale * (h_t + rho * (h_t + q_t));
     let quotient_point = [&u[..], &[rho, y0, y1]].concat();
     let sum_point = [vec![one; m], vec![S::zero(); 3], vec![y0, y1]].concat();
