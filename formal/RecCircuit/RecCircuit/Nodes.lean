@@ -564,6 +564,157 @@ theorem inv_input_free (hc : c.Checked r) (hw : c.circuit.Satisfied w) {id : ℕ
   rw [w2, w1, w0, ← F64.ofU64_eq_ofNat, ← F64.ofU64_eq_ofNat, ← F64.ofU64_eq_ofNat, F64.ofU64_toU64,
     F64.ofU64_toU64, F64.ofU64_toU64]
 
+/-! ## Bit fields -/
+
+theorem filterMap_lookup (bv : ℕ → ℕ) (shift width : ℕ) : ∀ (N e : ℕ),
+    (((List.range N).map fun e => (e, bv e)).filterMap fun t =>
+        if shift ≤ t.1 && t.1 < shift + width then some (t.1 - shift, t.2) else none).lookup e =
+      if e < width ∧ shift + e < N then some (bv (shift + e)) else none
+  | 0, e => by simp
+  | N + 1, e => by
+    rw [List.range_succ, List.map_append, List.filterMap_append, List.lookup_append, filterMap_lookup bv shift width N e]
+    by_cases h1 : e < width ∧ shift + e < N
+    · rw [if_pos h1, if_pos ⟨h1.1, by omega⟩]; rfl
+    · rw [if_neg h1]
+      simp only [Option.none_or, List.map_cons, List.map_nil, List.filterMap_cons, List.filterMap_nil]
+      by_cases hN : shift ≤ N ∧ N < shift + width
+      · have hc : (decide (shift ≤ N) && decide (N < shift + width)) = true := by simp [hN.1, hN.2]
+        rw [if_pos hc]
+        by_cases he : e = N - shift
+        · subst he
+          simp only [List.lookup_cons, beq_self_eq_true, ite_true]
+          rw [if_pos ⟨by omega, by omega⟩, show shift + (N - shift) = N by omega]
+        · have : (e == N - shift) = false := by simpa using he
+          simp only [List.lookup_cons, this, Bool.false_eq_true, ite_false, List.lookup_nil]
+          rw [if_neg (by omega)]
+      · have hc : (decide (shift ≤ N) && decide (N < shift + width)) = false := by
+          simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not]; omega
+        rw [if_neg (by simp [hc])]
+        simp only [List.lookup_nil]
+        rw [if_neg (by omega)]
+
+theorem bitField_lookup (sb : ℕ → ℕ) (off len shift width e : ℕ) :
+    (bitField sb off len shift width).lookup e =
+      if e < width ∧ shift + e < 8 * len then some (sb (8 * (off + len - 1 - (shift + e) / 8) + (shift + e) % 8))
+      else none :=
+  filterMap_lookup (fun e => sb (8 * (off + len - 1 - e / 8) + e % 8)) shift width (8 * len) e
+
+theorem c0_ofLimbs (a b d : F64) : (F192.ofLimbs a b d).c0 = F64.toU64 a := by simp [F192.c0]
+
+theorem toU64_ofNat (n : ℕ) : (F64.toU64 (F64.ofNat n)).toNat = n % 2 ^ 64 := by
+  show (BitVec.ofNat 64 n).toNat = n % 2 ^ 64
+  simp
+
+theorem ofNat_ofBool (b : Bool) : F64.ofNat (if b then 1 else 0) = ofBool b := by
+  cases b
+  · simp [ofBool]
+  · show F64.ofNat 1 = 1; decide
+
+theorem inv_bits (hc : c.Checked r) (G : c.ctx.Good w) (hw : c.circuit.Satisfied w) {id : ℕ}
+    (hid : id < c.nodes.size) (hl : c.live.getD id false = true) {v shift width : ℕ}
+    (hnode : c.nodes.getD id default = .bits v shift width) : c.ElemInv r w id := by
+  have hok := hc.nodes id hid hl
+  simp only [nodeOk, hnode] at hok
+  obtain ⟨hvid, hvl⟩ := (graphOk_parts hc.graph).1 id hid hl v (by simp [hnode, Node.ops])
+  generalize hv : c.nodes.getD v default = nv at hok
+  cases nv with
+  | input off len =>
+    simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, List.all_eq_true, List.mem_range] at hok
+    obtain ⟨⟨⟨⟨⟨h8, hs⟩, h1⟩, h2⟩, hall⟩, hcase⟩ := hok
+    set S := c.streamW r w
+    set N0 := beNat (slice S off len)
+    set M := N0 / 2 ^ shift % 2 ^ width
+    -- The semantics: the field of the read's integer.
+    have hval : ((c.valsW r w).getD id default).toE = F192.ofLimbs (F64.ofNat M) 0 0 := by
+      rw [valsW_step hc hid hl, hnode]
+      simp only [Graph.step, Value.toE, bitsOf, elemOfNats]
+      rw [valsW_step hc (lt_trans hvid hid) hvl, hv]
+      simp only [Graph.step, Value.toE, inputValue]
+      rw [if_neg (by omega), if_neg (by omega), elemOfNats, c0_ofLimbs, toU64_ofNat, Primitives.F64.ofNat_zero]
+      have hN : N0 < 2 ^ 64 := by
+        have := beNat_lt (slice S off len)
+        exact lt_of_lt_of_le this (Nat.pow_le_pow_right (by norm_num) (by
+          have := slice_length_le S off len; omega))
+      rw [Nat.mod_eq_of_lt hN]
+    -- M's bits are the field's.
+    have hMbit : ∀ e, M.testBit e = (decide (e < width) && N0.testBit (shift + e)) := by
+      intro e
+      simp only [M, Nat.testBit_mod_two_pow, Nat.testBit_div_two_pow, Nat.add_comm e shift]
+    have hlook := bitField_lookup c.streamBit off len shift width
+    refine ⟨hs, ?_⟩
+    rw [hval, Ctx.const_val G h1, Ctx.const_val G h2]
+    -- The field's bits are the stream's.
+    have hstream : ∀ e, e < width → shift + e < 8 * len →
+        c.ctx.val w (c.streamBit (8 * (off + len - 1 - (shift + e) / 8) + (shift + e) % 8)) = ofBool (M.testBit e) := by
+      intro e hew hel
+      have hlen1 : 1 ≤ len := by omega
+      obtain ⟨hb, hbits⟩ := read_bits hc hw hlen1 (fun k hk => hall k hk)
+      have := hbits (len - 1 - (shift + e) / 8) (by omega) ((shift + e) % 8) (Nat.mod_lt _ (by norm_num))
+      rw [show off + len - 1 - (shift + e) / 8 = off + (len - 1 - (shift + e) / 8) by omega, this, hMbit,
+        decide_eq_true hew, Bool.true_and, beNat_testBit, slice_length _ _ _ (by rw [streamW_length]; omega),
+        decide_eq_true hel, Bool.true_and, slice_getD _ _ _ _ (by omega)]
+    split at hcase
+    · -- No bit in the field: zero.
+      rename_i hF
+      rw [Ctx.const_val G hcase]
+      have hM : M = 0 := by
+        apply Nat.eq_of_testBit_eq
+        intro e
+        rw [hMbit, Nat.zero_testBit]
+        have := hlook e
+        rw [hF, List.lookup_nil] at this
+        by_cases hew : e < width
+        · have hel : ¬ shift + e < 8 * len := fun h => by rw [if_pos ⟨hew, h⟩] at this; cases this
+          rw [beNat_testBit, decide_eq_false (show ¬ (shift + e < 8 * (slice S off len).length) by
+            have := slice_length_le S off len; omega)]; simp
+        · simp [hew]
+      rw [hM, Primitives.F64.ofNat_zero]
+    · -- One bit, at exponent 0: the bit itself.
+      rename_i x hF
+      simp only [beq_iff_eq] at hcase
+      rw [hcase]
+      have h0 := hlook 0
+      rw [hF, List.lookup_cons_self] at h0
+      by_cases hc0 : 0 < width ∧ shift + 0 < 8 * len
+      · rw [if_pos hc0] at h0
+        cases h0
+        rw [hstream 0 hc0.1 hc0.2]
+        have hM : M = if M.testBit 0 then 1 else 0 := by
+          apply Nat.eq_of_testBit_eq
+          intro e
+          rcases Nat.eq_zero_or_pos e with rfl | he
+          · cases M.testBit 0 <;> simp
+          · have := hlook e
+            have hne : (e == 0) = false := by simpa using he.ne'
+            simp only [hF, List.lookup_cons, hne, List.lookup_nil] at this
+            have hfalse : M.testBit e = false := by
+              rw [hMbit]
+              by_cases hew : e < width
+              · have hel : ¬ shift + e < 8 * len := fun h => by rw [if_pos ⟨hew, h⟩] at this; cases this
+                rw [beNat_testBit, decide_eq_false (show ¬ (shift + e < 8 * (slice S off len).length) by
+                  have := slice_length_le S off len; omega)]; simp
+              · simp [hew]
+            rw [hfalse]
+            have h1 : (1 : ℕ).testBit e = false := Nat.testBit_eq_false_of_lt (Nat.one_lt_two_pow (by omega))
+            cases M.testBit 0
+            · simp
+            · simp only [ite_true]; exact h1.symm
+        rw [show F64.ofNat M = F64.ofNat (if M.testBit 0 then 1 else 0) from by rw [← hM], ofNat_ofBool]
+      · rw [if_neg hc0] at h0; cases h0
+    · -- A packing of the field.
+      rw [packIs_word hc G hcase M]
+      intro e he
+      rw [Ctx.bitAt, hlook]
+      by_cases hc' : e < width ∧ shift + e < 8 * len
+      · rw [if_pos hc']; exact hstream e hc'.1 hc'.2
+      · rw [if_neg hc', hMbit]
+        by_cases hew : e < width
+        · have hel : ¬ shift + e < 8 * len := fun h => hc' ⟨hew, h⟩
+          rw [beNat_testBit, decide_eq_false (show ¬ (shift + e < 8 * (slice S off len).length) by
+            have := slice_length_le S off len; omega)]; simp [ofBool]
+        · simp [hew, ofBool]
+  | _ => simp at hok
+
 end Compiled
 
 end RecCircuit

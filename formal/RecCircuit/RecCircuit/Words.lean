@@ -34,6 +34,18 @@ def leNat (bytes : List UInt8) : ℕ := bytes.foldr (fun b acc => b.toNat + 256 
 theorem beNat_append (bs : List UInt8) (b : UInt8) : beNat (bs ++ [b]) = beNat bs * 256 + b.toNat := by
   simp [beNat, List.foldl_append]
 
+theorem beNat_lt : ∀ bs : List UInt8, beNat bs < 2 ^ (8 * bs.length) := by
+  intro bs
+  induction bs using List.reverseRecOn with
+  | nil => simp [beNat]
+  | append_singleton bs b ih =>
+    rw [beNat_append, List.length_append, List.length_singleton, show 8 * (bs.length + 1) = 8 * bs.length + 8 by ring,
+      pow_add]
+    have := b.toNat_lt
+    have h256 : (2 : ℕ) ^ 8 = 256 := by norm_num
+    rw [h256]
+    nlinarith
+
 theorem testBit_byte (b : UInt8) (t : ℕ) (ht : 8 ≤ t) : b.toNat.testBit t = false :=
   Nat.testBit_eq_false_of_lt (lt_of_lt_of_le b.toNat_lt (Nat.pow_le_pow_right (by norm_num) ht))
 
