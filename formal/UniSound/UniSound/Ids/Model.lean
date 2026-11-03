@@ -268,22 +268,29 @@ noncomputable def slotP (slot : ℕ) : Polynomial E :=
 def linesOf (pw : List E) : List (E × E) :=
   [(pw.getD 0 0, pw.getD 2 0), (pw.getD 1 0, pw.getD 3 0), (0, 0)]
 
-/-- **The constraints** `(M_i, W_i)` (`constraintRelation`'s, in its order): per table, `JUMP`'s two,
-the counters' `z Π c + 1`, `BLAKE2S`'s copies `copy_c + slot(y)`; then the public lines; each `W_i` on
-its table's domain, `M_i` its lift to `V_{r_W}`. -/
-noncomputable def constraintsP (pw : List E) : List (Polynomial E × Polynomial E) :=
-  (tables.flatMap fun tab ↦
-    let o := tab.opcode
-    let lift := liftP (S.heights.getD o 0) S.constraintVars
-    let col (n : String) : Polynomial E := c1P S c1 (.table o (colIdx tab.columns n))
-    (if o = opJump then
-      [(lift, col "b" + col "v_cond" * col "w"), (lift, col "v_cond" * (col "b" + 1))] else []) ++
-    [(lift, c1P S c1 (.inverse o) * (tab.countColumns.map fun c ↦ c1P S c1 (.table o c)).prod + 1)] ++
-    (if o = opBlake2s then (List.range tab.width).filterMap fun c ↦
-      (qflockSlot (tab.columns.getD c "")).map fun slot ↦ (lift, c1P S c1 (.table o c) + slotP S c1 slot)
-     else [])) ++
+/-- **A table's constraints** `(M_i, W_i)` (`constraintRelation`'s, in its order): `JUMP`'s two, the
+counters' `z Π c + 1`, `BLAKE2S`'s copies `copy_c + slot(y)`; `M_i` the lift to `V_{r_W}`. -/
+noncomputable def tableConstraintsP (tab : Table) : List (Polynomial E × Polynomial E) :=
+  let o := tab.opcode
+  let lift := liftP (S.heights.getD o 0) S.constraintVars
+  let col (n : String) : Polynomial E := c1P S c1 (.table o (colIdx tab.columns n))
+  (if o = opJump then
+    [(lift, col "b" + col "v_cond" * col "w"), (lift, col "v_cond" * (col "b" + 1))] else []) ++
+  [(lift, c1P S c1 (.inverse o) * (tab.countColumns.map fun c ↦ c1P S c1 (.table o c)).prod + 1)] ++
+  (if o = opBlake2s then (List.range tab.width).filterMap fun c ↦
+    (qflockSlot (tab.columns.getD c "")).map fun slot ↦ (lift, c1P S c1 (.table o c) + slotP S c1 slot)
+   else [])
+
+/-- The public lines' constraints: memory limb `k`'s cells `0, 1` on the line through them. -/
+noncomputable def linesP (pw : List E) : List (Polynomial E × Polynomial E) :=
   ((linesOf pw).zip (List.range 3)).map fun lk ↦
     (liftP 1 S.constraintVars, c1P S c1 (.memory lk.2) + C lk.1.1 + X * C (lk.1.1 + lk.1.2))
+
+/-- **The constraints** `(M_i, W_i)` (`constraintRelation`'s, in its order): per table
+(`tableConstraintsP`), then the public lines; each `W_i` on its table's domain, `M_i` its lift to
+`V_{r_W}`. -/
+noncomputable def constraintsP (pw : List E) : List (Polynomial E × Polynomial E) :=
+  tables.flatMap (tableConstraintsP S c1) ++ linesP S c1 pw
 
 /-- **`Z_bad`**: `(y_0 + X)(y_0 + p_0)`, `p_0` Flock's point's first coordinate. -/
 noncomputable def zBad (p0 : E) : Polynomial E :=

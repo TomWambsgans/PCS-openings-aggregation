@@ -90,7 +90,7 @@ theorem length_filterMap_map {α β γ : Type} (l : List α) (o : α → Option 
 
 theorem length_constraintsP (S : Shape) (c : Stk) (pw : List E) :
     (constraintsP S c pw).length = (constraintsP S (fun _ ↦ 0) []).length := by
-  unfold constraintsP
+  unfold constraintsP linesP tableConstraintsP
   generalize tables = ts
   simp only [List.length_append, List.length_flatMap, List.length_map, List.length_zip, linesOf,
     List.length_cons, List.length_nil, List.length_range]
