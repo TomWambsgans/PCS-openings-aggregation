@@ -180,6 +180,7 @@ macro_rules
         | replace $h:ident := RpPairs.pgrow _ _ _ _ $hg $hs' $h
         | replace $h:ident := RpTermsC.pgrow _ _ _ _ $hg $hs' $h
         | replace $h:ident := RpRels.pgrow _ _ _ _ $hg $hs' $h
+        | replace $h:ident := RpTms.pgrow _ _ _ _ $hg $hs' $h
         | replace $h:ident := RpParts.pgrow _ _ _ _ $hg $hs' $h)
 
 macro_rules

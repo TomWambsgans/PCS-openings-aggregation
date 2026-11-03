@@ -545,3 +545,250 @@ theorem mergedSelfG (rels : List (RelG Pt)) (p : List Pt) (hp : ∃ r ∈ rels, 
   exact (List.take_of_length_le hlen).symm.trans hE.2
 
 end RecGraph.Sim.Gen
+
+/-! ## The program's `combine` is `combineG` over nodes -/
+
+namespace RecGraph.Sim
+
+open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash UniStatement RecGraph.Pi1
+open Gen (TermG RelG CombG combineG mineG cOuter cInner cInner_eq cpStep cIdx keptOf renumberOf mergedOf
+  longestList longestOfG combineG_eq)
+
+/-- An optional pair, related. -/
+def OptRel {α β : Type} (R : α → β → Prop) : Option α → Option β → Prop
+  | none, none => True
+  | some a, some b => R a b
+  | _, _ => False
+
+/-- `longestOfS` is `longestOfG` over nodes. -/
+theorem longestOfS_eq : Pi1.longestOfS = longestOfG (Pt := Nat) := rfl
+
+section CombineSim
+
+variable (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8)
+
+/-- **A program term against a term over nodes**: the same column, point (its nodes) and twist, the coefficient
+represented. -/
+def RpTermN (st : RecState) (t : TermS) (u : TermG Nat) : Prop :=
+  t.column = u.column ∧ t.point = u.point ∧ t.twist = u.twist ∧ Rp π iv publicInput stream st t.coefficient u.coefficient
+
+/-- A program relation against a relation over nodes. -/
+def RpRelN (st : RecState) (r : RelationS) (u : RelG Nat) : Prop :=
+  List.Forall₂ (RpTermN π iv publicInput stream st) r.terms u.terms ∧ Rp π iv publicInput stream st r.value u.value
+
+/-- A combined term: the same column, point index and twist, the coefficient represented. -/
+def RpTm (st : RecState) (a : Column × ℕ × ℕ × Nat) (b : Column × ℕ × ℕ × E) : Prop :=
+  a.1 = b.1 ∧ a.2.1 = b.2.1 ∧ a.2.2.1 = b.2.2.1 ∧ Rp π iv publicInput stream st a.2.2.2 b.2.2.2
+
+/-- Combined terms, entry by entry. -/
+def RpTms (st : RecState) (a : List (Column × ℕ × ℕ × Nat)) (b : List (Column × ℕ × ℕ × E)) : Prop :=
+  List.Forall₂ (RpTm π iv publicInput stream st) a b
+
+/-- **A program combined claim against one over nodes**: the same points (nodes), the terms related, the value
+represented, the same count of relations. -/
+def RpCombN (st : RecState) (cS : CombinedS) (cG : CombG Nat) : Prop :=
+  cS.points = cG.points ∧ RpTms π iv publicInput stream st cS.terms cG.terms ∧
+    Rp π iv publicInput stream st cS.value cG.value ∧ cS.relations = cG.relations
+
+theorem RpTermN.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {t : TermS} {u : TermG Nat}
+    (h : RpTermN π iv publicInput stream st t u) : RpTermN π iv publicInput stream st' t u :=
+  ⟨h.1, h.2.1, h.2.2.1, Rp.pgrow hg hs h.2.2.2⟩
+
+theorem RpRelN.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {r : RelationS} {u : RelG Nat}
+    (h : RpRelN π iv publicInput stream st r u) : RpRelN π iv publicInput stream st' r u :=
+  ⟨h.1.imp fun _ _ h ↦ RpTermN.pgrow π iv publicInput stream hg hs h, Rp.pgrow hg hs h.2⟩
+
+theorem RpTm.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {a : Column × ℕ × ℕ × Nat}
+    {b : Column × ℕ × ℕ × E} (h : RpTm π iv publicInput stream st a b) : RpTm π iv publicInput stream st' a b :=
+  ⟨h.1, h.2.1, h.2.2.1, Rp.pgrow hg hs h.2.2.2⟩
+
+theorem RpTms.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {a : List (Column × ℕ × ℕ × Nat)}
+    {b : List (Column × ℕ × ℕ × E)} (h : RpTms π iv publicInput stream st a b) :
+    RpTms π iv publicInput stream st' a b :=
+  List.Forall₂.imp (fun _ _ h ↦ RpTm.pgrow π iv publicInput stream hg hs h) h
+
+theorem RpRelN.commitment {st : RecState} {r : RelationS} {u : RelG Nat} (h : RpRelN π iv publicInput stream st r u) :
+    r.commitment = u.commitment := by
+  obtain ⟨rt, rv⟩ := r
+  obtain ⟨ut, uv⟩ := u
+  obtain ⟨ht, -⟩ := h
+  unfold RelationS.commitment RelG.commitment
+  cases ht with
+  | nil => rfl
+  | cons h1 _ => exact congrArg Column.commitment h1.1
+
+theorem forall₂_filter_commitment {st : RecState} (c : Commitment) :
+    ∀ {rs : List RelationS} {us : List (RelG Nat)}, List.Forall₂ (RpRelN π iv publicInput stream st) rs us →
+      List.Forall₂ (RpRelN π iv publicInput stream st) (rs.filter (·.commitment == c)) (us.filter (·.commitment == c))
+  | _, _, .nil => .nil
+  | _, _, .cons (a := r) (b := u) h hl => by
+    rw [List.filter_cons, List.filter_cons, RpRelN.commitment π iv publicInput stream h]
+    by_cases hc : (u.commitment == c) = true
+    · simp only [hc, ↓reduceIte]
+      exact List.Forall₂.cons h (forall₂_filter_commitment c hl)
+    · simp only [hc, Bool.false_eq_true, ↓reduceIte]
+      exact forall₂_filter_commitment c hl
+
+theorem RpTms.keys {st : RecState} {a : List (Column × ℕ × ℕ × Nat)} {b : List (Column × ℕ × ℕ × E)}
+    (h : RpTms π iv publicInput stream st a b) :
+    a.map (fun x ↦ (x.1, x.2.1, x.2.2.1)) = b.map (fun x ↦ (x.1, x.2.1, x.2.2.1)) := by
+  induction h with
+  | nil => rfl
+  | cons hr _ ih => rw [List.map_cons, List.map_cons, ih, hr.1, hr.2.1, hr.2.2.1]
+
+/-- **`mergeTerm`**: the program's on nodes is `UniStatement`'s. -/
+theorem mergeTermS_phc {st : RecState} (hg : Good st) {A : Array (Column × ℕ × ℕ × Nat)}
+    {B : Array (Column × ℕ × ℕ × E)} (h : RpTms π iv publicInput stream st A.toList B.toList) (column : Column)
+    (p twist : ℕ) {cS : Nat} {c : E} (hc : Rp π iv publicInput stream st cS c) :
+    PHc st (Pi1.mergeTermS A column p twist cS) fun A' st' ↦
+      RpTms π iv publicInput stream st' A'.toList (mergeTerm B column p twist c).toList := by
+  have hkey : A.toList.map (fun x ↦ (x.1, x.2.1, x.2.2.1)) = B.toList.map (fun x ↦ (x.1, x.2.1, x.2.2.1)) :=
+    RpTms.keys π iv publicInput stream h
+  have hfind : A.findIdx? (fun x : Column × ℕ × ℕ × Nat ↦ x.1 == column && x.2.1 == p && x.2.2.1 == twist) =
+      B.findIdx? (fun x : Column × ℕ × ℕ × E ↦ x.1 == column && x.2.1 == p && x.2.2.1 == twist) := by
+    rw [arr_findIdx?_toListC, arr_findIdx?_toListC]
+    have h1 : A.toList.findIdx? (fun x : Column × ℕ × ℕ × Nat ↦ x.1 == column && x.2.1 == p && x.2.2.1 == twist) =
+        (A.toList.map (fun x ↦ (x.1, x.2.1, x.2.2.1))).findIdx?
+          (fun k : Column × ℕ × ℕ ↦ k.1 == column && k.2.1 == p && k.2.2 == twist) := by
+      rw [List.findIdx?_map]; rfl
+    have h2 : B.toList.findIdx? (fun x : Column × ℕ × ℕ × E ↦ x.1 == column && x.2.1 == p && x.2.2.1 == twist) =
+        (B.toList.map (fun x ↦ (x.1, x.2.1, x.2.2.1))).findIdx?
+          (fun k : Column × ℕ × ℕ ↦ k.1 == column && k.2.1 == p && k.2.2 == twist) := by
+      rw [List.findIdx?_map]; rfl
+    rw [h1, h2, hkey]
+  have hlen : A.toList.length = B.toList.length := List.Forall₂.length_eq h
+  unfold Pi1.mergeTermS mergeTerm
+  rw [show (fun x : Column × ℕ × ℕ × Nat ↦ match x with | (c, q, k, _) => c == column && q == p && k == twist) =
+    (fun x : Column × ℕ × ℕ × Nat ↦ x.1 == column && x.2.1 == p && x.2.2.1 == twist) from rfl,
+    show (fun x : Column × ℕ × ℕ × E ↦ match x with | (c, q, k, _) => c == column && q == p && k == twist) =
+    (fun x : Column × ℕ × ℕ × E ↦ x.1 == column && x.2.1 == p && x.2.2.1 == twist) from rfl, hfind]
+  cases hi : B.findIdx? (fun x : Column × ℕ × ℕ × E ↦ x.1 == column && x.2.1 == p && x.2.2.1 == twist) with
+  | none =>
+    dsimp only
+    refine phc_pure _ hg ?_
+    rw [Array.toList_push, Array.toList_push]
+    exact List.rel_append h (List.Forall₂.cons ⟨rfl, rfl, rfl, hc⟩ List.Forall₂.nil)
+  | some i =>
+    obtain ⟨hlt, -, -⟩ := Array.findIdx?_eq_some_iff_getElem.mp hi
+    have hltB : i < B.toList.length := by simpa using hlt
+    have hltA : i < A.toList.length := by omega
+    have hltA' : i < A.size := by simpa using hltA
+    have he : RpTm π iv publicInput stream st (A.getInternal i hltA') (B.toList[i]'hltB) :=
+      forall₂_getElemC h i hltA hltB
+    dsimp only
+    simp only [hltA', ↓reduceDIte]
+    generalize A.getInternal i hltA' = x at he
+    obtain ⟨c0, q0, k0, v0⟩ := x
+    dsimp only
+    refine phc_bind (phc_add π iv publicInput stream hg he.2.2.2 hc) fun v st' hs hv ↦ phc_pure _ hs.good ?_
+    rw [Array.set!_eq_setIfInBounds, Array.toList_setIfInBounds, Array.toList_modify]
+    refine forall₂_set_modifyC (RpTms.pgrow π iv publicInput stream hg hs h) i _ _ fun _ ↦ ?_
+    generalize B.toList[i] = y at he hv
+    obtain ⟨c1, q1, k1, v1⟩ := y
+    exact ⟨he.1, he.2.1, he.2.2.1, hv⟩
+
+/-- **The program's `combine` is `combineG` over nodes**: the relations related term by term, `ρ` represented. -/
+theorem combine_phc {st : RecState} (hg : Good st) {relsS : List RelationS} {relsG : List (RelG Nat)}
+    (hr : List.Forall₂ (RpRelN π iv publicInput stream st) relsS relsG) (c : Commitment) {rhoS : Nat} {ρ : E}
+    (hrho : Rp π iv publicInput stream st rhoS ρ) :
+    PHc st (Pi1.combine relsS c rhoS) fun out st' ↦
+      OptRel (RpCombN π iv publicInput stream st') out (combineG relsG c ρ) := by
+  have hm := forall₂_filter_commitment π iv publicInput stream c hr
+  have hlen := List.Forall₂.length_eq hm
+  rw [combineG_eq]
+  unfold Pi1.combine
+  dsimp only
+  by_cases he : (mineG relsG c).isEmpty = true
+  · have he' : (relsS.filter (·.commitment == c)).isEmpty = true := by
+      rw [List.isEmpty_iff_length_eq_zero] at he ⊢
+      unfold mineG at he
+      omega
+    rw [ite_eq_left he, ite_eq_left he']
+    exact phc_pure none hg trivial
+  · have he' : ¬ (relsS.filter (·.commitment == c)).isEmpty = true := by
+      rw [List.isEmpty_iff_length_eq_zero] at he ⊢
+      unfold mineG at he
+      omega
+    rw [ite_eq_right he, ite_eq_right he']
+    refine phc_bind (phc_zero π iv publicInput stream hg) fun v0 st1 hs1 hv0 ↦ ?_
+    refine phc_bind (phc_one π iv publicInput stream hs1.good) fun s0 st2 hs2 hs0 ↦ ?_
+    have hm2 := (hm.imp fun _ _ h ↦ RpRelN.pgrow π iv publicInput stream hg hs1 h).imp fun _ _ h ↦
+      RpRelN.pgrow π iv publicInput stream hs1.good hs2 h
+    have hrho2 := Rp.pgrow hs1.good hs2 (Rp.pgrow hg hs1 hrho)
+    refine phc_bind (phc_forIn (fun a a' st ↦ RpRelN π iv publicInput stream st a a')
+      (fun _ _ _ _ hg hs h ↦ RpRelN.pgrow π iv publicInput stream hg hs h) _ (cOuter ρ)
+      (fun (b : Array (List Nat) × Array (Column × ℕ × ℕ × Nat) × Nat × Nat)
+        (acc : Array (List Nat) × Array (Column × ℕ × ℕ × E) × E × E) st ↦
+        b.1 = acc.1 ∧ RpTms π iv publicInput stream st b.2.1.toList acc.2.1.toList ∧
+          Rp π iv publicInput stream st b.2.2.1 acc.2.2.1 ∧ Rp π iv publicInput stream st b.2.2.2 acc.2.2.2 ∧
+          Rp π iv publicInput stream st rhoS ρ) ?_ _ _ st2 (#[], #[], v0, s0) (#[], #[], 0, 1) hs2.good hm2
+      ⟨rfl, List.Forall₂.nil, Rp.pgrow hs1.good hs2 hv0, hs0, hrho2⟩) fun res st3 hs3 hR ↦ ?_
+    · rintro relation relG ⟨P, T, V, Sc⟩ ⟨P', T', V', Sc'⟩ st hg ⟨hterms, hval⟩ ⟨hP, hT, hV, hSc, hrho⟩
+      dsimp only at hP hT hV hSc ⊢
+      subst hP
+      refine phc_bind (phc_mul π iv publicInput stream hg hSc hval) fun sv st1 hs1 hsv ↦ ?_
+      grow [hT, hV, hSc, hrho] with hg hs1
+      refine phc_bind (phc_add π iv publicInput stream hs1.good hV hsv) fun v' st2 hs2 hv' ↦ ?_
+      grow [hT, hSc, hrho] with hs1.good hs2
+      have hterms2 := (hterms.imp fun _ _ h ↦ RpTermN.pgrow π iv publicInput stream hg hs1 h).imp fun _ _ h ↦
+        RpTermN.pgrow π iv publicInput stream hs1.good hs2 h
+      refine phc_bind (phc_forIn (fun a a' st ↦ RpTermN π iv publicInput stream st a a')
+        (fun _ _ _ _ hg hs h ↦ RpTermN.pgrow π iv publicInput stream hg hs h) _ (cInner Sc')
+        (fun (b : Array (List Nat) × Array (Column × ℕ × ℕ × Nat))
+          (acc : Array (List Nat) × Array (Column × ℕ × ℕ × E)) st ↦
+          b.1 = acc.1 ∧ RpTms π iv publicInput stream st b.2.toList acc.2.toList ∧
+            Rp π iv publicInput stream st Sc Sc') ?_ _ _ st2 (P, T) (P, T') hs2.good hterms2 ⟨rfl, hT, hSc⟩)
+        fun r st3 hs3 hr ↦ ?_
+      · rintro t tG ⟨PS, TS⟩ ⟨P, T⟩ st hg ⟨hcol, hpt, htw, hco⟩ ⟨hP, hT, hsc⟩
+        dsimp only at hP hT ⊢
+        rw [← hP, cInner_eq]
+        unfold cpStep cIdx
+        rw [hpt, hcol, htw]
+        cases hf : PS.findIdx? (· == tG.point) with
+        | none =>
+          simp only [Option.getD_none, ↓reduceIte]
+          refine phc_bind (phc_mul π iv publicInput stream hg hsc hco) fun cS st1 hs1 hcS ↦ ?_
+          exact phc_bind (mergeTermS_phc π iv publicInput stream hs1.good (RpTms.pgrow π iv publicInput stream hg hs1 hT)
+            tG.column _ tG.twist hcS) fun _ st2 hs2 hT2 ↦
+            phc_pure _ hs2.good ⟨_, rfl, rfl, hT2, Rp.pgrow hs1.good hs2 (Rp.pgrow hg hs1 hsc)⟩
+        | some q =>
+          have hq := (Array.findIdx?_eq_some_iff_getElem.mp hf).1
+          simp only [Option.getD_some]
+          rw [ite_eq_right (Nat.ne_of_lt hq)]
+          refine phc_bind (phc_mul π iv publicInput stream hg hsc hco) fun cS st1 hs1 hcS ↦ ?_
+          exact phc_bind (mergeTermS_phc π iv publicInput stream hs1.good (RpTms.pgrow π iv publicInput stream hg hs1 hT)
+            tG.column _ tG.twist hcS) fun _ st2 hs2 hT2 ↦
+            phc_pure _ hs2.good ⟨_, rfl, rfl, hT2, Rp.pgrow hs1.good hs2 (Rp.pgrow hg hs1 hsc)⟩
+      · obtain ⟨hP3, hT3, hSc3⟩ := hr
+        grow [hrho] with hs2.good hs3
+        have hv3 := Rp.pgrow hs2.good hs3 hv'
+        exact phc_bind (phc_mul π iv publicInput stream hs3.good hSc3 hrho) fun _ st4 hs4 hs4' ↦
+          phc_pure _ hs4.good ⟨_, rfl, hP3, RpTms.pgrow π iv publicInput stream hs3.good hs4 hT3,
+            Rp.pgrow hs3.good hs4 hv3, hs4', Rp.pgrow hs3.good hs4 hrho⟩
+    · obtain ⟨hP, hT, hV, -, -⟩ := hR
+      have hP' : res.1 = ((mineG relsG c).foldl (cOuter ρ) (#[], #[], 0, 1)).1 := hP
+      rw [← Array.forIn_toList]
+      refine phc_bind (phc_forIn (fun a a' st ↦ RpTm π iv publicInput stream st a a')
+        (fun _ _ _ _ hg hs h ↦ RpTm.pgrow π iv publicInput stream hg hs h) _
+        (fun acc (x : Column × ℕ × ℕ × E) ↦ mergeTerm acc x.1 (renumberOf res.1 x.2.1) x.2.2.1 x.2.2.2)
+        (fun (b : Array (Column × ℕ × ℕ × Nat)) (acc : Array (Column × ℕ × ℕ × E)) st ↦
+          RpTms π iv publicInput stream st b.toList acc.toList) ?_ _ _ st3 #[] #[] hs3.good hT List.Forall₂.nil)
+        fun mg st4 hs4 hmg ↦ phc_pure _ hs4.good ?_
+      · rintro ⟨c0, p0, k0, v0⟩ ⟨c1, p1, k1, v1⟩ b acc st hg ⟨h1, h2, h3, h4⟩ hb
+        dsimp only at h1 h2 h3 h4 ⊢
+        subst h1 h2 h3
+        exact phc_bind (mergeTermS_phc π iv publicInput stream hg hb _ _ _ h4) fun _ st' hs' h' ↦
+          phc_pure _ hs'.good ⟨_, rfl, h'⟩
+      · refine ⟨?_, ?_, Rp.pgrow hs3.good hs4 hV, ?_⟩
+        · show List.map (fun x ↦ res.1.getD x []) (keptOf res.1) = _
+          rw [hP']
+        · show RpTms π iv publicInput stream st4 mg.toList (mergedOf _ _).toList
+          unfold mergedOf
+          rw [← Array.foldl_toList, ← hP']
+          exact hmg
+        · show (relsS.filter (·.commitment == c)).length = (mineG relsG c).length
+          exact hlen
+
+end CombineSim
+
+end RecGraph.Sim
