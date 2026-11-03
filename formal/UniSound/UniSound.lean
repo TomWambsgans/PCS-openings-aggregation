@@ -34,6 +34,7 @@ import UniSound.Ids.Assembly
 import UniSound.Ids.Remaining
 import UniSound.Ids.Align
 import UniSound.Ids.WeightMle
+import UniSound.Closed
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001

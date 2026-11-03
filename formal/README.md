@@ -20,8 +20,9 @@ circuit, with ideal commitments.
 
 **The univariate PIOP for leanVM 42422001** (`crates/leanvm_univariate`, milestone 4): its verifier transcribed
 and differential-tested, with its end statements `UniKnowledgeSoundness` and `UniCompleteness` against
-[`Lv42/`](Lv42)'s relation `M3Holds`, stated and not yet proved, is [`UniStatement/`](UniStatement/README.md), a
-library of `EndToEnd/`.
+[`Lv42/`](Lv42)'s relation `M3Holds`, is [`UniStatement/`](UniStatement/README.md), a library of `EndToEnd/`;
+its knowledge soundness is proved, with no hypothesis, in `UniSound/` and `FlockSound/`
+([below](#the-univariate-verifier-for-leanvm-42422001-knowledge-soundness)).
 
 ## End-to-end theorems
 
@@ -130,6 +131,39 @@ lake build Soundness E2ECompleteness Evm ZK        # the end theorems; #guard_ms
 lake env lean Review/E2ESoundness.lean             # the knowledge-soundness review
 lake env lean Review/E2ECompletenessReview.lean    # the completeness review
 python3 -I Review/E2ESoundnessNumbers.py           # ksBound in exact rationals
+```
+
+## The univariate verifier for leanVM 42422001: knowledge soundness
+
+Four libraries of `EndToEnd/`: **`UniStatement`** (`UniStatement/`: the verifier, the extractor
+`uniExtractor`, `UniKnowledgeSoundness`), **`UniSound`** (`UniSound/`: the PIOP's round-by-round soundness,
+the code-level and last links, the Fiat–Shamir layer, the identity model `UniSound/Ids`), **`FlockSound`**
+(`FlockSound/FlockSound`: sumcheck, univariate-skip, lincheck and ring-switch soundness over the cube) and
+**`FlockSoundUni`** (`FlockSound/FlockSoundUni`: Flock's interface instance `flockSoundInstance`, the
+reference deployment's numbers, the end theorems). The end theorem (`UniSound/UniSound/Closed.lean`):
+
+```lean
+theorem uniKnowledgeSoundness_closed (D : Deployment) (hD : D.shape = reference)
+    (hIv : D.programIv = programIv) :
+    UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
+      ∀ Q ≤ 2 ^ 64,
+        uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61
+```
+
+For every deployment at the reference shape (`reference`: heights `18 18 18 18 17 18`, memory `2^21`, bytecode
+`2^19`) with leanVM's program IV, and every program, the univariate verifier is knowledge sound for the explicit
+extractor `uniExtractor`: an adversary of `Q` calls of `π` and `π⁻¹` makes it accept while the extractor finds no
+stack satisfying leanVM 42422001's relation with probability at most `uniBound (2^32/|E|) Q`, which is `2^-61.41`
+at `Q = 2^64` (`EndToEnd/Review/UniSoundnessNumbers.py`, exact rationals: the five openings' doom terms
+`2^-61.68`, the seed tag's `2^-64`, the list term `2^-69.44`). `hD` and `hIv` say which deployment it is; nothing
+else is assumed. Sorry-free, on `propext`, `Classical.choice`, `Quot.sound` (`#guard_msgs`), no `native_decide`.
+The proof's route and what each layer contributes are in `UniSound/UniSound.lean`'s report.
+
+```sh
+cd formal/EndToEnd   # on h1, under /root/pcs-quotient-fv/ only, with formal/leanervm linked as above
+systemd-run --scope -p MemoryMax=10G lake build UniSound FlockSoundUni FlockSoundUni.PendingShape \
+  FlockSoundUni.Good FlockSoundUni.Game
+python3 -I Review/UniSoundnessNumbers.py      # uniBound in exact rationals
 ```
 
 ## Layers
