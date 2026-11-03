@@ -291,7 +291,7 @@ theorem RecCompose.recKnowledgeSoundness2_real (D : RecDeployment) (hD : D.Real)
     (hb : CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream)) :
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64
 theorem RecCompose.recKnowledgeSoundness_end (D : RecDeployment) (hD : D.Real) (L : Pi2Layers D pi2Bound)
-    (hagree : Pi1OpeningsAgree D) (ε1 εh : ℕ → ℝ≥0∞) : RecKnowledgeSoundness D pi2Bound ε1 εh
+    (ε1 εh : ℕ → ℝ≥0∞) : RecKnowledgeSoundness D pi2Bound ε1 εh
 theorem RecCompose.recCompleteness_end (D : RecDeployment) (hD : D.Real) (P1 : Pi1Prover D) (P2 : Pi2Prover)
     (δ2 : ℝ≥0∞) (h2 : RecCompleteness2 D P1 P2 δ2) (δ1 δh : ℝ≥0∞) : RecCompleteness D P1 P2 δ1 δh δ2
 ```
@@ -315,7 +315,9 @@ argument over `L_W` 153.13 bits, the identity at `t` over `L_W L_Q` 140.60, `W`'
 on the compiler's checked ports, the last state by `checks_claims_iff_post2`); the circuit's corollary from RecCircuit's
 `pi1rec3_end` and the bridge (`circuit_of_bridge`); the contract's π1 openings are the calldata's (`callsPure`); the
 couplings of the end-to-end experiments with the hypotheses' (`experimentsAgree`, `hazardCoupling`, `pi1Coupling`,
-`completenessAgree`, `completenessPi1Coupling`, by eager sampling and the logging lemmas); `pi1RunShape`.
+`completenessAgree`, `completenessPi1Coupling`, by eager sampling and the logging lemmas); π1-rec3's verifier's three
+openings are the contract's (`pi1OpeningsAgree`, from `pi1RunShape`, `pi1RunOpenings`: a run's result has three point
+claims in order, no matrices' claim, roots of two limbs). Part 1 ⇒ part 2 has no hypothesis left.
 
 **The named inputs left**:
 
@@ -327,7 +329,6 @@ couplings of the end-to-end experiments with the hypotheses' (`experimentsAgree`
 | `Pi2Circuits D`, `hroots`, `hg` | the Lean compiler's run on π1-rec3's graph at every π1 IV; the Lean recording is the emitted graph | runs, not proofs (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
 | `CircuitBridge` | RecCircuit's `EndStatement` at π2's public limbs gives `Pi1GraphAccepts` with the contract's openings | open, `lean-rec-compose` |
 | `Pi1RootWordOk` | π2's word 0 of π1's roots decodes to π1-rec3's WHIR root | the root-word fix, `fix-pi1-root` (false at `leanvm-rec` d93c375) |
-| `Pi1OpeningsAgree D` | π1-rec3's verifier's three openings are the contract's | open, `lean-rec-compose` |
 | `RecCompleteness2 D P1 P2 δ2` | π2's completeness | π2's honest prover is not transcribed |
 
 ```sh

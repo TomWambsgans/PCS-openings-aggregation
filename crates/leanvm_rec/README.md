@@ -54,7 +54,6 @@ end-to-end statements against leanVM 42422001's relation, `RecKnowledgeSoundness
 - π2's Fiat–Shamir layer;
 - the tables' layer;
 - the bridge from RecCircuit's end statement to `Pi1GraphAccepts`;
-- `Pi1OpeningsAgree`;
 - the root-word fix (`fix-pi1-root`): π2's stream carries π1's roots with each half reversed, so the contract decodes
   them to other digests than π1-rec3's.
 
