@@ -44,8 +44,8 @@ def checkAt (label : String) (iv : List UInt8) : IO Bool := do
     part "blocks" fun _ ↦ blocksB C
     part "ports" fun _ ↦ portsB C
     part "no hole read" fun _ ↦ noHoleReadB C
-    part "kappa" fun _ ↦ kappaB C
-    part "sigma" fun _ ↦ sigmaB C
+    part "kappa" fun _ ↦ kappaExprB C
+    part "sigma" fun _ ↦ sigmaOkB C
     let ok := viewCheck c
     IO.println s!"{label}: viewCheck {ok}"
     (← IO.getStdout).flush

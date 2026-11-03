@@ -89,13 +89,13 @@ theorem specOf_data {r : RecCircuit.Recorded} {c : RecCircuit.Compiled} (hc : Re
     (hview : viewOf c.circuit = Data.circuit) (hV : c.circuit.toPiop.Valid) :
     SpecOf (Spec.of Data.circuit).core c.circuit.toPiop UniComplete.Domain.basisE (pairOfC c.circuit) (fun J ↦ 16 + J)
       16 (pubOfC c.circuit) := by
-  have hlogN := view_logN hview
-  have hlogW := view_logW hview
-  have hports := view_ports hview
-  have hroots := view_roots hview
-  have hpairs := view_pairs hview
-  have hformulas := view_formulas hview
-  have hterms := view_terms hview
+  have hlogN := viewOf_logN hview
+  have hlogW := viewOf_logW hview
+  have hports := viewOf_ports hview
+  have hroots := viewOf_roots hview
+  have hpairs := viewOf_pairs hview
+  have hformulas := viewOf_formulas hview
+  have hterms := viewOf_terms hview
   have hslen : (Spec.of Data.circuit).core.pairs.length = (slots c.circuit).length := by
     rw [core_pairs, List.length_map, ← hpairs, pairsOf_length]
   have htl : (Spec.of Data.circuit).core.publicTerms.length = 20 := by

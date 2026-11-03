@@ -24,6 +24,15 @@ import RecCompose.Final
 import RecCompose.Tables
 import RecCompose.Real
 import RecCompose.FsClosed
+import RecCompose.ViewDefs
+import RecCompose.View
+import RecCompose.Valid
+import RecCompose.FactsAlg
+import RecCompose.FactsSpec
+import RecCompose.FactsSpecOf
+import RecCompose.Facts
+import RecCompose.Meanings
+import RecCompose.Layouts
 
 /-!
 # RecCompose: the recursive verifier's end theorems

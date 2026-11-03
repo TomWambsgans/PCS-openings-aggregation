@@ -21,6 +21,7 @@ This library proves part 1 from π2's layers, its bound in bits, and part 1 ⇒ 
 ```sh
 cd formal/EndToEnd   # on h1, under /root/pcs-quotient-fv/ only
 systemd-run --scope -p MemoryMax=10G lake build RecCompose     # the theorems; #guard_msgs checks their axioms
+systemd-run --scope -p MemoryMax=12G lake exe rec-view-check   # Pi2ViewChecked at two IVs (about 3 minutes, 3 GB)
 python3 -I Review/RecSoundnessNumbers.py                        # ε2 = pi2Bound in exact rationals
 ```
 
@@ -45,12 +46,18 @@ named inputs; the files:
 | `Tables.lean` | **`pi2Tables`** (the tables' layer, from `Pi2SetupColumns`), `cells_wFold`, `claim_wFold`, `claim_quotient`, `claim_sum`, `claim_setup`, `sum_novP_omega`. |
 | `Bridge.lean` | **`circuitBridge`** (from `StatementPortMeaning`, `ZeroPortsMeaning`, `CallWordsAgree`, `Pi1CallsLayouts`). |
 | `End.lean` | `recKnowledgeSoundness2_real`, **`recKnowledgeSoundness_end`**, `recKnowledgeSoundness_end_real`, **`recCompleteness_end`**, **`recKnowledgeSoundness_end_fs`**, **`recCompleteness_end_fs`**. |
+| `ViewDefs.lean`, `View.lean` | **`viewOf`** (`pi2::adapt` transcribed), `callsOf`, `validB`, **`viewCheck`** (evaluated by `rec-view-check`, `RecComposeTest/ViewCheck.lean`); the slots, `groupsOf_perm`, `groupsOf_mem`. |
+| `Valid.lean` | **`validB_sound`**: `validB` gives `RecPiop.Circuit.Valid` of `toPiop`. |
+| `FactsAlg.lean`, `FactsSpec.lean`, `FactsSpecOf.lean` | the formulas' and terms' values, `pubOfC`; `Data`'s facts by kernel decision; **`specOf_data`**. |
+| `Facts.lean` | `Pi2ViewChecked`; **`pi2Facts`** (`Pi2Facts D C`), `pubOfC_canon`, `pi2Facts_pubOf`. |
+| `Meanings.lean` | **`statementPortMeaning`**, **`zeroPortsMeaning`**, **`callWordsAgree`** for `pi2Facts`. |
+| `Layouts.lean` | **`pi1CallsLayouts_of_real`** (`stackLayout_words`). |
 | `Final.lean` | **`recKnowledgeSoundness2_final`**, **`recKnowledgeSoundness_final`**, **`recKnowledgeSoundness_final_fs`**: the end theorems from the named inputs left. |
 | `FsDefs.lean` | π2's Fiat–Shamir layer's objects: the chain `pi2Spec` (`ChainSpecU` over π2's transcript: the label `name ‖ iv ‖ input`, the public data's 472 bytes before `W`'s root), the proof `P2Pf` and its view, the six openings `p2Ops` (π1's `C1`, `C2`, `F`, π2's `W`, the setup, `Q`), the setup's stacks `p2Stk`, the composed setup `p2Setup`, the IV `p2IvKC4`, the composed verifier `p2Ver`, the bridge facts' Props. |
 | `FsOps.lean` | the openings' `OKP`, coverage, `hS_p2` (the setup's claim), `ClaimOn` as F2's `tableEval` on public layouts (`claimOn_iff`, `readEntry_public`), the shapes at once (`p2Shapes`), `maxErrK_p2`. |
 | `FsSetup.lean`, `FsExtract.lean`, `FsWalk.lean` | **`pi2SetupBridge`**, the setup's facts and `okp_setupOp`; **`pi2ExtractBridge`**; **`pi2Walk`** (π2's run is the chain), **`pi2WalkReject`**, `pi2Scalars_real`. |
 | `FsVerifier.lean`, `FsCouple.lean`, `FsCost.lean` | **`pi2VerifierBridge`** (the contract's six calls below the composed openings), **`pi2GameLeV`** (the coupling), the composed verifier's cost, the IV moved into the adversary (`expU_p2IvAdv`), `hlab_p2`. |
-| `FsGame.lean`, `FsClosed.lean` | **`pi2FsLayer_of`** (through `Compose.knowledgeSoundness_listChainU_closed128S`, `prEvent_doomF_le`, `prEvent_pairTr_expL_le`, `le_pi2BoundE`); **`pi2FsLayer_real`** (`Pi2FsLayer D` proved at the real deployment); **`recKnowledgeSoundness2_closed`**, **`recKnowledgeSoundness_closed`**, **`recKnowledgeSoundness_closed_fs`**: `Final.lean`'s end theorems without `hfs`. |
+| `FsGame.lean`, `FsClosed.lean` | **`pi2FsLayer_of`** (through `Compose.knowledgeSoundness_listChainU_closed128S`, `prEvent_doomF_le`, `prEvent_pairTr_expL_le`, `le_pi2BoundE`); **`pi2FsLayer_real`** (`Pi2FsLayer D` proved at the real deployment); **`recKnowledgeSoundness2_closed`**, **`recKnowledgeSoundness_closed`**, **`recKnowledgeSoundness_closed_fs`**: `Final.lean`'s end theorems without `hfs`, `Fa`, `hstmt`, `hzero`, `hcalls`, `hlay` (their inputs `C`, `hroots`, `GraphsAgree`, `Pi2ViewChecked C`). |
 
 ## The statements' fixes (in `RecStatement/Security.lean`, found by this composition)
 

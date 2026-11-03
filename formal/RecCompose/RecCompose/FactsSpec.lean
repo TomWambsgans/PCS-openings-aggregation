@@ -58,26 +58,26 @@ section View
 variable {C : RecCircuit.Circuit} (hview : viewOf C = Data.circuit)
 include hview
 
-theorem view_logN : C.logN = 24 := congrArg Circuit.logN hview
+theorem viewOf_logN : C.logN = 24 := congrArg Circuit.logN hview
 
-theorem view_logW : C.logWidth = 4 := congrArg Circuit.logRow hview
+theorem viewOf_logW : C.logWidth = 4 := congrArg Circuit.logRow hview
 
-theorem view_terms : publicTermsOf C = Data.publicTerms := congrArg Circuit.publicTerms hview
+theorem viewOf_terms : publicTermsOf C = Data.publicTerms := congrArg Circuit.publicTerms hview
 
-theorem view_pairs : pairsOf C = Data.pairs := congrArg Circuit.pairs hview
+theorem viewOf_pairs : pairsOf C = Data.pairs := congrArg Circuit.pairs hview
 
-theorem view_formulas : formulasOf C = Data.formulas := congrArg Circuit.formulas hview
+theorem viewOf_formulas : formulasOf C = Data.formulas := congrArg Circuit.formulas hview
 
-theorem view_reads : List.replicate (publicCounts C).1 Read.root ++ List.replicate (publicCounts C).2 Read.scalar =
+theorem viewOf_reads : List.replicate (publicCounts C).1 Read.root ++ List.replicate (publicCounts C).2 Read.scalar =
     Data.reads := congrArg Circuit.reads hview
 
-theorem view_roots : (publicCounts C).1 = 2 := by
-  have h := congrArg (List.count Read.root) (view_reads hview)
+theorem viewOf_roots : (publicCounts C).1 = 2 := by
+  have h := congrArg (List.count Read.root) (viewOf_reads hview)
   rw [data_reads_roots, List.count_append, List.count_replicate_self, List.count_replicate] at h
   simpa using h
 
-theorem view_ports : C.ports.size = 36 := by
-  have h := congrArg List.length (view_terms hview)
+theorem viewOf_ports : C.ports.size = 36 := by
+  have h := congrArg List.length (viewOf_terms hview)
   rw [data_terms_length] at h
   simpa [publicTermsOf] using h
 

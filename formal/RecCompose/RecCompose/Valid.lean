@@ -318,7 +318,7 @@ theorem validB_sound (h : validB c = true) : c.toPiop.Valid := by
   have hhole : ∀ i < c.n, (holeMap c).getD i false = true ↔ i ∈ c.toPiop.ports := fun i hi ↦ by
     rw [holeMap_spec hi, mem_toPiop_ports]
   -- `σ`
-  unfold sigmaB at hsigma
+  unfold sigmaOkB at hsigma
   cases hm : sigmaMarks c with
   | none => rw [hm] at hsigma; simp at hsigma
   | some marks =>

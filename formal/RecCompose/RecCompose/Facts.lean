@@ -173,9 +173,9 @@ include hchk in
 /-- Four limbs at port `j` exactly when `Data`'s term `j` has two or four terms. -/
 theorem four_sum (roots : RecSetupRoots) : ∑ j ∈ range (C.G roots).nP, C.d roots j = 3 := by
   obtain ⟨hview, -, -⟩ := viewChecked_at C hchk roots
-  have hports := view_ports hview
-  have hroots := view_roots hview
-  have hterms := view_terms hview
+  have hports := viewOf_ports hview
+  have hroots := viewOf_roots hview
+  have hterms := viewOf_terms hview
   have hnP : (C.G roots).nP = 36 := by
     show ((C.compiled (D.pi1IvAt roots.pi1)).circuit.ports.toList.map (·.position)).length = 36
     rw [List.length_map, Array.length_toList, hports]
@@ -203,8 +203,8 @@ def pi2Facts : Pi2Facts D C where
     rw [show (D.circuitAt roots.pi1).circuit = Data.circuit from hD.1 _]
     exact specOf_data (C.compile_ok _) hview (validB_sound hval)
   valid roots := validB_sound (viewChecked_at C hchk roots).2.2
-  logN roots := view_logN (viewChecked_at C hchk roots).1
-  logW roots := view_logW (viewChecked_at C hchk roots).1
+  logN roots := viewOf_logN (viewChecked_at C hchk roots).1
+  logW roots := viewOf_logW (viewChecked_at C hchk roots).1
   four roots := four_sum C hchk roots
   pub_len roots scalars j hj := by
     unfold pubOfC

@@ -171,13 +171,13 @@ def noHoleReadB (c : RecCircuit.Circuit) : Bool :=
     !(c.formulaAt (c.width * (p.position / c.width) + k)).reads.contains (p.position % c.width)
 
 /-- `κ` only at expression slots. -/
-def kappaB (c : RecCircuit.Circuit) : Bool :=
+def kappaExprB (c : RecCircuit.Circuit) : Bool :=
   c.kappa.all fun e ↦ e.2 == 0 || !decide (e.1 < c.n) || match c.formulaAt e.1 with
     | .expr _ => true
     | _ => false
 
 /-- `σ` on the non-holes: inside, onto the non-holes, injective with the ports' tags. -/
-def sigmaB (c : RecCircuit.Circuit) : Bool :=
+def sigmaOkB (c : RecCircuit.Circuit) : Bool :=
   let holes := holeMap c
   match sigmaMarks c with
   | none => false
@@ -188,7 +188,7 @@ def sigmaB (c : RecCircuit.Circuit) : Bool :=
 /-- **`RecPiop.Circuit.Valid` of `toPiop`, decided by loops** (`validB_sound`). -/
 def validB (c : RecCircuit.Circuit) : Bool :=
   decide (c.logWidth < c.logN) && (c.regions.all fun r ↦ r.roles.size == c.width) && readsB c && blocksB c &&
-    portsB c && noHoleReadB c && kappaB c && sigmaB c
+    portsB c && noHoleReadB c && kappaExprB c && sigmaOkB c
 
 /-! ## The check -/
 
