@@ -5,6 +5,7 @@ import RecStatement.Spec
 import RecStatement.Core
 import RecStatement.Verifier
 import RecStatement.Calls
+import RecStatement.Security
 
 /-!
 # RecStatement: π2's verifier, transcribed
@@ -20,3 +21,23 @@ import RecStatement.Calls
 /-- info: 'RecStatement.pcsCalls' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecStatement.pcsCalls
+
+/-- info: 'RecStatement.RecDeployment.verifierWith' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.RecDeployment.verifierWith
+
+/-- info: 'RecStatement.recExtractor' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.recExtractor
+
+/-- info: 'RecStatement.RecDeployment.Real' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.RecDeployment.Real
+
+/-- info: 'RecStatement.RecKnowledgeSoundness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.RecKnowledgeSoundness
+
+/-- info: 'RecStatement.RecCompleteness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.RecCompleteness
