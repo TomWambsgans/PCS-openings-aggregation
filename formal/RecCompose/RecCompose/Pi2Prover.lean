@@ -139,16 +139,31 @@ def indAt (p : RecPiop.Block × ℕ) (x : E) : E :=
   zvAt G.logN x * ((∏ j ∈ G.compl p, (UniStatement.pointE (G.pairBase p) + UniStatement.pointE j)) *
     ∏ j ∈ (range G.N).filter (G.InPair p), (x + UniStatement.pointE j))⁻¹
 
+/-- **The pairs as a list** (`G.pairs`' elements, each once): every non-forward role of every block. -/
+def pairsList : List (RecPiop.Block × ℕ) :=
+  (G.blocks.dedup ×ˢ List.range G.W).filter fun p ↦ !(G.regionRole p.1 p.2).isForward
+
+/-- **Each pair's data, once** (`spec.pairs`): the pair, its indicator's constant `Π_{j ∉ p} (ω_{c_p} + ω_j)`, its
+positions. -/
+def pairData : List ((RecPiop.Block × ℕ) × E × List ℕ) :=
+  (pairsList G).map fun q ↦
+    (q, ∏ j ∈ G.compl q, (UniStatement.pointE (G.pairBase q) + UniStatement.pointE j),
+      (List.range G.N).filter fun j ↦ decide (G.InPair q j))
+
+/-- A pair's indicator at `x` from its data: `Z_V(x) / (c · Π_{j ∈ p} (x + ω_j))`. -/
+def indFrom (m : ℕ) (c : E) (pos : List ℕ) (x : E) : E :=
+  zvAt m x * (c * (pos.map fun j ↦ x + UniStatement.pointE j).prod)⁻¹
+
 /-- **The push polynomial at coset point `p`** (`P = w + Σ_p I_p (E_p + w) + κ`), from `w` and `κ` on the coset, the
-cells `w(x + ω_c)` at `p ⊕ c`. -/
-def pushAtCoset (m : ℕ) (wD κD : Array E) (γ : E) (p : ℕ) : E :=
-  wD.getD p 0 + ∑ q ∈ G.pairs, indAt G q (cosetPoint m p) *
-    ((G.regionRole q.1 q.2).value γ (wD.getD p 0) (fun c ↦ wD.getD (p ^^^ (q.2 ^^^ c)) 0) + wD.getD p 0) +
-      κD.getD p 0
+cells `w(x + ω_c)` at `p ⊕ c`, the pairs' data `pd`. -/
+def pushAtCoset (pd : List ((RecPiop.Block × ℕ) × E × List ℕ)) (m : ℕ) (wD κD : Array E) (γ : E) (p : ℕ) : E :=
+  wD.getD p 0 + (pd.map fun d ↦ indFrom m d.2.1 d.2.2 (cosetPoint m p) *
+    ((G.regionRole d.1.1 d.1.2).value γ (wD.getD p 0) (fun c ↦ wD.getD (p ^^^ (d.1.2 ^^^ c)) 0) +
+      wD.getD p 0)).sum + κD.getD p 0
 
 /-- **The holes' indicator at coset point `p`** (`1_S`): the port pairs' indicators. -/
-def holeAtCoset (m p : ℕ) : E :=
-  ∑ q ∈ G.pairs.filter (fun q ↦ (G.regionRole q.1 q.2).isPort = true), indAt G q (cosetPoint m p)
+def holeAtCoset (pd : List ((RecPiop.Block × ℕ) × E × List ℕ)) (m p : ℕ) : E :=
+  ((pd.filter fun d ↦ (G.regionRole d.1.1 d.1.2).isPort).map fun d ↦ indFrom m d.2.1 d.2.2 (cosetPoint m p)).sum
 
 /-- **`h`'s novel coefficients** (`2^m`). -/
 def hNovel (α β γ : E) : Array E := UniComplete.novelOfValuesE G.logN (hValues G w α β γ)
@@ -160,11 +175,12 @@ def qValues (α β γ : E) : Array E :=
   let σD := onCoset m (UniComplete.novelOfValuesE m (sigmaValues G))
   let κD := onCoset m (UniComplete.novelOfValuesE m (kappaValues G))
   let hD := onCoset m (hNovel G w α β γ)
+  let pd := pairData G
   Array.ofFn (n := 2 ^ (m + 2)) fun p ↦
     let x := cosetPoint m p.val
     let dPull := α + wD.getD p.val 0 + β * x
-    let dPush := α + pushAtCoset G m wD κD γ p.val + β * σD.getD p.val 0
-    (hD.getD p.val 0 * dPull * dPush + (1 + holeAtCoset G m p.val) * dPush + dPull) * (zvAt m x)⁻¹
+    let dPush := α + pushAtCoset G pd m wD κD γ p.val + β * σD.getD p.val 0
+    (hD.getD p.val 0 * dPull * dPush + (1 + holeAtCoset G pd m p.val) * dPush + dPull) * (zvAt m x)⁻¹
 
 /-- **`q`'s novel coefficients** (`4N`): the transform at the coset's offset. -/
 def qNovel (α β γ : E) : Array E :=
