@@ -435,4 +435,521 @@ theorem le_c2Hi (s : Shape) : colsWords s.c2Columns ≤ c2Hi s := by
   rw [c2Words, heap_blocks_words, heap_h]
   exact Nat.add_le_add_left (sum_map_le _ _ _ fun b _ ↦ le_leafHi b) _
 
+/-! ## The three stacks' variables, bounded by closed numbers -/
+
+/-- **A lower bound of a stack's variables**, computable: `C1`'s and the setup's exact, `C2`'s from
+`c2Lo`. -/
+def varsLo (s : Shape) : Commitment → ℕ
+  | .c1 => stackVarsOf (colsWords (c1Cols s))
+  | .c2 => stackVarsOf (c2Lo s)
+  | .setup => stackVarsOf (colsWords (setupCols s))
+
+/-- **An upper bound of a stack's variables**, computable: `C1`'s and the setup's exact, `C2`'s from
+`c2Hi`. -/
+def varsHi (s : Shape) : Commitment → ℕ
+  | .c1 => stackVarsOf (colsWords (c1Cols s))
+  | .c2 => stackVarsOf (c2Hi s)
+  | .setup => stackVarsOf (colsWords (setupCols s))
+
+theorem varsLo_le (s : Shape) (c : Commitment) : varsLo s c ≤ (layoutOf (layoutsOf s) c).vars := by
+  cases c
+  · rw [layoutOf_c1, stackLayout_vars]
+    exact le_rfl
+  · rw [layoutOf_c2, stackLayout_vars]
+    exact stackVarsOf_mono (c2Lo_le s)
+  · rw [layoutOf_setup, stackLayout_vars]
+    exact le_rfl
+
+theorem le_varsHi (s : Shape) (c : Commitment) : (layoutOf (layoutsOf s) c).vars ≤ varsHi s c := by
+  cases c
+  · rw [layoutOf_c1, stackLayout_vars]
+    exact le_rfl
+  · rw [layoutOf_c2, stackLayout_vars]
+    exact stackVarsOf_mono (le_c2Hi s)
+  · rw [layoutOf_setup, stackLayout_vars]
+    exact le_rfl
+
+theorem varsLo_c1 (s : Shape) : varsLo s .c1 = varsHi s .c1 := rfl
+
+theorem varsLo_setup (s : Shape) : varsLo s .setup = varsHi s .setup := rfl
+
+/-- **A stack's variables, when the bounds meet.** -/
+theorem layoutVars_eq (s : Shape) (c : Commitment) (h : varsLo s c = varsHi s c) :
+    (layoutOf (layoutsOf s) c).vars = varsLo s c :=
+  le_antisymm (h ▸ le_varsHi s c) (varsLo_le s c)
+
+/-! ## `UniShapes` and `LayoutVarsSmall` from the bounds -/
+
+/-- **The shape check**: every stack's bounds inside `24 … 28`. -/
+def shapeOK (s : Shape) : Bool := commitments.all fun c ↦ 24 ≤ varsLo s c && varsHi s c ≤ 28
+
+theorem layoutVars_of_shapeOK (s : Shape) (h : shapeOK s = true) (c : Commitment) :
+    24 ≤ (layoutOf (layoutsOf s) c).vars ∧ (layoutOf (layoutsOf s) c).vars ≤ 28 := by
+  have hc : (24 ≤ varsLo s c && varsHi s c ≤ 28) = true :=
+    List.all_eq_true.mp h c (by cases c <;> simp [commitments])
+  simp only [Bool.and_eq_true, decide_eq_true_eq] at hc
+  exact ⟨hc.1.trans (varsLo_le s c), (le_varsHi s c).trans hc.2⟩
+
+theorem matrixVars_eq : matrixVars = 28 := rfl
+
+/-- **`UniShapes` from the stacks' variables** (`C1`, `C2`, the setup in `24 … 28`; `A0`, `B0` have
+`28`). -/
+theorem uniShapes_of (D : Deployment)
+    (h : ∀ c, 24 ≤ (layoutOf (layoutsOf D.shape) c).vars ∧ (layoutOf (layoutsOf D.shape) c).vars ≤ 28) :
+    UniShapes D ∧ LayoutVarsSmall D := by
+  have hsmall : LayoutVarsSmall D := fun c ↦ by have := (h c).2; omega
+  have hk : ∀ k < 5, 24 ≤ wv D k ∧ wv D k ≤ 28 := by
+    intro k hk
+    interval_cases k
+    · show 24 ≤ wv D (wordIndex .c1) ∧ wv D (wordIndex .c1) ≤ 28
+      unfold wv
+      rw [claimVars D hsmall .c1]
+      exact h .c1
+    · show 24 ≤ wv D (wordIndex .c2) ∧ wv D (wordIndex .c2) ≤ 28
+      unfold wv
+      rw [claimVars D hsmall .c2]
+      exact h .c2
+    · show 24 ≤ wv D (wordIndex .setup) ∧ wv D (wordIndex .setup) ≤ 28
+      unfold wv
+      rw [claimVars D hsmall .setup]
+      exact h .setup
+    · unfold wv
+      rw [(matrixWordVars D.shape).1, matrixVars_eq]
+      decide
+    · unfold wv
+      rw [(matrixWordVars D.shape).2, matrixVars_eq]
+      decide
+  exact ⟨⟨fun k hk' ↦ (hk k hk').1, fun k hk' ↦ (hk k hk').2⟩, hsmall⟩
+
+/-- **`UniShapes` and `LayoutVarsSmall` from the shape check.** -/
+theorem uniShapes_of_shapeOK (D : Deployment) (h : shapeOK D.shape = true) :
+    UniShapes D ∧ LayoutVarsSmall D :=
+  uniShapes_of D (layoutVars_of_shapeOK D.shape h)
+
+/-! ## The reference shape -/
+
+/-- The reference's heights: `⌈log₂ rows⌉` of `183266, 195439, 223851, 137591, 80937, 202025`. -/
+theorem reference_heights : reference.heights = [18, 18, 18, 18, 17, 18] := by decide +kernel
+
+/-- **`κ` at the reference**: BLAKE2S's height, `⌈log₂ 202025⌉ = 18`. -/
+theorem hκ_reference (D : Deployment) (hD : D.shape = reference) :
+    D.shape.heights.getD opBlake2s 0 = 18 := by
+  rw [hD, reference_heights]
+  rfl
+
+/-- `C1`'s words at the reference: `2^26 + 102.5 · 2^18 + 4 · 2^21 + 2^19`. -/
+theorem c1Words_reference : colsWords (c1Cols reference) = 102891520 := by decide +kernel
+
+/-- The setup's words at the reference: `2^23 + 2^21`. -/
+theorem setupWords_reference : colsWords (setupCols reference) = 10485760 := by decide +kernel
+
+/-- `C2`'s words at the reference lie in `(2^26, 2^27]` (`#eval`: `109,117,443`). -/
+theorem c2Words_reference : 2 ^ 26 < colsWords reference.c2Columns ∧ colsWords reference.c2Columns ≤ 2 ^ 27 := by
+  have h : 2 ^ 26 < c2Lo reference ∧ c2Hi reference ≤ 2 ^ 27 := by decide +kernel
+  exact ⟨h.1.trans_le (c2Lo_le _), (le_c2Hi _).trans h.2⟩
+
+theorem varsBounds_reference : (commitments.map fun c ↦ (varsLo reference c, varsHi reference c)) =
+    [(27, 27), (27, 27), (24, 24)] := by decide +kernel
+
+/-- **The reference's stacks' variables**: `C1` `27`, `C2` `27`, the setup `24`. -/
+theorem layoutVars_reference : (layoutOf (layoutsOf reference) .c1).vars = 27 ∧
+    (layoutOf (layoutsOf reference) .c2).vars = 27 ∧ (layoutOf (layoutsOf reference) .setup).vars = 24 := by
+  have h := varsBounds_reference
+  simp only [commitments, List.map_cons, List.map_nil, List.cons.injEq, Prod.mk.injEq] at h
+  refine ⟨?_, ?_, ?_⟩
+  · rw [layoutVars_eq _ _ (h.1.1.trans h.1.2.symm), h.1.1]
+  · rw [layoutVars_eq _ _ (h.2.1.1.trans h.2.1.2.symm), h.2.1.1]
+  · rw [layoutVars_eq _ _ (h.2.2.1.1.trans h.2.2.1.2.symm), h.2.2.1.1]
+
+/-- **The batch's variables at the reference**: `V = 27`. -/
+theorem varsOf_reference : varsOf (layoutsOf reference) = 27 := by
+  rw [varsOf_layoutsOf, layoutVars_reference.1, layoutVars_reference.2.1, layoutVars_reference.2.2]
+  rfl
+
+theorem varsOf_reference_le (D : Deployment) (hD : D.shape = reference) :
+    varsOf (layoutsOf D.shape) ≤ 28 := by
+  rw [hD, varsOf_reference]
+  decide
+
+/-- **`UniShapes` at the reference.** -/
+theorem uniShapes_reference (D : Deployment) (hD : D.shape = reference) : UniShapes D :=
+  (uniShapes_of D fun c ↦ by
+    rw [hD]
+    obtain ⟨h1, h2, h3⟩ := layoutVars_reference
+    cases c
+    · rw [h1]; decide
+    · rw [h2]; decide
+    · rw [h3]; decide).1
+
+/-- **`LayoutVarsSmall` at the reference.** -/
+theorem layoutVarsSmall_reference (D : Deployment) (hD : D.shape = reference) : LayoutVarsSmall D := by
+  intro c
+  rw [hD]
+  obtain ⟨h1, h2, h3⟩ := layoutVars_reference
+  cases c
+  · rw [h1]; decide
+  · rw [h2]; decide
+  · rw [h3]; decide
+
+/-- **The reference's five layout words name `[27, 27, 24, 28, 28]` variables.** -/
+theorem wv_reference (D : Deployment) (hD : D.shape = reference) :
+    wv D 0 = 27 ∧ wv D 1 = 27 ∧ wv D 2 = 24 ∧ wv D 3 = 28 ∧ wv D 4 = 28 := by
+  have hsmall := layoutVarsSmall_reference D hD
+  obtain ⟨h1, h2, h3⟩ := layoutVars_reference
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · show wv D (wordIndex .c1) = 27
+    unfold wv
+    rw [claimVars D hsmall .c1, hD, h1]
+  · show wv D (wordIndex .c2) = 27
+    unfold wv
+    rw [claimVars D hsmall .c2, hD, h2]
+  · show wv D (wordIndex .setup) = 24
+    unfold wv
+    rw [claimVars D hsmall .setup, hD, h3]
+  · exact (matrixWordVars D.shape).1
+  · exact (matrixWordVars D.shape).2
+
+/-! ## The measured workloads -/
+
+/-- **The measured workloads' stacks' variables** (`C1`, `C2`, the setup), each pinned by its
+bounds. -/
+theorem layoutVars_workloads :
+    workloads.map (fun w ↦ commitments.map fun c ↦ (layoutOf (layoutsOf w.2.2) c).vars) =
+      [[22, 24, 24], [24, 25, 24], [26, 27, 24], [27, 27, 24], [27, 28, 24], [28, 28, 24]] := by
+  have hmeet : ∀ w ∈ workloads, ∀ c ∈ commitments, varsLo w.2.2 c = varsHi w.2.2 c := by decide +kernel
+  have hvals : workloads.map (fun w ↦ commitments.map fun c ↦ varsLo w.2.2 c) =
+      [[22, 24, 24], [24, 25, 24], [26, 27, 24], [27, 27, 24], [27, 28, 24], [28, 28, 24]] := by
+    decide +kernel
+  rw [← hvals]
+  exact List.map_congr_left fun w hw ↦ List.map_congr_left fun c hc ↦ layoutVars_eq _ _ (hmeet w hw c hc)
+
+/-- **`UniShapes` and `LayoutVarsSmall` for the measured workloads but `xmss32`**: `xmss128`,
+`xmss400`, `xmss1000` (the reference), `xmss1290`, `xmss2000`. -/
+theorem uniShapes_workloads (w : String × ℕ × Shape) (hw : w ∈ workloads.tail) (D : Deployment)
+    (hD : D.shape = w.2.2) : UniShapes D ∧ LayoutVarsSmall D := by
+  have h : ∀ w ∈ workloads.tail, shapeOK w.2.2 = true := by decide +kernel
+  exact uniShapes_of_shapeOK D (hD ▸ h w hw)
+
+/-- The first measured workload, `xmss32`: 32 signatures, memory `2^16`. -/
+theorem workloads_head :
+    workloads.head? = some ("xmss32", 32, shapeOf 16 [6060, 6490, 11768, 4703, 2699, 6489]) := rfl
+
+/-- **`UniShapes` fails at `xmss32`**: its `C1` has `22` variables (`2^21` words of `q_flock` and
+`3,796,992` in all), below the large WHIR shapes' `24`. -/
+theorem not_uniShapes_xmss32 (D : Deployment) (hD : D.shape = shapeOf 16 [6060, 6490, 11768, 4703, 2699, 6489]) :
+    ¬ UniShapes D := by
+  intro hs
+  have h1 : (layoutOf (layoutsOf (shapeOf 16 [6060, 6490, 11768, 4703, 2699, 6489])) .c1).vars = 22 := by
+    have h : varsLo (shapeOf 16 [6060, 6490, 11768, 4703, 2699, 6489]) .c1 = 22 := by decide +kernel
+    rw [layoutVars_eq _ _ (varsLo_c1 _), h]
+  have h0 := hs.lo 0 (by decide)
+  have hw : wv D 0 = 22 := by
+    show layoutWordVars ((layoutWords D.shape).getD (wordIndex .c1) []) = 22
+    rw [layoutWords_word, layoutWordVars_layoutWord _ _ _ _ (by rw [hD, h1]; decide), hD, h1]
+  omega
+
+/-! ## The program's IV -/
+
+theorem programIv_length : programIv.length = 32 := rfl
+
+/-- **`UniIv` for the reference program IV** (`32` bytes). -/
+theorem uniIv_of (D : Deployment) (h : D.programIv = programIv) : UniIv D :=
+  ⟨by rw [h, programIv_length]; decide, by rw [h, programIv_length]; decide⟩
+
+/-! ## The chain's queries and the rounds' sizes (`hnQ`, `hnv`) -/
+
+theorem nSteps_append : ∀ a b : List Compose.RoundSpec,
+    Compose.nSteps (a ++ b) = Compose.nSteps a + Compose.nSteps b
+  | [], b => by simp [Compose.nSteps]
+  | s :: a, b => by
+    simp only [List.cons_append, Compose.nSteps, nSteps_append a b]
+    omega
+
+theorem nSteps_replicate (s : Compose.RoundSpec) :
+    ∀ n, Compose.nSteps (List.replicate n s) = n * (s.ns + 1)
+  | 0 => by simp [Compose.nSteps]
+  | n + 1 => by
+    rw [List.replicate_succ, Compose.nSteps, nSteps_replicate s n]
+    ring
+
+/-- Flock's rounds take `31 + 2κ` steps. -/
+theorem nSteps_flockRounds (κ : ℕ) : Compose.nSteps (flockRounds κ) = 31 + 2 * κ := by
+  simp only [flockRounds, nSteps_append, nSteps_replicate, Compose.nSteps]
+  ring
+
+theorem uRounds_flock (κ nV V : ℕ) :
+    uRounds (flockSoundInstance κ) nV V = uniRounds (flockRounds κ) nV V := rfl
+
+/-- **The main line's chain makes `41 + 2κ + V` queries**: the label, `C1` and `α, β, γ` (`6`),
+Flock's `31 + 2κ`, `C2` and `t` (`1`), the values and `ρ, λ` (`2`), the batch's `V` rounds. -/
+theorem nQ_flock (κ nV V : ℕ) : (uSpec (flockSoundInstance κ) nV V).K.nQ = 41 + 2 * κ + V := by
+  show Compose.nSteps (uniRounds (flockRounds κ) nV V) + 1 = _
+  simp only [uniRounds, nSteps_append, nSteps_replicate, nSteps_flockRounds, Compose.nSteps]
+  ring
+
+/-- **`hnQ`**: at most `2^10` queries when `2κ + V ≤ 983`. -/
+theorem hnQ_flock (κ nV V : ℕ) (h : 2 * κ + V ≤ 983) : (uSpec (flockSoundInstance κ) nV V).K.nQ ≤ 2 ^ 10 := by
+  rw [nQ_flock]
+  omega
+
+/-- **`hnQ`** for `κ ≤ 32` and `V ≤ 64` (the reference: `κ = 18`, `V = 27`, `86` queries). -/
+theorem hnQ_flock' (κ nV V : ℕ) (hκ : κ ≤ 32) (hV : V ≤ 64) :
+    (uSpec (flockSoundInstance κ) nV V).K.nQ ≤ 2 ^ 10 :=
+  hnQ_flock κ nV V (by omega)
+
+theorem flushReads_le (weights : Array E) (sent : Array (Option E)) (x : List Form × List Form) :
+    flushReads weights sent x ≤ 2 := by
+  unfold flushReads
+  split_ifs <;> omega
+
+/-- A table's values at `t` at most: its sent columns, and two fingerprints per flush. -/
+def readsHi (t : Table) : ℕ := (sentColumns t).length + 2 * (t.flushes.pull.zip t.flushes.push).length
+
+theorem tableReads_le (t : Table) : tableReads t ≤ readsHi t := by
+  unfold tableReads readsHi
+  have := sum_map_le (flushReads #[] (sentPat t)) (fun _ ↦ 2) (t.flushes.pull.zip t.flushes.push)
+    fun x _ ↦ flushReads_le _ _ x
+  simp only [List.map_const', List.sum_replicate, smul_eq_mul] at this
+  omega
+
+/-- **The values at `t` are at most `122`** (the tables' sent columns and fingerprints, and seven). -/
+theorem valsCount_le : valsCount ≤ 122 := by
+  have h : (UniStatement.tables.map readsHi).sum = 115 := by decide +kernel
+  have := sum_map_le tableReads readsHi UniStatement.tables fun t _ ↦ tableReads_le t
+  show (UniStatement.tables.map tableReads).sum + 7 ≤ 122
+  omega
+
+/-- **`hnv`** for any number of values at `t` up to `2^30`: Flock's rounds read at most `64`
+scalars. -/
+theorem hnv_flock' (κ nV V : ℕ) (hnV : nV ≤ 2 ^ 30) :
+    ∀ r ∈ uRounds (flockSoundInstance κ) nV V, r.nv ≤ 2 ^ 30 := by
+  intro r hr
+  rw [uRounds_flock] at hr
+  simp only [uniRounds, flockRounds, List.mem_append, List.mem_cons, List.mem_replicate,
+    List.not_mem_nil, or_false] at hr
+  rcases hr with ((h | (((((h | h) | ⟨_, h⟩) | h) | ⟨_, h⟩) | h)) | (h | h)) | ⟨_, h⟩ <;> subst h <;>
+    dsimp only <;> omega
+
+/-- **`hnv`**: every round of the main line reads at most `2^30` scalars (Flock's at most `64`, the
+values at `t` at most `122`), for every `κ` and `V`. -/
+theorem hnv_flock (κ V : ℕ) : ∀ r ∈ uRounds (flockSoundInstance κ) valsCount V, r.nv ≤ 2 ^ 30 :=
+  hnv_flock' κ valsCount V (valsCount_le.trans (by decide))
+
+/-! ## Flock's rounds' errors (`hFl`) -/
+
+open scoped ENNReal in
+/-- **Flock's round errors are at most `(15 + κ)/|E|`**: `roundErr κ j` on its `23 + κ` rounds, and
+`1/|E|` (`dBound`'s default) past them. -/
+theorem err_flock_le (κ j : ℕ) :
+    (flockSoundInstance κ).err j ≤ ((15 + κ : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := by
+  by_cases hj : j < 23 + κ
+  · rw [flockSoundInstance_err κ j hj]
+    refine ENNReal.div_le_div_right (Nat.cast_le.mpr ?_) _
+    unfold roundErr
+    split_ifs <;> omega
+  · show ((∑ i ∈ Finset.range ((((flockRounds κ)[j]?).map (·.ns)).getD 0 + 1), dBound κ j i : ℕ) :
+        ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) ≤ _
+    rw [List.getElem?_eq_none (by rw [flockRounds_length]; omega)]
+    refine ENNReal.div_le_div_right (Nat.cast_le.mpr ?_) _
+    simp only [Option.map_none, Option.getD_none, Nat.zero_add, Finset.sum_range_one]
+    unfold dBound
+    split_ifs <;> omega
+
+open scoped ENNReal in
+/-- **`hFl`**: every Flock round's error is at most `2^32/|E|`, for `κ ≤ 2^32 − 15`. -/
+theorem hFl_flock (κ : ℕ) (hκ : κ ≤ 2 ^ 32 - 15) :
+    ∀ j, (flockSoundInstance κ).err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) := fun j ↦
+  (err_flock_le κ j).trans (ENNReal.div_le_div_right (Nat.cast_le.mpr (by omega)) _)
+
+/-! ## The Fiat–Shamir layer with the numbers in place -/
+
+/-- **The Fiat–Shamir layer of the main line from the three bridge facts**, for `κ ≤ 32`, `V ≤ 64`,
+the shapes and the IV (`fsLayer_of_bridges` with `hnQ_flock'`, `hnv_flock`). -/
+theorem fsLayer_flock (D : Deployment) (κ V : ℕ) (hκ : κ ≤ 32) (hV : V ≤ 64)
+    (C : UniCode D (flockSoundInstance κ) valsCount V) (hs : UniShapes D) (hI : UniIv D)
+    (hS : UniSetupBridge D hs) (hVb : UniVerifierBridge D (flockSoundInstance κ) valsCount V C hs)
+    (hX : UniExtractBridge D (flockSoundInstance κ) valsCount V hs) :
+    FsLayer D (flockSoundInstance κ) valsCount V C :=
+  fsLayer_of_bridges D _ valsCount V C hs (hnQ_flock' κ valsCount V hκ hV) (hnv_flock κ V) hI hS hVb hX
+
+/-- **The Fiat–Shamir layer at the reference deployment from the three bridge facts**: `κ = 18`,
+`V = varsOf (layoutsOf D.shape) = 27`, the shapes `uniShapes_reference`, the IV `uniIv_of`. -/
+theorem fsLayer_reference (D : Deployment) (hD : D.shape = reference) (hIv : D.programIv = programIv)
+    (C : UniCode D (flockSoundInstance 18) valsCount (varsOf (layoutsOf D.shape)))
+    (hS : UniSetupBridge D (uniShapes_reference D hD))
+    (hVb : UniVerifierBridge D (flockSoundInstance 18) valsCount (varsOf (layoutsOf D.shape)) C
+      (uniShapes_reference D hD))
+    (hX : UniExtractBridge D (flockSoundInstance 18) valsCount (varsOf (layoutsOf D.shape))
+      (uniShapes_reference D hD)) :
+    FsLayer D (flockSoundInstance 18) valsCount (varsOf (layoutsOf D.shape)) C :=
+  fsLayer_flock D 18 _ (by decide) (by rw [hD, varsOf_reference]; decide) C _ (uniIv_of D hIv) hS hVb hX
+
+/-! ## The end theorem at the reference -/
+
+open scoped ENNReal in
+/-- **Knowledge soundness at the reference deployment, its numbers in place**
+(`uniKnowledgeSoundness_flock` at `κ = 18`): `hκ` (`hκ_reference`), `LayoutVarsSmall`
+(`layoutVarsSmall_reference`), Flock's errors (`hFl_flock`), and the Fiat–Shamir layer from the three
+bridge facts (`fsLayer_of_bridges` with `uniShapes_reference`, `hnQ_flock'`, `hnv_flock'`, `uniIv_of`).
+What is left: the bus model and the identity model's rest (`B`, `J`, their numbers `hB`, `hdeg`,
+`hrel`, the batch `hprod`, `htarget`), `WeightMle`, and the three bridges. -/
+theorem uniKnowledgeSoundness_reference {D : Deployment} (hD : D.shape = reference)
+    (hIv : D.programIv = programIv) (B : BusModel D 18) (J : UniIdsRest D (flockSoundInstance 18) B)
+    (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
+    (hprod : ∀ s c1 ch fd c2 t vals rho lam,
+      J.prod s c1 ch fd c2 t vals rho lam = batchProd D (flockSoundInstance 18) s c1 ch fd c2 t vals rho lam)
+    (htarget : ∀ s c1 ch fd c2 t vals rho lam,
+      J.target s c1 ch fd c2 t vals rho lam = batchTargetOf D (flockSoundInstance 18) s ch fd t vals rho lam)
+    (hW : WeightMle D (flockSoundInstance 18))
+    (hS : UniSetupBridge D (uniShapes_reference D hD))
+    (hVb : UniVerifierBridge D (flockSoundInstance 18) J.nV J.V
+      (uniCodeAt D (flockSoundInstance 18) (hκ_reference D hD) J.nV J.V hnV hV) (uniShapes_reference D hD))
+    (hX : UniExtractBridge D (flockSoundInstance 18) J.nV J.V (uniShapes_reference D hD))
+    (hB : 4 * B.N + B.ncv ≤ 2 ^ 32) (hdeg : J.degSum ≤ 2 ^ 32) (hrel : J.nRel + 2 ≤ 2 ^ 32) :
+    UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
+      ∀ Q ≤ 2 ^ 64,
+        uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
+  uniKnowledgeSoundness_flock 18 (hκ_reference D hD) B J hnV hV hprod htarget hW
+    (layoutVarsSmall_reference D hD)
+    (fsLayer_of_bridges D _ J.nV J.V _ (uniShapes_reference D hD)
+      (hnQ_flock' 18 J.nV J.V (by decide) (by rw [hV, hD, varsOf_reference]; decide))
+      (hnv_flock' 18 J.nV J.V (by rw [hnV]; exact valsCount_le.trans (by decide))) (uniIv_of D hIv) hS hVb hX)
+    hB (hFl_flock 18 (by decide)) hdeg hrel
+
 end FlockSound.Uni
+
+/-- info: 'FlockSound.Uni.stackLayout_vars' depends on axioms: [propext, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.stackLayout_vars
+
+/-- info: 'FlockSound.Uni.c2Words' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.c2Words
+
+/-- info: 'FlockSound.Uni.heap_blocks_words' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.heap_blocks_words
+
+/-- info: 'FlockSound.Uni.tupleDegree_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.tupleDegree_le
+
+/-- info: 'FlockSound.Uni.c2Lo_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.c2Lo_le
+
+/-- info: 'FlockSound.Uni.le_c2Hi' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.le_c2Hi
+
+/-- info: 'FlockSound.Uni.varsLo_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.varsLo_le
+
+/-- info: 'FlockSound.Uni.le_varsHi' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.le_varsHi
+
+/-- info: 'FlockSound.Uni.layoutVars_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.layoutVars_eq
+
+/-- info: 'FlockSound.Uni.uniShapes_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.uniShapes_of
+
+/-- info: 'FlockSound.Uni.uniShapes_of_shapeOK' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.uniShapes_of_shapeOK
+
+/-- info: 'FlockSound.Uni.hκ_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.hκ_reference
+
+/-- info: 'FlockSound.Uni.c2Words_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.c2Words_reference
+
+/-- info: 'FlockSound.Uni.layoutVars_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.layoutVars_reference
+
+/-- info: 'FlockSound.Uni.varsOf_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.varsOf_reference
+
+/-- info: 'FlockSound.Uni.varsOf_reference_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.varsOf_reference_le
+
+/-- info: 'FlockSound.Uni.uniShapes_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.uniShapes_reference
+
+/-- info: 'FlockSound.Uni.layoutVarsSmall_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.layoutVarsSmall_reference
+
+/-- info: 'FlockSound.Uni.wv_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.wv_reference
+
+/-- info: 'FlockSound.Uni.layoutVars_workloads' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.layoutVars_workloads
+
+/-- info: 'FlockSound.Uni.uniShapes_workloads' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.uniShapes_workloads
+
+/-- info: 'FlockSound.Uni.not_uniShapes_xmss32' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.not_uniShapes_xmss32
+
+/-- info: 'FlockSound.Uni.uniIv_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.uniIv_of
+
+/-- info: 'FlockSound.Uni.nQ_flock' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.nQ_flock
+
+/-- info: 'FlockSound.Uni.hnQ_flock' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.hnQ_flock
+
+/-- info: 'FlockSound.Uni.hnQ_flock'' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.hnQ_flock'
+
+/-- info: 'FlockSound.Uni.valsCount_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.valsCount_le
+
+/-- info: 'FlockSound.Uni.hnv_flock'' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.hnv_flock'
+
+/-- info: 'FlockSound.Uni.hnv_flock' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.hnv_flock
+
+/-- info: 'FlockSound.Uni.err_flock_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.err_flock_le
+
+/-- info: 'FlockSound.Uni.hFl_flock' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.hFl_flock
+
+/-- info: 'FlockSound.Uni.fsLayer_flock' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.fsLayer_flock
+
+/-- info: 'FlockSound.Uni.fsLayer_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.fsLayer_reference
+
+/-- info: 'FlockSound.Uni.uniKnowledgeSoundness_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.uniKnowledgeSoundness_reference
