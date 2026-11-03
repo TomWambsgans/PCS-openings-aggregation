@@ -6,7 +6,29 @@ import UniSound.Ids.Deployed
 /-!
 # `DiffsEvalP`: the verifier's relations at `t`, all zero, give every identity at `t`
 
-WIP.
+**`diffsEvalP_of_heapGood`**: for a deployment whose heap's blocks fill the leaves (`HeapGood`,
+`heapGood_reference` at the reference shape), where every relation's difference vanishes
+(`diffsOf`), every identity polynomial of `polysOf` vanishes at `t`. No other hypothesis: the code-level
+facts are proved here.
+
+* **The differences read each column at its merged point** (`evOf`); where they vanish, every
+  untwisted relation on one commitment holds under `evOf` (`holds_of_diffs`).
+* **A term's reading is its column's polynomial at `t`** (`ev_colPoly`: `termWExtend` from the merged
+  point back to the term's, `termInner`, `eval_mlP`), the digits being `digitP`'s (`digits_getD`), each
+  column's limbs at its variables (`c1_limbs`, `c2_limbs`, `setup_limbs`, by `StackLayout.new`).
+  `q_flock`'s slot at `y(t)` (`ev_slot`, `slotInner`): off `Z_bad`'s roots no longer `C1` point extends
+  `y(t)` (`y_self`: every `C1` point is a prefix of the digits, `y(t)` or Flock's point, `c1_points`),
+  so `y(t)` is not merged (`mergedSelf`).
+* **The verifier's loops, unfolded**: `heapRelations` (`heapRelations_fst`), `constraintRelation`
+  (`constraintRelation_eq`, its folds `crStep`, `copyStep`, `lineStep`), `chunks` (`chunks_eq`);
+  `tablePartOf` at `t` (`tablePartOf_spec`: the sent values are the columns', the leaf's products the
+  fingerprints, through `linearise_spec`).
+* **Each identity at `t`**: the tree (`treeP_eval`), the root (`rootP_eval`), the constraint quotient's
+  (`wP_eval`, by `crOf_holds`; trivially at `Z_bad`'s roots), each heap block's leaf (`blockP_eval`).
+* **The shape's facts**: the tables' flushes as `linearise` reads them (`tablesLin`, the kernel on their
+  monomials), the bytecode inside the heap (`lbFits`), the quotients' chunks inside the digits
+  (`chunksFit`: `2^e ≤ count` for every chunk, the constraint degree below `2^(r_W + 4)`, a table's
+  leaf degree below `2^(r + 5)` from its `23` fingerprint degrees).
 -/
 
 namespace UniSound.Ids.Eval
@@ -2887,5 +2909,14 @@ theorem diffsEvalP_of_heapGood (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) 
 /-- info: 'UniSound.Ids.diffsEvalP_of_heapGood' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms diffsEvalP_of_heapGood
+
+/-- **`DiffsEvalP` at the reference shape**, unconditionally. -/
+theorem diffsEvalP_reference (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hD : D.shape = reference) :
+    DiffsEvalP D Fl :=
+  diffsEvalP_of_heapGood D Fl (hD ▸ heapGood_reference)
+
+/-- info: 'UniSound.Ids.diffsEvalP_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms diffsEvalP_reference
 
 end UniSound.Ids
