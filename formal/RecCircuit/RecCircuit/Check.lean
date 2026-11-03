@@ -366,10 +366,13 @@ def nodeOk (X : Ctx) (iv : List UInt8) (packOf : Array (Option ℕ)) (id : ℕ) 
     | none => false
   | .ringWeight .. => false
 
-/-- The zero checks that are not constants, in order: the zero ports'. -/
-def zeroNodes : List ℕ := c.zero.filter fun id => match c.nodes.getD id default with
+/-- A node that is not a constant. -/
+def notConst : Node → Bool
   | .const .. => false
   | _ => true
+
+/-- The zero checks that are not constants, in order: the zero ports'. -/
+def zeroNodes : List ℕ := c.zero.filter fun id => notConst (c.nodes.getD id default)
 
 /-- The number of zero ports before port `J`: the zero check port `J` carries. -/
 def zeroIndex (J : ℕ) : ℕ := ((c.circuit.ports.toList.take J).filter fun p => p.source == .zero).length
