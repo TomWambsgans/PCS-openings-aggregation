@@ -36,10 +36,28 @@ theorem compile_sound_zero {g : RecGraph.Graph} {rootsAt : List ℕ} {iv : List 
   - a padding port: zero.
 
   All of these are values of the expanded graph (`Graph.eval`, a transcription of `eval.rs`).
-- **`compile_sound_zero`** restates the zero ports against RecGraph's semantics (`RecGraph.evalNodes` over
-  Keccak-f[1600], branch `lean-rec-graph`). It assumes one named obligation, **`ExpandFaithful`**: the expanded graph,
-  evaluated, agrees at every node's image with RecGraph's value of the node. That covers `compile.rs`'s `expand`
-  (`Expand.lean`) together with this library's `eval.rs` transcription. Neither is proved.
+- **Against RecGraph's semantics** (`RecCircuit/SoundRG.lean`; `RecGraph.evalNodes` of the original graph over
+  Keccak-f[1600], branch `lean-rec-graph`):
+  - `compile_sound_statement`: the statement port carries the public input's words as RecGraph reads them;
+  - `compile_sound_root`: root `i`'s port carries the root word's limbs of RecGraph's `Word.stream` bytes;
+  - `compile_sound_element`: element `e`'s port carries RecGraph's value of any original node the expansion maps to
+    the calls' `e`-th element node;
+  - `compile_sound_zero_rg`: the `m`-th zero port carries RecGraph's value of the `m`-th non-constant zero check.
+
+  These rest on `agree` (`RecCircuit/Agree.lean`, proved): on an accepted circuit, every live node of the expanded
+  graph has the same value in this library's semantics and in RecGraph's (`step_corr`, node by node, including the
+  `UInt64` word folds `beWordAt`/`beWord` against `beNat`). They assume one named obligation, in RecGraph's semantics
+  only, **`ExpandSound`**: `compile.rs`'s `expand` (`Expand.lean`) keeps every live node's value. `compile_sound_zero`
+  (`Sound.lean`) is the earlier form, stated with the wider obligation `ExpandFaithful`, which `agree` and
+  `ExpandSound` imply.
+- **What `ExpandSound` would need.**
+  - Rebase `Expand.lean` on `RecGraph.RecState`, whose recorder is the Rust's `Sym`, so that RecGraph's
+    `add_val`, `mul_val`, `bits_val`, `new_val` and `RecInv` (hash-consing, constant folding, `x + 0`, `x · 1`,
+    `x + x`) give each replayed node's value. This needs three extra checks: node 0 is the seed, the original graph is
+    well typed, and every ring-weight map has `towerStages` entries.
+  - Prove that `weightAtM` on symbols simulates `Flock.towerWeightAt` on `E`.
+- **`call_inputs`** is not restated: π2's calls reconstruct π1's `PCS_OPEN` inputs with root words (REVIEW-REC M1),
+  word by word against the circuit's `CallWord`s, pairs included. That correspondence is still to be written.
 
 ## The layers
 
@@ -61,6 +79,8 @@ theorem compile_sound_zero {g : RecGraph.Graph} {rootsAt : List ℕ} {iv : List 
 | `Ports` | `ports_carry` |
 | `Piop` | `Circuit.toPiop`; `satisfied_of_piop`, `satisfied_of_flow`: RecPiop's relation gives `Satisfied` |
 | `Sound` | the end theorems |
+| `Agree` | `step_corr`, `agree`: this library's graph semantics is RecGraph's on every live expanded node |
+| `SoundRG` | the ports against `RecGraph.evalNodes`, given `ExpandSound` |
 
 ### What is generic and what is instantiated
 
@@ -100,8 +120,9 @@ LEAN_CIRCUIT_OUT=out cargo test --release -p leanvm_rec --test lean_circuit -- -
 
 ## Findings about `compile.rs`
 
-Neither finding occurs in π1-rec3's graph, and the Lean compiler rejects both. The Rust would compile each of them
-into an unsound circuit.
+Neither finding occurs in π1-rec3's graph, and the Lean compiler rejects both. The Rust compiled each of them into an
+unsound circuit. It now rejects them too (`compile.rs`, `tests/compile_rejects.rs`), as well as empty hashed reads.
+π1-rec3's circuit and `real_gas` are unchanged.
 
 1. **A never-hashed read shorter than 24 bytes.** `compile.rs` makes all three of its limbs free values. The graph
    gives a 16-byte read's `c2`, and an integer's `c1` and `c2`, the value 0; in the circuit they are unconstrained. A
