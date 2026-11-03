@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import RecGraph.Sim.FlockBase
 import RecGraph.Sim.Pure
+import RecGraph.Sim.Transcript
 
 /-!
 # Flock's pure parts, simulated: the Lagrange weights, the row weights, the known weights
@@ -9,7 +10,7 @@ import RecGraph.Sim.Pure
   `UniStatement`'s two pushed arrays (the suffix's reversed), through the products `prodSeq`;
 * `lagrangeInterpolate_ph` (`Sim.Pure`'s `dot_psim`);
 * `rowLowWeights_ph`: the skip's weights and their products with `eq(low, ·)` (`eqKernel_psim`), the nested loops
-  against `flatMap`;
+  against `flatMap` (the skip's point related by `Sim.Transcript`'s `OptRp`);
 * `knownWeights_ph`: the constant's bits, `α²`, `α³` (`pow_psim`), the two `eq` evaluations (`eqEval_psim`).
 -/
 
@@ -72,18 +73,6 @@ theorem lagrangeWeights_eq (count : ℕ) (x : E) :
   · exact prodSeq_congr fun k hk ↦ hd k (by omega)
   · rw [show count + 1 - 1 - (i + 1) = count - (i + 1) by omega]
     exact prodSeq_congr fun k hk ↦ hd _ (by omega)
-
-section Defs
-
-variable (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8)
-
-/-- **An optional node represents an optional element**: both absent, or both present and represented. -/
-def RpO (st : RecState) : Option Sym → Option E → Prop
-  | some a, some x => Rp π iv publicInput stream st a x
-  | none, none => True
-  | _, _ => False
-
-end Defs
 
 section Pure
 
@@ -246,7 +235,7 @@ theorem rowLowTail_ph {st : RecState} (hg : Good st) {skip : List Sym} {skipU : 
 
 /-- **`row_low_weights(z_skip, low)`**: the skip's Lagrange weights, and their products with `eq(low, ·)`. -/
 theorem rowLowWeights_ph {st : RecState} (hg : Good st) {zSkip : Option Sym} {zS : Option E}
-    (hz : RpO π iv publicInput stream st zSkip zS) {low : List Sym} {L : List E} (hl : RpL' st low L) :
+    (hz : OptRp π iv publicInput stream st zSkip zS) {low : List Sym} {L : List E} (hl : RpL' st low L) :
     PH (Pi1.rowLowWeights zSkip low) st (fun st' r ↦ RpL' st' r.1 (Flock.rowLowWeights zS L).1 ∧
       RpL' st' r.2 (Flock.rowLowWeights zS L).2) := by
   have hlen := hl.length
