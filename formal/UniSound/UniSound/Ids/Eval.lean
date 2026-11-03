@@ -2382,6 +2382,186 @@ theorem bc_facts (hLb : LbFits D.shape) (hold : HoldAll D Fl s c1 ch fd c2 t val
   linear_combination (-(inpOf D Fl s ch fd t vals).beta -
     (inpOf D Fl s ch fd t vals).weights.getD 2 0 * (inpOf D Fl s ch fd t vals).bytecodeFinalCount) * two
 
+/-- **A table's `Z_act(t)`** (F1b): the verifier's, from the count's bits, is `zActP`'s. -/
+theorem active_eval (hfit : CountsFit D.shape s.2) (o : ℕ) (ho : o < 6) :
+    (inpOf D Fl s ch fd t vals).active.getD o 0 =
+      (zActP ((List.range (D.shape.heights.getD o 0 + 1)).map fun j ↦ intBits (s.2.getD o 0) j 1)
+        (D.shape.heights.getD o 0)).eval t := by
+  have hh6 : D.shape.heights.length = 6 := D.valid.1
+  have hr6 : s.2.length = 6 := hfit.1
+  have hlen : o < ((countsOf D.shape s.2).zip D.shape.heights).length := by
+    simp [countsOf, hh6, hr6, ho]
+  show (((countsOf D.shape s.2).zip D.shape.heights).map fun p ↦
+    activeVanishingFromBits (inpOf D Fl s ch fd t vals).w p.1 p.2).getD o 0 = _
+  rw [List.getD_eq_getElem _ _ (by simpa using hlen), List.getElem_map, List.getElem_zip]
+  simp only [countsOf, List.getElem_map, List.getElem_zip]
+  rw [← List.getD_eq_getElem s.2 0, ← List.getD_eq_getElem D.shape.heights 0]
+  exact activeVanishing_eval _ _ t _ fun j hj ↦ w_getD D Fl s ch fd t vals j
+    (by have := height_lt_nDigits D o; omega)
+
+theorem pullP_evalE (tab : Table) (weights : Array E) (beta : E) (cols : ℕ → Polynomial E) :
+    (pullP tab weights beta cols).eval t = ((tab.flushes.pull.zip tab.flushes.push).map fun fl ↦
+      beta + tupleE fl.1 weights fun c ↦ (cols c).eval t).prod := by
+  unfold pullP
+  rw [eval_list_prod_of, List.map_map]
+  refine congrArg List.prod (List.map_congr_left fun fl _ ↦ ?_)
+  simp only [Function.comp_apply, Polynomial.eval_add, Polynomial.eval_C, tupleP_evalE]
+
+theorem pushP_evalE (tab : Table) (weights : Array E) (beta : E) (cols : ℕ → Polynomial E) :
+    (pushP tab weights beta cols).eval t = ((tab.flushes.pull.zip tab.flushes.push).map fun fl ↦
+      beta + tupleE fl.2 weights fun c ↦ (cols c).eval t).prod := by
+  unfold pushP
+  rw [eval_list_prod_of, List.map_map]
+  refine congrArg List.prod (List.map_congr_left fun fl _ ↦ ?_)
+  simp only [Function.comp_apply, Polynomial.eval_add, Polynomial.eval_C, tupleP_evalE]
+
+/-- **Each heap block's leaf identity at `t`.** -/
+theorem blockP_eval (hL : TablesLin) (hC : ChunksFit D.shape) (hLb : LbFits D.shape) (hH : HeapGood D.shape)
+    (hfit : CountsFit D.shape s.2) (hold : HoldAll D Fl s c1 ch fd c2 t vals) (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) :
+    (blockP D.shape c1 c2 (stackFor D c1 c2 .setup) s.2 (alphasOf ch) (betaOf ch) b i).eval t = 0 := by
+  have hb := (List.of_mem_zip hbi).1
+  have hbr := block_r_lt D.shape hH b hb
+  have hN := h_lt_nDigits D
+  have hR := ev_mixed D Fl s c1 ch fd c2 t vals hH b i hbi
+  unfold mixedOf at hR
+  have hrel := block_holds D Fl s c1 ch fd c2 t vals hold b i hbi
+  have hsub : ∀ (sizes : List ℕ) (X sc : E), (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)).terms =
+        [term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b) X] ++
+          quotientTerms (Column.leafQuotient i) sizes (inpOf D Fl s ch fd t vals).w sc →
+      ∀ tm ∈ qTerms (Column.leafQuotient i) (inpOf D Fl s ch fd t vals).w sizes 0 sc, tm ∈ (blockRel D.shape
+        (inpOf D Fl s ch fd t vals).active (inpOf D Fl s ch fd t vals).tp.1
+        (inpOf D Fl s ch fd t vals).memoryPull (inpOf D Fl s ch fd t vals).memoryPush
+        (inpOf D Fl s ch fd t vals).bytecodePull (inpOf D Fl s ch fd t vals).bytecodePush
+        (inpOf D Fl s ch fd t vals).w (b, i)).terms := by
+    intro sizes X sc h tm htm
+    rw [h, quotientTerms_eq]
+    exact List.mem_append_right _ htm
+  have hwq : ∀ d, Shape.leafDegree b = some d → ∀ c < (chunks (d + 1)).length,
+      (inpOf D Fl s ch fd t vals).w.getD ((chunks (d + 1)).getD c 0) 0 =
+        (digitP ((chunks (d + 1)).getD c 0)).eval t :=
+    fun d hd c hc ↦ w_getD D Fl s ch fd t vals _ (hC.2 b hb d hd _ (getD_mem' (d := 0) hc))
+  have hwr := w_getD D Fl s ch fd t vals b.r (by omega)
+  have hblk := hH.2.2.2.2.2 b hb
+  have hw : (inpOf D Fl s ch fd t vals).weights = eqKernel (alphasOf ch) := rfl
+  have hbeta : (inpOf D Fl s ch fd t vals).beta = betaOf ch := rfl
+  have hterms : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+      blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i) := rfl
+  unfold RelHolds at hrel
+  unfold blockP
+  dsimp only
+  rcases hlv : b.leaves with _ | _ | tt | _
+  · -- The memory's block.
+    have hd : Shape.leafDegree b = some (degree (2 * (2 ^ b.r - 1)) (2 ^ b.r)) := by
+      unfold Shape.leafDegree; rw [hlv]
+    have ht : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+        (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+        (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+        (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+        ⟨[term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b) (inpOf D Fl s ch fd t vals).memoryPull] ++
+          quotientTerms (Column.leafQuotient i) (chunks (degree (2 * (2 ^ b.r - 1)) (2 ^ b.r) + 1))
+            (inpOf D Fl s ch fd t vals).w ((inpOf D Fl s ch fd t vals).w.getD b.r 0),
+          (inpOf D Fl s ch fd t vals).memoryPush⟩ := by
+      unfold blockRel mixedOf; dsimp only; rw [hlv]
+    have hq := qTerms_val D.shape c2 (evOf D Fl s c1 ch fd c2 t vals) (inpOf D Fl s ch fd t vals).w t
+      (Column.leafQuotient i) _ ((inpOf D Fl s ch fd t vals).w.getD b.r 0)
+      (ev_leafQ D Fl s c1 ch fd c2 t vals hC b i hbi _ hd _ (hsub _ _ _ (by rw [ht])))
+      (hwq _ hd)
+    rw [ht] at hrel
+    simp only [quotientTerms_eq, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+      List.sum_cons, List.sum_nil, add_zero, term, hq] at hrel
+    obtain ⟨hmfc, hmpull⟩ := mem_facts D Fl s c1 ch fd c2 t vals hold
+    unfold mixedOf at hrel
+    rw [hR] at hrel
+    unfold RelInput.memoryPush at hrel
+    rw [hmfc, hmpull, hwr, hw, hbeta] at hrel
+    simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_one]
+    linear_combination hrel
+  · -- The bytecode's block.
+    have hd : Shape.leafDegree b = some (degree (2 * (2 ^ b.r - 1)) (2 ^ b.r)) := by
+      unfold Shape.leafDegree; rw [hlv]
+    have ht : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+        (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+        (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+        (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+        ⟨[term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b)
+            (inpOf D Fl s ch fd t vals).bytecodePull] ++
+          quotientTerms (Column.leafQuotient i) (chunks (degree (2 * (2 ^ b.r - 1)) (2 ^ b.r) + 1))
+            (inpOf D Fl s ch fd t vals).w ((inpOf D Fl s ch fd t vals).w.getD b.r 0),
+          (inpOf D Fl s ch fd t vals).bytecodePush⟩ := by
+      unfold blockRel mixedOf; dsimp only; rw [hlv]
+    have hq := qTerms_val D.shape c2 (evOf D Fl s c1 ch fd c2 t vals) (inpOf D Fl s ch fd t vals).w t
+      (Column.leafQuotient i) _ ((inpOf D Fl s ch fd t vals).w.getD b.r 0)
+      (ev_leafQ D Fl s c1 ch fd c2 t vals hC b i hbi _ hd _ (hsub _ _ _ (by rw [ht])))
+      (hwq _ hd)
+    rw [ht] at hrel
+    simp only [quotientTerms_eq, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+      List.sum_cons, List.sum_nil, add_zero, term, hq] at hrel
+    obtain ⟨hbfc, hbpull⟩ := bc_facts D Fl s c1 ch fd c2 t vals hLb hold
+    unfold mixedOf at hrel
+    rw [hR] at hrel
+    unfold RelInput.bytecodePush at hrel
+    rw [hbfc, hbpull, hwr, hw, hbeta] at hrel
+    simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_one]
+    linear_combination hrel
+  · -- A table's block.
+    have htt : tt < 6 ∧ b.r = D.shape.heights.getD tt 0 := by rw [hlv] at hblk; exact hblk
+    obtain ⟨-, -, hpull, hpush, hpd, hppd⟩ := part_spec D Fl s c1 ch fd c2 t vals hL hold tt htt.1
+    have hop := tables_opcode tt htt.1
+    have hd : Shape.leafDegree b = some (degree (max (tableDegrees (tables.getD tt default)).1
+        (tableDegrees (tables.getD tt default)).2 * (2 ^ b.r - 1) + (2 ^ b.r - Shape.leastRows b.r))
+        (2 ^ b.r)) := by
+      unfold Shape.leafDegree; rw [hlv]
+    have ht : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+        (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+        (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+        (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+        ⟨[term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b)
+            (((inpOf D Fl s ch fd t vals).tp.1.getD tt default).pull * (inpOf D Fl s ch fd t vals).w.getD b.r 0 +
+              (inpOf D Fl s ch fd t vals).active.getD tt 0 * (inpOf D Fl s ch fd t vals).active.getD tt 0)] ++
+          quotientTerms (Column.leafQuotient i) (chunks (degree (max (tableDegrees (tables.getD tt default)).1
+            (tableDegrees (tables.getD tt default)).2 * (2 ^ b.r - 1) + (2 ^ b.r - Shape.leastRows b.r))
+            (2 ^ b.r) + 1))
+            (inpOf D Fl s ch fd t vals).w
+            ((inpOf D Fl s ch fd t vals).w.getD b.r 0 * (inpOf D Fl s ch fd t vals).active.getD tt 0),
+          ((inpOf D Fl s ch fd t vals).tp.1.getD tt default).push * (inpOf D Fl s ch fd t vals).w.getD b.r 0 +
+            (inpOf D Fl s ch fd t vals).active.getD tt 0 * (inpOf D Fl s ch fd t vals).active.getD tt 0⟩ := by
+      unfold blockRel mixedOf; dsimp only; rw [hlv]; dsimp only; rw [hpd, hppd]
+    have hq := qTerms_val D.shape c2 (evOf D Fl s c1 ch fd c2 t vals) (inpOf D Fl s ch fd t vals).w t
+      (Column.leafQuotient i) _
+      ((inpOf D Fl s ch fd t vals).w.getD b.r 0 * (inpOf D Fl s ch fd t vals).active.getD tt 0)
+      (ev_leafQ D Fl s c1 ch fd c2 t vals hC b i hbi _ hd _ (hsub _ _ _ (by rw [ht])))
+      (hwq _ hd)
+    rw [ht] at hrel
+    simp only [quotientTerms_eq, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+      List.sum_cons, List.sum_nil, add_zero, term, hq] at hrel
+    unfold mixedOf at hrel
+    rw [hR, hpull, hpush, hwr, hw, hbeta, active_eval D Fl s ch fd t vals hfit tt htt.1, ← htt.2] at hrel
+    simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_pow, pullP_evalE, pushP_evalE, hop]
+    linear_combination hrel
+  · -- An unused block.
+    have ht : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+        (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+        (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+        (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+        ⟨[term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b) 1], 1⟩ := by
+      unfold blockRel mixedOf; dsimp only; rw [hlv]
+    rw [ht] at hrel
+    simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero, term, one_mul] at hrel
+    unfold mixedOf at hrel
+    rw [hR] at hrel
+    simp only [Polynomial.eval_add, Polynomial.eval_one]
+    exact hrel
+
 end Ctx
 
 end UniSound.Ids.Eval
