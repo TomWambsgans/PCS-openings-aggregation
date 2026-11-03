@@ -195,6 +195,9 @@ impl Spec {
 #[derive(Clone, Debug)]
 pub struct Reduced<S> {
     pub public: Vec<S>,
+    /// `transcript::pair_point` of every public scalar: the coordinates of π1-rec3's paired batch, which its calls
+    /// take (`CallWord::Pair`); a contract computes only those its calls read.
+    pub pair_points: Vec<[S; 2]>,
     pub roots: [[S; 2]; 2],
     pub witness: (Vec<S>, S),
     pub quotient: (Vec<S>, S),
@@ -559,7 +562,9 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
     }
     let witness_point = [&rhos[..], &w[r..m]].concat();
     let setup_point = [&w[..m], &[beta]].concat();
+    let pair_points = public.iter().map(|&x| leanvm_flock_gas::transcript::pair_point(x)).collect();
     Ok(Reduced {
+        pair_points,
         public,
         roots: [witness_root, quotient_root],
         witness: (witness_point, fold[0]),

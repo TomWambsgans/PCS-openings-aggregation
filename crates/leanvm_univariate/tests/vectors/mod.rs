@@ -12,7 +12,7 @@
 use leanvm_flock_gas::evm::codegen::{Ending, Entry, compile_deployable};
 use leanvm_flock_gas::evm::contract::{Deployed, deploy};
 use leanvm_univariate::contract::{NAME, Recorded, calls};
-use leanvm_univariate::{Blake2s, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, FLOCK_REC, FLOCK_REC2, Shape};
+use leanvm_univariate::{Blake2s, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, FLOCK_REC, FLOCK_REC2, FLOCK_REC3, Shape};
 
 /// The program's IV the vectors' contracts are built with (`leanvm_flock_gas::shapes::PROGRAM_IV`).
 pub use leanvm_flock_gas::shapes::PROGRAM_IV;
@@ -36,6 +36,7 @@ pub fn blake2s_of(config: &str) -> Blake2s {
         "main_line" => Blake2s::Flock(FLOCK_MAIN),
         "main_line_rec" => Blake2s::Flock(FLOCK_REC),
         "main_line_rec2" => Blake2s::Flock(FLOCK_REC2),
+        "main_line_rec3" => Blake2s::Flock(FLOCK_REC3),
         "leanvm_skip" => Blake2s::Flock(FLOCK_LEANVM_SKIP),
         "ext_b" => Blake2s::Flock(FLOCK_BIT_SLICE),
         other => panic!("no configuration {other}"),
@@ -48,6 +49,7 @@ pub fn name_of(blake2s: Blake2s) -> &'static str {
         Blake2s::Flock(v) if v == FLOCK_MAIN => "main_line",
         Blake2s::Flock(v) if v == FLOCK_REC => "main_line_rec",
         Blake2s::Flock(v) if v == FLOCK_REC2 => "main_line_rec2",
+        Blake2s::Flock(v) if v == FLOCK_REC3 => "main_line_rec3",
         Blake2s::Flock(v) if v == FLOCK_LEANVM_SKIP => "leanvm_skip",
         Blake2s::Flock(v) if v == FLOCK_BIT_SLICE => "ext_b",
         Blake2s::Flock(_) => "flock",

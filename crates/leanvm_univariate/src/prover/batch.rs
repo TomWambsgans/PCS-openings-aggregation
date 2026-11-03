@@ -35,6 +35,7 @@ fn pair_sums(w: &[F192], c: &[F192]) -> (F192Unreduced, F192Unreduced) {
 
 /// A stack and its weight, written out once folded past the rounds that read the words: the tables (the first
 /// `len` words of `w` and `c`), the buffers they fold into, and the next round's sums.
+#[derive(Clone)]
 struct Folded {
     w: Vec<F192>,
     c: Vec<F192>,
@@ -253,4 +254,174 @@ pub fn prove(
         None => None,
     };
     Ok((point, values, matrices))
+}
+
+/// `e ⊗ (1 + r, r)`: the eq table of one more bound variable.
+fn extend(e: &[F192], r: F192) -> Vec<F192> {
+    e.iter().map(|&x| x * (F192::ONE + r)).chain(e.iter().map(|&x| x * r)).collect()
+}
+
+/// A polynomial's product with another (monomial coefficients, low first).
+fn poly_mul(a: &[F192], b: &[F192]) -> Vec<F192> {
+    let mut out = vec![F192::ZERO; a.len() + b.len() - 1];
+    for (i, &x) in a.iter().enumerate() {
+        for (j, &y) in b.iter().enumerate() {
+            out[i + j] += x * y;
+        }
+    }
+    out
+}
+
+/// π1-rec3's batching sumcheck (`crates/leanvm_rec/SPEC-POINTS.md`, the verifier's `transcript::sumcheck_pairs_drawn`
+/// at degree 2, narrow challenges): as [`prove`] without the matrices' reduction, two variables a round. Pair `j`'s
+/// polynomial is `G(X) = G̃(y_0(X), y_1(X))`, `G̃(u_0, u_1)` the sum with its two variables free (degree 2 in each),
+/// `(y_0, y_1)` `V_2`'s coordinate functionals (`pair_point`): its stream holds `c_0, c_1, c_2, c_4 … c_8` (the claim
+/// gives `c_3`). `G̃` comes from four rounds on the state as [`prove`] has it: the round on `u_0` (with the claim, all of
+/// `h(u_0)`), and the round on `u_1` with `u_0` bound to `0`, `1` and `β_1` on clones, whose sums give `G̃(a, ·)` for
+/// those `a` (`h(a)` its sum): then `G̃`'s coefficients in `u_0` by interpolation (`β_1² + β_1 = 1`, no inversion). With
+/// `vars` odd the last variable is a plain round. Returns the point and each stack's value.
+pub fn prove_pairs(
+    writer: &mut KeccakWriter,
+    stacks: &[(&[F64], usize)],
+    weights: Vec<Weight>,
+    lambda: F192,
+    target: F192,
+) -> Result<(Vec<F192>, Vec<F192>), String> {
+    use leanvm_flock_gas::transcript::{cantor_beta1, pair_point};
+    let vars = stacks.iter().map(|&(_, v)| v).max().expect("stacks");
+    let shortest = stacks.iter().map(|&(_, v)| v).min().expect("stacks");
+    // The rounds that read the words end on a pair's boundary.
+    let base_rounds = BASE_ROUNDS.min(shortest - 1) & !1;
+    if stacks.iter().any(|&(_, v)| v % 2 == 1 && v != vars) {
+        return Err("a stack shorter than the batch ends inside a pair".into());
+    }
+    let scales: Vec<F192> = primitives::field::powers(lambda, stacks.len());
+    let beta1 = from_v(cantor_beta1());
+    let mut weights = weights;
+    let mut folded: Vec<Folded> = Vec::new();
+    let mut e = vec![F192::ONE];
+    let mut values = vec![F192::ZERO; stacks.len()];
+    let mut point = Vec::with_capacity(vars);
+    let mut claim = target;
+    // The combined sums `(c_0, c_2)` of the next variable, the state's, or its clone's with the low variable at `a`.
+    let sums = |weights: &[Weight], folded: &[Folded], e: &[F192], at: Option<F192>| -> (F192, F192) {
+        let (mut q0, mut q2) = (F192::ZERO, F192::ZERO);
+        for k in 0..stacks.len() {
+            let (a, b) = match (folded.is_empty(), at) {
+                (true, None) => weights[k].round(stacks[k].0, e),
+                (true, Some(x)) => {
+                    let mut w = weights[k].clone();
+                    w.fold(x);
+                    w.round(stacks[k].0, &extend(e, x))
+                }
+                (false, None) => folded[k].sums,
+                (false, Some(x)) => {
+                    let mut f = folded[k].clone();
+                    f.fold(x);
+                    f.sums
+                }
+            };
+            q0 += scales[k] * a;
+            q2 += scales[k] * b;
+        }
+        (q0, q2)
+    };
+    let mut round = 0;
+    while round + 2 <= vars {
+        if round == base_rounds {
+            folded = stacks
+                .iter()
+                .zip(&weights)
+                .map(|(&(words, v), weight)| {
+                    let len = 1 << (v - base_rounds);
+                    Folded::new(weight.dense(len), fold_stack(words, &e, len))
+                })
+                .collect();
+            weights = Vec::new();
+        }
+        // h(u_0) = Σ G̃(u_0, ·): c_0 and c_2 from the round, c_1 from the claim (h(0) + h(1) = claim).
+        let (a0, a2) = sums(&weights, &folded, &e, None);
+        let a1 = claim + a2;
+        let h = |x: F192| a0 + a1 * x + a2 * x * x;
+        // G̃(a, u_1) for a = 0, 1, β_1: (c_0, c_1, c_2) in u_1.
+        let at = [F192::ZERO, F192::ONE, beta1];
+        let g_at: Vec<[F192; 3]> = at
+            .iter()
+            .map(|&a| {
+                let (b0, b2) = sums(&weights, &folded, &e, Some(a));
+                [b0, h(a) + b2, b2]
+            })
+            .collect();
+        // G̃'s coefficient of u_1^j as a polynomial in u_0 of degree 2 through (0, v_0), (1, v_1), (β_1, v_b):
+        // g_0 = v_0, g_2 = (v_0 + v_b) + β_1 (v_0 + v_1) (as β_1² + β_1 = 1), g_1 = v_0 + v_1 + g_2.
+        let mut g = [[F192::ZERO; 3]; 3]; // g[i][j]: u_0^i u_1^j
+        for j in 0..3 {
+            let (v0, v1, vb) = (g_at[0][j], g_at[1][j], g_at[2][j]);
+            let g2 = (v0 + vb) + beta1 * (v0 + v1);
+            g[0][j] = v0;
+            g[1][j] = v0 + v1 + g2;
+            g[2][j] = g2;
+        }
+        // G(X) = Σ g_ij y_0(X)^i y_1(X)^j, y_1 = X + X², y_0 = X + β_1 y_1.
+        let y1 = [F192::ZERO, F192::ONE, F192::ONE];
+        let y0 = [F192::ZERO, F192::ONE + beta1, beta1];
+        let p0 = [vec![F192::ONE], y0.to_vec(), poly_mul(&y0, &y0)];
+        let p1 = [vec![F192::ONE], y1.to_vec(), poly_mul(&y1, &y1)];
+        let mut c = vec![F192::ZERO; 9];
+        for i in 0..3 {
+            for j in 0..3 {
+                for (d, &x) in poly_mul(&p0[i], &p1[j]).iter().enumerate() {
+                    c[d] += g[i][j] * x;
+                }
+            }
+        }
+        if c[3] + c[6] != claim {
+            return Err("a pair's polynomial does not sum to the claim over V_2".into());
+        }
+        for (d, &x) in c.iter().enumerate() {
+            if d != 3 {
+                writer.send(to_v(x));
+            }
+        }
+        let z = writer.sample_narrow();
+        let [u0, u1] = pair_point(z).map(from_v);
+        let zf = from_v(z);
+        claim = c.iter().rev().fold(F192::ZERO, |acc, &x| acc * zf + x);
+        for (offset, r) in [(1, u0), (2, u1)] {
+            point.push(r);
+            if folded.is_empty() {
+                for weight in &mut weights {
+                    weight.fold(r);
+                }
+                e = extend(&e, r);
+            } else {
+                for (k, f) in folded.iter_mut().enumerate() {
+                    f.fold(r);
+                    if round + offset == stacks[k].1 {
+                        values[k] = f.c[0];
+                    }
+                }
+            }
+        }
+        round += 2;
+    }
+    if round < vars {
+        // The last variable, a plain round (`transcript::sumcheck_drawn`'s, narrow).
+        assert!(!folded.is_empty(), "past the rounds that read the words");
+        let (q0, q2) = sums(&weights, &folded, &e, None);
+        writer.send(to_v(q0));
+        writer.send(to_v(q2));
+        let r = from_v(writer.sample_narrow());
+        point.push(r);
+        for (k, f) in folded.iter_mut().enumerate() {
+            f.fold(r);
+            if round + 1 == stacks[k].1 {
+                values[k] = f.c[0];
+            }
+        }
+    }
+    for &v in &values {
+        writer.send(to_v(v));
+    }
+    Ok((point, values))
 }

@@ -247,7 +247,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     // c⁸) of one challenge c, squared in E as the verifier squares it.
     let alphas: Vec<F192> = match config.blake2s.fs() {
         FsShape::Main => (0..4).map(|_| from_v(writer.sample())).collect(),
-        FsShape::Rec | FsShape::Rec2 => squares(writer.sample(), 4).into_iter().map(from_v).collect(),
+        FsShape::Rec | FsShape::Rec2 | FsShape::Rec3 => squares(writer.sample(), 4).into_iter().map(from_v).collect(),
     };
     let beta = from_v(writer.sample());
     let gamma = from_v(writer.sample());
@@ -536,9 +536,22 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
                     (&s.words[..], s.layout.vars)
                 })
                 .collect();
-            let narrow = config.blake2s.fs() == FsShape::Rec2;
-            let (point, values, matrices) =
-                super::batch::prove(&mut writer, &stacks, weights, lambda, pending.as_ref(), narrow)?;
+            let fs = config.blake2s.fs();
+            let narrow = matches!(fs, FsShape::Rec2 | FsShape::Rec3);
+            let (point, values, matrices) = if fs == FsShape::Rec3 {
+                // π1-rec3: the batch two variables a round (SPEC-POINTS.md), its claim the combined claims' values.
+                let target: F192 = combined
+                    .iter()
+                    .rev()
+                    .fold(F192::ZERO, |acc, (_, claim)| acc * lambda + from_v(claim.value));
+                if pending.is_some() {
+                    return Err("π1-rec3's paired batch has no matrices' reduction".into());
+                }
+                let (point, values) = super::batch::prove_pairs(&mut writer, &stacks, weights, lambda, target)?;
+                (point, values, None)
+            } else {
+                super::batch::prove(&mut writer, &stacks, weights, lambda, pending.as_ref(), narrow)?
+            };
             if let Some(claim) = matrices {
                 report.flock = Some(claim);
             }

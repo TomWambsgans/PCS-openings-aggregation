@@ -283,6 +283,32 @@ proof; transaction gas without the 21,000 base, `c = 0`. Each row is one commit.
 | **3b: `PCS_OPEN`'s inputs reuse the region** | 1,292 B | 31,103 | **51,727** | 58,014 (π1-rec) | π1-rec: 35,212 → 32,916 |
 | **3c: the zero checks' coset in closed form** | 1,292 B | 30,182 | **51,560** (floor) | 57,266 (π1-rec) | π1-rec: 32,916 → 32,174 |
 | **1c: π1-rec2's batch challenges narrow (160 bits)** | 1,292 B, 110 zero | 30,182 | **49,534** | | the real calldata; floor 48,380 |
+| **1d: π1-rec3, the batch two variables a round (SPEC-POINTS.md), narrow** | 980 B, 60 zero | 29,832 | **44,792** | | the real calldata; floor 37,400; EIP-7976 62,720 |
+
+**Lever 1d: π1-rec3, the paired batch** (the points agent's design, `SPEC-POINTS.md` §3, branch `leanvm-rec-points`
+merged; `FsShape::Rec3`, `FLOCK_REC3`; **π1's Fiat–Shamir shape changes**). The batching sumcheck takes two variables a
+round on `V_2`'s coordinate functionals: a pair's polynomial `G(X) = G̃(y_0(X), y_1(X))` of degree 8, its stream
+`c_0, c_1, c_2, c_4 … c_8` (`c_3 = claim + c_6`, as `V_2 = GF(4)`), one challenge `z_j` a pair, the point's
+coordinates `pair_point(z_j) = (z_j + β_1(z_j² + z_j), z_j² + z_j)`; 13 pairs and one plain round: 14 challenges, all
+narrow (lever 1c), for the claims' 27 coordinates.
+- **π1's prover** (`prover::batch::prove_pairs`): `G̃` from four rounds on the batch's state, the one on `u_0` (with the
+  claim it gives all of `h(u_0)`) and the one on `u_1` with `u_0` bound to `0`, `1`, `β_1` on clones (`Weight` and
+  `Folded` are `Clone` now); `G̃`'s coefficients in `u_0` by interpolation (`β_1² + β_1 = 1`: no inversion); `G` by
+  composition. Checked against the claim each pair (`c_3 + c_6`). The real proof: 5.93 s (from 4.84: the clones'
+  passes over the stacks in the first three pairs), 10.4 GB; the stream 7,024 → 8,272 B (13 × 6 more scalars); vector
+  `main_line_rec3.txt` (stream keccak `9a57d0d1487afe10…`).
+- **π2** (`circuit::compile::pair_coordinate`): a call word that is `y_0(z)` or `y_1(z)` of a challenge `z` becomes
+  `CallWord::Pair { element, coordinate }`, `z` the port (`spec::pair_word`; `public_from_calls` recovers
+  `z = y_0 + β_1 y_1` and checks both coordinates); π2's verifier computes `pair_point` of its public scalars
+  (`Reduced::pair_points`, dead unless a call reads them). The circuit: 15,927,120 positions (94.9% of `2^24`), 156
+  pairs (from 145: the blocks fall differently), 36 public terms (from 47), `Q` `2^27.91` as before.
+- **The contract**: π1's elements 30 → 17 (14 `z_j`, 3 values); the public side 3,746 → 2,425 gas; the 13 pairs'
+  derivations and their words in "identity and claims" (2,451 → 3,218), the indicators 6,204 → 6,916 (11 more pairs).
+  Execution 30,182 → 29,832. On the real calldata (980 B, 60 zero): EIP-7623 at `c = 0` **44,792** (standard binds; the
+  floor is 37,400); EIP-7976 62,720.
+- **Soundness** (`review/leanvm_rec_params.py`): a pair of degree 8 with a narrow challenge errs with probability
+  `8/2^160`; 13 pairs and the plain round, `λ` (192 bits): 153.3 bits alone, **129.0** after `C1`'s and `C2`'s lists.
+  π1-rec3's PIOP: 129.0 bits. The openings are the same six (126.4 by a plain union).
 
 **Lever 1c: narrow batch challenges** (`FsShape::Rec2`, `Channel::sample_narrow`, `transcript::NARROW_BITS`; **π1's
 Fiat–Shamir shape changes**). The batching sumcheck's 27 challenges, the claims' point `r` that the contract passes to

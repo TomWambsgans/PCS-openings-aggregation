@@ -148,6 +148,7 @@ pub fn variant_bytes(blake2s: Blake2s) -> Vec<u8> {
     };
     let mut out = match v.fs {
         FsShape::Rec2 => b"fs-rec2".to_vec(),
+        FsShape::Rec3 => b"fs-rec3".to_vec(),
         _ => b"fs-rec".to_vec(),
     };
     out.extend([v.skip as u8, slices]);

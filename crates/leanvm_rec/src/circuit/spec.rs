@@ -182,6 +182,15 @@ pub enum CallWord {
     Root(u32),
     /// An element, as `machine::element_word`: `c2, c1, c0` big-endian in bytes `8..32`.
     Element(u32),
+    /// Coordinate `coordinate` of `transcript::pair_point` of element `element` (π1-rec3's paired batch,
+    /// `SPEC-POINTS.md`: a pair's challenge `z` is the port, its two coordinates `y_0(z) = z + β_1 y_1(z)`,
+    /// `y_1(z) = z² + z` words of the calls), as an element's word.
+    Pair { element: u32, coordinate: u8 },
+}
+
+/// `CallWord::Pair`'s word: coordinate `k` of `pair_point(z)`.
+pub fn pair_word(z: E, k: u8) -> [u8; 32] {
+    element_word(leanvm_flock_gas::transcript::pair_point(z)[k as usize])
 }
 
 /// `π2`'s public inputs.
@@ -362,6 +371,7 @@ impl Circuit {
                         CallWord::Const(bytes) => bytes,
                         CallWord::Root(i) => public.roots[i as usize],
                         CallWord::Element(i) => element_word(public.elements[i as usize]),
+                        CallWord::Pair { element, coordinate } => pair_word(public.elements[element as usize], coordinate),
                     })
                     .collect()
             })
@@ -376,9 +386,11 @@ impl Circuit {
             _ => None,
         });
         let elements_len = self.calls.iter().flatten().filter_map(|w| match w {
-            CallWord::Element(i) => Some(*i as usize + 1),
+            CallWord::Element(i) | CallWord::Pair { element: i, .. } => Some(*i as usize + 1),
             _ => None,
         });
+        // A pair's coordinates as the calls give them, then its element `z = y_0 + β_1 y_1`.
+        let mut pair_coordinates: std::collections::BTreeMap<u32, [Option<E>; 2]> = Default::default();
         let mut roots: Vec<Option<[u8; 32]>> = vec![None; roots_len.max().unwrap_or(0)];
         let mut elements: Vec<Option<E>> = vec![None; elements_len.max().unwrap_or(0)];
         if inputs.len() != self.calls.len() {
@@ -407,7 +419,30 @@ impl Circuit {
                             _ => elements[i as usize] = Some(x),
                         }
                     }
+                    CallWord::Pair { element, coordinate } => {
+                        let l = word_limbs(bytes);
+                        if l[3] != 0 {
+                            return None;
+                        }
+                        let y = E::new(l[0], l[1], l[2]);
+                        let slot = &mut pair_coordinates.entry(element).or_default()[coordinate as usize];
+                        match slot {
+                            Some(v) if *v != y => return None,
+                            _ => *slot = Some(y),
+                        }
+                    }
                 }
+            }
+        }
+        for (element, [y0, y1]) in pair_coordinates {
+            let (y0, y1) = (y0?, y1?);
+            let z = y0 + leanvm_flock_gas::transcript::cantor_beta1() * y1;
+            if leanvm_flock_gas::transcript::pair_point(z) != [y0, y1] {
+                return None;
+            }
+            match elements[element as usize] {
+                Some(e) if e != z => return None,
+                _ => elements[element as usize] = Some(z),
             }
         }
         Some(PublicInputs {

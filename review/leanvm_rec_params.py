@@ -436,6 +436,11 @@ def points_report():
     print(f"  soundness: λ and the batch, over C1's and C2's lists ({CERTIFIED_L0[27]}^2): plain {bits(plain_err):.1f}"
           f" alone, {bits(plain_err * l12):.1f} after; pairs (degree 8 a pair) {bits(pairs_err):.1f} alone,"
           f" {bits(pairs_err * l12):.1f} after; the PIOP stays at t's 142.3")
+    # pi1-rec3 (SPEC-REC.md §12, as built on leanvm-rec-opt): the pairs' challenges and the last plain round's narrow,
+    # 160 bits (lever 1c): a pair of degree 8 errs with probability 8/2^160, the plain round 2/2^160; λ stays 192-bit.
+    narrow_err = (8 * (BATCH_VARS // 2) + 2 * (BATCH_VARS % 2)) / 2.0 ** 160 + 3 / q
+    print(f"  pi1-rec3, the pairs' challenges narrow (160 bits): λ and the batch {bits(narrow_err):.1f} alone,"
+          f" {bits(narrow_err * l12):.1f} after the union (pi1-rec3's weakest round; t 142.3)")
 
     print("  gas, EIP-7623 c = 0 without the base (B calldata bytes, X execution):")
     derive_pairs = (BATCH_VARS // 2) * DERIVE_PAIR_GAS

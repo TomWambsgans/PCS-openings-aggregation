@@ -528,6 +528,8 @@ fn differential(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 
                     assert_eq!(*elements.entry(e).or_insert(x), x, "{label}: element {e} repeated");
                 }
                 CallWord::Const(k) => assert_eq!(&k, chunk, "{label}: a constant word"),
+                // π1-rec3's paired coordinates (SPEC-POINTS.md): checked once their element is known, below.
+                CallWord::Pair { .. } => {}
                 CallWord::Root(_) => {}
             }
         }

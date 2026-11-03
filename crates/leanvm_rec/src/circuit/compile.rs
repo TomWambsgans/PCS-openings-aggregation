@@ -101,6 +101,32 @@ fn le_bits(bit: &dyn Fn(usize) -> Value, first: usize, nbytes: usize) -> Vec<(us
     (0..8 * nbytes).map(|e| (e, bit(8 * (first + e / 8) + e % 8))).collect()
 }
 
+/// A call word's node as π1-rec3's paired batch makes it (`transcript::pair_point`): `y_1(z) = z·z + z` or
+/// `y_0(z) = z + β_1 · y_1(z)` of a challenge `z`: `(z, the coordinate)`. Then `z` is the port, not the coordinate.
+fn pair_coordinate(g: &Graph, id: u32) -> Option<(u32, u8)> {
+    let node = |id: u32| g.nodes[id as usize];
+    let is_challenge = |z: u32| matches!(node(z), Node::Narrow(_) | Node::Low(_));
+    let y1_of = |id: u32| -> Option<u32> {
+        let Node::Add(a, b) = node(id) else { return None };
+        [(a, b), (b, a)].into_iter().find_map(|(square, z)| match node(square) {
+            Node::Mul(x, y) if x == z && y == z && is_challenge(z) => Some(z),
+            _ => None,
+        })
+    };
+    if let Some(z) = y1_of(id) {
+        return Some((z, 1));
+    }
+    let beta1 = leanvm_flock_gas::transcript::cantor_beta1();
+    let Node::Add(a, b) = node(id) else { return None };
+    [(a, b), (b, a)].into_iter().find_map(|(z, product)| {
+        let Node::Mul(c, y) = node(product) else { return None };
+        [(c, y), (y, c)].into_iter().find_map(|(c, y)| match node(c) {
+            Node::Const(limbs) if E::new(limbs[0], limbs[1], limbs[2]) == beta1 && y1_of(y) == Some(z) => Some((z, 0)),
+            _ => None,
+        })
+    })
+}
+
 /// `π2`'s two layouts (SPEC-REC.md §2.4, §2.6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
@@ -442,8 +468,17 @@ pub fn compile<P: Permutation>(
                 Word::Const(bytes) if k == 0 => CallWord::Const(root_word(&bytes)),
                 Word::Const(bytes) => CallWord::Const(bytes),
                 Word::Stream(at) => CallWord::Root(root_of[&at]),
-                Word::Node(id) => match g.nodes[id as usize] {
-                    Node::Const([c0, c1, c2]) => CallWord::Const(super::spec::element_word(E::new(c0, c1, c2))),
+                Word::Node(id) => match (g.nodes[id as usize], pair_coordinate(&g, id)) {
+                    (Node::Const([c0, c1, c2]), _) => CallWord::Const(super::spec::element_word(E::new(c0, c1, c2))),
+                    // π1-rec3: a pair's coordinate, its challenge the port (SPEC-POINTS.md).
+                    (_, Some((z, coordinate))) => {
+                        let next = element_nodes.len() as u32;
+                        let element = *element_of.entry(z).or_insert_with(|| {
+                            element_nodes.push(z);
+                            next
+                        });
+                        CallWord::Pair { element, coordinate }
+                    }
                     _ => {
                         let next = element_nodes.len() as u32;
                         let e = *element_of.entry(id).or_insert_with(|| {

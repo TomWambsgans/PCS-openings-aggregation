@@ -259,6 +259,12 @@ fn pi1_rec2_d16v() {
     deep(|| run("main_line_rec2", Layout::D16v, 24, (0.80, 0.99)));
 }
 
+/// π1-rec3 (SPEC-REC.md §12, SPEC-POINTS.md): π1-rec2 with the batch two variables a round: still `2^24`.
+#[test]
+fn pi1_rec3_d16v() {
+    deep(|| run("main_line_rec3", Layout::D16v, 24, (0.80, 0.99)));
+}
+
 #[test]
 fn pi1_rec_d32v() {
     deep(|| run("main_line_rec", Layout::D32v, 23, (0.60, 0.75)));

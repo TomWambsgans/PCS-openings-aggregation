@@ -16,7 +16,7 @@ use leanvm_flock_gas::layout::{
 use leanvm_flock_gas::matrices::MatrixClaim;
 use leanvm_flock_gas::multilinear::{eq_kernel, log2_ceil};
 use leanvm_flock_gas::scalar::{Scalar, enter};
-use leanvm_flock_gas::transcript::{Channel, FsShape, sumcheck_drawn};
+use leanvm_flock_gas::transcript::{Channel, FsShape, sumcheck_drawn, sumcheck_pairs_drawn};
 use leanvm_flock_gas::VerifierError;
 
 use crate::claims::{COMMITMENTS, Column, Combined, Commitment, Relations, Term, term};
@@ -343,6 +343,15 @@ pub const FLOCK_REC2: Variant = Variant {
     skip: 3,
     slices: Slices::TowerWalk,
     fs: FsShape::Rec2,
+};
+
+/// **π1-rec3** (SPEC-REC.md §12, `SPEC-POINTS.md`): π1-rec2 with the batching sumcheck two variables a round
+/// (`transcript::sumcheck_pairs_drawn`, `FsShape::Rec3`): 13 pairs, each of one narrow challenge `z_j` whose
+/// `pair_point` is two of the point's coordinates, then one plain round: 14 challenges for the claims' 27 coordinates.
+pub const FLOCK_REC3: Variant = Variant {
+    skip: 3,
+    slices: Slices::TowerWalk,
+    fs: FsShape::Rec3,
 };
 
 /// The twist field of the term that stands for the whole ring-switch weight `Φ(eq(p, ·))` on the main line: the
@@ -783,7 +792,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
         Claims::Point => {
             let (openings, deferred) = batch(
                 channel,
-                blake2s.fs() == FsShape::Rec2,
+                blake2s.fs(),
                 &combined,
                 &layouts,
                 bit_slice,
@@ -951,7 +960,7 @@ fn weight_at<S: Scalar>(
 /// first ones: after the stacks' values the prover sends `a = Â0`, `b = B̂0` at the point, and the terminal checks both.
 fn batch<S: Scalar + PartialEq, C: Channel<S>>(
     channel: &mut C,
-    narrow: bool,
+    fs: FsShape,
     combined: &[(Commitment, Combined<S>)],
     layouts: &[(Commitment, StackLayout)],
     bit_slice: Option<Combined<S>>,
@@ -971,8 +980,16 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
         assert!(pending.rounds() <= vars);
         target += scale * pending.claim;
     }
-    // π1-rec2 (`FsShape::Rec2`): the rounds' challenges narrow, 160 bits.
-    let (r, last) = sumcheck_drawn(channel, target, 3, &vec![None; vars], narrow)?;
+    // π1-rec2 (`FsShape::Rec2`): the rounds' challenges narrow, 160 bits; π1-rec3 (`FsShape::Rec3`): narrow and two
+    // variables a round (`SPEC-POINTS.md`).
+    let (r, last) = match fs {
+        FsShape::Rec3 => {
+            assert!(pending.is_none(), "π1-rec3's paired batch has no matrices' reduction");
+            let (r, _, last) = sumcheck_pairs_drawn(channel, target, 2, vars, true)?;
+            (r, last)
+        }
+        _ => sumcheck_drawn(channel, target, 3, &vec![None; vars], fs == FsShape::Rec2)?,
+    };
     let values = channel.next_scalars(combined.len())?;
     let matrices = match pending {
         Some(_) => Some((channel.next_scalar()?, channel.next_scalar()?)),

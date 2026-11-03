@@ -74,6 +74,10 @@ pub enum FsShape {
     /// [`NARROW_BITS`] bits ([`Channel::sample_narrow`]): the claims' point, which the recursion's contract carries in
     /// calldata, has four zero bytes a coordinate.
     Rec2,
+    /// `π1-rec3`'s (SPEC-REC.md §12, `SPEC-POINTS.md`): [`FsShape::Rec2`] with the batching sumcheck two variables a
+    /// round ([`sumcheck_pairs_drawn`]): one narrow challenge `z_j` a pair, the point's two coordinates
+    /// [`pair_point`]`(z_j)`, so 14 challenges for 27 coordinates.
+    Rec3,
 }
 
 /// The bits of a narrow challenge: its top limb's low 32 (`c2 < 2^32`). Soundness: a sumcheck round of degree 2 errs
@@ -91,8 +95,8 @@ impl FsShape {
     pub fn draw<S: Scalar, C: Channel<S> + ?Sized>(self, channel: &mut C, count: usize) -> Vec<S> {
         match self {
             FsShape::Main => channel.samples(count),
-            FsShape::Rec | FsShape::Rec2 if count == 0 => Vec::new(),
-            FsShape::Rec | FsShape::Rec2 => squares(channel.sample(), count),
+            FsShape::Rec | FsShape::Rec2 | FsShape::Rec3 if count == 0 => Vec::new(),
+            FsShape::Rec | FsShape::Rec2 | FsShape::Rec3 => squares(channel.sample(), count),
         }
     }
 }
@@ -386,23 +390,42 @@ fn pair_round_poly<S: Scalar>(transcript: &mut impl Channel<S>, degree: usize, c
 /// odd, the last variable is an ordinary round ([`sumcheck`]'s). Returns the point and the last claim.
 pub fn sumcheck_pairs<S: Scalar>(
     transcript: &mut impl Channel<S>,
-    mut claim: S,
+    claim: S,
     degree: usize,
     vars: usize,
 ) -> Result<(Vec<S>, S), VerifierError> {
+    sumcheck_pairs_drawn(transcript, claim, degree, vars, false).map(|(point, _, end)| (point, end))
+}
+
+/// [`sumcheck_pairs`], its challenges narrow ([`Channel::sample_narrow`]) when `narrow` (π1-rec3, `FsShape::Rec3`):
+/// returns the point, the challenges (a pair's `z_j`, then the last plain round's), and the last claim.
+pub fn sumcheck_pairs_drawn<S: Scalar>(
+    transcript: &mut impl Channel<S>,
+    mut claim: S,
+    degree: usize,
+    vars: usize,
+    narrow: bool,
+) -> Result<(Vec<S>, Vec<S>, S), VerifierError> {
     let mut point = Vec::with_capacity(vars);
+    let mut challenges = Vec::with_capacity(vars.div_ceil(2));
     for _ in 0..vars / 2 {
         let message = pair_round_poly(transcript, degree, claim)?;
-        let z = transcript.sample();
+        let z = if narrow {
+            transcript.sample_narrow()
+        } else {
+            transcript.sample()
+        };
         point.extend(pair_point(z));
+        challenges.push(z);
         claim = poly_eval(&message, z);
     }
     if vars % 2 == 1 {
-        let (last, end) = sumcheck(transcript, claim, degree + 1, &[None])?;
+        let (last, end) = sumcheck_drawn(transcript, claim, degree + 1, &[None], narrow)?;
+        challenges.extend(&last);
         point.extend(last);
         claim = end;
     }
-    Ok((point, claim))
+    Ok((point, challenges, claim))
 }
 
 /// The bytes of a scalar in calldata: 24 bytes, big-endian.

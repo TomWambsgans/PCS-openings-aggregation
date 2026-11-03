@@ -889,13 +889,18 @@ in `PI2.md` §9.
    The batching sumcheck's challenges are the hash's low 160 bits, so the claims' 27 coordinates have four zero bytes
    each in calldata. 130.0 bits after the lists (`review/leanvm_rec_params.py`). The vector regenerated. On the real
    calldata (110 zero bytes): EIP-7623 `c = 0` 51,560 → **49,534** (the standard price binds; the floor is 48,380).
+8. **π1-rec3: the batch two variables a round** (**π1's Fiat–Shamir shape changes**: `FLOCK_REC3`, `FsShape::Rec3`;
+   the design is `SPEC-POINTS.md`'s, branch `leanvm-rec-points` merged). 14 narrow challenges for the 27 coordinates;
+   π2's ports bind the 14 challenges and the contract derives the coordinates (`CallWord::Pair`). 129.0 bits after the
+   lists. On the real calldata (980 B, 60 zero): EIP-7623 `c = 0` 49,534 → **44,792**; EIP-7976 82,688 → 62,720.
 
 ### Where it stands (measured on h1, the real 1,000-signature proof, `c = 0`, no base)
 
 | | calldata | execution | EIP-7623 | EIP-7976 | claims / calls | π2's positions |
 |---|---:|---:|---:|---:|---:|---|
 | D16v × π1-rec, before (9d1bf46) | 1,844 B | 39,674 | 73,550 | 118,016 | 9 / 8 | 14.37M of `2^24` |
-| **D16v × π1-rec2, now** (f7a0b28) | 1,292 B (110 zero) | 30,182 | **49,534** | 82,688 | 7 / 6 | 15.88M of `2^24` (94.6%) |
+| D16v × π1-rec2 (f7a0b28) | 1,292 B (110 zero) | 30,182 | 49,534 | 82,688 | 7 / 6 | 15.88M of `2^24` (94.6%) |
+| **D16v × π1-rec3, now** (§12 item 8) | 980 B (60 zero) | 29,832 | **44,792** | 62,720 | 7 / 6 | 15.93M of `2^24` (94.9%) |
 
 The calldata: the selector 4, the public input 32, π1's roots 64, π1's claims 720 (27 narrow coordinates and 3 values),
 π2's roots 64, π2's 17 values 408. EIP-7623's standard price binds (`16 · 1,182 + 4 · 110 + 30,182`); its floor is

@@ -113,6 +113,7 @@ fn gas(name: &str, layout: Layout) {
 #[ignore]
 fn real_gas() {
     deep(|| {
+        gas("main_line_rec3", Layout::D16v);
         gas("main_line_rec2", Layout::D16v);
         gas("main_line_rec", Layout::D16v);
         gas("main_line_rec", Layout::D32v);

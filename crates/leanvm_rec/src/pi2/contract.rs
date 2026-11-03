@@ -236,6 +236,9 @@ fn call_words<T: Copy, W: Clone>(
                     CallWord::Const(bytes) => constant(bytes),
                     CallWord::Root(i) => stream(roots_at[i as usize]),
                     CallWord::Element(i) => scalar(reduced.public[elements[i as usize]]),
+                    CallWord::Pair { element, coordinate } => {
+                        scalar(reduced.pair_points[elements[element as usize]][coordinate as usize])
+                    }
                 })
                 .collect()
         })

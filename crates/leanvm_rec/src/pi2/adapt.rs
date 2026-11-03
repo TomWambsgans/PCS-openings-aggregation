@@ -67,7 +67,7 @@ pub fn public_counts(c: &spec::Circuit) -> (usize, usize) {
     for w in c.calls.iter().flatten() {
         match *w {
             spec::CallWord::Root(i) => see(Some(i), None),
-            spec::CallWord::Element(i) => see(None, Some(i)),
+            spec::CallWord::Element(i) | spec::CallWord::Pair { element: i, .. } => see(None, Some(i)),
             spec::CallWord::Const(_) => {}
         }
     }

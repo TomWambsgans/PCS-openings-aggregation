@@ -345,6 +345,8 @@ fn review_fs_circuit_is_the_graph_on_a_random_stream() {
             match *w {
                 CallWord::Root(i) => assert!(roots.contains(&i), "root {i} of a call is a port's"),
                 CallWord::Element(i) => assert!(elements.contains(&i), "element {i} of a call is a port's"),
+                // π1-rec3's paired coordinates (SPEC-POINTS.md): their challenge is the port.
+                CallWord::Pair { element: i, .. } => assert!(elements.contains(&i), "element {i} of a call is a port's"),
                 CallWord::Const(_) => {}
             }
         }
