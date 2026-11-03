@@ -238,20 +238,32 @@ def zcRounds : List E → E → Array E → Array E → Array E → WrM m ZcOut
     let out ← zcRounds rest claim' (foldE a x) (foldE b x) (foldE c x)
     return ⟨x :: out.chi, out.running, out.va, out.vb⟩
 
+/-- **The skip's start** (with `k > 0`, `k` skip variables): the tables folded at `z`
+(`L_x(z) = lagrangeWeights (2^k) z`) and the verifier's claim, the interpolation at `z` of `2^k` zeros and the
+coset values. -/
+def startAt (k : ℕ) (coset : List E) (z : E) (wit : Wit) : ZcStart :=
+  let lw := lagrangeWeights (2 ^ k) z
+  ⟨some z, lagrangeInterpolate (2 ^ (k + 1)) (List.replicate (2 ^ k) 0 ++ coset) z, skipFold k lw wit.a,
+    skipFold k lw wit.b, skipFold k lw wit.c⟩
+
+/-- Without a skip: the tables themselves, the claim `0`. -/
+def startNone (wit : Wit) : ZcStart := ⟨none, 0, wit.a, wit.b, wit.c⟩
+
+/-- **The skip** (`zerocheck`'s second step): with `k > 0`, the coset values sent, `z` drawn. -/
+def skipW (k : ℕ) (r : List E) (wit : Wit) : WrM m ZcStart :=
+  if k > 0 then do
+    let coset := cosetValues k r wit
+    sendScalars coset
+    let z ← sampleW H
+    return startAt k coset z wit
+  else pure (startNone wit)
+
 /-- **The zerocheck** (`zerocheck`'s order): the sampled coordinates; with a skip, the coset values and `z`; the
 rounds; `v_a`, `v_b`. Returns what the verifier's `zerocheck` returns. -/
 def zerocheckW (logN k : ℕ) (wit : Wit) : WrM m (Option E × List E × E × E × E) := do
   let sampled ← samplesW H (logN - k - nFixed)
-  let r := fixedChallenges ++ sampled
-  let st : ZcStart ← if k > 0 then do
-      let coset := cosetValues k r wit
-      sendScalars coset
-      let z ← sampleW H
-      let lw := lagrangeWeights (2 ^ k) z
-      pure ⟨some z, lagrangeInterpolate (2 ^ (k + 1)) (List.replicate (2 ^ k) 0 ++ coset) z,
-        skipFold k lw wit.a, skipFold k lw wit.b, skipFold k lw wit.c⟩
-    else pure ⟨none, 0, wit.a, wit.b, wit.c⟩
-  let zc ← zcRounds H r st.claim st.a st.b st.c
+  let st ← skipW H k (fixedChallenges ++ sampled) wit
+  let zc ← zcRounds H (fixedChallenges ++ sampled) st.claim st.a st.b st.c
   sendScalar zc.va
   sendScalar zc.vb
   return (st.zSkip, zc.chi, zc.va, zc.vb, zc.running + zc.va * zc.vb)
@@ -269,32 +281,59 @@ def lcRounds : ℕ → E → Array E → Array E → WrM m LcOut
     let out ← lcRounds n claim' (foldHigh w x) (foldHigh z x)
     return ⟨x :: out.challenges, out.claim, out.z⟩
 
-/-- **Flock's front** (`front`'s order): the zerocheck, the point's split, `α`, the lincheck, the slices (sent
-unless `Slices.claim`). Returns the verifier's `Front` and the true slices. -/
-def frontW (logN : ℕ) (variant : Variant) (q : Array K) : WrM m (Front × List E) := do
+/-- The slices sent, unless `Slices.claim`. -/
+def sendSlices (variant : Variant) (s : List E) : WrM m Unit :=
+  if variant.slices = .claim then pure () else sendScalars s
+
+end With
+
+/-- The lincheck's claim `v_a + α v_b + α² v_c + α³` from the zerocheck's output. -/
+def lcClaim (zc : Option E × List E × E × E × E) (alpha : E) : E :=
+  zc.2.2.1 + alpha * zc.2.2.2.1 + epow alpha 2 * zc.2.2.2.2 + epow alpha 3
+
+/-- The lincheck's weights at the zerocheck's point (`front`'s split: `row_low`, `chi_in`). -/
+def lcWeightsOf (k : ℕ) (zc : Option E × List E × E × E × E) (alpha : E) : Array E :=
+  lincheckWeights (rowWeightsOf (rowLowWeights zc.1 (zc.2.1.take (packing - k))).2
+    ((zc.2.1.drop (packing - k)).take lincheckRounds)) alpha
+
+/-- The lincheck's witness at the zerocheck's instance coordinates (`chi_rest`). -/
+def lcWitnessOf (k : ℕ) (q : Array K) (zc : Option E × List E × E × E × E) : Array E :=
+  lincheckWitness q ((zc.2.1.drop (packing - k)).drop lincheckRounds)
+
+/-- **The front** from the zerocheck's output, `α` and the lincheck's: the verifier's `Front` (the point's split
+as `front` makes it, `chi_in' = rounds.reverse`, the slices unless `Slices.claim`) and the true slices. -/
+def frontOf (variant : Variant) (zc : Option E × List E × E × E × E) (alpha : E) (lc : LcOut) : Front × List E :=
   let k := variant.skip
-  let zc ← zerocheckW H logN k (witOf logN q)
   let chi := zc.2.1
-  let rowLow := chi.take (packing - k)
-  let rest := chi.drop (packing - k)
-  let chiIn := rest.take lincheckRounds
-  let chiRest := rest.drop lincheckRounds
-  let alpha ← sampleW H
-  let claim := zc.2.2.1 + alpha * zc.2.2.2.1 + epow alpha 2 * zc.2.2.2.2 + epow alpha 3
-  let weights := lincheckWeights (rowWeightsOf (rowLowWeights zc.1 rowLow).2 chiIn) alpha
-  let lc ← lcRounds H lincheckRounds claim weights (lincheckWitness q chiRest)
   let chiInPrime := lc.challenges.reverse
-  let s := lc.z.toList
-  let slices : Option (List E) ← if variant.slices = .claim then pure none else do
-      sendScalars s
-      pure (some s)
-  return (⟨zc.1, chi, rowLow, chiIn, chiInPrime, alpha, lc.claim, slices, chiInPrime ++ chiRest⟩, s)
+  (⟨zc.1, chi, chi.take (packing - k), (chi.drop (packing - k)).take lincheckRounds, chiInPrime, alpha, lc.claim,
+      if variant.slices = .claim then none else some lc.z.toList,
+      chiInPrime ++ (chi.drop (packing - k)).drop lincheckRounds⟩, lc.z.toList)
+
+section With
+
+variable {m : Type → Type} [Monad m] (H : List UInt8 → m Digest)
+
+/-- **Flock's front** (`front`'s order): the zerocheck, `α`, the lincheck, the slices (sent unless
+`Slices.claim`). Returns the verifier's `Front` and the true slices. -/
+def frontW (logN : ℕ) (variant : Variant) (q : Array K) : WrM m (Front × List E) := do
+  let zc ← zerocheckW H logN variant.skip (witOf logN q)
+  let alpha ← sampleW H
+  let lc ← lcRounds H lincheckRounds (lcClaim zc alpha) (lcWeightsOf variant.skip zc alpha)
+    (lcWitnessOf variant.skip q zc)
+  sendSlices variant lc.z.toList
+  return frontOf variant zc alpha lc
 
 /-- **The ring switch's end** (`ring_end`): the map's 6 challenges, the target as the verifier computes it. -/
 def ringEndW (variant : Variant) (s : List E) : WrM m End := do
   let map ← samplesW H ringMapShifts.length
   return .ring map (if variant.slices = .tower then towerTarget s map
     else polyEval (s.map fun value ↦ ringMap value map) gen)
+
+/-- The end: the ring switch's with the slices sent; without them a placeholder (no ring switch). -/
+def endW (variant : Variant) : Option (List E) → WrM m End
+  | some s => ringEndW H variant s
+  | none => pure (.combination [] 0)
 
 end With
 
@@ -314,9 +353,7 @@ variable {m : Type → Type} [Monad m] (H : List UInt8 → m Digest)
 slices sent), what is left. -/
 def flockProve : FlockProver m := fun logN variant q ↦ do
   let frs ← frontW H logN variant q
-  let end_ ← match frs.1.slices with
-    | some s => ringEndW H variant s
-    | none => pure (.combination [] 0)
+  let end_ ← endW H variant frs.1.slices
   return assemble frs.1 frs.2 end_
 
 end With
