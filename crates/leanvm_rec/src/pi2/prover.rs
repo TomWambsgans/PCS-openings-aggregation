@@ -53,9 +53,26 @@ pub fn quotient_chunks(log_n: usize) -> Vec<(usize, usize)> {
     chunks
 }
 
+/// The certified rate-1/2 query ladders (`review/whir_params.py --large`, leanerVM's `largeQueries`), by stack size:
+/// what `pcs::whir::config_for_rate(log_n, 1)` must give for the stacks π2 commits (tested).
+pub const CERTIFIED_QUERIES: [(usize, &[usize]); 5] = [
+    (24, &[224, 56, 32, 23, 17]),
+    (25, &[224, 56, 32, 23, 17]),
+    (26, &[224, 56, 32, 23, 18]),
+    (27, &[225, 56, 32, 23, 18]),
+    (28, &[225, 56, 32, 23, 18, 14]),
+];
+
+/// The smallest stack leanerVM's certified parameters cover (`review/whir_params.py --large`): circuits of
+/// `2^CERTIFIED_FROM` positions or more commit no smaller stack (D32v's `W`, `2^23` words, takes a `2^24` stack, half
+/// its lanes absent); smaller circuits, the tests', take [`MIN_LOG_STACK`].
+pub const MIN_CERTIFIED_STACK: usize = 24;
+pub const CERTIFIED_FROM: usize = 20;
+
 pub fn layouts(log_n: usize) -> Layouts {
     let (m, n) = (log_n, 1usize << log_n);
-    let stack = |vars: usize| vars.max(MIN_LOG_STACK);
+    let least = if m >= CERTIFIED_FROM { MIN_CERTIFIED_STACK } else { MIN_LOG_STACK };
+    let stack = |vars: usize| vars.max(least);
     Layouts {
         witness: Layout::new(m, m, stack(m), &[(0, n)]),
         quotient: Layout::new(m + 5, m, stack(m + 4), &quotient_chunks(m)),
@@ -622,4 +639,24 @@ pub fn claims_hold(proved: &Proved, setup: &Setup) -> [bool; 4] {
         holds(&proved.quotient.0, &r.sum),
         holds(&setup.table, &r.setup),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// π2's stacks are committed and opened at the certified rate-1/2 parameters: `W` (`2^m`), `Q` (`2^(m+4)`), the
+    /// setup (`2^(m+1)`), for D16v (`m = 24`) and D32v (`m = 23`), all within `2^24 … 2^28`.
+    #[test]
+    fn stacks_take_the_certified_queries() {
+        assert_eq!(opening::LOG_INV_RATE, 1);
+        for m in [23, 24] {
+            let l = layouts(m);
+            for layout in [&l.witness, &l.quotient, &l.setup] {
+                let config = pcs::whir::config_for_rate(layout.log_n, opening::LOG_INV_RATE).expect("a WHIR shape");
+                let certified = CERTIFIED_QUERIES.iter().find(|(n, _)| *n == layout.log_n).map(|(_, q)| *q);
+                assert_eq!(Some(&config.queries[..]), certified, "2^{} words", layout.log_n);
+            }
+        }
+    }
 }
