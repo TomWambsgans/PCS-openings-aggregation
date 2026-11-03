@@ -11,6 +11,7 @@ import RecCompose.CompleteCouplings
 import RecCompose.RunShape
 import RecCompose.OpeningsAgree
 import RecCompose.RunOpenings
+import RecGraph.Sim.End
 
 /-!
 # The end theorems
@@ -105,6 +106,27 @@ theorem recCompleteness_end (D : RecDeployment) (hD : D.Real) (P1 : Pi1Prover D)
   recCompleteness_of_part1 h2 (completenessAgree D P1 P2) (completenessPi1Coupling D hD.2.2.1 pi1RunShape P1 P2)
     δ1 δh
 
+/-! ## With `Pi1GraphIsVerifier` proved (`RecGraph.Pi1.pi1GraphIsVerifier`, `lean-rec-graph` 614fbe0) -/
+
+/-- **The recursive verifier is knowledge sound end to end, the graph being π1-rec3's verifier off the hazard proved**:
+for every `ε1`, `εh`, under the Fiat–Shamir heuristic for Keccak-f[1600] (`Pi1FsKeccak ε1`, `Pi1HazardKeccak εh`) only,
+the explicit extractor `recExtractor` fails while the contract accepts with probability at most
+`pi2Bound Q + ε1 Q + εh Q`. -/
+theorem recKnowledgeSoundness_end_fs (D : RecDeployment) (hD : D.Real) (L : Pi2Layers D pi2Bound)
+    (ε1 εh : ℕ → ℝ≥0∞) (h1 : Pi1FsKeccak D ε1) (hh : Pi1HazardKeccak D εh) :
+    RecKnowledgeSoundnessWith D (recExtractor D) fun Q ↦ pi2Bound Q + ε1 Q + εh Q :=
+  recKnowledgeSoundness_end D hD L ε1 εh RecGraph.Pi1.pi1GraphIsVerifier h1 hh
+
+/-- **The recursive verifier is complete end to end, the graph being π1-rec3's verifier off the hazard proved**: for
+every `δ1`, `δh`, under π1-rec3's completeness at Keccak-f[1600] (`Pi1CompletenessKeccak δ1`) and the honest proofs'
+hazard (`Pi1HazardKeccakHonest δh`) only, the composed prover's proof is rejected with probability at most
+`δ1 + δh + δ2`. -/
+theorem recCompleteness_end_fs (D : RecDeployment) (hD : D.Real) (P1 : Pi1Prover D) (P2 : Pi2Prover) (δ2 : ℝ≥0∞)
+    (h2 : RecCompleteness2 D P1 P2 δ2) (δ1 δh : ℝ≥0∞) (h1 : Pi1CompletenessKeccak D P1 δ1)
+    (hh : Pi1HazardKeccakHonest D P1 δh) :
+    RecCompletenessWith D (composeProver D P1 P2) (δ1 + δh + δ2) :=
+  recCompleteness_end D hD P1 P2 δ2 h2 δ1 δh RecGraph.Pi1.pi1GraphIsVerifier h1 hh
+
 end RecCompose
 
 /-- info: 'RecCompose.recKnowledgeSoundness2_of_real' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -126,3 +148,11 @@ end RecCompose
 /-- info: 'RecCompose.recCompleteness_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.recCompleteness_end
+
+/-- info: 'RecCompose.recKnowledgeSoundness_end_fs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.recKnowledgeSoundness_end_fs
+
+/-- info: 'RecCompose.recCompleteness_end_fs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.recCompleteness_end_fs
