@@ -342,6 +342,21 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
     statement: [S; 4],
     channel: &mut C,
 ) -> Result<Reduced<S>, VerifierError> {
+    reduce_traced(spec, statement, channel, &mut |_, _| {})
+}
+
+/// What [`reduce_traced`] hands its trace: a step's name and its values (`formal/RecStatement`'s differential test
+/// compares every one with the Lean verifier's).
+pub type Trace<'a, S> = &'a mut dyn FnMut(&'static str, &[S]);
+
+/// [`reduce`], handing every intermediate value to `trace` after the step that computes it. The trace only reads
+/// values already computed: the arithmetic, its order and (on the recorder's symbol) the graph are [`reduce`]'s.
+pub fn reduce_traced<S: Limbs, C: Channel<S>>(
+    spec: &Spec,
+    statement: [S; 4],
+    channel: &mut C,
+    trace: Trace<'_, S>,
+) -> Result<Reduced<S>, VerifierError> {
     let (m, r) = (spec.log_n, spec.log_row);
     let one = S::one();
     let mut public = statement.to_vec();
@@ -359,6 +374,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
     let a = channel.next_scalars(1 << r)?;
     let xi = channel.next_scalar()?;
     let rho = channel.sample();
+    trace("challenges", &[alpha, beta, gamma, t, rho]);
 
     let w = {
         let _phase = enter("pi2: digits");
@@ -369,6 +385,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
         }
         w
     };
+    trace("digits", &w);
 
     // The row's cells: fold the top variable first, each fold splitting by the next bit of `c`. Siblings `2k`, `2k + 1`
     // fold at `z` and `z + 1` (`ω_{2k+1} = ω_{2k} + β_0`, `β_0 = 1`): the odd one is the even one plus the difference
@@ -391,6 +408,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
         }
         layer.into_iter().map(|v| v[0]).collect::<Vec<S>>()
     };
+    trace("cells", &cells);
     let v0 = cells[0];
 
     // `Ẑ_s(t)` for every block size.
@@ -403,6 +421,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
         }
         zt
     };
+    trace("zt", &zt);
 
     // Each group's indicators, summed: `Σ_p 1/d_p = N_g / D_g`, by `N ← N d + D`, `D ← D d`; the public side's sum
     // likewise. `Z_V(t) = w_m` multiplies every indicator: it is factored out.
@@ -424,6 +443,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
             })
             .collect()
     };
+    trace("groups", &groups.iter().flat_map(|&(n, d)| [n, d]).collect::<Vec<S>>());
     let gammas = leanvm_flock_gas::scalar::powers(gamma, spec.max_gamma + 1);
     // The public side, its terms in [`tag_walk`]'s order: `β ω_τ` is linear in the tag's bits, so each term's is the
     // last one's plus the products `β β_b` of the bits that differ.
@@ -431,6 +451,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
         let _phase = enter("pi2: public side (fingerprints)");
         let mut bits: Vec<Option<S>> = vec![None; super::circuit::TAG_BITS];
         let mut last: Option<(u32, S)> = None;
+        let mut denominators: Vec<S> = Vec::new();
         let mut terms = tag_walk(&spec.public).into_iter().map(|j| {
             let term = &spec.public[j];
             let beta_tag = match last {
@@ -445,9 +466,14 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
                 }
             };
             last = Some((term.tag, beta_tag));
-            alpha + lin(&term.value, &|c| public[c], &gammas) + beta_tag
+            let denominator = alpha + lin(&term.value, &|c| public[c], &gammas) + beta_tag;
+            denominators.push(denominator);
+            denominator
         });
         let side = (!spec.public.is_empty()).then(|| fraction(&mut terms));
+        drop(terms);
+        trace("public terms", &denominators);
+        trace("public side", &side.map_or(vec![], |(n, d)| vec![n, d]));
         // The zero coset `c + V_k`: `β^(2^k − 1) / F(Y)`, `Y = α + β ω_c`, `F(Y) = Σ a_i Y^(2^i) β^(2^k − 2^i)`.
         let coset = spec.zero_coset.as_ref().map(|(tag, k, a)| {
             let y = alpha + beta * base::<S>(point(*tag as usize));
@@ -472,6 +498,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
             }
             (b_rest[0], f)
         });
+        trace("zero coset", &coset.map_or(vec![], |(n, d)| vec![n, d]));
         match (side, coset) {
             (Some((n, d)), Some((nz, dz))) => Some((n * dz + d * nz, d * dz)),
             (side, None) => side,
@@ -508,6 +535,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
             s_den.unwrap_or(one),
         )
     };
+    trace("push", &[num, den, s_num, s_den]);
 
     let _phase = enter("pi2: identity and claims");
     let d_pull = alpha + v0 + beta * t;
@@ -520,6 +548,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
     let p1 = s_den * y;
     let p2 = p1 * w[m + 2];
     let all = p2 * public_den;
+    trace("identity", &[d_pull, d_num, y, x, public_num, public_den, p1, p2, all]);
     channel.require_nonzero(all, VerifierError::RecDegenerate)?;
     let inv_all = {
         let _phase = enter("pi2: the inversion");
@@ -537,6 +566,8 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
     }
     let rho_q = w[m] * den * s_den * inv_p1;
     let combination = x * inv_p1;
+    trace("inverse", &[inv_all, inv_p2, target, inv_p1, inv_top]);
+    trace("digit inverses", &w_invs);
 
     // `1/(1 + w_l) = 1/w_l + 1/w_{l+1}`; their product telescopes to `t / w_{m+2}`.
     let ([y0, y1], scale) = extension();
@@ -546,6 +577,8 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
     let quotient_value = scale * digits_scale * combination;
     let quotient_point = [&u[..], &[rho_q, y0, y1]].concat();
     let sum_point = [vec![one; m], vec![S::zero(); 3], vec![y0, y1]].concat();
+    trace("u", &u);
+    trace("quotient", &[rho_q, combination, digits_scale, quotient_value]);
 
     let mut rhos = vec![rho];
     for l in 1..r {
@@ -560,6 +593,8 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
         }
         fold.truncate(half);
     }
+    trace("rhos", &rhos);
+    trace("fold", &fold);
     let witness_point = [&rhos[..], &w[r..m]].concat();
     let setup_point = [&w[..m], &[beta]].concat();
     let pair_points = public.iter().map(|&x| leanvm_flock_gas::transcript::pair_point(x)).collect();

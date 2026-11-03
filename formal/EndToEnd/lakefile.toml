@@ -182,3 +182,15 @@ name = "RecPiop"
 srcDir = "../RecPiop"
 globs = ["RecPiop", "RecPiop.+"]
 leanOptions = { warningAsError = true }
+
+# π2's verifier (`crates/leanvm_rec`, `PI2.md` §2, §8–§9, branch `leanvm-rec` @ 2b22581), `formal/RecStatement`:
+# the verifier as computable Lean (its seed and IV, the public data in the stream, the arithmetic at `t` over any
+# field, the six `PCS_OPEN` calls word for word), the circuit's tables as data the Rust emits
+# (`crates/leanvm_rec/src/lean_statement.rs`, with a staleness test), the verifier-arithmetic lemmas `RecPiop`'s
+# rounds consume, and the end statements of the recursive verifier against `Lv42`'s relation. The differential
+# runner (`RecStatementTest/Runner.lean`) runs with `lake env lean`, not built.
+[[lean_lib]]
+name = "RecStatement"
+srcDir = "../RecStatement"
+globs = ["RecStatement", "RecStatement.+"]
+leanOptions = { warningAsError = true }
