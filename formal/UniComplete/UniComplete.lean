@@ -22,3 +22,4 @@ import UniComplete.FlockProverTerminal
 import UniComplete.FlockProverSync
 import UniComplete.FlockProverTower
 import UniComplete.FlockProverRing
+import UniComplete.FlockProverMain
