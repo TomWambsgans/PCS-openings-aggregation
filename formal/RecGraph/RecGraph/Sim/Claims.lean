@@ -1384,3 +1384,180 @@ theorem weightAt_phc {st : RecState} (hg : Good st) {cS : CombinedS} (hh : HeldC
 end WeightSim2
 
 end RecGraph.Sim
+
+/-! ## A term's weight as the program reads it is `UniStatement`'s -/
+
+namespace RecGraph.Sim
+
+open LeanVM.Parameters UniStatement
+open UniSound.Ids (limbScale)
+open UniSound.Ids.Weights (wSum twistPt slotView ringRow zero_ne_ringTwist slotView_of_ne weightAt_single rowEq_eq
+  foldl_mul_map foldl_add_map getD_of_take)
+
+/-- **A layout's limbs**: fewer than three, every limb of a column at the column's variables. -/
+def LayoutOK (L : StackLayout) : Prop := ∀ col, ∀ b ∈ L.limbs col, b.1 < 3 ∧ b.2.1 = headVars L col
+
+/-- **A term's kind** at a layout (as the verifier's relations have them): untwisted, not a slot, its point of at least
+its column's variables; or untwisted, a slot, `q_flock`'s blocks of at least `8` more variables than its point; or
+the ring-switch term on a column of at most its point's variables. -/
+def TermKind (L : StackLayout) (col : Column) (pt : List E) (tw : ℕ) : Prop :=
+  (tw = 0 ∧ (∀ j, col ≠ .qflockSlot j) ∧ ∀ b ∈ L.limbs col, b.2.1 ≤ pt.length) ∨
+  (tw = 0 ∧ (∃ j, col = .qflockSlot j) ∧ ∀ b ∈ L.limbs .qflock, 8 + pt.length ≤ b.2.1) ∨
+  (tw = ringTwist ∧ (∀ j, col ≠ .qflockSlot j) ∧ ∀ b ∈ L.limbs col, b.2.1 ≤ pt.length)
+
+theorem partV_eq {L : StackLayout} (hL : LayoutOK L) (r : List E) (z0 : E) (col : Column) :
+    partV r z0 L col = ((L.limbs col).map fun b ↦ limbScale b.1 * selector r b.2.1 b.2.2).sum := by
+  unfold partV
+  rw [foldl_add_map, zero_add]
+  refine congrArg List.sum (List.map_congr_left fun b hb ↦ ?_)
+  obtain ⟨hb3, hbv⟩ := hL col b hb
+  rw [← hbv]
+  unfold limbScale
+  by_cases h0 : b.1 = 0
+  · simp [h0]
+  · simp only [h0, ↓reduceIte]
+    have hl : b.1 < limbBasis.length := by simp [limbBasis]; omega
+    rw [List.getD_eq_getElem _ _ hl, List.getD_eq_getElem _ _ hl]
+
+theorem getD_lt_z {l : List E} {k : ℕ} (hk : k < l.length) (d : E) : l.getD k d = l.getD k 0 := by
+  rw [List.getD_eq_getElem _ _ hk, List.getD_eq_getElem _ _ hk]
+
+theorem opr_getD (r : List E) {k : ℕ} (hk : k < r.length) (d : E) : (r.map (1 + ·)).getD k d = 1 + r.getD k 0 := by
+  rw [List.getD_eq_getElem _ _ (by simpa using hk), List.getD_eq_getElem _ _ hk, List.getElem_map]
+
+theorem rowW_plain (r map : List E) (z0 : E) (pt q : List E) (hv : ℕ) (hr : hv ≤ r.length) (hp : hv ≤ pt.length)
+    (hq : q.take pt.length = pt) : rowW r map z0 q hv 0 = rowEq pt hv r := by
+  have hql : pt.length ≤ q.length := by
+    have := congrArg List.length hq
+    rw [List.length_take] at this
+    omega
+  unfold rowW
+  rw [ite_eq_right zero_ne_ringTwist, foldl_mul_map, one_mul, rowEq_eq, ← List.range_eq_range']
+  refine congrArg List.prod (List.map_congr_left fun k hk ↦ ?_)
+  have hk := List.mem_range.mp hk
+  rw [opr_getD r (by omega), getD_lt_z (l := q) (by omega) z0, getD_of_take hq (by omega)]
+  ring
+
+theorem rowW_ring (r map : List E) (z0 : E) (pt q : List E) (hv : ℕ) (hr : hv ≤ r.length) (hp : hv ≤ pt.length)
+    (hq : q.take pt.length = pt) :
+    rowW r map z0 q hv ringTwist = Flock.towerWeightAt (pt.take hv) ((r.map (1 + ·)).take hv) map := by
+  have hql : pt.length ≤ q.length := by
+    have := congrArg List.length hq
+    rw [List.length_take] at this
+    omega
+  have h1 : (q.take hv).length = hv := by rw [List.length_take]; omega
+  have h2 : ((r.map (1 + ·)).take hv).length = hv := by rw [List.length_take, List.length_map]; omega
+  have hqt : q.take hv = pt.take hv := by rw [← hq, List.take_take, min_eq_left hp]
+  unfold rowW ringWeightValue
+  rw [ite_eq_left rfl, h1]
+  have e3 : (q.take hv ++ (r.map (1 + ·)).take hv ++ map).drop (2 * hv) = map := by
+    rw [show 2 * hv = (q.take hv ++ (r.map (1 + ·)).take hv).length by
+      rw [List.length_append, h1, h2]; omega]
+    exact List.drop_left
+  rw [e3, List.append_assoc, List.take_left' h1, List.drop_left' h1, List.take_left' h2, hqt]
+
+theorem zip_foldlC (pt l : List E) (c : E) (h : pt.length ≤ l.length) :
+    (pt.zip l).foldl (fun a xa ↦ a * (xa.2 + xa.1)) c =
+      c * ((List.range pt.length).map fun k ↦ l.getD k 0 + pt.getD k 0).prod := by
+  induction pt generalizing l c with
+  | nil => simp
+  | cons x pt ih =>
+    cases l with
+    | nil => simp at h
+    | cons y l =>
+      rw [List.zip_cons_cons, List.foldl_cons, ih l _ (by simpa using h), List.length_cons, List.range_succ_eq_map,
+        List.map_cons, List.prod_cons, List.map_map]
+      simp only [Function.comp_def, List.getD_cons_zero, List.getD_cons_succ]
+      ring
+
+theorem instW_eq (r pt : List E) (hr : 8 + pt.length ≤ r.length) :
+    instW r pt = ((List.range pt.length).map fun k ↦ 1 + pt.getD k 0 + r.getD (8 + k) 0).prod := by
+  unfold instW
+  rw [zip_foldlC _ _ _ (by rw [List.length_drop, List.length_map]; omega), one_mul]
+  refine congrArg List.prod (List.map_congr_left fun k hk ↦ ?_)
+  have hk := List.mem_range.mp hk
+  have e : ((r.map (1 + ·)).drop 8).getD k 0 = (r.map (1 + ·)).getD (8 + k) 0 := by
+    rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD, List.getElem?_drop]
+  rw [e, opr_getD r (by omega)]
+  ring
+
+theorem accW_eq (r : List E) (z0 : E) (j : ℕ) (hr : 8 ≤ r.length) :
+    accW r z0 j = ((List.range 8).map fun k ↦ 1 + bitE j k + r.getD k 0).prod := by
+  unfold accW
+  rw [foldl_mul_map, one_mul, ← List.range_eq_range']
+  refine congrArg List.prod (List.map_congr_left fun k hk ↦ ?_)
+  have hk := List.mem_range.mp hk
+  have hkr : k < r.length := by omega
+  unfold bitE
+  by_cases hb : j.testBit k = true
+  · simp only [hb, ↓reduceIte]
+    rw [getD_lt_z hkr, CharTwo.add_self_eq_zero, zero_add]
+  · simp only [hb, Bool.false_eq_true, ↓reduceIte]
+    rw [opr_getD r hkr, add_zero]
+
+theorem rowEq_slot (j : ℕ) (pt r : List E) :
+    rowEq ((List.range 8).map (bitE j) ++ pt) ((List.range 8).map (bitE j) ++ pt).length r =
+      ((List.range 8).map fun k ↦ 1 + bitE j k + r.getD k 0).prod *
+        ((List.range pt.length).map fun k ↦ 1 + pt.getD k 0 + r.getD (8 + k) 0).prod := by
+  rw [rowEq_eq, List.length_append, List.length_map, List.length_range, List.range_add, List.map_append,
+    List.prod_append, List.map_map]
+  refine congrArg₂ (· * ·) ?_ ?_
+  · refine congrArg List.prod (List.map_congr_left fun k hk ↦ ?_)
+    have hk := List.mem_range.mp hk
+    rw [List.getD_eq_getElem?_getD, List.getElem?_append_left (by simpa using hk), List.getElem?_map,
+      List.getElem?_range hk]
+    rfl
+  · refine congrArg List.prod (List.map_congr_left fun k _ ↦ ?_)
+    simp only [Function.comp_apply]
+    rw [List.getD_eq_getElem?_getD (l := (List.range 8).map (bitE j) ++ pt),
+      List.getElem?_append_right (by simp), List.getD_eq_getElem?_getD]
+    simp
+
+theorem sum_factorC (l : List (ℕ × ℕ × ℕ)) (r : List E) (X : E) (Y : ℕ × ℕ × ℕ → E) (h : ∀ b ∈ l, Y b = X) :
+    X * (l.map fun b ↦ limbScale b.1 * selector r b.2.1 b.2.2).sum =
+      (l.map fun b ↦ limbScale b.1 * (Y b * selector r b.2.1 b.2.2)).sum := by
+  rw [← List.sum_map_mul_left]
+  refine congrArg List.sum (List.map_congr_left fun b hb ↦ ?_)
+  rw [h b hb]
+  ring
+
+/-- **A term's weight as the program reads it is `UniStatement`'s**, read at any extension `q` of its point (its point
+itself for a slot term), at a point `r` of at least every block's variables. -/
+theorem termP_eq {L : StackLayout} (hL : LayoutOK L) (r map : List E) (z0 : E)
+    (hr : ∀ col, ∀ b ∈ L.limbs col, b.2.1 ≤ r.length) {col : Column} {pt q : List E} {tw : ℕ}
+    (hk : TermKind L col pt tw) (hq : q.take pt.length = pt) (hs : (∃ j, col = .qflockSlot j) → q = pt) :
+    termP L r map z0 col q tw = weightAt ⟨[pt], [(col, 0, tw, 1)], 0, 1⟩ L r (some map) := by
+  rw [weightAt_single]
+  rcases hk with ⟨rfl, hne, hlen⟩ | ⟨rfl, ⟨j, rfl⟩, hlen⟩ | ⟨rfl, hne, hlen⟩
+  · rw [termP_of_ne hne, partV_eq hL]
+    unfold wSum
+    rw [ite_eq_right zero_ne_ringTwist, slotView_of_ne hne]
+    dsimp only
+    refine sum_factorC _ r _ _ fun b hb ↦ ?_
+    obtain ⟨_, hbv⟩ := hL col b hb
+    rw [ite_eq_right (lt_irrefl 0)]
+    show rowEq pt b.2.1 r = _
+    rw [hbv]
+    exact (rowW_plain r map z0 pt q _ (hbv ▸ hr col b hb) (hbv ▸ hlen b hb) hq).symm
+  · rw [hs ⟨j, rfl⟩]
+    simp only [termP]
+    unfold wSum
+    rw [ite_eq_right zero_ne_ringTwist]
+    simp only [slotView]
+    rw [partV_eq hL, ← mul_assoc]
+    refine sum_factorC _ r _ _ fun b hb ↦ ?_
+    have h8 : 8 + pt.length ≤ r.length := (hlen b hb).trans (hr .qflock b hb)
+    have hpos : ((List.range 8).map (bitE j) ++ twistPt pt 0).length > 0 := by simp
+    simp only [hpos, ↓reduceIte]
+    show rowEq ((List.range 8).map (bitE j) ++ pt) ((List.range 8).map (bitE j) ++ pt).length r = _
+    rw [rowEq_slot, accW_eq r z0 j (by omega), instW_eq r pt h8]
+  · rw [termP_of_ne hne, partV_eq hL]
+    unfold wSum
+    rw [ite_eq_left rfl]
+    refine sum_factorC _ r _ _ fun b hb ↦ ?_
+    obtain ⟨_, hbv⟩ := hL col b hb
+    show Flock.towerWeightAt (pt.take b.2.1) ((r.map (1 + ·)).take b.2.1) map = _
+    rw [hbv]
+    exact (rowW_ring r map z0 pt q _ (hbv ▸ hr col b hb) (hbv ▸ hlen b hb) hq).symm
+
+end RecGraph.Sim
