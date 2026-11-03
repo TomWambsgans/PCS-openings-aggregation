@@ -135,8 +135,12 @@ only off it. **Decision (the coordinator's): off the event, on the proof side** 
            verifierOutputsWith (m := Id) (fun s ↦ pure (π s)) reference referenceRoots iv publicInput.toList stream .rec3
              true
    ```
-   **Left: `Pi1Sim`**, the program's run on `E` (each operation worth its `Op.value`, `op_val`, `record_inv`) against
-   `UniStatement`'s `runWithFs … .rec3 true`, function by function: the counts, the transcript (seed, reads, samples,
+   **`Pi1Sim`** (done, `Sim/End.lean`: `pi1Sim`, `pi1GraphIsVerifier : Pi1GraphIsVerifier`, no hypotheses, on the
+   three standard axioms, `RecGraphTest/EndAxioms.lean`), the program's run on `E` (each operation worth its
+   `Op.value`, `op_val`, `record_inv`) against `UniStatement`'s `runWithFs … .rec3 true`, function by function
+   (`Sim/`: the judgment `Sim` and the transcript in `Chan`, `Transcript`; Flock in `Flock*`; the tables, relations,
+   batch and shapes in `TablePart`, `Relations`, `Batch`, `Shape`; the lockstep `reduce_simQ` in `Compose`; the seed,
+   `finish` and the calls' bytes in `Top`, `Calls`): the counts, the transcript (seed, reads, samples,
    narrow samples, the challenges list), `eqKernel` (the Rust's in-place doubling against `UniStatement`'s map),
    Flock (the zerocheck's Lagrange weights, the sumchecks, the walk `blake2sRowValues` against `Rec.lean`'s, the
    terminal, the tower target through the `XOR` network against the direct leaf sums), the digits, `Z_act`, the six

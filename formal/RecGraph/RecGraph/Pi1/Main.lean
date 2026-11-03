@@ -15,9 +15,10 @@ import RecGraph.Hazard
   `UniStatement`'s outputs.
 * `pi1GraphIsVerifier_of_sim` (proved): `Pi1Sim → Pi1GraphIsVerifier`.
 
-`Pi1Sim` is the simulation of `UniStatement`'s π1-rec3 verifier by the program, function by function; it is not
-proved here (`README.md`, "What is left"). It is checked by the differential runner on the real proof and 24 mutated
-and random streams (`RecGraphTest/Runner.lean`, with `Pi1Check.lean`'s equality of the graphs).
+`Pi1Sim` is the simulation of `UniStatement`'s π1-rec3 verifier by the program, function by function; it is proved in
+`Sim/End.lean` (`pi1Sim`, and `pi1GraphIsVerifier : Pi1GraphIsVerifier`, on the three standard axioms:
+`RecGraphTest/EndAxioms.lean`). It is also checked by the differential runner on the real proof and 24 mutated and
+random streams (`RecGraphTest/Runner.lean`, with `Pi1Check.lean`'s equality of the graphs).
 -/
 
 namespace RecGraph.Pi1
