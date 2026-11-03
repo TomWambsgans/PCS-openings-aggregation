@@ -625,4 +625,230 @@ theorem tablePartOf_spec (tab : Table) (hT : tab ∈ tables) (hL : TablesLin) (l
   · rw [hd1, tableDegrees_eq]
   · rw [hd2, tableDegrees_eq]
 
+/-- Every relation of a table's part is on the table's columns at `w[..h]`, untwisted. -/
+theorem tablePartOf_terms (tab : Table) (lh : ℕ) (weights : Array E) (beta : E) (w vals : List E) :
+    ∀ r ∈ (tablePartOf tab lh weights beta w vals).2.1, ∀ tm ∈ r.terms,
+      (∃ c, tm.column = .table tab.opcode c) ∧ tm.point = w.take lh ∧ tm.twist = 0 := by
+  have hstep : ∀ (st : TPState) (fl : List Form × List Form),
+      ∀ r ∈ (flushStep (fun c ↦ .table tab.opcode c) (w.take lh) weights beta (sentOf tab vals) st fl).rels,
+        r ∈ st.rels ∨ ∀ tm ∈ r.terms, (∃ c, tm.column = .table tab.opcode c) ∧ tm.point = w.take lh ∧
+          tm.twist = 0 := by
+    intro st fl r hr
+    unfold flushStep at hr
+    dsimp only at hr
+    have key : ∀ (l : List (ℕ × E)), ∀ tm ∈ l.map (fun ck ↦ term (.table tab.opcode ck.1) (w.take lh) ck.2),
+        (∃ c, tm.column = .table tab.opcode c) ∧ tm.point = w.take lh ∧ tm.twist = 0 := by
+      intro l tm htm
+      obtain ⟨ck, _, rfl⟩ := List.mem_map.mp htm
+      exact ⟨⟨ck.1, rfl⟩, rfl, rfl⟩
+    by_cases hp : (!(linearise fl.1 weights (sentOf tab vals)).2.isEmpty) = true <;>
+    by_cases hq : (!(linearise (difference fl.2 fl.1) weights (sentOf tab vals)).2.isEmpty) = true <;>
+      simp only [hp, hq, ↓reduceIte, Bool.false_eq_true, List.mem_append, List.mem_singleton] at hr
+    · rcases hr with (hr | rfl) | rfl
+      · exact Or.inl hr
+      · exact Or.inr (key _)
+      · exact Or.inr (key _)
+    · rcases hr with hr | rfl
+      · exact Or.inl hr
+      · exact Or.inr (key _)
+    · rcases hr with hr | rfl
+      · exact Or.inl hr
+      · exact Or.inr (key _)
+    · exact Or.inl hr
+  have hfold : ∀ (l : List (List Form × List Form)) (st : TPState),
+      ∀ r ∈ (l.foldl (flushStep (fun c ↦ .table tab.opcode c) (w.take lh) weights beta
+          (sentOf tab vals)) st).rels,
+        r ∈ st.rels ∨ ∀ tm ∈ r.terms, (∃ c, tm.column = .table tab.opcode c) ∧ tm.point = w.take lh ∧
+          tm.twist = 0 := by
+    intro l
+    induction l with
+    | nil => intro st r hr; exact Or.inl hr
+    | cons fl l ih =>
+      intro st r hr
+      rw [List.foldl_cons] at hr
+      rcases ih _ r hr with h | h
+      · exact hstep st fl r h
+      · exact Or.inr h
+  intro r hr
+  unfold tablePartOf at hr
+  dsimp only at hr
+  rcases hfold _ _ r hr with h | h
+  · obtain ⟨p, _, rfl⟩ := List.mem_map.mp h
+    intro tm htm
+    simp only [Relation.equal, term, List.mem_singleton] at htm
+    subst htm
+    exact ⟨⟨p.1, rfl⟩, rfl, rfl⟩
+  · exact h
+
+/-! ## The tables' parts (`tablesPart`) -/
+
+theorem tablesPart_length (S : Shape) (weights : Array E) (beta : E) (w : List E) :
+    ∀ (ts : List Table) (vals : List E), (tablesPart S weights beta w ts vals).1.length = ts.length
+  | [], _ => rfl
+  | t :: ts, vals => by
+    simp only [tablesPart, List.length_cons, tablesPart_length S weights beta w ts]
+
+theorem tablesPart_getD (S : Shape) (weights : Array E) (beta : E) (w : List E) :
+    ∀ (ts : List Table) (vals : List E) (i : ℕ) (hi : i < ts.length), ∃ vals',
+      (tablesPart S weights beta w ts vals).1.getD i default =
+          (tablePartOf ts[i] (S.heights.getD ts[i].opcode 0) weights beta w vals').1 ∧
+        ∀ r ∈ (tablePartOf ts[i] (S.heights.getD ts[i].opcode 0) weights beta w vals').2.1,
+          r ∈ (tablesPart S weights beta w ts vals).2.1
+  | [], _, i, hi => by simp at hi
+  | t :: ts, vals, 0, _ => ⟨vals, rfl, fun r hr ↦ List.mem_append_left _ hr⟩
+  | t :: ts, vals, i + 1, hi => by
+    obtain ⟨v', h1, h2⟩ := tablesPart_getD S weights beta w ts
+      (tablePartOf t (S.heights.getD t.opcode 0) weights beta w vals).2.2 i (by simpa using hi)
+    exact ⟨v', h1, fun r hr ↦ List.mem_append_right _ (h2 r hr)⟩
+
+theorem tablesPart_rels (S : Shape) (weights : Array E) (beta : E) (w : List E) :
+    ∀ (ts : List Table) (vals : List E), ∀ r ∈ (tablesPart S weights beta w ts vals).2.1,
+      ∃ tab ∈ ts, ∃ vals', r ∈ (tablePartOf tab (S.heights.getD tab.opcode 0) weights beta w vals').2.1
+  | [], _, r, hr => by simp [tablesPart] at hr
+  | t :: ts, vals, r, hr => by
+    simp only [tablesPart, List.mem_append] at hr
+    rcases hr with hr | hr
+    · exact ⟨t, List.mem_cons_self .., vals, hr⟩
+    · obtain ⟨tab, htab, v', hv⟩ := tablesPart_rels S weights beta w ts _ r hr
+      exact ⟨tab, List.mem_cons_of_mem _ htab, v', hv⟩
+
+/-! ## The heap's relations (`heapRelations`), stated explicitly -/
+
+theorem forIn_push {α γ : Type} (g : α → Relation) : ∀ (l : List α) (A : Array Relation) (B : γ)
+    (f : α → Array Relation × γ → Id (ForInStep (Array Relation × γ))),
+    (∀ a s, ∃ c, f a s = pure (.yield (s.1.push (g a), c))) →
+    (Id.run (forIn l (A, B) f)).1.toList = A.toList ++ l.map g
+  | [], A, B, f, _ => by simp
+  | a :: l, A, B, f, hf => by
+    obtain ⟨c, hc⟩ := hf a (A, B)
+    rw [List.forIn_cons, hc]
+    have := forIn_push g l (A.push (g a)) c f hf
+    simp only [Id.run, pure_bind] at this ⊢
+    rw [this]
+    simp
+
+/-- **A heap block's leaf relation**, as `heapRelations`' loop states it. -/
+def blockRel (S : Shape) (active : List E) (parts : List TablePart)
+    (memoryPull memoryPush bytecodePull bytecodePush : E) (w : List E) (x : Block × ℕ) : Relation :=
+  let mixed := (List.range S.heap.h).map fun l ↦
+    if l < x.1.r then w.getD l 0 + pointE (x.1.position >>> l) else pointE (x.1.position >>> l)
+  let n := 2 ^ x.1.r
+  let wr := w.getD x.1.r 0
+  match x.1.leaves with
+  | .unused => ⟨[term .heap mixed 1], 1⟩
+  | .memory => ⟨[term .heap mixed memoryPull] ++
+      quotientTerms (Column.leafQuotient x.2) (chunks (degree (2 * (n - 1)) n + 1)) w wr, memoryPush⟩
+  | .bytecode => ⟨[term .heap mixed bytecodePull] ++
+      quotientTerms (Column.leafQuotient x.2) (chunks (degree (2 * (n - 1)) n + 1)) w wr, bytecodePush⟩
+  | .table t =>
+    let part := parts.getD t default
+    let z := active.getD t 0
+    ⟨[term .heap mixed (part.pull * wr + z * z)] ++
+      quotientTerms (Column.leafQuotient x.2) (chunks (degree (max part.pullDegree part.pushDegree * (n - 1) +
+        (n - Shape.leastRows x.1.r)) n + 1)) w (wr * z), part.push * wr + z * z⟩
+
+/-- **`heapRelations`' relations**: `T(t)`, the tree, the root, each block's leaf, the constraint
+quotient's chunks (its `Id.run do` loop, unfolded). -/
+theorem heapRelations_fst (S : Shape) (active : List E) (parts : List TablePart) (weights : Array E)
+    (beta hv cv mpull mpush bpull bpush : E) (w : List E) (cc : List ℕ) :
+    (heapRelations S active parts weights beta hv cv mpull mpush bpull bpush w cc).1 =
+      [Relation.equal .heap (w.take S.heap.h) hv,
+        ⟨[term .heap ((w.drop 1).take S.heap.h) (w.getD 1 0),
+          term .heap ((w.take S.heap.h).modify 0 (· + 1)) (w.getD 1 0 * hv),
+          term (.treeQuotient 0) (w.take S.heap.h) (w.getD S.heap.h 0),
+          term (.treeQuotient 1) [] (w.getD S.heap.h 0 * w.getD S.heap.h 0)], 0⟩,
+        ⟨[term .heap ((List.range S.heap.h).map fun l ↦ if l = 0 then (1 : E) else 0)
+          (rootInit weights beta)], rootFin S weights beta⟩] ++
+      (S.heap.blocks.zip (List.range S.heap.blocks.length)).map
+        (blockRel S active parts mpull mpush bpull bpush w) ++
+      [⟨quotientTerms .constraintQuotient cc w 1, cv⟩] := by
+  unfold heapRelations
+  simp only [Id.run_bind, Id.run_pure]
+  rw [Array.toList_push, forIn_push (blockRel S active parts mpull mpush bpull bpush w)]
+  · simp [Relation.equal, rootInit, rootFin]
+  · intro a s
+    rcases a with ⟨⟨lv, r, pos⟩, i⟩
+    cases lv <;> exact ⟨_, rfl⟩
+
+/-! ## The constraint relation (`constraintRelation`), as folds -/
+
+/-- `BLAKE2S`'s copies (the inner loop of `constraintRelation`), on (terms, power). -/
+def copyStep (o r : ℕ) (columns : List String) (w y : List E) (lift gamma : E) (s : Array Term × E)
+    (c : ℕ) : Array Term × E :=
+  match qflockSlot (columns.getD c "") with
+  | some slot => ((s.1.push (term (.table o c) (w.take r) (s.2 * lift))).push
+      (term (.qflockSlot slot) y (s.2 * lift)), s.2 * gamma)
+  | none => s
+
+/-- One table's step of `constraintRelation`'s loop, on (known, terms, power, degree). -/
+def crStep (shape : Shape) (gamma t : E) (w : List E) (s : E × Array Term × E × ℕ)
+    (x : Table × TablePart) : E × Array Term × E × ℕ :=
+  let r := shape.heights.getD x.1.opcode 0
+  let n := 2 ^ r
+  let lift := vanishingRatio w r shape.constraintVars
+  let s1 : E × Array Term × E × ℕ := if x.1.opcode = opJump then
+      (s.1 + s.2.2.1 * lift * (x.2.sent.getD (colIdx x.1.columns "b") none).getD 0 +
+          s.2.2.1 * gamma * lift * (x.2.sent.getD (colIdx x.1.columns "v_cond") none).getD 0 *
+            ((x.2.sent.getD (colIdx x.1.columns "b") none).getD 0 + 1),
+        s.2.1.push (term (.table x.1.opcode (colIdx x.1.columns "w")) (w.take r)
+          (s.2.2.1 * lift * (x.2.sent.getD (colIdx x.1.columns "v_cond") none).getD 0)),
+        s.2.2.1 * gamma * gamma, max s.2.2.2 (degree n 2))
+    else s
+  let s2 : E × Array Term × E × ℕ := (s1.1 + s1.2.2.1 * lift,
+    s1.2.1.push (term (.inverse x.1.opcode) (w.take r)
+      (s1.2.2.1 * lift * x.1.countColumns.foldl (fun acc c ↦ acc * (x.2.sent.getD c none).getD 0) 1)),
+    s1.2.2.1 * gamma, max s1.2.2.2 (degree ((n - 1) * (1 + x.1.countColumns.length)) n))
+  if x.1.opcode = opBlake2s then
+    let inner := (List.range x.1.width).foldl
+      (copyStep x.1.opcode r x.1.columns w (coordinatesAt t (coordinateFunctionals r)) lift gamma)
+      (s2.2.1, s2.2.2.1)
+    (s2.1, inner.1, inner.2, max s2.2.2.2 (degree (r * (n / 2)) n))
+  else s2
+
+/-- The public lines' step, on (known, terms, power). -/
+def lineStep (shape : Shape) (gamma t : E) (w : List E) (s : E × Array Term × E) (x : (E × E) × ℕ) :
+    E × Array Term × E :=
+  (s.1 + s.2.2 * vanishingRatio w 1 shape.constraintVars * (x.1.1 + t * (x.1.1 + x.1.2)),
+    s.2.1.push (term (.memory x.2) (w.take shape.logMemory) (s.2.2 * vanishingRatio w 1 shape.constraintVars)),
+    s.2.2 * gamma)
+
+/-- **`constraintRelation`, as folds.** -/
+def crOf (shape : Shape) (parts : List TablePart) (publicWords : List E) (gamma t constraintValue : E)
+    (w : List E) : Relation × ℕ :=
+  let s := (tables.zip parts).foldl (crStep shape gamma t w) (0, #[], 1, 0)
+  let s' := ((linesOf publicWords).zip (List.range 3)).foldl (lineStep shape gamma t w) (s.1, s.2.1, s.2.2.1)
+  (⟨s'.2.1.toList, constraintValue * w.getD shape.constraintVars 0 + s'.1⟩,
+    max s.2.2.2 (degree (2 ^ shape.logMemory) 3))
+
+theorem forIn_id_eq_foldl' {α β : Type} (l : List α) (init : β) (f : α → β → Id (ForInStep β))
+    (g : β → α → β) (h : ∀ a b, f a b = pure (.yield (g b a))) :
+    forIn l init f = pure (l.foldl g init) := by
+  rw [show f = fun a b ↦ pure (.yield (g b a)) from funext fun a ↦ funext fun b ↦ h a b]
+  exact List.forIn_pure_yield_eq_foldl _ _
+
+/-- **`constraintRelation` is its folds** (its `Id.run do` loops, unfolded). -/
+theorem constraintRelation_eq (shape : Shape) (parts : List TablePart) (publicWords : List E)
+    (gamma t constraintValue : E) (w : List E) :
+    constraintRelation shape parts publicWords gamma t constraintValue w =
+      crOf shape parts publicWords gamma t constraintValue w := by
+  unfold constraintRelation crOf
+  simp only [Id.run]
+  rw [forIn_id_eq_foldl' _ _ _ (crStep shape gamma t w)]
+  · simp only [pure_bind, List.forIn_pure_yield_eq_foldl]
+    rfl
+  · intro x s
+    by_cases hj : x.1.opcode = opJump
+    · have hb : ¬ x.1.opcode = opBlake2s := by rw [hj]; decide
+      simp only [crStep, ite_eq_left hj, ite_eq_right hb]
+    · by_cases hb : x.1.opcode = opBlake2s
+      · simp only [crStep, ite_eq_right hj, ite_eq_left hb]
+        rw [forIn_id_eq_foldl' _ _ _ (copyStep x.1.opcode (shape.heights.getD x.1.opcode 0) x.1.columns w
+          (coordinatesAt t (coordinateFunctionals (shape.heights.getD x.1.opcode 0)))
+          (vanishingRatio w (shape.heights.getD x.1.opcode 0) shape.constraintVars) gamma)]
+        · rfl
+        · intro c s'
+          unfold copyStep
+          rcases qflockSlot (x.1.columns.getD c "") with _ | slot <;> rfl
+      · simp only [crStep, ite_eq_right hj, ite_eq_right hb]
+
 end UniSound.Ids.Eval
