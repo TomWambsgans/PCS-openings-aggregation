@@ -240,3 +240,10 @@ leanOptions = { warningAsError = true }
 name = "rec-circuit-emitted"
 srcDir = "../RecCircuit"
 root = "RecCircuitTest.Emitted"
+
+# The view check of `RecCompose.Facts` (`Pi2ViewChecked`) on the compiler's circuit for π1-rec3
+# (`RecComposeTest/ViewCheck.lean`).
+[[lean_exe]]
+name = "rec-view-check"
+srcDir = "../RecCompose"
+root = "RecComposeTest.ViewCheck"
