@@ -227,7 +227,10 @@ theorem tableHolds (hfit : CountsFit D.shape s.2) (t : ℕ) (hb : b.leaves = .ta
   rw [hb] at hP
   simp only at hP
   rw [leaf_form] at hP
-  have hk' : k < 2 ^ b.r := hk
+  have hk' : k < 2 ^ b.r := by
+    have := blockK_r D c1 s.2 b
+    simp only [Heap.LeafBlock.size, this] at hk
+    exact hk
   have hk24 : k < 2 ^ 24 := by omega
   have hw : (digitP b.r).eval (pointE k) = 0 := by
     rw [eval_digitP_pointE hr.c1.beta _ hk24, pointE_shift_zero hk']
