@@ -46,7 +46,7 @@ theorem flockGood (κ V : ℕ) (hV : 15 ≤ V) (fd : Done)
     omega
   obtain ⟨x, d, rfl⟩ : ∃ x d, fd = x :: d := by
     rcases fd with _ | ⟨x, d⟩
-    · simp at hl
+    · exact absurd hl (by simp only [List.length_nil]; omega)
     · exact ⟨x, d, rfl⟩
   have hx : x.2.length = 3 + κ + 1 := hfd.2.1
   refine ⟨⟨_, _, rfl⟩, ?_, hR.trans hV⟩
