@@ -11,24 +11,30 @@ import Heap.LeanIsa
 
 `lvRealizes`: for a deployment `D`, wherever the copies hold (`CopiesOf`), the heap the verifier reads off
 `C1` (`hdOf`) realizes the bus of `C1`'s Lv42 stack (`Heap.Realizes`, `lv42Stack`): its push and its pull
-tuples are permutations of `(D.inst rows).tuples q side`. The pieces:
+tuples are permutations of `(D.inst rows).tuples q side`. Its hypotheses are the bridges `LvReadBack D`,
+`BasisValueInv`, `C1Limbs D.shape` (only `q_flock`'s conjunct) and `HeapGood D.shape` (only the memory's
+and the bytecode's heights at most `24`, for `BasisValueInv`). The pieces:
 
-1. **The forms are Lv42's flushes** (`uni_tuples_eq`, `tables_tuples`): on every row `r : ℕ → K`, table
-   `j`'s tuples of `UniStatement.tables` (`tupleK` of its push or pull forms) are, in order, Lv42's flushes
+1. **The forms are Lv42's flushes** (`uni_tuples_eq`, `rowTuples_eq`): on every row `R : ℕ → K`, table
+   `j`'s tuples of `UniStatement.tables` (`tupleK` of its push or pull forms) are, **in order**, Lv42's flushes
    of opcode table `j` of that side (`Component.toM3` of its Clean component) evaluated at the row. By
    reflection: both sides are read as polynomials in a normal form (`SP`, `spNorm`; the forms' `E`
-   coefficients by `toK`, Clean's expressions by `exprSP`), the twelve normal forms are equal by
+   coefficients by `toK`, Clean's expressions by `exprSP`), the twelve lists of normal forms are equal by
    `decide +kernel` (`sides_eq`), and the normal form keeps the value (`spEval_spNorm`). Every tuple has at
-   most `16` forms (`tables_length_le`).
-2. **The rows** (`map_rowPosition`, `activePositions_perm`): `rowPosition count h` maps Lv42's executed rows
-   `[0, count)` onto the active rows, a permutation of `{y < 2^h : isActive y count h}`.
-3. **The values** (`row_eq`): Lv42's row `x` of opcode table `j` is `C1`'s row `rowPosition x`
+   most `16` forms (`tables_length_le`); every coefficient is `ofK` of its `K` reading and every monomial has
+   at most two variables (`tables_coeffs`); `gpow i = ofK (g^i)` (`gpow_eq_ofK`).
+2. **The rows** (`map_rowPosition`, `activePositions_perm`): `rowPosition count h` lists the active rows in
+   order, a permutation of `{y < 2^h : isActive y count h}`, for `count ≤ 2^h`.
+3. **The values** (`row_eq`): Lv42's executed row `x` of opcode table `j` is `C1`'s row `rowPosition x`
    (`LvReadBack`), on `BLAKE2S`'s limb columns by the copies (`CopiesOf`; Lv42's slots are
-   `UniStatement.qflockSlot`'s, `slots_eq`).
-4. **The boundary** (`memSeed_eq`, …): the memory's and the bytecode's pairs and the state boundary are Lv42's
-   six boundary blocks; the setup's address is `g^x` and its bytecode slots are `tupleSlot` (`BasisValueInv`).
-5. **The heap** (`heap_keys`): `HeapLayout.new`'s blocks are the memory's, the bytecode's, the six tables'
-   and unused ones; assembled as `Heap.LeanIsa.realizes`.
+   `UniStatement.qflockSlot`'s, `slots_eq`). A table's block holds the table's flushes
+   (`tableBlock_pushes`, `tableBlock_pulls`).
+4. **The boundary** (`memTupleK_eq`, `bcTupleK_eq`, `initK_eq`, `finK_eq`): the memory's and the bytecode's
+   pairs and the state boundary are Lv42's six boundary blocks; the setup's two blocks are one limb each,
+   disjoint, inside the stack (`setup_facts`), its address column is `g^x` (`suVal_address`) and its
+   bytecode slots are `tupleSlot` (`slotVal_eq`), by `BasisValueInv`.
+5. **The heap** (`heap_flatMap`, `blocks_side`): `HeapLayout.new`'s blocks are the memory's, the bytecode's,
+   the six tables' and unused ones (`unusedBlocks_unused`); assembled as `Heap.LeanIsa.realizes` is.
 -/
 
 namespace UniSound.Ids
