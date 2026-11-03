@@ -146,3 +146,19 @@ name = "UniSound"
 srcDir = "../UniSound"
 globs = ["UniSound", "UniSound.+"]
 leanOptions = { warningAsError = true }
+
+# Flock's soundness (`crates/leanvm_flock_gas/src/flock_min.rs`, `crates/leanvm_univariate/SPEC-FLOCK.md`),
+# `formal/FlockSound`: generic sumcheck, univariate-skip, lincheck and ring-switch soundness over the
+# Boolean cube, then Flock's checks and claims give `Lv42`'s `FlockRegion.Holds` but for explicit bad
+# challenges, each of a bounded number of values.
+[[lean_lib]]
+name = "FlockSound"
+srcDir = "../FlockSound"
+globs = ["FlockSound", "FlockSound.+"]
+
+# Flock's interface instance (`formal/FlockSound/Interface`): the round-by-round state and errors of
+# `UniSound.FlockSound` from `FlockSound`'s bad challenges.
+[[lean_lib]]
+name = "FlockSoundUni"
+srcDir = "../FlockSound"
+globs = ["FlockSoundUni", "FlockSoundUni.+"]

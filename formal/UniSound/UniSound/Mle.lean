@@ -79,15 +79,24 @@ noncomputable def Pending.Gext (p : Flock.Pending) (u : ℕ) : E :=
 /-- `L ŝ`, read on the low `k + 6` coordinates of the batch's. -/
 def Pending.Llift (p : Flock.Pending) (u : ℕ) : E := Pending.L p (u % 2 ^ p.rounds)
 
+/-- **A pending reduction's shape** (Flock's, `Pending.new`): the skip's `2^k` Lagrange weights, the
+slices `2^6` (or none), its row and column points inside `A0`'s variables. `multilinear_eval` folds
+pairs, so it is a multilinear extension only of a table of exactly `2^n` entries: without the shape,
+`PendingTerminalLink` is false (three slices). -/
+def Pending.Shaped (p : Flock.Pending) : Prop :=
+  (0 < p.k → p.skipWeights.length = 2 ^ p.k) ∧
+    ((p.slices.getD []).length = 2 ^ Flock.packing ∨ p.slices.getD [] = []) ∧
+    p.k + (p.rowLow ++ p.chiIn).length + Flock.packing ≤ matrixVars
+
 /-- **The pending term's terminal** (the λ³ product of the batching sumcheck, `G_ext · L_lift`, at
-its point `r`): with `a`, `b` the matrices' extensions at the claim's point (`MatrixHolds`), the
-product of the two folds is `Pending.terminal`'s value times the zero extension
-`Π_{j ≥ k+6} (1 + r_j)` (the verifier's `scale · value · extension`). Flock's `matFun_append` and
-`extFun_append` (`formal/FlockSound/FlockSound/Matrices.lean`), restated on `foldAll`, `Pending.G`,
-`Pending.L`: the λ³ component of `UniFinal`. Not used yet (stated as the target for the Flock
-side). -/
+its point `r`): for a pending reduction of Flock's shape (`Pending.Shaped`), with `a`, `b` the
+matrices' extensions at the claim's point (`MatrixHolds`), the product of the two folds is
+`Pending.terminal`'s value times the zero extension `Π_{j ≥ k+6} (1 + r_j)` (the verifier's
+`scale · value · extension`). Flock's `matFun_append` and `extFun_append`
+(`formal/FlockSound/FlockSound/Matrices.lean`), restated on `foldAll`, `Pending.G`, `Pending.L`: the
+λ³ component of `UniFinal`. Proved: `PendingLink.lean`'s `pendingTerminalLink`. -/
 def PendingTerminalLink : Prop :=
-  ∀ (p : Flock.Pending) (r : List E) (a b : E), p.rounds ≤ r.length →
+  ∀ (p : Flock.Pending) (r : List E) (a b : E), Pending.Shaped p → p.rounds ≤ r.length →
     MatrixHolds (p.matrixClaim r a b) →
       foldAll (Pending.Gext p) r 0 * foldAll (Pending.Llift p) r 0 =
         (p.terminal r a b).1 *

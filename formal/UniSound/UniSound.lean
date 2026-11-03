@@ -14,6 +14,13 @@ import UniSound.FsOps
 import UniSound.FsProof
 import UniSound.FinalFs
 import UniSound.FsCost
+import UniSound.PendingLink
+import UniSound.CodeBase
+import UniSound.CodeTables
+import UniSound.CodeBatch
+import UniSound.CodeShape
+import UniSound.CodeLink
+import UniSound.FinalLink
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001
@@ -33,7 +40,11 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `PiopSound.lean` | **`uniPiop`**: the PIOP is round-by-round sound (every round proved). |
 | `Fs.lean` | The code-level link (`UniCode`), the last link (`UniFinal`), the Fiat–Shamir layer (`FsLayer`), the bound (`uniBound`). |
 | `Bus.lean` | Round `0` from `formal/Heap`: the bus model (`BusModel`), **`BusModel.mainSound`** (`4N/|E|` and the constraints' batching), `UniIds.ofBus`. |
-| `Mle.lean` | The sumcheck's folds are the claims' multilinear extensions (`foldAll_eq_sum`, `mleStk_eq_foldAll`): glue for `UniFinal`. |
+| `Mle.lean` | The sumcheck's folds are the claims' multilinear extensions (`foldAll_eq_sum`, `mleStk_eq_foldAll`): glue for `UniFinal`; the pending term's target `PendingTerminalLink`. |
+| `CodeBase.lean`, `CodeTables.lean`, `CodeBatch.lean`, `CodeShape.lean` | The code-level link's layers: fixed reads, loops of fixed reads, observational equivalence (`obsOf`), the row counts, `tablePart` as `tableReads` reads, `batch` as its rounds (`batch_eq`), `C2`'s columns the shape's (`c2Columns_run`). |
+| `CodeLink.lean` | **`uniCode`**: `UniCode D hFlock valsCount (varsOf (layoutsOf D.shape))`, `reduceWith` on the main line as the chain program `mainProg` (`link_obs`), Flock's segment by `hFlock.link`. |
+| `FinalLink.lean` | **`uniFinal`**: `UniFinal` for the identity model whose batch is the verifier's (`batchProd`, `batchTargetOf`), under `WeightMle`, `LayoutVarsSmall`, `FlockPendingShaped`; the batch's algebra `terminal_sumState`; **`uniKnowledgeSoundness_code`**, the end theorem with both links in place. |
+| `PendingLink.lean` | **`pendingTerminalLink`**: the batch's `λ³` product at its point is the pending reduction's terminal times the zero extension (`multilinear_eval` as the extension, substitution into `Â0`, `B̂0`). |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
 | `FsChain.lean` | The univariate transcript as `Compose.ChainSpecU` (`uniSpec`: 24-byte scalars, the root's reversed halves, the seed's 16-byte tag, the row counts before `C1`'s root), the PIOP lifted to the chain's statement (`liftPiop`), the proof the chain reads (`UPf`, `uView`). |
 | `FsOps.lean` | The five `PCS_OPEN` calls as `WhirOp`s on plain layouts (`uniOps`: `C1`, `C2` by `tableCode`; the setup's stack, `A0`, `B0` at the setup's roots), the check (`uniCheck`), `good` (`uniGood`, `uniGoodS`). |
@@ -65,8 +76,20 @@ the bound in bits (`uniBound_le_bits`).
    relations at `t` (`diffs`, `diffs_eval`, `diffs_flock`, `diffs_pending`), the batch's products
    (`prod`, `target`, `batch_start`: `combine` and `weightAt` are the `ρ`- and `λ`-combinations).
 4. `C : UniCode D hFlock nV V` — the code-level link: `reduceWith` after the row counts is the
-   chain program on `uniRounds`.
+   chain program on `uniRounds`. **Constructed** (`CodeLink.lean`): `uniCode D hFlock hκ :
+   UniCode D hFlock valsCount (varsOf (layoutsOf D.shape))` for every deployment whose `BLAKE2S`
+   height is `κ`, Flock's segment by `hFlock.link`; `uniCodeAt` at the identity model's numbers.
 5. `hFin : UniFinal …` — the last link: the batch's terminal with true claims is the last state.
+   **Constructed** (`FinalLink.lean`): `uniFinal` for the identity model whose batch is the
+   verifier's (`prod = batchProd`, `target = batchTargetOf`), under three named hypotheses:
+   `WeightMle` (each claim's weight at the batch's point is the fold of its cube values; it fails
+   when a `q_flock` slot term's point `y(t)` is a proper prefix of another `C1` point, a polynomial
+   coincidence in `t`: `combine` then lengthens the point and `weightAt` reads the slot's row on
+   `8 + |point|` coordinates, overlapping the selector's), `LayoutVarsSmall` (fewer than `256`
+   variables per stack, the layout word's byte), `FlockPendingShaped` (discharged for
+   `flockSoundInstance`: `FlockSoundUni/PendingShape.lean`'s `flockPendingShaped`). The `λ³` term
+   is `pendingTerminalLink` (`PendingLink.lean`). `uniKnowledgeSoundness_code` (and, with Flock's
+   instance, `FlockSound.Uni.uniKnowledgeSoundness_flock`) is the end theorem with both in place.
 6. `hFs : FsLayer …` — the Fiat–Shamir layer, **proved** from `UniGameLe` and `UniNumbers`
    (`fsLayer_of_game`, `FsProof.lean`): `Compose.ListChainU`'s chain over the univariate encoding,
    the random-permutation transfer for a setup of three trees (`Compose.rpm_le_kcS`), the five
@@ -124,3 +147,26 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.hok_uni' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.hok_uni
+/-- info: 'UniSound.pendingTerminalLink' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.pendingTerminalLink
+
+/-- info: 'UniSound.link_obs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.link_obs
+
+/-- info: 'UniSound.uniCode' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniCode
+
+/-- info: 'UniSound.uniFinal' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniFinal
+
+/-- info: 'UniSound.terminal_sumState' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.terminal_sumState
+
+/-- info: 'UniSound.uniKnowledgeSoundness_code' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniKnowledgeSoundness_code
