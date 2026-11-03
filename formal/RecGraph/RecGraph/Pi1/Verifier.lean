@@ -585,10 +585,13 @@ def callsOf (st : RecState) (red : ReducedS) : List (List Word) :=
       | .setup => (.const (beNat (LeanVM.Protocol.KeccakHash.digestBytes referenceRoots.bytecode)), words.getD 2 [])
     [root, .const (beNat layout), .const 1] ++ point.map Word.node ++ [.node value]
 
+/-- A program's recorded graph, from the recorder's start, with its calls' words and its stream's length. -/
+def recordedGraph (p : Prog ReducedS) : Graph :=
+  (p.record RecState.start).2.graph (callsOf (p.record RecState.start).2 (p.record RecState.start).1)
+    (p.record RecState.start).2.cursor
+
 /-- **π1-rec3's graph, recorded in Lean**: `pi1Rec3` on the recorder from its start, with its calls' words and its
 stream's length. -/
-def pi1Graph : Graph :=
-  let (red, st) := pi1Rec3.record RecState.start
-  st.graph (callsOf st red) st.cursor
+abbrev pi1Graph : Graph := recordedGraph pi1Rec3
 
 end RecGraph.Pi1

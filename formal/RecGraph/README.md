@@ -48,7 +48,11 @@ REC_VECTORS=$PWD/rec_vectors.txt REC_REAL=$PWD/crates/leanvm_univariate/tests/ve
 - [`Commute.lean`](RecGraph/Commute.lean): **recording commutes with evaluation**, for every program.
 - [`Values.lean`](RecGraph/Values.lean): **every operation's node has the operation's meaning** (`op_val`), folds, dropped zeros and ones, `x + x = 0`
   and hash-consed nodes included.
-- [`RecGraphTest/Runner.lean`](RecGraphTest/Runner.lean): the differential runner.
+- [`Hazard.lean`](RecGraph/Hazard.lean): the merge hazard and its probability.
+- [`Pi1/`](RecGraph/Pi1): π1-rec3's verifier as a program (`Ops`, `Flock`, `Verifier`: `pi1Rec3`, `pi1Graph`), and
+  graph = verifier reduced to the program (`Main`).
+- [`RecGraphTest/Runner.lean`](RecGraphTest/Runner.lean): the differential runner;
+  [`RecGraphTest/Pi1Check.lean`](RecGraphTest/Pi1Check.lean): the program's recording is the Rust's, node for node.
 - `formal/UniStatement/UniStatement/Rec.lean`: `UniStatement` extended with π1-rec, π1-rec2, π1-rec3 (`FsShape`, `walk`;
   `formal/UniStatement/README.md`, item 15).
 
@@ -110,21 +114,39 @@ it: an oracle that answers Keccak-f[1600] but sets `t` and Flock's point's first
 `gapRun`; every query distinct, so a permutation answers the same) makes the batch's terminal zero differ (the
 graph's `5ce27468…`, the verifier's `b68345633…`), while setting `t` alone does not. Under a random permutation such a
 coincidence has probability about `2^-192` a coordinate, so it is a soundness-irrelevant event, but the equation holds
-only off it. Two ways to close it:
+only off it. **Decision (the coordinator's): off the event, on the proof side** (the main line's `Z_bad` / `NoMerge`), the Rust's
+`combine` unchanged.
 
-- **state it off the bad event**: `evalGraph = verifierOutputsWith` unless two of `combine`'s points are related by
-  value and not by symbol (a union bound in the random-permutation model, as the soundness proofs already take);
-- **or merge by structure**: make `combine` in the Rust verifier and in `UniStatement` merge points by what they are
-  (which challenges, which prefix), a function of the shape alone. Then graph = verifier holds for every stream and
-  permutation.
+**Where the proof stands** (π1-rec3, `leanvm-rec` 4247e37):
 
-**What is left** for a proof: write π1-rec3's verifier as a scoped `Prog` (in the Rust's operation order, so that
-`Prog.record`'s graph is `Emitted.graph` node for node, which the runner can check without the kernel), then prove,
-function by function, that its run (each operation worth its `Op.value`: `op_val`, `record_inv`) computes
-`UniStatement`'s `runFs … .rec3 true` off the bad event above; `record_eval` then turns that into the graph's
-`evalNodes`. The per-operation and per-program lemmas are here; the simulation of the verifier (about 2,500 lines of
-`UniStatement` on π1-rec3's path: the counts, the transcript, Flock with the walk, the tables, the heap, `combine`,
-the paired batch) is not.
+1. **The verifier as a program, node for node** (done): `Pi1/Ops.lean`, `Pi1/Flock.lean`, `Pi1/Verifier.lean`
+   transcribe `reduce` with `FLOCK_REC3` in the Rust's operation order (every `S::zero()`, `S::one()`, constant, the
+   eager iterator steps, the walk, the `XOR` network, the paired batch, `weight_at`'s grouping) as a `Prog`;
+   `RecGraphTest/Pi1Check.lean` (`lake env lean`) checks that its Lean recording `Pi1.pi1Graph` is `Emitted.graph`:
+   the 165,829 nodes, the 14 zeros, the kernel, the 3 calls' words and the 8,272-byte stream, all equal.
+2. **Graph = verifier, reduced to the program** (done): `Pi1/Main.lean`'s `evalGraph_recordedGraph` (from
+   `record_eval`): the recorded graph's evaluation is the program's run on `E`; `pi1GraphIsVerifier_of_sim : Pi1Sim →
+   Pi1GraphIsVerifier`, the target stated off the hazard:
+   ```lean
+   def Pi1GraphIsVerifier : Prop :=
+     ∀ (π : KeccakState → KeccakState) (iv : List UInt8) (publicInput : Vector UInt8 32) (stream : Array UInt8),
+       ¬ MergeHazard π iv publicInput.toList stream →
+         evalGraph (m := Id) (fun s ↦ pure (π s)) (recordedGraph pi1Rec3) iv publicInput.toList stream =
+           verifierOutputsWith (m := Id) (fun s ↦ pure (π s)) reference referenceRoots iv publicInput.toList stream .rec3
+             true
+   ```
+   **Left: `Pi1Sim`**, the program's run on `E` (each operation worth its `Op.value`, `op_val`, `record_inv`) against
+   `UniStatement`'s `runWithFs … .rec3 true`, function by function: the counts, the transcript (seed, reads, samples,
+   narrow samples, the challenges list), `eqKernel` (the Rust's in-place doubling against `UniStatement`'s map),
+   Flock (the zerocheck's Lagrange weights, the sumchecks, the walk `blake2sRowValues` against `Rec.lean`'s, the
+   terminal, the tower target through the `XOR` network against the direct leaf sums), the digits, `Z_act`, the six
+   tables' `linearise`, the constraint and heap relations, `combine` (by node against by value: off the hazard the
+   value merges change no weight, `UniSound`'s `CombineEq`, `MergedSelf`, `TermWExtend`, `y_self`), `weight_at` (the
+   Rust's grouping against `weightAt`: `UniSound`'s `WeightAtLinear`), the paired batch, the calls' bytes.
+3. **The hazard's probability** (done, `Hazard.lean`): `MergeHazard` is `UniSound`'s `Z_bad(t) = 0` at π1-rec3's run
+   (`t` its challenge 49, `p_0` = Flock's point's first coordinate, challenge 42); `hazard_card`: for every `p_0`, at
+   most `2^19` values of `t`; `hazard_prob`: `≤ 2^19/|E| = 2^-173`, per candidate `C1`, `C2` (the challenges before `t`
+   fixed: Flock's point is drawn before `C2`'s root, `t` after it).
 
 ## The differential tests (run on h1, `leanvm-rec` 4247e37)
 
