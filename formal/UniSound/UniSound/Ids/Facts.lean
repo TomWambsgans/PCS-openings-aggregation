@@ -186,6 +186,235 @@ theorem gpowInK : GpowInK := fun n ↦ (inK_gpow n).ofK_toK
 
 end UniSound.Ids
 
+namespace UniSound.Ids.Facts
+
+open LeanVM.Parameters UniStatement
+
+/-! ## The tables' flushes -/
+
+/-- A form whose coefficients are in `K`. -/
+def FormK (f : Form) : Prop := ∀ mc ∈ f, InK mc.2
+
+/-- Forms all in `K`. -/
+def AllK (l : List Form) : Prop := ∀ f ∈ l, FormK f
+
+/-- A tuple of at most sixteen forms in `K`. -/
+def TupK (tup : List Form) : Prop := tup.length ≤ 16 ∧ AllK tup
+
+/-- **Flushes as `TablesFacts` wants them**: as many pulls as pushes, each tuple a `TupK`. -/
+def Good (fl : Flushes) : Prop :=
+  fl.pull.length = fl.push.length ∧ ∀ tup ∈ fl.pull ++ fl.push, TupK tup
+
+theorem allK_nil : AllK [] := fun _ h ↦ absurd h List.not_mem_nil
+
+theorem AllK.cons {f : Form} {l : List Form} (hf : FormK f) (hl : AllK l) : AllK (f :: l) := by
+  intro g hg
+  rcases List.mem_cons.mp hg with rfl | h
+  · exact hf
+  · exact hl g h
+
+theorem AllK.append {l l' : List Form} (hl : AllK l) (hl' : AllK l') : AllK (l ++ l') := by
+  intro g hg
+  rcases List.mem_append.mp hg with h | h
+  · exact hl g h
+  · exact hl' g h
+
+theorem allK_map {α : Type} (l : List α) {φ : α → Form} (h : ∀ a, FormK (φ a)) : AllK (l.map φ) := by
+  intro g hg
+  obtain ⟨a, -, rfl⟩ := List.mem_map.mp hg
+  exact h a
+
+theorem formK_term (mono : List ℕ) {c : E} (hc : InK c) : FormK (Form.term mono c) := by
+  intro mc hmc
+  rw [Form.term, List.mem_singleton] at hmc
+  subst hmc
+  exact hc
+
+theorem formK_constant {c : E} (hc : InK c) : FormK (constant c) := formK_term [] hc
+
+theorem formK_col (index exponent : ℕ) : FormK (col index exponent) :=
+  formK_term [index] (inK_gpow exponent)
+
+theorem formK_prod (a b exponent : ℕ) : FormK (UniStatement.prod a b exponent) :=
+  formK_term [min a b, max a b] (inK_gpow exponent)
+
+theorem FormK.addAt {mono : List ℕ} {c : E} (hc : InK c) : ∀ {f : Form}, FormK f → FormK (f.addAt mono c)
+  | [], _ => by
+    intro mc hmc
+    simp only [Form.addAt, List.mem_singleton] at hmc
+    subst hmc
+    exact hc
+  | (k, v) :: rest, hf => by
+    have hv : InK v := hf (k, v) List.mem_cons_self
+    have hrest : FormK rest := fun mc h ↦ hf mc (List.mem_cons_of_mem _ h)
+    simp only [Form.addAt]
+    split_ifs
+    · intro mc hmc
+      rcases List.mem_cons.mp hmc with rfl | h
+      · exact hv.add hc
+      · exact hrest mc h
+    · intro mc hmc
+      rcases List.mem_cons.mp hmc with rfl | h
+      · exact hc
+      · exact hf mc h
+    · intro mc hmc
+      rcases List.mem_cons.mp hmc with rfl | h
+      · exact hv
+      · exact FormK.addAt hc hrest mc h
+
+theorem FormK.addScaled {w : E} (hw : InK w) : ∀ {f other : Form}, FormK f → FormK other →
+    FormK (f.addScaled other w)
+  | _, [], hf, _ => hf
+  | f, (mono, c) :: rest, hf, ho => by
+    have hc : InK c := ho (mono, c) List.mem_cons_self
+    have hrest : FormK rest := fun mc h ↦ ho mc (List.mem_cons_of_mem _ h)
+    rw [Form.addScaled, List.foldl_cons]
+    exact FormK.addScaled hw (hf.addAt (hw.mul hc)) hrest
+
+theorem FormK.add {f other : Form} (hf : FormK f) (ho : FormK other) : FormK (f.add other) :=
+  FormK.addScaled inK_one hf ho
+
+theorem formK_sum : ∀ {forms : List Form} {acc : Form}, FormK acc → AllK forms →
+    FormK (forms.foldl Form.add acc)
+  | [], _, hacc, _ => hacc
+  | x :: rest, _, hacc, hf => by
+    rw [List.foldl_cons]
+    exact formK_sum (hacc.add (hf x List.mem_cons_self)) fun h hh ↦ hf h (List.mem_cons_of_mem _ hh)
+
+theorem formK_Form_sum {forms : List Form} (hf : AllK forms) : FormK (Form.sum forms) :=
+  formK_sum (fun _ h ↦ absurd h List.not_mem_nil) hf
+
+theorem good_empty : Good ⟨[], []⟩ := ⟨rfl, fun _ h ↦ absurd h List.not_mem_nil⟩
+
+theorem Good.pair {f : Flushes} {push pull : List Form} (hf : Good f) (hpush : TupK push)
+    (hpull : TupK pull) : Good (f.pair push pull) := by
+  refine ⟨by simp [Flushes.pair, hf.1], ?_⟩
+  intro tup htup
+  simp only [Flushes.pair, List.mem_append, List.mem_singleton] at htup
+  rcases htup with (h | rfl) | (h | rfl)
+  · exact hf.2 tup (List.mem_append_left _ h)
+  · exact hpull
+  · exact hf.2 tup (List.mem_append_right _ h)
+  · exact hpush
+
+theorem Good.stateDerived {f : Flushes} (hf : Good f) (pc fp : ℕ) {npc nfp : Form} (hn : FormK npc)
+    (hnf : FormK nfp) : Good (f.stateDerived pc fp npc nfp) :=
+  hf.pair ⟨by simp, (((allK_nil.cons hnf).cons hn).cons (formK_constant inK_one))⟩
+    ⟨by simp, (((allK_nil.cons (formK_col fp 0)).cons (formK_col pc 0)).cons (formK_constant inK_one))⟩
+
+theorem Good.stateStep {f : Flushes} (hf : Good f) (pc fp : ℕ) : Good (f.stateStep pc fp) :=
+  hf.stateDerived pc fp (formK_col pc 1) (formK_col fp 0)
+
+theorem Good.counted {f : Flushes} {pre suffix : List Form} (hf : Good f) (count : ℕ)
+    (hlen : pre.length + suffix.length ≤ 15) (hpre : AllK pre) (hsuf : AllK suffix) :
+    Good (f.counted pre count suffix) := by
+  unfold Flushes.counted
+  exact hf.pair ⟨by simp; omega, (hpre.append (allK_nil.cons (formK_col count 1))).append hsuf⟩
+    ⟨by simp; omega, (hpre.append (allK_nil.cons (formK_col count 0))).append hsuf⟩
+
+theorem Good.bytecode {f : Flushes} (hf : Good f) (pc count opcode : ℕ) {operands : List Form}
+    (hlen : operands.length ≤ 12) (hop : AllK operands) : Good (f.bytecode pc count opcode operands) :=
+  hf.counted count (by simp; omega)
+    ((allK_nil.cons (formK_col pc 0)).cons (formK_constant (inK_eK 4)))
+    ((allK_nil.cons (formK_constant (inK_gpow opcode))).append hop)
+
+theorem Good.memory {f : Flushes} (hf : Good f) {address : Form} (ha : FormK address) (count : ℕ)
+    {values : List Form} (hlen : values.length ≤ 13) (hv : AllK values) :
+    Good (f.memory address count values) :=
+  hf.counted count (by simp; omega) ((allK_nil.cons ha).cons (formK_constant (inK_eK 2))) hv
+
+theorem Good.memoryCols {f : Flushes} (hf : Good f) {address : Form} (ha : FormK address)
+    (count : ℕ) (columns : List ℕ) : Good (f.memoryCols address count columns) := by
+  unfold Flushes.memoryCols
+  refine hf.memory ha count (by simp) (allK_map _ fun limb ↦ ?_)
+  split
+  · exact formK_col _ 0
+  · exact formK_constant inK_zero
+
+theorem good_foldl {α : Type} (step : Flushes → α → Flushes) (h : ∀ f a, Good f → Good (step f a)) :
+    ∀ (l : List α) {init : Flushes}, Good init → Good (l.foldl step init)
+  | [], _, hi => hi
+  | a :: l, _, hi => by
+    rw [List.foldl_cons]
+    exact good_foldl step h l (h _ a hi)
+
+/-- Closes the `AllK`/`FormK` goals of the tables' literal tuples. -/
+macro "formk" : tactic => `(tactic| repeat' first
+  | exact allK_nil
+  | exact formK_col _ _
+  | exact formK_prod _ _ _
+  | exact formK_constant inK_zero
+  | exact formK_constant inK_one
+  | apply formK_Form_sum
+  | apply FormK.add
+  | apply AllK.cons
+  | apply AllK.append)
+
+theorem good_arith (opcode : ℕ) (multiply : Bool) : Good (flushesArith opcode multiply) := by
+  unfold flushesArith
+  dsimp only
+  refine ((((good_empty.stateStep _ _).bytecode _ _ _ (by simp) (by formk)).memoryCols
+    (formK_prod _ _ 0) _ _).memoryCols (formK_prod _ _ 0) _ _).memory (formK_prod _ _ 0) _ ?_ ?_
+  · cases multiply <;> simp
+  · cases multiply
+    · simp only [Bool.false_eq_true, ↓reduceIte]
+      exact allK_map _ fun _ ↦ (formK_col _ 0).add (formK_col _ 0)
+    · simp only [↓reduceIte]
+      exact allK_map _ fun lane ↦ formK_Form_sum (allK_map lane fun ⟨_, _⟩ ↦ formK_prod _ _ 0)
+
+theorem good_set : Good flushesSet := by
+  unfold flushesSet
+  dsimp only
+  exact ((good_empty.stateStep _ _).bytecode _ _ _ (by simp) (by formk)).memoryCols
+    (formK_prod _ _ 0) _ _
+
+theorem good_deref : Good flushesDeref := by
+  unfold flushesDeref
+  dsimp only
+  exact ((((good_empty.stateStep _ _).bytecode _ _ _ (by simp) (by formk)).memoryCols
+    (formK_prod _ _ 0) _ _).memory (formK_prod _ _ 0) _ (by simp) (by formk)).memoryCols
+    (formK_prod _ _ 0) _ _
+
+theorem good_jump : Good flushesJump := by
+  unfold flushesJump
+  dsimp only
+  exact (((((good_empty.stateDerived _ _ (by formk) (by formk)).bytecode _ _ _ (by simp)
+    (by formk)).memoryCols (formK_prod _ _ 0) _ _).memoryCols (formK_prod _ _ 0) _ _).memoryCols
+    (formK_prod _ _ 0) _ _)
+
+theorem good_blake2s : Good flushesBlake2s := by
+  unfold flushesBlake2s
+  dsimp only
+  refine good_foldl _ (fun f x hf ↦ ?_) _
+    ((good_empty.stateStep _ _).bytecode _ _ _ (by simp) (allK_map _ fun _ ↦ formK_col _ 0))
+  obtain ⟨_, _, _⟩ := x
+  exact hf.memoryCols (formK_prod _ _ _) _ _
+
+end UniSound.Ids.Facts
+
+namespace UniSound.Ids
+
+open LeanVM.Parameters UniStatement Facts
+
+/-- **The tables' flushes** (`TablesFacts`): as many pulls as pushes, tuples of at most `16` forms,
+every coefficient in `K`. -/
+theorem tablesFacts : TablesFacts := by
+  have key : ∀ tab ∈ tables, Good tab.flushes := by
+    intro tab htab
+    simp only [tables, List.mem_cons, List.not_mem_nil, or_false] at htab
+    rcases htab with rfl | rfl | rfl | rfl | rfl | rfl
+    · exact good_arith _ _
+    · exact good_arith _ _
+    · exact good_set
+    · exact good_deref
+    · exact good_jump
+    · exact good_blake2s
+  intro tab htab
+  obtain ⟨hlen, htup⟩ := key tab htab
+  exact ⟨hlen, fun tup h ↦ ⟨(htup tup h).1, fun f hf mc hmc ↦ ((htup tup h).2 f hf mc hmc).ofK_toK⟩⟩
+
+end UniSound.Ids
+
 /-! ## Axioms -/
 
 /-- info: 'UniSound.Ids.eqKernelLagrange' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -195,3 +424,7 @@ end UniSound.Ids
 /-- info: 'UniSound.Ids.gpowInK' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.Ids.gpowInK
+
+/-- info: 'UniSound.Ids.tablesFacts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.tablesFacts
