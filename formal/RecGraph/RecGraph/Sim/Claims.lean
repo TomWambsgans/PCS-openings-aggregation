@@ -792,3 +792,236 @@ theorem combine_phc {st : RecState} (hg : Good st) {relsS : List RelationS} {rel
 end CombineSim
 
 end RecGraph.Sim
+
+/-! ## The program's `weight_at`, on values -/
+
+namespace RecGraph.Sim
+
+open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash UniStatement RecGraph.Pi1
+
+/-- A column's variables, as `partS` reads them: its first limb's. -/
+def headVars (L : StackLayout) (column : Column) : ℕ := ((L.limbs column).headD (0, 0, 0)).2.1
+
+/-- **`partS`'s value**: the column's limbs, each its basis entry (`z0` past the basis) times its selector at the
+column's variables. -/
+def partV (r : List E) (z0 : E) (L : StackLayout) (column : Column) : E :=
+  (L.limbs column).foldl (fun s b ↦ s + (if b.1 = 0 then selector r (headVars L column) b.2.2
+    else limbBasis.getD b.1 z0 * selector r (headVars L column) b.2.2)) 0
+
+/-- **A row's value**, as the program computes it (`z0` the value of an out-of-range read): the ring-switch
+weight, or `Π_(k < len) ((1 + r_k) + p_k)`. -/
+def rowW (r map : List E) (z0 : E) (point : List E) (len twist : ℕ) : E :=
+  if twist = ringTwist then
+    ringWeightValue (point.take len ++ (r.map (1 + ·)).take len ++ map) (point.take len).length
+  else (List.range' 0 len).foldl (fun a k ↦ a * ((r.map (1 + ·)).getD k z0 + point.getD k z0)) 1
+
+/-- `q_flock`'s slot `j`'s eight low coordinates' `eq`, as the program computes it. -/
+def accW (r : List E) (z0 : E) (j : ℕ) : E :=
+  (List.range' 0 8).foldl (fun a b ↦ a * (if j.testBit b = true then r.getD b z0 else (r.map (1 + ·)).getD b z0)) 1
+
+/-- A slot point's instance coordinates' `eq`, as the program computes it. -/
+def instW (r point : List E) : E := (point.zip ((r.map (1 + ·)).drop 8)).foldl (fun a xa ↦ a * (xa.2 + xa.1)) 1
+
+/-- **One term's weight as the program reads it** (coefficient `1`). -/
+def termP (L : StackLayout) (r map : List E) (z0 : E) (column : Column) (point : List E) (twist : ℕ) : E :=
+  match column with
+  | .qflockSlot j => accW r z0 j * (instW r point * partV r z0 L .qflock)
+  | _ => rowW r map z0 point (headVars L column) twist * partV r z0 L column
+
+/-- **The program's weight, on values**: each term's coefficient times its weight as the program reads it. -/
+def progW (C : Combined) (L : StackLayout) (r map : List E) (z0 : E) : E :=
+  (C.terms.map fun x ↦ x.2.2.2 * termP L r map z0 x.1 (C.points.getD x.2.1 []) x.2.2.1).sum
+
+/-- A keyed accumulator's reading. -/
+def rdK {K : Type} (f : K → E) (V : List (K × E)) : E := (V.map fun e ↦ f e.1 * e.2).sum
+
+/-- The rows' part of a prefix of the terms. -/
+def rowT (L : StackLayout) (r : List E) (z0 : E) (f : ℕ × ℕ × ℕ → E) (x : Column × ℕ × ℕ × E) : E :=
+  match x.1 with
+  | .qflockSlot _ => 0
+  | _ => f (x.2.1, headVars L x.1, x.2.2.1) * (x.2.2.2 * partV r z0 L x.1)
+
+/-- The slots' part of a prefix of the terms. -/
+def slotT (r : List E) (z0 : E) (g : ℕ → E) (x : Column × ℕ × ℕ × E) : E :=
+  match x.1 with
+  | .qflockSlot j => g x.2.1 * (x.2.2.2 * accW r z0 j)
+  | _ => 0
+
+section WeightSim
+
+variable (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8)
+
+/-- A combined term's values at `st`. -/
+def valTm (st : RecState) (x : Column × ℕ × ℕ × Nat) : Column × ℕ × ℕ × E :=
+  (x.1, x.2.1, x.2.2.1, val π iv publicInput stream st x.2.2.2)
+
+/-- **A program combined claim's values** at `st`. -/
+def valC (st : RecState) (cS : CombinedS) : Combined :=
+  ⟨cS.points.map (·.map (val π iv publicInput stream st)), cS.terms.map (valTm π iv publicInput stream st),
+    val π iv publicInput stream st cS.value, cS.relations⟩
+
+/-- **A program combined claim's nodes are held** at `st`. -/
+structure HeldC (st : RecState) (cS : CombinedS) : Prop where
+  points : ∀ q ∈ cS.points, ∀ i ∈ q, i < st.nodes.size
+  terms : ∀ x ∈ cS.terms, x.2.2.2 < st.nodes.size
+  value : cS.value < st.nodes.size
+
+/-- Keyed accumulators: the same keys, the values represented. -/
+def RpKeyed {K : Type} (st : RecState) (a : List (K × Nat)) (b : List (K × E)) : Prop :=
+  List.Forall₂ (fun x y ↦ x.1 = y.1 ∧ Rp π iv publicInput stream st x.2 y.2) a b
+
+theorem RpKeyed.pgrow {K : Type} {st st' : RecState} (hg : Good st) (hs : PStep st st') {a : List (K × Nat)}
+    {b : List (K × E)} (h : RpKeyed π iv publicInput stream st a b) : RpKeyed π iv publicInput stream st' a b :=
+  List.Forall₂.imp (fun _ _ h ↦ ⟨h.1, Rp.pgrow hg hs h.2⟩) h
+
+theorem HeldC.grows {st st' : RecState} (hgr : Grows st st') {cS : CombinedS} (h : HeldC st cS) : HeldC st' cS :=
+  ⟨fun q hq i hi ↦ lt_of_lt_of_le (h.points q hq i hi) (Grows.size_le hgr),
+    fun x hx ↦ lt_of_lt_of_le (h.terms x hx) (Grows.size_le hgr), lt_of_lt_of_le h.value (Grows.size_le hgr)⟩
+
+/-- A held node represents its value. -/
+theorem rp_val {st : RecState} {i : Nat} (hi : i < st.nodes.size) :
+    Rp π iv publicInput stream st i (val π iv publicInput stream st i) := ⟨hi, rfl⟩
+
+theorem rpL_val {st : RecState} {l : List Nat} (hl : ∀ i ∈ l, i < st.nodes.size) :
+    RpL π iv publicInput stream st l (l.map (val π iv publicInput stream st)) := by
+  induction l with
+  | nil => exact List.Forall₂.nil
+  | cons a l ih =>
+    exact List.Forall₂.cons (rp_val π iv publicInput stream (hl a (by simp)))
+      (ih fun i hi ↦ hl i (by simp [hi]))
+
+/-- A held claim's values do not change as the state grows. -/
+theorem valC_grow {st st' : RecState} (hk : KInv st) (hgr : Grows st st') {cS : CombinedS} (h : HeldC st cS) :
+    valC π iv publicInput stream st' cS = valC π iv publicInput stream st cS := by
+  unfold valC valTm
+  congr 1
+  · refine List.map_congr_left fun q hq ↦ List.map_congr_left fun i hi ↦ ?_
+    exact val_grow π iv publicInput stream hk hgr (h.points q hq i hi)
+  · refine List.map_congr_left fun x hx ↦ ?_
+    rw [val_grow π iv publicInput stream hk hgr (h.terms x hx)]
+  · exact val_grow π iv publicInput stream hk hgr h.value
+
+/-- An out-of-range read of a node list is node `0`. -/
+theorem RpL.getDz {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) {z0 : E}
+    (h0 : Rp π iv publicInput stream st 0 z0) (k : Nat) : Rp π iv publicInput stream st (is.getD k 0) (xs.getD k z0) := by
+  induction h generalizing k with
+  | nil => simpa using h0
+  | cons hr _ ih =>
+    cases k with
+    | zero => simpa using hr
+    | succ k => simpa using ih k
+
+theorem RpL.arrGetDz {st : RecState} {a : Array Nat} {xs : List E} (h : RpL π iv publicInput stream st a.toList xs)
+    {z0 : E} (h0 : Rp π iv publicInput stream st 0 z0) (k : Nat) :
+    Rp π iv publicInput stream st (a.getD k 0) (xs.getD k z0) := by
+  have e : a.getD k 0 = a.toList.getD k 0 := by
+    rw [Array.getD_eq_getD_getElem?, ← Array.getElem?_toList, List.getD_eq_getElem?_getD]
+  rw [e]
+  exact RpL.getDz π iv publicInput stream h h0 k
+
+theorem forall₂_zipC {α β γ δ : Type} {R : α → β → Prop} {S : γ → δ → Prop} :
+    ∀ {l1 : List α} {m1 : List β} {l2 : List γ} {m2 : List δ}, List.Forall₂ R l1 m1 → List.Forall₂ S l2 m2 →
+      List.Forall₂ (fun a b ↦ R a.1 b.1 ∧ S a.2 b.2) (l1.zip l2) (m1.zip m2)
+  | _, _, _, _, .nil, _ => by simp
+  | _, _, _, _, .cons _ _, .nil => by simp
+  | _, _, _, _, .cons h1 t1, .cons h2 t2 => List.Forall₂.cons ⟨h1, h2⟩ (forall₂_zipC t1 t2)
+
+theorem forall₂_getD_nilC {α β : Type} {R : List α → List β → Prop} (hd : R [] []) {l : List (List α)}
+    {m : List (List β)} (h : List.Forall₂ R l m) (p : Nat) : R (l.getD p []) (m.getD p []) := by
+  rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD]
+  exact forall₂_getElem?_getDC h [] [] hd p
+
+/-- **The context of `weight_at`'s loops**: the point `r`, `1 + r`, the basis, node `0`, the claim's points, the map. -/
+structure WCtx (st0 st : RecState) (cS : CombinedS) (rS opS basis mapS : List Nat) (r map : List E) (z0 : E) :
+    Prop where
+  hr : RpL π iv publicInput stream st rS r
+  hop : RpL π iv publicInput stream st opS (r.map (1 + ·))
+  hbasis : RpL π iv publicInput stream st basis limbBasis
+  hz0 : Rp π iv publicInput stream st 0 z0
+  hpts : ∀ p, RpL π iv publicInput stream st (cS.points.getD p []) ((valC π iv publicInput stream st0 cS).points.getD p [])
+  hmap : RpL π iv publicInput stream st mapS map
+
+theorem WCtx.pgrow {st0 st st' : RecState} (hg : Good st) (hs : PStep st st') {cS : CombinedS}
+    {rS opS basis mapS : List Nat} {r map : List E} {z0 : E}
+    (h : WCtx π iv publicInput stream st0 st cS rS opS basis mapS r map z0) :
+    WCtx π iv publicInput stream st0 st' cS rS opS basis mapS r map z0 :=
+  ⟨RpL.pgrow hg hs h.hr, RpL.pgrow hg hs h.hop, RpL.pgrow hg hs h.hbasis, Rp.pgrow hg hs h.hz0,
+    fun p ↦ RpL.pgrow hg hs (h.hpts p), RpL.pgrow hg hs h.hmap⟩
+
+/-- `selector` from the bottom: its first factor times the rest. -/
+theorem selector_succ (r : List E) (fromVar offset : ℕ) (h : fromVar < r.length) :
+    selector r fromVar offset = (if offset.testBit fromVar then r.getD fromVar 0 else 1 + r.getD fromVar 0) *
+      selector r (fromVar + 1) offset := by
+  unfold selector
+  have e : r.length - fromVar = (r.length - (fromVar + 1)) + 1 := by omega
+  rw [e, List.range'_succ, List.foldl_cons, UniSound.Ids.Weights.foldl_mul_map,
+    UniSound.Ids.Weights.foldl_mul_map, one_mul, one_mul]
+
+theorem selector_ge (r : List E) (fromVar offset : ℕ) (h : r.length ≤ fromVar) : selector r fromVar offset = 1 := by
+  unfold selector
+  rw [show r.length - fromVar = 0 by omega]
+  rfl
+
+/-- **`EqCache::selector`**: the program's is `UniStatement`'s. -/
+theorem selectorS_phc {rS : List Nat} {r : List E} (offset : ℕ) :
+    ∀ (fuel fromVar : ℕ) (st : RecState), Good st → RpL π iv publicInput stream st rS r →
+      r.length - fromVar < fuel →
+      PHc st (Pi1.selectorS rS fuel fromVar offset) fun i st' ↦
+        Rp π iv publicInput stream st' i (selector r fromVar offset) := by
+  intro fuel
+  induction fuel with
+  | zero => intro _ _ _ _ h; omega
+  | succ fuel ih =>
+    intro fromVar st hg hr hf
+    have hlen := RpL.lengthC π iv publicInput stream hr
+    simp only [Pi1.selectorS]
+    by_cases hge : fromVar ≥ rS.length
+    · rw [ite_eq_left hge, selector_ge r fromVar offset (by omega)]
+      exact phc_one π iv publicInput stream hg
+    · rw [ite_eq_right hge, selector_succ r fromVar offset (by omega)]
+      refine phc_bind (ih (fromVar + 1) st hg hr (by omega)) fun rest st1 hs1 hrest ↦ ?_
+      have hrf : Rp π iv publicInput stream st1 (rS.getD fromVar 0) (r.getD fromVar 0) :=
+        RpL.getDC π iv publicInput stream (RpL.pgrow hg hs1 hr) (by omega)
+      by_cases hb : offset.testBit fromVar = true
+      · simp only [hb, ↓reduceIte]
+        exact phc_bind (phc_pure _ hs1.good hrf) fun f st2 hs2 hf ↦
+          phc_mul π iv publicInput stream hs2.good hf (Rp.pgrow hs1.good hs2 hrest)
+      · simp only [hb, Bool.false_eq_true, ↓reduceIte]
+        exact phc_bind (phc_one π iv publicInput stream hs1.good) fun o st2 hs2 ho ↦
+          phc_bind (phc_add π iv publicInput stream hs2.good ho (Rp.pgrow hs1.good hs2 hrf)) fun f st3 hs3 hf ↦
+          phc_mul π iv publicInput stream hs3.good hf (Rp.pgrow hs2.good hs3 (Rp.pgrow hs1.good hs2 hrest))
+
+/-- **`partS`**: the column's variables, and its part's value. -/
+theorem partS_phc {st : RecState} (hg : Good st) {rS basis : List Nat} {r : List E}
+    (hr : RpL π iv publicInput stream st rS r) (hb : RpL π iv publicInput stream st basis limbBasis) {z0 : E}
+    (h0 : Rp π iv publicInput stream st 0 z0) (L : StackLayout) (column : Column) :
+    PHc st (Pi1.partS rS basis L column) fun res st' ↦
+      res.1 = headVars L column ∧ Rp π iv publicInput stream st' res.2 (partV r z0 L column) := by
+  have hlen := RpL.lengthC π iv publicInput stream hr
+  unfold Pi1.partS partV
+  refine phc_bind (phc_zero π iv publicInput stream hg) fun s0 st1 hs1 hs0 ↦ ?_
+  refine phc_bind (phc_forIn_same (fun _ ↦ True)
+    (fun st ↦ RpL π iv publicInput stream st rS r ∧ RpL π iv publicInput stream st basis limbBasis ∧
+      Rp π iv publicInput stream st 0 z0)
+    (fun _ _ hg hs h ↦ ⟨RpL.pgrow hg hs h.1, RpL.pgrow hg hs h.2.1, Rp.pgrow hg hs h.2.2⟩) _ _
+    (fun (b : Nat) (c : E) st ↦ Rp π iv publicInput stream st b c) ?_ _ (fun _ _ ↦ trivial) st1 s0 0 hs1.good
+    ⟨RpL.pgrow hg hs1 hr, RpL.pgrow hg hs1 hb, Rp.pgrow hg hs1 h0⟩ hs0) fun res st2 hs2 hres ↦
+      phc_pure _ hs2.good ⟨rfl, hres⟩
+  rintro ⟨limb, v, off⟩ b c st hg - ⟨hr, hb, h0⟩ hbc
+  dsimp only
+  refine phc_bind (selectorS_phc π iv publicInput stream off (rS.length + 1) _ st hg hr (by omega))
+    fun sel st1 hs1 hsel ↦ ?_
+  by_cases hl : limb = 0
+  · simp only [hl, ↓reduceIte]
+    exact phc_bind (phc_pure _ hs1.good hsel) fun t st2 hs2 ht ↦
+      phc_bind (phc_add π iv publicInput stream hs2.good
+        (Rp.pgrow hs1.good hs2 (Rp.pgrow hg hs1 hbc)) ht) fun _ st3 hs3 h ↦ phc_pure _ hs3.good ⟨_, rfl, h⟩
+  · simp only [hl, ↓reduceIte]
+    have hbl := RpL.getDz π iv publicInput stream (RpL.pgrow hg hs1 hb) (Rp.pgrow hg hs1 h0) limb
+    exact phc_bind (phc_mul π iv publicInput stream hs1.good hbl hsel) fun t st2 hs2 ht ↦
+      phc_bind (phc_add π iv publicInput stream hs2.good
+        (Rp.pgrow hs1.good hs2 (Rp.pgrow hg hs1 hbc)) ht) fun _ st3 hs3 h ↦ phc_pure _ hs3.good ⟨_, rfl, h⟩
+
+end WeightSim
+
+end RecGraph.Sim
