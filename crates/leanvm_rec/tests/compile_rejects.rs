@@ -1,13 +1,15 @@
 // Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 //! The compiler's rejections (`circuit::compile`, as the Lean compiler's in `formal/RecCircuit/RecCircuit/Compile.lean`):
-//! three kinds of recorded graph it would otherwise compile into a circuit that does not constrain what the graph means,
+//! kinds of recorded graph it would otherwise compile into a circuit that does not constrain what the graph means,
 //! each refused with its message, and a small well-formed graph at each check's boundary still compiled, its circuit
 //! holding on its witness and every node's limbs the evaluator's values.
 //!
 //! - a read never hashed that is not a 24-byte scalar (a root's 16-byte half, a 4-byte integer): its free limbs would
 //!   leave the high limbs unconstrained, while the graph's are zero;
 //! - a bit field of a 24-byte read: the circuit's field could take bits past the low limb, which `E::bits` ignores;
-//! - an empty hashed read (the recorder cannot make one: the graph is built by hand).
+//! - an empty hashed read (the recorder cannot make one: the graph is built by hand);
+//! - a graph not well typed (by hand): node 0 not the seed, a hash of an element, a sum of a state, a ring weight whose
+//!   map is not of 6 stages.
 //!
 //! `cargo test --release -p leanvm_rec --test compile_rejects`
 
@@ -168,6 +170,46 @@ fn rejects_an_empty_read() {
             ],
         );
         compile(&recorded(graph, reduced, 64, [0, 32]));
+    });
+}
+
+/// A graph by hand, its openings empty: the compiler panics before reading them.
+fn by_hand(nodes: &[Node], kernels: Vec<Vec<u32>>) -> Recorded {
+    let mut graph = Graph::default();
+    graph.nodes.extend_from_slice(nodes);
+    graph.kernels = kernels;
+    recorded(graph, reduced([[Sym(0), Sym(0)], [Sym(0), Sym(0)]], vec![]), 64, [0, 32])
+}
+
+#[test]
+#[should_panic(expected = "node 0 is the seed")]
+fn rejects_a_graph_not_seeded_first() {
+    deep(|| {
+        compile(&by_hand(&[Node::Input { offset: 0, len: 24 }, Node::Seed], vec![]));
+    });
+}
+
+#[test]
+#[should_panic(expected = "a hash or a challenge reads a state")]
+fn rejects_a_hash_of_an_element() {
+    deep(|| {
+        compile(&by_hand(&[Node::Seed, Node::Input { offset: 0, len: 24 }, Node::Hash(1, 0, 24)], vec![]));
+    });
+}
+
+#[test]
+#[should_panic(expected = "a sum or a product reads elements")]
+fn rejects_a_sum_of_a_state() {
+    deep(|| {
+        compile(&by_hand(&[Node::Seed, Node::Input { offset: 0, len: 24 }, Node::Add(0, 1)], vec![]));
+    });
+}
+
+#[test]
+#[should_panic(expected = "a ring weight's map has 6 stages")]
+fn rejects_a_ring_weight_of_a_short_map() {
+    deep(|| {
+        compile(&by_hand(&[Node::Seed, Node::Input { offset: 0, len: 24 }, Node::RingWeight(0, 1)], vec![vec![1; 7]]));
     });
 }
 

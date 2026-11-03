@@ -16,22 +16,6 @@ namespace RecCircuit
 
 open Primitives LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash UniStatement
 
-/-- This library's node as `RecGraph`'s. -/
-def toRGNode : Node → RecGraph.Node
-  | .const a b d => .const a b d
-  | .statement k => .statement k
-  | .input o l => .input o l
-  | .add a b => .add a b
-  | .mul a b => .mul a b
-  | .seed => .seed
-  | .hash s f t => .hash s f t
-  | .low h => .low h
-  | .narrow h => .narrow h
-  | .bits v s w => .bits v s w
-  | .ringWeight k n => .ringWeight k n
-
-theorem toRG_ofRG (n : RecGraph.Node) : toRGNode (ofRGNode n) = n := by cases n <;> rfl
-
 /-! ## Words -/
 
 theorem ofLane_eq (w : UInt64) : K.ofLane w = F64.ofU64 w := rfl

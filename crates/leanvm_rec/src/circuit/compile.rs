@@ -12,8 +12,10 @@
 //!   permutation's input slot) has a copy;
 //! - `Input` (24-byte scalars, 4-byte integers), `Low`, `Statement`, `Bits` → **packings** of their bits into `K`
 //!   limbs; reads never hashed are free limbs;
-//! - rejected (a panic, as the Lean compiler `formal/RecCircuit` refuses them; π1's graphs have none): a read never
-//!   hashed that is not a 24-byte scalar, a bit field of a read of more than 8 bytes, an empty hashed read;
+//! - rejected (a panic, as the Lean compiler `formal/RecCircuit` refuses them; π1's graphs have none): a graph not
+//!   well typed (`assert_typed`: node 0 not the seed, a hash or a challenge of an element, a sum, a product, a bit
+//!   field or a ring weight of a state, a ring weight's map not of 6 stages), a read never hashed that is not a
+//!   24-byte scalar, a bit field of a read of more than 8 bytes, an empty hashed read;
 //! - `Add`, `Mul` → `E` units on limbs (a product, a square, a sum), constants → `κ` slots;
 //! - the calls' elements, `π1`'s roots, the statement, and the zero checks → **ports** (`spec::Source`).
 //!
@@ -34,8 +36,45 @@ use super::layout::{Builder, Finished, Value};
 use super::spec::{CallWord, PublicInputs, Source};
 use super::units::{Arith, Bools, Limbs, Op, Packer, Ports};
 
+/// What the Lean compiler checks before the expansion (`formal/RecCircuit/RecCircuit/Expand.lean`, `Graph.typed`):
+/// node 0 is the seed (π1's recorder makes it first, `Recorder::new`, and the expansion replays the graph from it);
+/// every node reads earlier nodes; a hash and a challenge read a state (the seed, a hash), a sum, a product, a bit
+/// field and a ring weight read elements; a ring weight's kernel is its point's `n` coordinates, `1 + r`'s `n` and the
+/// map's `ring_tower::STAGES`; the checks name nodes. π1's graphs are all such; a panic otherwise.
+fn assert_typed(graph: &Graph) {
+    let is_state = |id: u32| matches!(graph.nodes[id as usize], Node::Seed | Node::Hash(..));
+    assert_eq!(graph.nodes.first(), Some(&Node::Seed), "node 0 is the seed");
+    for (i, node) in graph.nodes.iter().enumerate() {
+        let earlier = |id: u32| {
+            assert!((id as usize) < i, "a node reads earlier nodes");
+            id
+        };
+        match *node {
+            Node::Add(a, b) | Node::Mul(a, b) => {
+                assert!(!is_state(earlier(a)) && !is_state(earlier(b)), "a sum or a product reads elements")
+            }
+            Node::Bits(v, ..) => assert!(!is_state(earlier(v)), "a bit field reads an element"),
+            Node::Hash(s, ..) | Node::Low(s) | Node::Narrow(s) => {
+                assert!(is_state(earlier(s)), "a hash or a challenge reads a state")
+            }
+            Node::RingWeight(k, n) => {
+                let ops = &graph.kernels[k as usize];
+                assert_eq!(ops.len(), 2 * n as usize + ring_tower::STAGES, "a ring weight's map has 6 stages");
+                for &a in ops {
+                    assert!(!is_state(earlier(a)), "a ring weight reads elements");
+                }
+            }
+            _ => {}
+        }
+    }
+    for &(id, _) in graph.zero.iter().chain(&graph.nonzero) {
+        assert!((id as usize) < graph.nodes.len(), "a check names a node");
+    }
+}
+
 /// The graph replayed with every ring-switch kernel expanded, and each original node's image.
 pub fn expand(graph: &Graph) -> (Graph, Vec<u32>) {
+    assert_typed(graph);
     let (map, expanded) = record(|| {
         let mut map: Vec<Sym> = Vec::with_capacity(graph.nodes.len());
         for node in &graph.nodes {
