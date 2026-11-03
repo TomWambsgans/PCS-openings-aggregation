@@ -18,3 +18,4 @@ import UniComplete.VerifierHDuplex
 import UniComplete.VerifierHCost
 import UniComplete.ProverSim
 import UniComplete.ProverDuplex
+import UniComplete.ProverBounds

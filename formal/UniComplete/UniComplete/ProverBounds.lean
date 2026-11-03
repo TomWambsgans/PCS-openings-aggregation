@@ -420,8 +420,8 @@ theorem chunks_ne_nil {c : ℕ} (hc : 0 < c) : chunks c ≠ [] := by
 
 theorem colWords_zip_map (index : ℕ) :
     ∀ (l l' : List ℕ), l.length ≤ l'.length →
-      colWords ((l.zip l').map fun (x : ℕ × ℕ) ↦ match x with
-        | (e, chunk) => (Column.leafQuotient index chunk, e, true)) = 3 * (l.map (2 ^ ·)).sum
+      colWords ((l.zip l').map fun (x : ℕ × ℕ) ↦ (Column.leafQuotient index x.2, x.1, true)) =
+        3 * (l.map (2 ^ ·)).sum
   | [], _, _ => rfl
   | _ :: _, [], h => by simp at h
   | e :: l, c :: l', h => by
@@ -437,6 +437,171 @@ theorem colWords_chunkCols (index d : ℕ) :
   rw [Array.toList_map, List.toList_toArray]
   exact colWords_zip_map index _ _ (by simp)
 
+/-! ## The walk's `C2` columns against the shape's -/
+
+/-- **`C2`'s columns at given parts**: the heap's, the tree quotient's, the constraint quotient's chunks at the
+shape's degree, each heap block's leaf quotient's (a table's at its part's degrees). -/
+def c2ColumnsWith (shape : Shape) (parts : List TablePart) : List (Column × ℕ × Bool) :=
+  let h := shape.heap.h
+  let constraintChunks := chunks (shape.constraintDegree + 1)
+  [(.heap, h, true), (.treeQuotient 0, h, true), (.treeQuotient 1, 0, true)] ++
+    (constraintChunks.zip (List.range constraintChunks.length)).map (fun (x : ℕ × ℕ) ↦ match x with
+      | (e, c) => (Column.constraintQuotient c, e, true)) ++
+    (shape.heap.blocks.zip (List.range shape.heap.blocks.length)).flatMap fun x ↦ (leafCols parts x.1 x.2).toList
+
+theorem one_le_sum_pow_aux {l : List ℕ} (hl : l ≠ []) : 1 ≤ (l.map (2 ^ ·)).sum := by
+  obtain ⟨a, l, rfl⟩ : ∃ a l', l = a :: l' := by
+    cases l with
+    | nil => exact absurd rfl hl
+    | cons a l' => exact ⟨a, l', rfl⟩
+  simp only [List.map_cons, List.sum_cons]
+  have := Nat.one_le_two_pow (n := a)
+  omega
+
+theorem one_le_sum_pow {l : List ℕ} (hl : l ≠ []) : 1 ≤ (l.map (2 ^ ·)).sum := one_le_sum_pow_aux hl
+
+/-- A positive degree's chunks fill at least three words. -/
+theorem three_le_colWords_chunks (index d : ℕ) :
+    3 ≤ colWords (((chunks (d + 1)).zip (List.range (chunks (d + 1)).length)).map
+      fun (x : ℕ × ℕ) ↦ (Column.leafQuotient index x.2, x.1, true)) := by
+  rw [colWords_zip_map _ _ _ (by simp)]
+  have := one_le_sum_pow (chunks_ne_nil (c := d + 1) (by omega))
+  omega
+
+/-- **The walk's `C2` columns fill at most the shape's words**: a table's leaf quotient at its table's degrees
+is the shape's, at zero degrees (a failed read) one chunk of one word. -/
+theorem colWords_c2ColumnsWith_le (shape : Shape) {parts : List TablePart} (hp : PartsOK parts) :
+    colWords (c2ColumnsWith shape parts) ≤ colWords shape.c2Columns := by
+  unfold c2ColumnsWith Shape.c2Columns
+  dsimp only
+  simp only [colWords_append, colWords_flatMap]
+  refine Nat.add_le_add_left (List.sum_le_sum fun x _ ↦ ?_) _
+  obtain ⟨⟨leaves, r, position⟩, index⟩ := x
+  cases leaves with
+  | memory =>
+    simp only [leafCols, Shape.leafDegree]
+    rw [colWords_chunkCols, colWords_zip_map _ _ _ (by simp)]
+  | bytecode =>
+    simp only [leafCols, Shape.leafDegree]
+    rw [colWords_chunkCols, colWords_zip_map _ _ _ (by simp)]
+  | unused => simp [leafCols, Shape.leafDegree, colWords]
+  | table t =>
+    simp only [leafCols, Shape.leafDegree]
+    rcases hp.getD t with h | h
+    · rw [← h]
+      simp only [partDegrees]
+      rw [colWords_chunkCols, colWords_zip_map _ _ _ (by simp)]
+    · simp only [partDegrees, Prod.mk.injEq] at h
+      rw [h.1, h.2, colWords_chunkCols, colWords_zip_map _ _ _ (by simp)]
+      have h0 : degree (max 0 0 * (2 ^ r - 1) + (2 ^ r - Shape.leastRows r)) (2 ^ r) = 0 := by
+        unfold degree
+        simp only [max_self, Nat.zero_mul, Nat.zero_add]
+        omega
+      rw [h0, Nat.zero_add, chunks_one]
+      exact Nat.mul_le_mul_left 3 (le_trans (by simp) (one_le_sum_pow (chunks_ne_nil (Nat.succ_pos _))))
+
+/-- **The batching sumcheck's variables bound**: the largest of the shape's stacks' variables. -/
+def batchVarsBound (shape : Shape) : ℕ := ((layoutsOf shape).map (·.2.vars)).foldl max 0
+
+theorem batchVars_le (shape : Shape) (cols : List (Column × ℕ × Bool)) (h : colWords cols ≤ colWords shape.c2Columns) :
+    ((layouts shape cols).map (·.2.vars)).foldl max 0 ≤ batchVarsBound shape := by
+  have := vars_new_mono h
+  simp only [batchVarsBound, layoutsOf, layouts, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil]
+  omega
+
+/-! ## The values at `t` -/
+
+@[simp] theorem id_pure_value {β : Type} (x : ForInStep β) : (pure x : Id (ForInStep β)).value = x.value := rfl
+
+theorem foldl_succ {γ : Type} : ∀ (l : List γ) (n : ℕ), l.foldl (fun n (_ : γ) ↦ n + 1) n = n + l.length
+  | [], n => rfl
+  | _ :: l, n => by rw [List.foldl_cons, foldl_succ l, List.length_cons]; omega
+
+/-- **A loop, then the rest**, bounded by a projection of the loop's state. -/
+theorem id_bind_le {α β γ : Type} {l : List γ} {b : β} {f : γ → β → Id (ForInStep β)} {k : β → Id α}
+    {P : α → Prop} (p : β → ℕ) (c : ℕ) (hf : ∀ a s, p (f a s).value ≤ p s + c)
+    (hk : ∀ s, p s ≤ p b + l.length * c → P (Id.run (k s))) : P (Id.run (forIn l b f >>= k)) :=
+  hk _ (id_forIn_le l b f p c hf)
+
+/-- A table's values at `t`: its sent columns, at most two fingerprints per flush. -/
+def tvBound (t : Table) : ℕ := (sentColumns t).length + 2 * (t.flushes.pull.zip t.flushes.push).length
+
+theorem length_tableValues (table : Table) (at_ : ℕ → E) (weights : Array E) (beta : E) :
+    (tableValues table at_ weights beta).length ≤ tvBound table := by
+  unfold tableValues
+  refine id_bind_foldl (P := fun out : List E ↦ out.length ≤ tvBound table)
+    (fun s : Array (Option E) × Array E ↦ s.2.size) (fun n _ ↦ n + 1) (fun col s ↦ ⟨_, rfl, by simp⟩)
+    fun s hs ↦ ?_
+  refine id_bind_le (P := fun out : List E ↦ out.length ≤ tvBound table) (fun out : Array E ↦ out.size) 2 ?_
+    fun out hout ↦ ?_
+  · intro x st
+    obtain ⟨pulled, pushed⟩ := x
+    dsimp only
+    split_ifs <;> simp
+  · show out.toList.length ≤ _
+    rw [foldl_succ] at hs
+    simp only [Array.length_toList, Array.size_empty] at hs ⊢
+    unfold tvBound
+    omega
+
+/-- **The values at `t`**: every table's, then seven. -/
+def valuesBound : ℕ := (tables.map tvBound).sum + 7
+
+/-- **What `atTOf` leaves**, from the shape: its `C2` columns at parts read off the tables, its values, Flock's
+pending claim. -/
+structure AtTFacts (tr : Trace) (flockOut : Option FlockOut) (a : AtT) : Prop where
+  c2 : ∃ parts, PartsOK parts ∧ a.c2Columns = c2ColumnsWith tr.shape parts
+  values : a.values.length ≤ valuesBound
+  pending : a.pending = flockOut.map fun out ↦ (out.pending, out.point)
+
+theorem atT_facts (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t : E) (flockOut : Option FlockOut) :
+    AtTFacts tr flockOut (atTOf tr c2 alphas beta gamma t flockOut) := by
+  rcases flockOut with _ | ⟨point, end_, pending, tabs⟩
+  rotate_left
+  cases end_
+  all_goals
+    unfold atTOf
+    refine id_bind_prefix (P := AtTFacts tr _)
+      (fun (pre : List Table) (s : Array E × Array Relation × Array TablePart) ↦
+        List.Forall₂ DegOK s.2.2.toList pre ∧ s.1.size ≤ (pre.map tvBound).sum) ⟨List.Forall₂.nil, by simp⟩ ?_
+      fun s hs ↦ ?_
+    · intro pre table s hI
+      refine ⟨_, rfl, ?_, ?_⟩
+      · rw [Array.toList_push]
+        exact forall₂_snoc hI.1 (degOK_runReader _ _ _ _ _ _)
+      · simp only [Array.size_append, List.size_toArray, List.map_append, List.map_cons, List.map_nil,
+          List.sum_append, List.sum_cons, List.sum_nil]
+        have := length_tableValues table (fun c ↦ evalB ((bCoefficients (tr.shape.heights.getD table.opcode 0)
+          (tr.column table.opcode c)).map ofK) (tr.shape.heights.getD table.opcode 0)
+          (digits t (max tr.shape.heap.h (tr.shape.constraintVars + 4) + 2))) (eqKernel alphas) beta
+        have := hI.2
+        omega
+    · dsimp only
+      refine ⟨⟨s.2.2.toList, hs.1, ?_⟩, ?_, rfl⟩
+      · rw [constraintRelation_snd _ _ (le_of_eq (List.Forall₂.length_eq hs.1).symm), heapRelations_snd]
+        rfl
+      · simp only [Id.run_pure, Array.length_toList, Array.size_append, List.size_toArray, List.length_cons,
+          List.length_nil]
+        unfold valuesBound
+        have := hs.2
+        omega
+
+/-- **The batching sumcheck's variables at `t`** are at most the shape's stacks' (`batchVarsBound`). -/
+theorem batchVars_atT (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t : E) (flockOut : Option FlockOut) :
+    ((layouts tr.shape (atTOf tr c2 alphas beta gamma t flockOut).c2Columns).map (·.2.vars)).foldl max 0 ≤
+      batchVarsBound tr.shape := by
+  obtain ⟨parts, hp, h⟩ := (atT_facts tr c2 alphas beta gamma t flockOut).c2
+  rw [h]
+  exact batchVars_le _ _ (colWords_c2ColumnsWith_le _ hp)
+
 end Bounds
 
 end UniComplete
+
+/-- info: 'UniComplete.Bounds.batchVars_atT' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.Bounds.batchVars_atT
+
+/-- info: 'UniComplete.Bounds.atT_facts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.Bounds.atT_facts
