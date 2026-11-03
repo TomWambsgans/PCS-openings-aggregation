@@ -258,3 +258,120 @@ theorem claim_wFold {m r : ℕ} (hrm : r ≤ m) (T : ℕ → K) (t ρ : E) :
   ring
 
 end RecCompose
+
+namespace RecCompose
+
+open RecStatement LeanVM.Parameters LeanVM.Protocol Finset Polynomial
+open scoped ENNReal
+
+/-! ## Public layouts -/
+
+/-- **A public layout holds nothing outside its chunks**: an entry whose chunk (`i / 2^lc`) is none of the listed ones
+reads `0`. -/
+theorem readEntry_ofChunks_zero {vars lc logN : ℕ} {chunks : List (ℕ × ℕ)}
+    (hlane : logN - PcsQuotient.laneFold ≤ lc) (hlen : ∀ p ∈ chunks, p.2 ≤ 2 ^ lc) (stack : ℕ → K) {i : ℕ}
+    (hi : ∀ p ∈ chunks, p.1 ≠ i / 2 ^ lc) :
+    (PcsQuotient.Layout.ofChunks vars lc logN chunks).readEntry stack i = 0 := by
+  obtain ⟨d, hd⟩ : ∃ d, lc = (logN - PcsQuotient.laneFold) + d := ⟨lc - (logN - PcsQuotient.laneFold), by omega⟩
+  set a := logN - PcsQuotient.laneFold with ha
+  have hpos : 0 < 2 ^ a := Nat.two_pow_pos a
+  have hnone : (PcsQuotient.Layout.ofChunks vars lc logN chunks).lanes.findIdx?
+      (· = PcsQuotient.Lane.block (i / 2 ^ a)) = none := by
+    rw [List.findIdx?_eq_none_iff]
+    intro x hx
+    rw [decide_eq_false_iff_not]
+    intro heq
+    simp only [PcsQuotient.Layout.ofChunks, List.mem_flatMap] at hx
+    obtain ⟨⟨c, len⟩, hc, hx⟩ := hx
+    simp only [List.mem_map, List.mem_range] at hx
+    obtain ⟨j, hj, rfl⟩ := hx
+    simp only [PcsQuotient.Lane.block.injEq] at heq
+    have hlenc : len ≤ 2 ^ lc := hlen (c, len) hc
+    have hjd : j < 2 ^ d := by
+      have h1 : (len + 2 ^ a - 1) / 2 ^ a ≤ 2 ^ d := by
+        rw [Nat.div_le_iff_le_mul_add_pred hpos]
+        rw [hd, pow_add] at hlenc
+        generalize 2 ^ a * 2 ^ d = P at hlenc ⊢
+        generalize 2 ^ a = A at hpos ⊢
+        omega
+      rw [← ha] at hj
+      omega
+    have hd' : lc - a = d := by omega
+    rw [hd'] at heq
+    refine hi (c, len) hc ?_
+    show c = i / 2 ^ lc
+    rw [hd, pow_add, ← Nat.div_div_eq_div_mul, ← heq, mul_comm c, Nat.add_comm, Nat.add_mul_div_left _ _
+      (Nat.two_pow_pos d), Nat.div_eq_of_lt hjd, zero_add]
+  have hlp : (PcsQuotient.Layout.ofChunks vars lc logN chunks).logPiece = none := rfl
+  have hlg : (PcsQuotient.Layout.ofChunks vars lc logN chunks).logN = logN := rfl
+  simp only [PcsQuotient.Layout.readEntry, hlp, PcsQuotient.Layout.logLane, hlg, ← ha, hnone]
+
+end RecCompose
+
+namespace RecCompose
+
+open RecStatement LeanVM.Parameters LeanVM.Protocol Finset Polynomial
+open scoped ENNReal
+
+/-! ## The extension's coordinates -/
+
+theorem one_add_yE_ne_zero : (1 + yE : E) ≠ 0 := by decide +kernel
+
+theorem one_add_yE_sq_ne_zero : (1 + yE * yE : E) ≠ 0 := by
+  have e : (1 + yE * yE : E) = (1 + yE) * (1 + yE) := by
+    have h2 : (2 : E) = 0 := CharTwo.two_eq_zero
+    linear_combination (-yE) * h2
+  rw [e]
+  exact mul_ne_zero one_add_yE_ne_zero one_add_yE_ne_zero
+
+theorem ext_y0 : extension.1.1 = yE * (1 + yE)⁻¹ := rfl
+theorem ext_y1 : extension.1.2 = yE * yE * (1 + yE * yE)⁻¹ := rfl
+theorem ext_scale : extension.2 = ((1 + yE) * (1 + yE * yE))⁻¹ := by simp only [extension]
+
+section Gen
+
+variable {F : Type} [Field F] [CharP F 2]
+
+theorem one_add_mul_inv {x : F} (hx : 1 + x ≠ 0) : 1 + x * (1 + x)⁻¹ = (1 + x)⁻¹ := by
+  have h : (1 + x) * (1 + x)⁻¹ = 1 := mul_inv_cancel₀ hx
+  have h2 : (2 : F) = 0 := CharTwo.two_eq_zero
+  linear_combination (-1 : F) * h + x * (1 + x)⁻¹ * h2
+
+/-- A digit's weight at `u = w/(1 + w)`: `(w if b else 1) (1 + w)⁻¹`. -/
+theorem digit_weight {w : F} (hw : 1 + w ≠ 0) (b : Bool) :
+    (if b then w / (1 + w) else 1 + w / (1 + w)) = (if b then w else 1) * (1 + w)⁻¹ := by
+  cases b
+  · simp only [Bool.false_eq_true, ite_false, one_mul, div_eq_mul_inv]
+    exact one_add_mul_inv hw
+  · simp only [ite_true, div_eq_mul_inv]
+
+theorem limbs_sum_gen (Y : F) (h0 : 1 + Y ≠ 0) (h1 : 1 + Y * Y ≠ 0) (f : ℕ → F) :
+    (1 + Y * (1 + Y)⁻¹) * (1 + Y * Y * (1 + Y * Y)⁻¹) * f 0 + Y * (1 + Y)⁻¹ * (1 + Y * Y * (1 + Y * Y)⁻¹) * f 1 +
+        (1 + Y * (1 + Y)⁻¹) * (Y * Y * (1 + Y * Y)⁻¹) * f 2 =
+      ((1 + Y) * (1 + Y * Y))⁻¹ * (f 0 + Y * f 1 + Y ^ 2 * f 2) := by
+  have e1 : 1 + Y * Y * (1 + Y * Y)⁻¹ = (1 + Y * Y)⁻¹ := one_add_mul_inv h1
+  rw [one_add_mul_inv h0, e1, mul_inv]
+  ring
+
+end Gen
+
+theorem eqBits_pair (p q : E) (l : ℕ) :
+    PcsQuotient.eqBits [p, q] l = (if l.testBit 0 then p else 1 + p) * (if l.testBit 1 then q else 1 + q) := by
+  rw [eqBits_eq_prod]
+  simp [Finset.prod_range_succ]
+
+/-- **The limbs' weights at the extension's point** are the scale times `1, Y, Y²` (limb `3` weighs `y₀ y₁`, read
+nowhere): `Σ_{l<4} eq((y₀, y₁), l) f_l = s (f_0 + Y f_1 + Y² f_2)` when `f_3 = 0`. -/
+theorem limbs_sum (f : ℕ → E) (h3 : f 3 = 0) :
+    ∑ l ∈ range 4, PcsQuotient.eqBits [extension.1.1, extension.1.2] l * f l =
+      extension.2 * ∑ l ∈ range 3, yE ^ l * f l := by
+  simp only [Finset.sum_range_succ, Finset.sum_range_zero, zero_add, h3, mul_zero, add_zero]
+  rw [eqBits_pair _ _ 0, eqBits_pair _ _ 1, eqBits_pair _ _ 2]
+  simp only [show (0 : ℕ).testBit 0 = false from rfl, show (0 : ℕ).testBit 1 = false from rfl,
+    show (1 : ℕ).testBit 0 = true from rfl, show (1 : ℕ).testBit 1 = false from rfl,
+    show (2 : ℕ).testBit 0 = false from rfl, show (2 : ℕ).testBit 1 = true from rfl, ite_true, ite_false,
+    Bool.false_eq_true, pow_zero, pow_one, one_mul]
+  rw [ext_y0, ext_y1, ext_scale]
+  exact limbs_sum_gen yE one_add_yE_ne_zero one_add_yE_sq_ne_zero f
+
+end RecCompose
