@@ -6,6 +6,7 @@ import UniComplete.DomainCount
 import UniComplete.DomainPositions
 import UniComplete.DomainActive
 import UniComplete.DomainCoord
+import UniComplete.DomainCoord18
 
 /-!
 # The domain facts of the univariate verifier (milestone 4)
@@ -30,6 +31,7 @@ definitions as they are (namespace `UniComplete.Domain`):
 6. **The count checks** (`DomainCount`): `intBits_one`, `intBits_high`, `intBits_range`, `byteFold_wire`,
    `byteFold_wire_toArray`.
 7. **The coordinate functionals** (`DomainCoord`): `coordinatesAt_pointE` (from the basis values),
-   `coordinatesAt_pointE_of_basis`; the instance `r = 18` is the named proposition
-   `CoordinateFunctionalsBasis 18`, not kernel-checked (see `DomainCoord`).
+   `coordinatesAt_pointE_of_basis`; at the reference height `r = 18` (`DomainCoord18`, by kernel evaluation
+   of the elimination cut into column steps on literal words): `coordinateFunctionals_18`,
+   `coordinateFunctionalsBasis_18`, `coordinatesAt_pointE_18`.
 -/
