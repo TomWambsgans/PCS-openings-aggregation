@@ -11,6 +11,10 @@
 //!   batching sumcheck, the last byte), a row count changed, the public input changed, one call left unattested, a
 //!   byte of an attested input flipped.
 //!
+//! `main_line_rec.txt` is π1-rec's (`FLOCK_REC`, `crates/leanvm_rec/SPEC-REC.md` §1.4). The two Fiat–Shamir shapes do
+//! not cross: the main line's contract rejects π1-rec's proof, and π1-rec's the main line's, even with `PCS_OPEN`
+//! attesting every call.
+//!
 //! `cargo test --release -p leanvm_univariate --test evm_vectors -- --nocapture`
 
 mod vectors;
@@ -97,6 +101,33 @@ fn replay(v: Vector) {
         assert!(run_deployed(data, block).output.is_none(), "{} deployed: {what} must revert", v.config);
     }
     println!("{}: {} mutations revert on both builds", v.config, mutants.len());
+}
+
+/// The main line's and π1-rec's contracts each reject the other's real proof: same stream layout, other challenges,
+/// so their checks fail, even with every `PCS_OPEN` call attested.
+#[test]
+fn fiat_shamir_shapes_do_not_cross() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/vectors");
+    let load = |name: &str| read(&std::fs::read_to_string(dir.join(format!("{name}.txt"))).expect("a vector"));
+    for (proof, contract) in [("main_line", "main_line_rec"), ("main_line_rec", "main_line")] {
+        let (v, other) = (load(proof), load(contract));
+        deep(move || {
+            let recorded = record_verifier(&other.shape, blake2s_of(&other.config), Claims::Point);
+            assert_eq!(STREAM_AT + recorded.stream_len, v.calldata.len(), "the same stream layout");
+            let straight = compile_verifier(&recorded, &PROGRAM_IV, false);
+            let deployed = deployable(&recorded);
+            let one = word([1, 0, 0]);
+            let all = PcsOpen::attesting_all(0);
+            let own = call(&straight.code, &[], &other.calldata, &all);
+            assert_eq!(own.output.as_deref(), Some(&one[..]), "{contract}'s contract accepts its own proof");
+            assert!(call(&straight.code, &[], &v.calldata, &all).output.is_none(), "{contract}'s straight build rejects {proof}'s proof");
+            assert!(
+                deployed.chain.call(deployed.address, &v.calldata, &all).output.is_none(),
+                "{contract}'s deployable build rejects {proof}'s proof"
+            );
+            println!("{contract}'s contract (both builds) rejects {proof}'s real proof, every call attested");
+        });
+    }
 }
 
 /// Every vector file, replayed.
