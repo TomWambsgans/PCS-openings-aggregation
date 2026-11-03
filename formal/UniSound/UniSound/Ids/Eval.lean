@@ -1538,6 +1538,13 @@ theorem coordinateFunctionals_size (r : ℕ) : (coordinateFunctionals r).size = 
 /-- The digits the verifier reads `t` through. -/
 def nDigits (S : Shape) : ℕ := max S.heap.h (S.constraintVars + 4) + 2
 
+/-- **The quotients' chunks fit the digits**: every chunk size of the constraint quotient and of each
+heap block's leaf quotient is below the number of digits the verifier reads `t` through (so each chunk
+is read at the digits, and the digit `w_e` past it is the digit polynomial's). -/
+def ChunksFit (S : Shape) : Prop :=
+  (∀ e ∈ chunks (S.constraintDegree + 1), e < nDigits S) ∧
+    ∀ b ∈ S.heap.blocks, ∀ d, Shape.leafDegree b = some d → ∀ e ∈ chunks (d + 1), e < nDigits S
+
 section Ctx
 
 variable (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (s : USt) (c1 : Stk) (ch : List E) (fd : Done)
@@ -1849,6 +1856,10 @@ end Ctx
 
 /-! ## The tables' parts, the `C1` points -/
 
+theorem getD_mem' {α : Type} {l : List α} {c : ℕ} {d : α} (hc : c < l.length) : l.getD c d ∈ l := by
+  rw [List.getD_eq_getElem _ _ hc]
+  exact List.getElem_mem hc
+
 theorem sentColumns_ne_nil (tab : Table) : sentColumns tab ≠ [] := by
   unfold sentColumns factorColumns
   split_ifs <;> simp
@@ -2000,6 +2011,184 @@ theorem y_self (h2 : 1 ≤ D.shape.heights.getD opBlake2s 0)
     exact lt_irrefl _ hlt
   · rw [hk] at h0
     exact hne2 h0.symm
+
+theorem height_lt_nDigits (o : ℕ) : D.shape.heights.getD o 0 < nDigits D.shape := by
+  have := height_le_rW D.shape o
+  unfold nDigits; omega
+
+theorem lm_lt_nDigits : D.shape.logMemory < nDigits D.shape := by
+  have := logMemory_le_rW D.shape
+  unfold nDigits; omega
+
+/-- **Each table's part at `t`**: its point is a `C1` point, its sent values are its columns at `t`,
+its leaf's products the flushes' fingerprints at `t`, its degrees `tableDegrees`. -/
+theorem part_spec (hL : TablesLin) (hold : HoldAll D Fl s c1 ch fd c2 t vals) (o : ℕ) (ho : o < 6) :
+    IsPt D Fl s ch fd t vals .c1 ((inpOf D Fl s ch fd t vals).w.take (D.shape.heights.getD o 0)) ∧
+    (∀ c ∈ sentColumns (tables.getD o default),
+      ((inpOf D Fl s ch fd t vals).tp.1.getD o default).sent.getD c none =
+        some ((c1P D.shape c1 (.table o c)).eval t)) ∧
+    ((inpOf D Fl s ch fd t vals).tp.1.getD o default).pull =
+      (((tables.getD o default).flushes.pull.zip (tables.getD o default).flushes.push).map fun fl ↦
+        (inpOf D Fl s ch fd t vals).beta +
+          tupleE fl.1 (inpOf D Fl s ch fd t vals).weights fun c ↦ (c1P D.shape c1 (.table o c)).eval t).prod ∧
+    ((inpOf D Fl s ch fd t vals).tp.1.getD o default).push =
+      (((tables.getD o default).flushes.pull.zip (tables.getD o default).flushes.push).map fun fl ↦
+        (inpOf D Fl s ch fd t vals).beta +
+          tupleE fl.2 (inpOf D Fl s ch fd t vals).weights fun c ↦ (c1P D.shape c1 (.table o c)).eval t).prod ∧
+    ((inpOf D Fl s ch fd t vals).tp.1.getD o default).pullDegree = (tableDegrees (tables.getD o default)).1 ∧
+    ((inpOf D Fl s ch fd t vals).tp.1.getD o default).pushDegree = (tableDegrees (tables.getD o default)).2 := by
+  have h6 : o < tables.length := by rw [tables_length]; exact ho
+  obtain ⟨v', hpart, hsub⟩ := tablesPart_getD D.shape (inpOf D Fl s ch fd t vals).weights
+    (inpOf D Fl s ch fd t vals).beta (inpOf D Fl s ch fd t vals).w tables (inpOf D Fl s ch fd t vals).vals o h6
+  rw [← List.getD_eq_getElem _ default h6, tables_opcode o ho] at hpart hsub
+  have hw0 := tablePartOf_equal_mem (tables.getD o default) (D.shape.heights.getD o 0)
+    (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta (inpOf D Fl s ch fd t vals).w v' 0
+    (List.length_pos_iff.mpr (sentColumns_ne_nil _))
+  have hpt : IsPt D Fl s ch fd t vals .c1 ((inpOf D Fl s ch fd t vals).w.take (D.shape.heights.getD o 0)) :=
+    ⟨_, mem_rels_tp D Fl s ch fd t vals (hsub _ hw0), rfl, _, List.mem_singleton_self _, rfl⟩
+  have hev : ∀ c, evOf D Fl s c1 ch fd c2 t vals (.table (tables.getD o default).opcode c)
+      ((inpOf D Fl s ch fd t vals).w.take (D.shape.heights.getD o 0)) = (c1P D.shape c1 (.table o c)).eval t := by
+    intro c
+    rw [tables_opcode o ho]
+    exact ev_c1 D Fl s c1 ch fd c2 t vals (.table o c) rfl (fun j h ↦ by cases h) _
+      (height_lt_nDigits D o).le le_rfl hpt
+  have hh : ∀ r ∈ (tablePartOf (tables.getD o default) (D.shape.heights.getD o 0)
+      (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta (inpOf D Fl s ch fd t vals).w v').2.1,
+      RelHolds (evOf D Fl s c1 ch fd c2 t vals) r := by
+    intro r hr
+    refine hold r (mem_rels_tp D Fl s ch fd t vals (hsub r hr)) .c1 fun tm htm ↦ ?_
+    obtain ⟨⟨c, hc⟩, -, htw⟩ := tablePartOf_terms _ _ _ _ _ _ r hr tm htm
+    exact ⟨htw, by rw [hc]; rfl⟩
+  obtain ⟨s1, s2, s3, s4, s5⟩ := tablePartOf_spec (tables.getD o default) (tables_mem o ho) hL _ _ _ _ v'
+    (evOf D Fl s c1 ch fd c2 t vals) (fun c ↦ (c1P D.shape c1 (.table o c)).eval t) hev hh
+  have hpart' : (inpOf D Fl s ch fd t vals).tp.1.getD o default = (tablePartOf (tables.getD o default)
+      (D.shape.heights.getD o 0) (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta
+      (inpOf D Fl s ch fd t vals).w v').1 := hpart
+  rw [hpart']
+  exact ⟨hpt, s1, s2, s3, s4, s5⟩
+
+/-- A relation whose terms are all on `C1` is on `C1`. -/
+theorem commitment_c1 {r : Relation} (h : ∀ tm ∈ r.terms, tm.column.commitment = .c1) : r.commitment = .c1 := by
+  unfold Relation.commitment
+  rcases hr : r.terms with _ | ⟨tm0, rest⟩
+  · rfl
+  · exact h tm0 (by rw [hr]; exact List.mem_cons_self ..)
+
+/-- The relation of a quotient's chunks, on `C2` where it has a chunk. -/
+theorem qrel_commitment (column : ℕ → Column) (hcol : ∀ c, (column c).commitment = .c2) (w : List E)
+    (sizes : List ℕ) (hne : sizes ≠ []) (sc v : E) :
+    (⟨qTerms column w sizes 0 sc, v⟩ : Relation).commitment = .c2 := by
+  rcases sizes with _ | ⟨e, rest⟩
+  · exact absurd rfl hne
+  · exact hcol 0
+
+/-- **The constraint quotient's identity at `t`.** -/
+theorem wP_eval (hL : TablesLin) (hC : ChunksFit D.shape) (h2 : 1 ≤ D.shape.heights.getD opBlake2s 0)
+    (hold : HoldAll D Fl s c1 ch fd c2 t vals) :
+    (wP D.shape c1 c2 (publicWordsOf s.1.toList) (gammaOf ch) ((Fl.prog.out fd []).1.getD 0 0)).eval t = 0 := by
+  unfold wP
+  rw [Polynomial.eval_mul]
+  by_cases hz : (zBad D.shape ((Fl.prog.out fd []).1.getD 0 0)).eval t = 0
+  · rw [hz, zero_mul]
+  refine mul_eq_zero_of_right _ ?_
+  have hplen : tables.length ≤ (inpOf D Fl s ch fd t vals).tp.1.length := by
+    show tables.length ≤ (tablesPart _ _ _ _ tables _).1.length
+    rw [tablesPart_length]
+  have hdeg : (inpOf D Fl s ch fd t vals).constraint.2 = D.shape.constraintDegree := by
+    show (constraintRelation _ _ _ _ _ _ _).2 = _
+    rw [constraintRelation_eq]
+    exact crOf_deg _ _ _ _ _ _ _ hplen
+  -- The constraint quotient's value: its chunks at `t`.
+  have mQ := mem_rels_heap D Fl s ch fd t vals (by
+    rw [heap_fst]; exact List.mem_append_right _ (List.mem_singleton_self _))
+  have hQ := hold _ mQ .c2 fun tm htm ↦ by
+    rw [quotientTerms_eq] at htm
+    obtain ⟨h1, h3⟩ := qTerms_c2 _ (fun _ ↦ rfl) _ _ 0 _ tm htm
+    exact ⟨h3, h1⟩
+  unfold RelHolds at hQ
+  simp only [quotientTerms_eq] at hQ mQ
+  rw [hdeg] at hQ mQ
+  have hev : ∀ c < (chunks (D.shape.constraintDegree + 1)).length,
+      evOf D Fl s c1 ch fd c2 t vals (.constraintQuotient c)
+        ((inpOf D Fl s ch fd t vals).w.take ((chunks (D.shape.constraintDegree + 1)).getD c 0)) =
+        (c2P D.shape c2 (.constraintQuotient c) digitP).eval t := by
+    intro c hc
+    have he := hC.1 _ (getD_mem' (d := 0) hc)
+    obtain ⟨tm, htm, hpt⟩ := qTerms_pt Column.constraintQuotient (inpOf D Fl s ch fd t vals).w _ 0 1 c hc
+    refine ev_c2 D Fl s c1 ch fd c2 t vals _ rfl _ digitP
+      ⟨_, mQ, qrel_commitment _ (fun _ ↦ rfl) _ _ (List.ne_nil_of_length_pos (by omega)) _ _, tm, htm, hpt⟩
+      (by rw [wtake_length D Fl s ch fd t vals _ he.le]; rfl) (fun l hl ↦ ?_)
+    exact (wtake_getD D Fl s ch fd t vals _ he.le l hl).symm
+  rw [qTerms_val D.shape c2 _ _ t _ _ 1 hev
+    (fun c hc ↦ w_getD D Fl s ch fd t vals _ (hC.1 _ (getD_mem' (d := 0) hc))), one_mul] at hQ
+  -- The constraint relation at `t`.
+  have hok : ∀ x ∈ tables.zip (inpOf D Fl s ch fd t vals).tp.1,
+      CrTableOk D.shape c1 t (inpOf D Fl s ch fd t vals).w (evOf D Fl s c1 ch fd c2 t vals) x.1 x.2 := by
+    intro x hx
+    obtain ⟨i, hi, hxi⟩ := List.getElem_of_mem hx
+    have hi6 : i < 6 := by rw [List.length_zip] at hi; have := tables_length; omega
+    rw [← hxi, List.getElem_zip, ← List.getD_eq_getElem _ default, ← List.getD_eq_getElem _ default]
+    obtain ⟨hpt, hsent, -⟩ := part_spec D Fl s c1 ch fd c2 t vals hL hold i hi6
+    have hop := tables_opcode i hi6
+    refine ⟨?_, ?_, ?_, ?_, ?_, jumpSent _⟩
+    · rw [hop]
+      exact vanishingRatio_eval _ t _ _ fun j hj ↦ w_getD D Fl s ch fd t vals j
+        (by have := rW_lt_nDigits D; omega)
+    · rw [hop]
+      intro c
+      exact ev_c1 D Fl s c1 ch fd c2 t vals (.table i c) rfl (fun j h ↦ by cases h) _
+        (height_lt_nDigits D i).le le_rfl hpt
+    · rw [hop]
+      exact ev_c1 D Fl s c1 ch fd c2 t vals (.inverse i) rfl (fun j h ↦ by cases h) _
+        (height_lt_nDigits D i).le le_rfl hpt
+    · intro hb slot
+      rw [hb]
+      have hyl : (yOf D t).length = D.shape.heights.getD opBlake2s 0 := by
+        rw [yOf, coordinatesAt_length, coordinateFunctionals_size]
+      obtain ⟨tm, htm, hpt'⟩ := crOf_slot D.shape (inpOf D Fl s ch fd t vals).tp.1
+        (inpOf D Fl s ch fd t vals).publicWords (inpOf D Fl s ch fd t vals).gamma t
+        (inpOf D Fl s ch fd t vals).constraintValue (inpOf D Fl s ch fd t vals).w hplen
+      refine ev_slot D Fl s c1 ch fd c2 t vals slot (yOf D t) _ ⟨_, mem_rels_constraint D Fl s ch fd t vals,
+        ?_, tm, ?_, hpt'⟩ (y_self D Fl s ch fd t vals h2 hz) ?_ ?_
+      · show (constraintRelation _ _ _ _ _ _ _).1.commitment = _
+        rw [constraintRelation_eq]
+        exact commitment_c1 fun tm' htm' ↦ (crOf_terms _ _ _ _ _ _ _ tm' htm').2.1
+      · show tm ∈ (constraintRelation _ _ _ _ _ _ _).1.terms
+        rw [constraintRelation_eq]
+        exact htm
+      · intro b hb'
+        obtain ⟨h1, h3⟩ := c1_limbs D.shape .qflock b hb'
+        refine ⟨?_, h3⟩
+        rw [h1, hyl]
+        simp only [c1Vars]
+        omega
+      · intro m hm
+        rw [hyl] at hm
+        rw [yOf, coordinatesAt_getD _ _ _ (by rw [coordinateFunctionals_size]; exact hm)]
+    · rw [hop]
+      exact hsent
+  have hmem : ∀ k < 3, evOf D Fl s c1 ch fd c2 t vals (.memory k)
+      ((inpOf D Fl s ch fd t vals).w.take D.shape.logMemory) = (c1P D.shape c1 (.memory k)).eval t := by
+    intro k _
+    refine ev_c1 D Fl s c1 ch fd c2 t vals (.memory k) rfl (fun j h ↦ by cases h) _ (lm_lt_nDigits D).le le_rfl
+      ⟨_, mem_rels_mem D Fl s ch fd t vals (List.mem_cons_self ..), rfl, _, List.mem_singleton_self _, rfl⟩
+  have mC := mem_rels_constraint D Fl s ch fd t vals
+  have hCr := hold _ mC .c1 fun tm htm ↦ by
+    have := crOf_terms _ _ _ _ _ _ _ tm (by rw [← constraintRelation_eq]; exact htm)
+    exact ⟨this.1, this.2.1⟩
+  have hc := crOf_holds D.shape c1 (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).publicWords
+    (inpOf D Fl s ch fd t vals).gamma t (inpOf D Fl s ch fd t vals).constraintValue (inpOf D Fl s ch fd t vals).w
+    (evOf D Fl s c1 ch fd c2 t vals) hplen hok hmem
+    (vanishingRatio_eval _ t _ _ fun j hj ↦ w_getD D Fl s ch fd t vals j (by have := rW_lt_nDigits D; omega))
+    (by rw [← constraintRelation_eq]; exact hCr)
+  rw [Polynomial.eval_add, eval_batched, Polynomial.eval_mul,
+    ← w_getD D Fl s ch fd t vals _ (by have := rW_lt_nDigits D; omega)]
+  have two : (2 : E) = 0 := CharTwo.two_eq_zero
+  have e1 : (inpOf D Fl s ch fd t vals).publicWords = publicWordsOf s.1.toList := rfl
+  have e2 : (inpOf D Fl s ch fd t vals).gamma = gammaOf ch := rfl
+  rw [e1, e2] at hc
+  linear_combination hc + (inpOf D Fl s ch fd t vals).w.getD D.shape.constraintVars 0 * hQ -
+    (inpOf D Fl s ch fd t vals).constraintValue * (inpOf D Fl s ch fd t vals).w.getD D.shape.constraintVars 0 * two
 
 end Ctx
 
