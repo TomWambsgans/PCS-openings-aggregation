@@ -20,6 +20,7 @@ import UniSound.FsWalk
 import UniSound.FsExtract
 import UniSound.FsVerifier
 import UniSound.FsWalkProof
+import UniSound.FsFinal
 import UniSound.PendingLink
 import UniSound.CodeBase
 import UniSound.CodeTables
