@@ -3,9 +3,11 @@
 # Recursion: an EVM verifier for leanVM 42422001 near 100K gas
 
 **Status: milestone R1 done (measure, size, specify); R2 step 1 done (π1-rec in code, §1.4, §7); R2 steps 2–6 done
-(π2's circuit compiled and its witness on the real proofs, §10: D16v × π1-rec is `2^24` positions, 85.7% used).**
+(π2's circuit compiled and its witness on the real proofs, §10: D16v × π1-rec is `2^24` positions, 85.7% used); R3
+steps 1–3 done (π2's prover, verifier and contract, measured end to end on the real proof, §11 and `PI2.md`: 73,550 at
+`c = 0`, 94,550 with the base).**
 Branch `leanvm-rec`, from `leanvm-univariate` @ 29d3095; π1-rec on `leanvm-rec-pi1`; π2's circuit on
-`leanvm-rec-circuit`.
+`leanvm-rec-circuit`; π2's PIOP on `leanvm-rec-piop`.
 No Lean for now (the user's instruction: no proofs until the gas is close to 100K). Every number is marked:
 
 - **measured**: by `crates/leanvm_rec`'s tests on h1, or by the univariate crate's revm runs;
@@ -652,9 +654,10 @@ adds 9 claims' worth.
 5. **The claims dominate above `c ≈ 2K`.** There are 9 claims (π1's 5, π2's 4); at `c = 20K` that is 251K.
    Extension W or B would cut π1's batch, not its claims.
 6. **EIP-7976.** π1's claims alone are 78K at 64 a byte; the total is 118K at `c = 0`.
-7. **The prover's time and memory are modelled.** π2's extension coset is `8N = 2^27` `E`-values (3 GB).
+7. **The prover's time and memory are modelled.** π2's extension coset is `8N = 2^27` `E`-values (3 GB). *Measured
+   (§11): the coset is `4N`; 8.4 s and 11.7 GB at `2^24`.*
 8. **WHIR's certified lists** exist for `2^24..2^28` stacks only. π2's `W` and setup are `2^24` and `2^25`, so they
-   are covered.
+   are covered. *D32v's `W` (`2^23` words) is committed on a `2^24` stack (§11).*
 
 ## 9. Measured vs modelled
 
@@ -666,10 +669,8 @@ adds 9 claims' worth.
   - `crates/quotient`'s rows and words (§2.1);
   - today's gas (`crates/leanvm_univariate`, SPEC.md §13).
   - π2's circuit, its witness on the real proofs and its counts (§10);
-- **Modelled:** everything else about π2:
-  - its words, values, soundness and gas;
-  - π1-rec's soundness;
-  - the prover's cost.
+  - π2's prover, its proof on the real witness, the contract's gas and its acceptance end to end (§11, `PI2.md`);
+- **Modelled:** everything else about π2: its soundness, and π1-rec's.
 
 ## 10. R2: π2's circuit, measured (steps 2–6)
 
@@ -812,3 +813,28 @@ side is roughly 2,850 operations, against D16v's 1,040. At 13.85 gas an operatio
 - The PIOP builds on `spec.rs`: `pi2(recorded, Layout::D16v, inputs)` gives the circuit, the witness and the public
   inputs. `σ` and `κ` depend on the graph only.
 - The verifier's push side is 120 selector pairs and 322 formula terms, plus 67 public fractions and 3 hole cosets.
+
+## 11. R3: π2's PIOP, measured (steps 1–3)
+
+Branch `leanvm-rec-piop`, `crates/leanvm_rec/src/pi2/`; the protocol, the decisions and every number are in
+[`PI2.md`](PI2.md). Measured on h1 (`tests/pi2.rs`, `tests/pi2_real.rs`), on the real circuit and witness of π1-rec's
+1,000-signature proof:
+
+| | D16v × π1-rec (**the layout**) | D32v (fallback; π1-rec or π1) | §6 model, D16v / D32v |
+|---|---:|---:|---:|
+| calldata | 1,844 B | 2,228 B | 1,844 / 2,228 B |
+| execution, `c = 0` (straight) | **39,674** | 71,097 (76,241 deployable, 2 contracts) | 41,421 / 50,226 |
+| **EIP-7623, `c` = 0 / 2K / 5K / 20K** | **73,550** / 87,094 / 114,094 / 249,094 | 106,649 / 124,649 / 151,649 / 286,649 | 73,370 / 88,670 at `c = 0` |
+| + 21K base, `c = 0` | **94,550** | 127,649 | 94,370 / 109,670 |
+| EIP-7976, `c` = 0 / 20K | 118,016 / 249,094 | 142,592 / 286,649 | 118,016 / 142,592 at `c = 0` |
+| the prover: prove / open / peak memory | 8.4 s / 1.4 s / 11.7 GB | 5.6 s / 0.7 s / 6.9 GB | 5–8 s, 3 GB beyond π1 |
+
+- **End to end:** π1-rec's real proof → π2's proof → its three openings verify (`quotient::opening::verify`) → the
+  contract accepts, `PCS_OPEN` attesting exactly the 9 claims in 8 calls; 18 flipped calldata bytes each revert. The
+  contract is the Rust verifier word for word, straight and deployable.
+- **Deviations from §2–§4** (`PI2.md` §4): the holes are left out of the pulls (the identity's pull term times
+  `1 + 1_S`) rather than summed into the target; the ports' fingerprints are the element itself (3 limbs) and a root's
+  halves `+ γ ·` (4 limbs); `h(t)` is sent (19 values, not 18) to spare a second inversion; `W` and the setup in the `B`
+  basis, `Q` in the novel one; the extension coset is `4N`; the public data is absorbed by the first challenge; the
+  target shapes' stacks are at least `2^24` words (leanerVM's certified range: D32v's `W` sits on a `2^24` stack).
+- **What remains:** R3 step 4, a review, then Lean.
