@@ -9,6 +9,9 @@ import UniSound.Fs
 import UniSound.Bus
 import UniSound.Final
 import UniSound.Mle
+import UniSound.FsChain
+import UniSound.FsOps
+import UniSound.FsProof
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001
@@ -30,6 +33,9 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `Bus.lean` | Round `0` from `formal/Heap`: the bus model (`BusModel`), **`BusModel.mainSound`** (`4N/|E|` and the constraints' batching), `UniIds.ofBus`. |
 | `Mle.lean` | The sumcheck's folds are the claims' multilinear extensions (`foldAll_eq_sum`, `mleStk_eq_foldAll`): glue for `UniFinal`. |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
+| `FsChain.lean` | The univariate transcript as `Compose.ChainSpecU` (`uniSpec`: 24-byte scalars, the root's reversed halves, the seed's 16-byte tag, the row counts before `C1`'s root), the PIOP lifted to the chain's statement (`liftPiop`), the proof the chain reads (`UPf`, `uView`). |
+| `FsOps.lean` | The five `PCS_OPEN` calls as `WhirOp`s on plain layouts (`uniOps`: `C1`, `C2` by `tableCode`; the setup's stack, `A0`, `B0` at the setup's roots), the check (`uniCheck`), `good` (`uniGood`, `uniGoodS`). |
+| `FsProof.lean` | **`fsLayer_of_game`**: `FsLayer` from the game bridge (`UniGameLe`) and the numbers (`UniNumbers`), through `Compose.knowledgeSoundness_listChainU_closed_rpm`: the setup's three trees, the openings' matches, the last link, the bound. |
 
 ## What is proved, what is assumed
 
@@ -57,8 +63,14 @@ the bound in bits (`uniBound_le_bits`).
 4. `C : UniCode D hFlock nV V` — the code-level link: `reduceWith` after the row counts is the
    chain program on `uniRounds`.
 5. `hFin : UniFinal …` — the last link: the batch's terminal with true claims is the last state.
-6. `hFs : FsLayer …` — the Fiat–Shamir layer: `ListChainK`'s closed random-permutation theorem
-   ported to the univariate transcript, its five openings, its setup and `uniExtractor`.
+6. `hFs : FsLayer …` — the Fiat–Shamir layer, **proved** from `UniGameLe` and `UniNumbers`
+   (`fsLayer_of_game`, `FsProof.lean`): `Compose.ListChainU`'s chain over the univariate encoding,
+   the random-permutation transfer for a setup of three trees (`Compose.rpm_le_kcS`), the five
+   openings' doom terms by F2, the decoders, the last link. What remains assumed is the coupling
+   `UniGameLe` (the univariate experiment is dominated by the composed game: the setup's trees are
+   `setupTreesWith`'s, the contract's IV recomputed by the wrapped adversary, the verifier with its
+   early stops below the composed one, `uniExtractor` listing the decoders' candidates) and the
+   numbers (the chain's `< 2^10` queries, the verifier's `< 2^80` calls of `π`).
 7. Numbers: `4 N + ncv ≤ 2^32`, Flock's rounds' errors at most `2^32 / |E|`, `degSum ≤ 2^32`,
    `nRel + 2 ≤ 2^32`.
 
@@ -96,3 +108,15 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.prEvent_twoLevel_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.prEvent_twoLevel_le
+
+/-- info: 'UniSound.fsLayer_of_game' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.fsLayer_of_game
+
+/-- info: 'UniSound.hlink_uni' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.hlink_uni
+
+/-- info: 'UniSound.hok_uni' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.hok_uni
