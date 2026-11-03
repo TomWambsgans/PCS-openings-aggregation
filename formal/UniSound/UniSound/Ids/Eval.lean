@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import UniSound.Ids.MainOk
 import UniSound.Ids.Weights
+import UniSound.Ids.Deployed
 
 /-!
 # `DiffsEvalP`: the verifier's relations at `t`, all zero, give every identity at `t`
@@ -1404,5 +1405,104 @@ theorem activeVanishing_eval (w bits : List E) (t : E) (r : ℕ)
   · rw [List.mem_range] at hb
     simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_one,
       hw b hb.le]
+
+/-! ## The layouts' columns -/
+
+theorem layoutsOf_eq (S : Shape) :
+    layoutsOf S = [(.c1, layoutOf S .c1), (.c2, layoutOf S .c2), (.setup, layoutOf S .setup)] := rfl
+
+theorem layoutOf_c2 (S : Shape) : layoutOf S .c2 = StackLayout.new S.c2Columns := rfl
+
+theorem vars_le_batch (S : Shape) (c : Commitment) : (layoutOf S c).vars ≤ batchVars S := by
+  unfold batchVars
+  rw [layoutsOf_eq]
+  refine le_foldl_max _ 0 _ (Or.inl ?_)
+  cases c <;> simp
+
+theorem limb_le_vars {L : StackLayout} (hL : LayoutAligned L) {col : Column} {b : ℕ × ℕ × ℕ}
+    (hb : b ∈ L.limbs col) : b.2.1 ≤ L.vars := by
+  have h := (hL _ (limbs_mem_blocks hb)).2
+  have h2 : 2 ^ b.2.1 ≤ 2 ^ L.vars := by simp only at h; omega
+  exact (Nat.pow_le_pow_iff_right (by norm_num)).mp h2
+
+theorem limb_le_batch (S : Shape) (c : Commitment) (hL : LayoutAligned (layoutOf S c)) {col : Column}
+    {b : ℕ × ℕ × ℕ} (hb : b ∈ (layoutOf S c).limbs col) : b.2.1 ≤ batchVars S :=
+  (limb_le_vars hL hb).trans (vars_le_batch S c)
+
+/-- A column's blocks in a layout of columns: each at the variables it is listed with. -/
+theorem limbs_new_mem (cols : List (Column × ℕ × Bool)) (col : Column) (b : ℕ × ℕ × ℕ)
+    (hb : b ∈ (StackLayout.new cols).limbs col) : ∃ e, (col, b.2.1, e) ∈ cols := by
+  unfold StackLayout.new at hb
+  dsimp only at hb
+  rw [(foldl_place _ (fun _ _ _ _ ↦ rfl) _ #[] 0).1] at hb
+  rw [limbs_eq] at hb
+  simp only [List.nil_append] at hb
+  have hm := limbs_place col ((cols.flatMap fun x ↦ (List.range (if x.2.2 then 3 else 1)).map fun limb ↦
+    (x.1, limb, x.2.1)).mergeSort fun a b ↦ decide (b.2.2 ≤ a.2.2)) 0
+  have h1 : (col, b.1, b.2.1) ∈ ((cols.flatMap fun x ↦ (List.range (if x.2.2 then 3 else 1)).map fun limb ↦
+      (x.1, limb, x.2.1)).mergeSort fun a b ↦ decide (b.2.2 ≤ a.2.2)).filter (fun x ↦ x.1 == col) := by
+    rw [← hm]
+    exact List.mem_map.mpr ⟨b, hb, rfl⟩
+  obtain ⟨h2, -⟩ := List.mem_filter.mp h1
+  rw [List.mem_mergeSort] at h2
+  obtain ⟨⟨c', v, e⟩, hc, hx⟩ := List.mem_flatMap.mp h2
+  obtain ⟨limb, _, he⟩ := List.mem_map.mp hx
+  simp only [Prod.mk.injEq] at he
+  obtain ⟨rfl, -, rfl⟩ := he
+  exact ⟨e, hc⟩
+
+/-- **`C2`'s columns' variables**: the heap's and the tree quotient's first chunk `h`, its second `0`, each
+quotient's chunk its size. -/
+def c2Vars (S : Shape) : Column → ℕ
+  | .heap => S.heap.h
+  | .treeQuotient 0 => S.heap.h
+  | .treeQuotient _ => 0
+  | .constraintQuotient c => (chunks (S.constraintDegree + 1)).getD c 0
+  | .leafQuotient i c => match Shape.leafDegree (S.heap.blocks.getD i default) with
+    | some d => (chunks (d + 1)).getD c 0
+    | none => 0
+  | _ => 0
+
+theorem c2Columns_vars (S : Shape) (col : Column) (v : ℕ) (e : Bool) (h : (col, v, e) ∈ S.c2Columns) :
+    v = c2Vars S col := by
+  unfold Shape.c2Columns at h
+  dsimp only at h
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false] at h
+  rcases h with ((h | h | h) | h) | h
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, -⟩ := h
+    rfl
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, -⟩ := h
+    rfl
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, -⟩ := h
+    rfl
+  · obtain ⟨p, hp, he⟩ := List.mem_map.mp h
+    obtain ⟨-, hget⟩ := mem_zip_range_iff _ 0 p hp
+    simp only [Prod.mk.injEq] at he
+    obtain ⟨rfl, rfl, -⟩ := he
+    simp only [c2Vars, hget]
+  · obtain ⟨⟨blk, idx⟩, hp, hx⟩ := List.mem_flatMap.mp h
+    obtain ⟨-, hget⟩ := mem_zip_range_iff _ default _ hp
+    dsimp only at hget hx
+    rcases hd : Shape.leafDegree blk with _ | d
+    · rw [hd] at hx
+      simp at hx
+    · rw [hd] at hx
+      obtain ⟨p, hp', he⟩ := List.mem_map.mp hx
+      obtain ⟨-, hget'⟩ := mem_zip_range_iff _ 0 p hp'
+      simp only [Prod.mk.injEq] at he
+      obtain ⟨rfl, rfl, -⟩ := he
+      simp only [c2Vars, hget, hd]
+      exact hget'.symm
+
+/-- **`C2`'s limbs**: each at its column's variables, within the batch's. -/
+theorem c2_limbs (S : Shape) (col : Column) (b : ℕ × ℕ × ℕ) (hb : b ∈ (layoutOf S .c2).limbs col) :
+    b.2.1 = c2Vars S col ∧ b.2.1 ≤ batchVars S := by
+  refine ⟨?_, limb_le_batch S .c2 (by rw [layoutOf_c2]; exact layoutAligned_new _) hb⟩
+  rw [layoutOf_c2] at hb
+  obtain ⟨e, he⟩ := limbs_new_mem _ col b hb
+  exact c2Columns_vars S col _ e he
 
 end UniSound.Ids.Eval
