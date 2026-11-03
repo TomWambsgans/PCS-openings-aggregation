@@ -300,10 +300,20 @@ theorem RecCompose.recCompleteness_end (D : RecDeployment) (hD : D.Real) (P1 : P
 
 (`recKnowledgeSoundness_end_real` is `recKnowledgeSoundness_end` with `L` assembled from `C`, `Fa`, `T`, `hfs`, `hroots`,
 `hg`, `_hroot`, `hb`.) `RecKnowledgeSoundness D ε2 ε1 εh` and `RecCompleteness D P1 P2 δ1 δh δ2` are Props whose own
-hypotheses are `RecGraph.Pi1.Pi1GraphIsVerifier` (`Pi1Sim`, `lean-rec-graph`), `Pi1FsKeccak ε1`, `Pi1HazardKeccak εh`
-(and `Pi1CompletenessKeccak δ1`, `Pi1HazardKeccakHonest δh`): the Fiat–Shamir heuristic for Keccak-f[1600], justified
-by `uniKnowledgeSoundness_closed_rec3`, `uniCompletenessRec3_end_closed` and `RecGraph.hazard_prob`. The end bound is
-`pi2Bound Q + ε1 Q + εh Q`.
+hypotheses are `RecGraph.Pi1.Pi1GraphIsVerifier`, `Pi1FsKeccak ε1`, `Pi1HazardKeccak εh` (and `Pi1CompletenessKeccak
+δ1`, `Pi1HazardKeccakHonest δh`). `Pi1GraphIsVerifier` is proved (`RecGraph.Pi1.pi1GraphIsVerifier`, `lean-rec-graph`):
+`recKnowledgeSoundness_end_fs` and `recCompleteness_end_fs` state the end theorems under the Fiat–Shamir heuristic for
+Keccak-f[1600] alone (justified by `uniKnowledgeSoundness_closed_rec3`, `uniCompletenessRec3_end_closed` and
+`RecGraph.hazard_prob`):
+
+```lean
+theorem RecCompose.recKnowledgeSoundness_end_fs (D : RecDeployment) (hD : D.Real) (L : Pi2Layers D pi2Bound)
+    (ε1 εh : ℕ → ℝ≥0∞) (h1 : Pi1FsKeccak D ε1) (hh : Pi1HazardKeccak D εh) :
+    RecKnowledgeSoundnessWith D (recExtractor D) fun Q ↦ pi2Bound Q + ε1 Q + εh Q
+theorem RecCompose.recCompleteness_end_fs (D : RecDeployment) (hD : D.Real) (P1 : Pi1Prover D) (P2 : Pi2Prover)
+    (δ2 : ℝ≥0∞) (h2 : RecCompleteness2 D P1 P2 δ2) (δ1 δh : ℝ≥0∞) (h1 : Pi1CompletenessKeccak D P1 δ1)
+    (hh : Pi1HazardKeccakHonest D P1 δh) : RecCompletenessWith D (composeProver D P1 P2) (δ1 + δh + δ2)
+```
 
 **ε2 = `pi2Bound`** is `2^-64.93` at `Q = 2^64`, 128.93 bits as `Q / ε2` (`pi2Bound_le_bits`;
 `EndToEnd/Review/RecSoundnessNumbers.py`, exact rationals). The terms: π2's three openings once, `2^-64.93` (at
@@ -328,7 +338,7 @@ claims in order, no matrices' claim, roots of two limbs). Part 1 ⇒ part 2 has 
 | `Pi2FsLayer D` | π2's Fiat–Shamir layer and openings, for every round-by-round sound protocol on π2's rounds | open, `lean-rec-compose`: the port of `UniSound`'s `Fs128`/`FsGame128`/`FsFinal128` and bridges to π2's transcript |
 | `Pi2Tables D C` | the tables' layer: the candidates' polynomials and the four claims as their values | open, `lean-rec-compose` |
 | `Pi2Facts D C` | `SpecOf` of π2's constants and the compiled circuit, validity, `2^24` positions, rows of 16, three four-limb ports, the public limbs in `K` | `RecStatement.Lemmas.SpecLink` (`lean-rec-statement`), the compiler's checks and the runners (compiled evaluation) |
-| `Pi2Circuits D`, `hroots`, `hg` | the Lean compiler's run on π1-rec3's graph at every π1 IV; the Lean recording is the emitted graph | runs, not proofs (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
+| `Pi2Circuits D`, `hroots`, `hg` | the Lean compiler accepts π1-rec3's graph at every π1 IV (`compile_ok`); the Lean recording `recordedGraph pi1Rec3` is `Emitted.graph` (`GraphsAgree`) | **checked by evaluation**, not by the kernel (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
 | `CircuitBridge` | RecCircuit's `EndStatement` at π2's public limbs gives `Pi1GraphAccepts` with the contract's openings | open, `lean-rec-compose` |
 | `Pi1RootWordOk` | π2's word 0 of π1's roots decodes to π1-rec3's WHIR root | the root-word fix, `fix-pi1-root` (false at `leanvm-rec` d93c375) |
 | `RecCompleteness2 D P1 P2 δ2` | π2's completeness | π2's honest prover is not transcribed |
