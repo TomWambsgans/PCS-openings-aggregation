@@ -258,6 +258,117 @@ theorem tableHolds (hfit : CountsFit D.shape s.2) (t : ℕ) (hb : b.leaves = .ta
     rw [hR] at h1
     simp [Heap.fpProd, h1]
 
+theorem hk_of (k : ℕ) (hk : k < (blockK D c1 s.2 b).size) : k < 2 ^ b.r := by
+  have := blockK_r D c1 s.2 b
+  simp only [Heap.LeafBlock.size, this] at hk
+  exact hk
+
+theorem two_eq_zero_E : (2 : E) = 0 := CharTwo.two_eq_zero
+
+include hr in
+/-- **The memory's block from its leaf identity.** -/
+theorem memHolds (hb : b.leaves = .memory) (hrb : b.r = D.shape.logMemory) (hal : 2 ^ b.r ∣ b.position)
+    (hpos : b.position + 2 ^ b.r ≤ 2 ^ 24)
+    (hP : blockP D.shape c1 c2 (stackFor D c1 c2 .setup) s.2 (alphasOf ch) (betaOf ch) b i = 0) :
+    (blockK D c1 s.2 b).Holds (Heap.fp (fun j ↦ ch.getD j.val 0) (ch.getD 4 0)) (heapT D.shape c2)
+      b.position := by
+  intro k hk
+  have hk' := hk_of D c1 s b k hk
+  have hk24 : k < 2 ^ 24 := by omega
+  have hbk : blockK D c1 s.2 b = Heap.LeafBlock.pair b.r (memTupleK D c1 1)
+      (fun x ↦ memTupleK D c1 (c1Val D c1 (.memory 3) D.shape.logMemory x) x) := by
+    unfold blockK; rw [hb]
+  rw [hbk]
+  show heapT D.shape c2 (b.position + k) * Heap.fpProd _ [_] = Heap.fpProd _ [_]
+  rw [fpProd_single, fpProd_single, fp_memTupleK hr.eqk, fp_memTupleK hr.eqk]
+  unfold blockP at hP
+  rw [hb] at hP
+  simp only at hP
+  have he := congrArg (Polynomial.eval (pointE k)) hP
+  have hlm : D.shape.logMemory ≤ 24 := (logMemory_le_rW D.shape).trans hr.c1.rW
+  have hkm : k < 2 ^ D.shape.logMemory := hrb ▸ hk'
+  have hmem : ∀ j < 4, (c1P D.shape c1 (.memory j)).eval (pointE k) =
+      ofK (c1Val D c1 (.memory j) D.shape.logMemory k) := fun j hj ↦ by
+    obtain ⟨off, hl⟩ := hr.c1.limbs.2.2.1 j hj
+    exact c1P_eval_pointE D hr.c1.beta hr.c1.aligned hr.c1.vars c1 _ _ off k hl hlm hkm
+  have haddr : (suP D.shape (stackFor D c1 c2 .setup) .address digitP).eval (pointE k) =
+      ofK (suVal D .address D.shape.logMemory k) := by
+    obtain ⟨off, hl⟩ := hr.setupLimbs.1
+    have hbl := hr.setupAligned _ (limbs_mem_blocks (b := (0, D.shape.logMemory, off))
+      (by rw [hl]; exact List.mem_singleton_self _))
+    unfold suP
+    rw [colPoly_eval_pointE hr.c1.beta _ _ _ _ _ off k hl hbl.1 hbl.2 hr.setupVars hlm hkm]
+    unfold suVal c1Block
+    rw [setupLayout_eq, hl]
+    rfl
+  simp only [memPullP, Polynomial.eval_add, Polynomial.eval_mul, eval_C, eval_one, eval_zero,
+    List.map_cons, List.map_nil, List.range_succ, List.range_zero, List.nil_append,
+    List.cons_append, List.sum_cons, List.sum_nil, add_zero, Nat.reduceAdd] at he
+  rw [eval_digitP_pointE hr.c1.beta _ hk24, pointE_shift_zero hk', mul_zero, add_zero,
+    restr_eval D hr c2 b hal hk' (by omega), hmem 0 (by norm_num), hmem 1 (by norm_num),
+    hmem 2 (by norm_num), hmem 3 (by norm_num), haddr] at he
+  have hsep : ofK (toK sepMem) = sepMem := by
+    unfold sepMem gen
+    rw [eK_eq, toK_ofK]
+  rw [hsep, ofK_one]
+  have h2 := two_eq_zero_E
+  unfold betaOf at he
+  refine CharTwo.add_eq_zero.mp ?_
+  linear_combination he + (-(wt ch 2 * ofK (c1Val D c1 (.memory 3) D.shape.logMemory k))) * h2
+
+include hr in
+/-- **The bytecode's block from its leaf identity.** -/
+theorem bcHolds (hb : b.leaves = .bytecode) (hrb : b.r = D.shape.logBytecode) (hal : 2 ^ b.r ∣ b.position)
+    (hpos : b.position + 2 ^ b.r ≤ 2 ^ 24) (hlb : D.shape.logBytecode ≤ 24)
+    (hP : blockP D.shape c1 c2 (stackFor D c1 c2 .setup) s.2 (alphasOf ch) (betaOf ch) b i = 0) :
+    (blockK D c1 s.2 b).Holds (Heap.fp (fun j ↦ ch.getD j.val 0) (ch.getD 4 0)) (heapT D.shape c2)
+      b.position := by
+  intro k hk
+  have hk' := hk_of D c1 s b k hk
+  have hk24 : k < 2 ^ 24 := by omega
+  have hbk : blockK D c1 s.2 b = Heap.LeafBlock.pair b.r (bcTupleK D 1)
+      (fun x ↦ bcTupleK D (c1Val D c1 .bytecodeFinal D.shape.logBytecode x) x) := by
+    unfold blockK; rw [hb]
+  rw [hbk]
+  show heapT D.shape c2 (b.position + k) * Heap.fpProd _ [_] = Heap.fpProd _ [_]
+  rw [fpProd_single, fpProd_single, fp_bcTupleK hr.eqk, fp_bcTupleK hr.eqk]
+  unfold blockP at hP
+  rw [hb] at hP
+  simp only at hP
+  have he := congrArg (Polynomial.eval (pointE k)) hP
+  have hkb : k < 2 ^ D.shape.logBytecode := hrb ▸ hk'
+  have hbf : (c1P D.shape c1 .bytecodeFinal).eval (pointE k) =
+      ofK (c1Val D c1 .bytecodeFinal D.shape.logBytecode k) := by
+    obtain ⟨off, hl⟩ := hr.c1.limbs.2.2.2.1
+    exact c1P_eval_pointE D hr.c1.beta hr.c1.aligned hr.c1.vars c1 _ _ off k hl hlb hkb
+  simp only [bcPullP, Polynomial.eval_add, Polynomial.eval_mul, eval_C, eval_one, eval_zero] at he
+  rw [eval_digitP_pointE hr.c1.beta _ hk24, pointE_shift_zero hk', mul_zero, add_zero,
+    restr_eval D hr c2 b hal hk' (by omega), hbf, show stackFor D c1 c2 .setup = setupStk D from rfl,
+    hr.bcTuple ch k hkb] at he
+  rw [ofK_one]
+  have h2 := two_eq_zero_E
+  unfold betaOf at he
+  refine CharTwo.add_eq_zero.mp ?_
+  linear_combination he + (-(wt ch 2 * ofK (c1Val D c1 .bytecodeFinal D.shape.logBytecode k))) * h2
+
+include hr in
+/-- **An unused block from its identity.** -/
+theorem unusedHolds (hb : b.leaves = .unused) (hal : 2 ^ b.r ∣ b.position)
+    (hpos : b.position + 2 ^ b.r ≤ 2 ^ 24)
+    (hP : blockP D.shape c1 c2 (stackFor D c1 c2 .setup) s.2 (alphasOf ch) (betaOf ch) b i = 0) :
+    (blockK D c1 s.2 b).Holds (Heap.fp (fun j ↦ ch.getD j.val 0) (ch.getD 4 0)) (heapT D.shape c2)
+      b.position := by
+  intro k hk
+  have hk' := hk_of D c1 s b k hk
+  have hbk : blockK D c1 s.2 b = Heap.LeafBlock.unused b.r := by unfold blockK; rw [hb]
+  rw [hbk]
+  unfold blockP at hP
+  rw [hb] at hP
+  simp only at hP
+  have he := congrArg (Polynomial.eval (pointE k)) hP
+  rw [Polynomial.eval_add, eval_one, eval_zero, restr_eval D hr c2 b hal hk' (by omega)] at he
+  simp [Heap.LeafBlock.unused, Heap.fpProd, CharTwo.add_eq_zero.mp he]
+
 end Blocks
 
 end UniSound.Ids
