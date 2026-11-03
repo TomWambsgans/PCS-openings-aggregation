@@ -4,22 +4,30 @@ import UniComplete.Witness
 /-!
 # The honest prover's sizes, from the shape
 
-The prover's stream and its openings' claims have sizes that the shape bounds:
+The prover's stream and its openings' claims have sizes that the shape bounds (`atT_facts`, `batchVars_atT`):
 
-* **the values at `t`** (`atTOf`'s `values`): at most `valuesBound` scalars (`length_atT_values`): each table's
-  sent columns and at most two fingerprints per flush (`length_tableValues`), the memory's three, the bytecode's
-  two, `T(t)`, `Q_W(t)`;
-* **the batching sumcheck's variables** (the largest of the stacks' layouts the verifier states,
-  `layouts shape a.c2Columns`): at most the shape's own (`layoutsOf shape`, `batchVars_le`). `C2`'s columns from
-  the walk are the shape's (`Shape.c2Columns`) but for a table's leaf quotient, whose degree comes from the
-  table's part as the verifier's code computes it on the values sent (`runReader (tablePart …)`): its degrees
-  are the table's (`tableDegrees`) when the read succeeds, `0` when it does not (`partDegrees_cases`), so its
-  chunks fill at most the shape's words (`colWords_le`); a layout's variables depend on its words only
-  (`StackLayout.vars_new`);
-* **Flock's pending claim** at `t` is Flock's prover's (`atT_pending`).
+* **the values at `t`** (`atTOf`'s `values`): at most `valuesBound` scalars (`AtTFacts.values`; `122`): each
+  table's sent columns and at most two fingerprints per flush (`length_tableValues`, `tvBound`), the memory's three,
+  the bytecode's two, `T(t)`, `Q_W(t)`;
+* **the batching sumcheck's variables** (the largest of the stacks' layouts the walk states,
+  `layouts shape a.c2Columns`): at most the shape's own (`layoutsOf shape`, `batchVarsBound`; `batchVars_atT`).
+  `C2`'s columns from the walk are the shape's (`Shape.c2Columns`) but for a table's leaf quotient, whose degree
+  comes from the table's part as the verifier's own code computes it on the values sent
+  (`runReader (tablePart …)`): its degrees are the table's (`tableDegrees`) when the read succeeds, `0` when it
+  does not (`DegOK`, `degOK_runReader`, from `okP_tablePart`): at `0`, one chunk of one word, at most the shape's
+  chunks (`colWords_c2ColumnsWith_le`). The constraint quotient's degree is the shape's whatever the parts
+  (`constraintRelation_snd`), the leaf columns the blocks' (`heapRelations_snd`). A layout's variables depend on
+  its words only (`vars_new`: the blocks are sorted, their words are not);
+* **Flock's pending claim** at `t` is Flock's prover's (`AtTFacts.pending`).
 
-The loops (`forIn` in `Id` and in the channel's `ChanM Id`) are read by their projections (`id_forIn_foldl`,
-`okP_forIn_foldl`): a body that always yields and moves a projection of its state by a fixed step.
+The loops (`forIn` in `Id` and in the channel's `ChanM Id`) are read by their projections or invariants
+(`id_forIn_foldl`, `id_forIn_prefix`, `okP_forIn_foldl`; `id_bind_…` for a loop followed by the rest).
+
+**Without sorting** (for the kernel, which evaluates neither `mergeSort` nor `Nat.log2`, both well-founded): `C2`'s
+words are at most `c2WordsBound`, a sum over the heap's used blocks (`heap_blocks_sum`: the sorted blocks are a
+permutation of the used ones, the unused carry no quotient; `heap_h`), each chunk list at most twice its count
+(`chunks_sum_le`); a bound `2^k` on a layout's words bounds its variables by `max k 15` (`vars_le_of_words`,
+`batchVarsBound_le`).
 -/
 
 namespace UniComplete
@@ -593,6 +601,228 @@ theorem batchVars_atT (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t
   obtain ⟨parts, hp, h⟩ := (atT_facts tr c2 alphas beta gamma t flockOut).c2
   rw [h]
   exact batchVars_le _ _ (colWords_c2ColumnsWith_le _ hp)
+
+/-! ## The shape's words, without sorting
+
+The heap's blocks and the stacks' layouts are sorted (`mergeSort`, well-founded recursion, which the kernel does not
+evaluate), and their sizes are logarithms (`Nat.log2`, likewise). The words they fill do not depend on the order:
+`colWords_c2Columns_le` bounds `C2`'s by `c2WordsBound`, a sum over the heap's used blocks with each chunk list's
+words at most twice its count (`chunks_sum_le`), which the kernel evaluates; `log2Ceil_le` turns a bound on words
+into one on variables. -/
+
+theorem log2Ceil_le {v k : ℕ} (h : v ≤ 2 ^ k) : log2Ceil v ≤ k := by
+  unfold log2Ceil
+  split_ifs with hv
+  · exact Nat.zero_le _
+  · have : (v - 1).log2 < k := (Nat.log2_lt (by omega)).mpr (by omega)
+    omega
+
+theorem two_pow_log2Ceil_le (t : ℕ) : 2 ^ log2Ceil t ≤ 2 * t + 1 := by
+  unfold log2Ceil
+  split_ifs with ht
+  · simp
+  · have := Nat.log2_self_le (n := t - 1) (by omega)
+    rw [pow_succ]
+    omega
+
+/-- **A chunk list fills at most twice its count**: the two largest powers of two, the rest rounded up. -/
+theorem chunks_sum_le (c : ℕ) : ((chunks c).map (2 ^ ·)).sum ≤ 2 * c := by
+  unfold chunks
+  dsimp only
+  rw [forIn_range4]
+  refine id_bind_inv (P := fun l : List ℕ ↦ (l.map (2 ^ ·)).sum ≤ 2 * c)
+    (fun s : Array ℕ × ℕ ↦ (s.1.toList.map (2 ^ ·)).sum + 2 * s.2 ≤ 2 * c) (by simp) ?_ fun s hs ↦ ?_
+  · intro x st h
+    split_ifs with h1 h2
+    · show ((st.1.push (st.2.log2 + 1)).toList.map (2 ^ ·)).sum + 2 * 0 ≤ 2 * c
+      have := Nat.log2_self_le (n := st.2) (by omega)
+      simp only [Array.toList_push, List.map_append, List.sum_append, List.map_cons, List.map_nil, List.sum_cons,
+        List.sum_nil, pow_succ]
+      omega
+    · show ((st.1.push st.2.log2).toList.map (2 ^ ·)).sum + 2 * (st.2 - 2 ^ st.2.log2) ≤ 2 * c
+      have := Nat.log2_self_le (n := st.2) (by omega)
+      have := Nat.two_pow_pos st.2.log2
+      simp only [Array.toList_push, List.map_append, List.sum_append, List.map_cons, List.map_nil, List.sum_cons,
+        List.sum_nil]
+      omega
+    · exact h
+  · show (s.1.toList.map (2 ^ ·)).sum ≤ 2 * c
+    omega
+
+theorem colWords_zip_map_col (col : ℕ → Column) :
+    ∀ (l l' : List ℕ), l.length ≤ l'.length →
+      colWords ((l.zip l').map fun (x : ℕ × ℕ) ↦ (col x.2, x.1, true)) = 3 * (l.map (2 ^ ·)).sum
+  | [], _, _ => rfl
+  | _ :: _, [], h => by simp at h
+  | e :: l, c :: l', h => by
+    rw [List.zip_cons_cons, List.map_cons, List.map_cons, List.sum_cons, ← List.singleton_append, colWords_append,
+      colWords_zip_map_col col l l' (by simpa using h)]
+    simp [colWords]
+    ring
+
+/-- The heap's used blocks (`HeapLayout.new`'s `used`): the memory, the bytecode, the tables. -/
+def heapUsed (shape : Shape) : List (Leaves × ℕ) :=
+  [(.memory, shape.logMemory), (.bytecode, shape.logBytecode)] ++
+    (List.range shape.heights.length).map fun t ↦ (.table t, shape.heights.getD t 0)
+
+theorem unusedBlocks_unused (base offset : ℕ) : ∀ b ∈ unusedBlocks base offset, b.leaves = .unused := by
+  unfold unusedBlocks
+  dsimp only
+  rw [Std.Legacy.Range.forIn_eq_forIn_range']
+  refine id_bind_inv (P := fun l : List Block ↦ ∀ b ∈ l, b.leaves = .unused)
+    (fun s : Array Block × ℕ ↦ ∀ b ∈ s.1.toList, b.leaves = .unused) (by simp) ?_ fun s hs ↦ hs
+  intro x st h
+  split_ifs
+  · show ∀ b ∈ (st.1.push ⟨.unused, _, _⟩).toList, b.leaves = .unused
+    intro b hb
+    rw [Array.toList_push, List.mem_append, List.mem_singleton] at hb
+    rcases hb with hb | rfl
+    · exact h b hb
+    · rfl
+  · exact h
+
+theorem foldl_blocks {X : Type} (π : Block → X) (G : Array Block × ℕ → Leaves × ℕ → Array Block × ℕ)
+    (σ : Leaves × ℕ → X) (hG : ∀ acc x, (G acc x).1.toList.map π = acc.1.toList.map π ++ [σ x]) :
+    ∀ (l : List (Leaves × ℕ)) (init : Array Block × ℕ),
+      (l.foldl G init).1.toList.map π = init.1.toList.map π ++ l.map σ
+  | [], init => by simp
+  | a :: l, init => by
+    rw [List.foldl_cons, foldl_blocks π G σ hG l, hG, List.map_cons, List.append_assoc]
+    rfl
+
+/-- **The heap's blocks, summed**: a function of the leaves and the height, zero on unused blocks, sums over the
+used blocks. -/
+theorem heap_blocks_sum (shape : Shape) (f : Leaves → ℕ → ℕ) (hf : ∀ r, f .unused r = 0) :
+    (shape.heap.blocks.map fun b ↦ f b.leaves b.r).sum = ((heapUsed shape).map fun x ↦ f x.1 x.2).sum := by
+  unfold Shape.heap HeapLayout.new
+  dsimp only
+  rw [List.map_append, List.sum_append]
+  have hu : ∀ base offset, ((unusedBlocks base offset).map fun b ↦ f b.leaves b.r).sum = 0 := by
+    intro base offset
+    refine List.sum_eq_zero fun y hy ↦ ?_
+    rw [List.mem_map] at hy
+    obtain ⟨b, hb, rfl⟩ := hy
+    rw [unusedBlocks_unused _ _ b hb, hf]
+  rw [hu, Nat.add_zero, show (fun b : Block ↦ f b.leaves b.r) =
+      (fun x : Leaves × ℕ ↦ f x.1 x.2) ∘ (fun b : Block ↦ (b.leaves, b.r)) from rfl, ← List.map_map,
+    foldl_blocks (fun b : Block ↦ (b.leaves, b.r)) _ id (fun acc x ↦ by simp)]
+  simp only [List.map_nil, List.nil_append, List.map_id]
+  rw [List.Perm.sum_eq (List.Perm.map _ (List.mergeSort_perm _ _))]
+  rfl
+
+theorem heap_h (shape : Shape) : shape.heap.h = log2Ceil ((heapUsed shape).map fun x ↦ 2 ^ x.2).sum + 1 := by
+  unfold Shape.heap HeapLayout.new
+  dsimp only
+  rw [List.Perm.sum_eq (List.Perm.map _ (List.mergeSort_perm _ _))]
+  rfl
+
+/-- A used block's leaf quotient's words, at most: six per coefficient. -/
+def leafBound (l : Leaves) (r : ℕ) : ℕ :=
+  match Shape.leafDegree ⟨l, r, 0⟩ with
+  | none => 0
+  | some d => 6 * (d + 1)
+
+/-- **`C2`'s words, at most**, without sorting: the heap and the tree quotient (`2^h` each, three words), the
+constraint quotient's chunks, every used block's leaf quotient's. -/
+def c2WordsBound (shape : Shape) : ℕ :=
+  6 * (2 * (2 * ((heapUsed shape).map fun x ↦ 2 ^ x.2).sum + 1)) + 3 + 6 * (shape.constraintDegree + 1) +
+    ((heapUsed shape).map fun x ↦ leafBound x.1 x.2).sum
+
+theorem map_zip_fst {X Y Z : Type} (g : X → Z) :
+    ∀ (l : List X) (l' : List Y), l.length ≤ l'.length → (l.zip l').map (fun x ↦ g x.1) = l.map g
+  | [], _, _ => rfl
+  | _ :: _, [], h => by simp at h
+  | a :: l, b :: l', h => by
+    rw [List.zip_cons_cons, List.map_cons, List.map_cons, map_zip_fst g l l' (by simpa using h)]
+
+theorem leafDegree_position (l : Leaves) (r p : ℕ) : Shape.leafDegree ⟨l, r, p⟩ = Shape.leafDegree ⟨l, r, 0⟩ :=
+  rfl
+
+theorem leaves_sum_le (shape : Shape) (G : Block × ℕ → List (Column × ℕ × Bool))
+    (hG : ∀ b i, colWords (G (b, i)) ≤ leafBound b.leaves b.r) :
+    ((shape.heap.blocks.zip (List.range shape.heap.blocks.length)).map fun x ↦ colWords (G x)).sum ≤
+      ((heapUsed shape).map fun x ↦ leafBound x.1 x.2).sum := by
+  rw [← heap_blocks_sum shape leafBound (fun _ ↦ rfl),
+    ← map_zip_fst (fun b : Block ↦ leafBound b.leaves b.r) _ (List.range shape.heap.blocks.length) (by simp)]
+  exact List.sum_le_sum fun x _ ↦ hG x.1 x.2
+
+theorem colWords_c2Columns_le (shape : Shape) : colWords shape.c2Columns ≤ c2WordsBound shape := by
+  unfold Shape.c2Columns c2WordsBound
+  dsimp only
+  simp only [colWords_append, colWords_flatMap]
+  refine le_trans (Nat.add_le_add_left (leaves_sum_le shape _ fun b i ↦ ?_) _) ?_
+  · obtain ⟨leaves, r, position⟩ := b
+    dsimp only
+    rw [leafDegree_position]
+    unfold leafBound
+    generalize Shape.leafDegree ⟨leaves, r, 0⟩ = o
+    cases o with
+    | none => simp [colWords]
+    | some d =>
+      dsimp only
+      rw [colWords_zip_map_col _ _ _ (by simp)]
+      have := chunks_sum_le (d + 1)
+      omega
+  · rw [colWords_zip_map_col _ _ _ (by simp)]
+    have hc := chunks_sum_le (shape.constraintDegree + 1)
+    have hh := two_pow_log2Ceil_le ((heapUsed shape).map fun x ↦ 2 ^ x.2).sum
+    have hfix : colWords [(Column.heap, shape.heap.h, true), (Column.treeQuotient 0, shape.heap.h, true),
+        (Column.treeQuotient 1, 0, true)] = 6 * 2 ^ shape.heap.h + 3 := by
+      simp [colWords]
+      ring
+    rw [hfix, heap_h, pow_succ]
+    omega
+
+/-! ## The stacks' layouts, by their words -/
+
+/-- `C1`'s columns (`layouts`'s): `q_flock`, every table's columns and its `z_T`, the memory, the bytecode's final
+counts. -/
+def c1ColsOf (shape : Shape) : List (Column × ℕ × Bool) :=
+  [(.qflock, shape.heights.getD opBlake2s 0 + 8, false)] ++
+    tables.flatMap (fun t ↦
+      let h := shape.heights.getD t.opcode 0
+      (List.range t.width).map (fun c ↦ (Column.table t.opcode c, h, false)) ++ [(.inverse t.opcode, h, false)]) ++
+    (List.range 4).map (fun k ↦ (Column.memory k, shape.logMemory, false)) ++
+    [(.bytecodeFinal, shape.logBytecode, false)]
+
+/-- The setup's columns: the bytecode's tuples, the addresses. -/
+def setupColsOf (shape : Shape) : List (Column × ℕ × Bool) :=
+  [(.bytecodeTuple, shape.logBytecode + 4, false), (.address, shape.logMemory, false)]
+
+theorem layouts_eq (shape : Shape) (cols : List (Column × ℕ × Bool)) :
+    layouts shape cols = [(.c1, StackLayout.new (c1ColsOf shape)), (.c2, StackLayout.new cols),
+      (.setup, StackLayout.new (setupColsOf shape))] := rfl
+
+theorem c1Layout_eq (shape : Shape) : c1Layout shape = StackLayout.new (c1ColsOf shape) := rfl
+
+theorem setupLayout_eq (shape : Shape) : setupLayout shape = StackLayout.new (setupColsOf shape) := rfl
+
+theorem c2Layout_eq (shape : Shape) :
+    ((layoutsOf shape).lookup .c2).getD default = StackLayout.new shape.c2Columns := rfl
+
+/-- **A layout's variables from a bound on its words.** -/
+theorem vars_le_of_words {cols : List (Column × ℕ × Bool)} {k : ℕ} (h : colWords cols ≤ 2 ^ k) :
+    (StackLayout.new cols).vars ≤ max k 15 := by
+  rw [vars_new]
+  have h1 : 2 ^ k ≤ 2 ^ max k 15 := Nat.pow_le_pow_right (by norm_num) (le_max_left _ _)
+  have h2 : 2 ≤ 2 ^ max k 15 := le_trans (by norm_num) (Nat.pow_le_pow_right (by norm_num) (le_max_right k 15))
+  have := log2Ceil_le (show max (colWords cols) 2 ≤ 2 ^ max k 15 by omega)
+  omega
+
+theorem c2Vars_le (shape : Shape) {k : ℕ} (h : c2WordsBound shape ≤ 2 ^ k) :
+    (((layoutsOf shape).lookup .c2).getD default).vars ≤ max k 15 := by
+  rw [c2Layout_eq]
+  exact vars_le_of_words ((colWords_c2Columns_le shape).trans h)
+
+/-- **The batching sumcheck's variables, from bounds on the stacks' words.** -/
+theorem batchVarsBound_le (shape : Shape) {k₁ k₂ k₃ : ℕ} (h₁ : colWords (c1ColsOf shape) ≤ 2 ^ k₁)
+    (h₂ : c2WordsBound shape ≤ 2 ^ k₂) (h₃ : colWords (setupColsOf shape) ≤ 2 ^ k₃) :
+    batchVarsBound shape ≤ max (max (max k₁ 15) (max k₂ 15)) (max k₃ 15) := by
+  have e1 := vars_le_of_words h₁
+  have e2 := vars_le_of_words ((colWords_c2Columns_le shape).trans h₂)
+  have e3 := vars_le_of_words h₃
+  simp only [batchVarsBound, layoutsOf, layouts_eq, List.map_cons, List.map_nil, List.foldl_cons, List.foldl_nil]
+  omega
 
 end Bounds
 
