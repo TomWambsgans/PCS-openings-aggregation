@@ -26,9 +26,9 @@ open UniStatement LeanVM.Parameters LeanVM.Protocol Finset
 open UniComplete.Core (relations_hold_front atTOf_coversC2 slotCondition_of_badT stack_sizes)
 
 /-- `squares c n` has `n` terms. -/
-theorem squares_length3 : ∀ (c : E) (n : ℕ), (squares c n).length = n
+theorem squaresLen_coreBatch : ∀ (c : E) (n : ℕ), (squares c n).length = n
   | _, 0 => rfl
-  | c, n + 1 => by rw [squares, List.length_cons, squares_length3 (c * c) n]
+  | c, n + 1 => by rw [squares, List.length_cons, squaresLen_coreBatch (c * c) n]
 
 /-- **Flock's ring switch**, at every writer: the end is a ring switch whose target is `q_flock`'s ring sum. -/
 def FlockRing3 (flock : FlockProver Id) (logN : ℕ) (q : Array K) : Prop :=
@@ -89,7 +89,7 @@ theorem batchHolds3_front (H : List UInt8 → Digest) (commit : Commitment → �
     BatchHolds F.combined F.stackLayouts F.stackOf F.atT.ringMap none none := by
   simp only [frontOf3, FrontOut.stackOf] at hbad hbadT ⊢
   obtain ⟨map, target, hend, hmap6, hsum⟩ := hring _
-  exact batchHolds3_of tr hon href (squares_length3 _ 4) _ _ _ _ _ hend hmap6 hsum (hlen _) hbad (hbadT _ rfl)
+  exact batchHolds3_of tr hon href (squaresLen_coreBatch _ 4) _ _ _ _ _ hend hmap6 hsum (hlen _) hbad (hbadT _ rfl)
 
 /-- **The paired batch synchronises at π1-rec3's prover's front state, its terminal zero.** -/
 theorem batchSyncsAt3_front (H : List UInt8 → Digest) (commit : Commitment → ℕ → Array K → Id Committed)
