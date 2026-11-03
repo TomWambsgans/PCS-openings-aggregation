@@ -139,16 +139,31 @@ def indAt (p : RecPiop.Block × ℕ) (x : E) : E :=
   zvAt G.logN x * ((∏ j ∈ G.compl p, (UniStatement.pointE (G.pairBase p) + UniStatement.pointE j)) *
     ∏ j ∈ (range G.N).filter (G.InPair p), (x + UniStatement.pointE j))⁻¹
 
+/-- **The pairs as a list** (`G.pairs`' elements, each once): every non-forward role of every block. -/
+def pairsList : List (RecPiop.Block × ℕ) :=
+  (G.blocks.dedup ×ˢ List.range G.W).filter fun p ↦ !(G.regionRole p.1 p.2).isForward
+
+/-- **Each pair's data, once** (`spec.pairs`): the pair, its indicator's constant `Π_{j ∉ p} (ω_{c_p} + ω_j)`, its
+positions. -/
+def pairData : List ((RecPiop.Block × ℕ) × E × List ℕ) :=
+  (pairsList G).map fun q ↦
+    (q, ∏ j ∈ G.compl q, (UniStatement.pointE (G.pairBase q) + UniStatement.pointE j),
+      (List.range G.N).filter fun j ↦ decide (G.InPair q j))
+
+/-- A pair's indicator at `x` from its data: `Z_V(x) / (c · Π_{j ∈ p} (x + ω_j))`. -/
+def indFrom (m : ℕ) (c : E) (pos : List ℕ) (x : E) : E :=
+  zvAt m x * (c * (pos.map fun j ↦ x + UniStatement.pointE j).prod)⁻¹
+
 /-- **The push polynomial at coset point `p`** (`P = w + Σ_p I_p (E_p + w) + κ`), from `w` and `κ` on the coset, the
-cells `w(x + ω_c)` at `p ⊕ c`. -/
-def pushAtCoset (m : ℕ) (wD κD : Array E) (γ : E) (p : ℕ) : E :=
-  wD.getD p 0 + ∑ q ∈ G.pairs, indAt G q (cosetPoint m p) *
-    ((G.regionRole q.1 q.2).value γ (wD.getD p 0) (fun c ↦ wD.getD (p ^^^ (q.2 ^^^ c)) 0) + wD.getD p 0) +
-      κD.getD p 0
+cells `w(x + ω_c)` at `p ⊕ c`, the pairs' data `pd`. -/
+def pushAtCoset (pd : List ((RecPiop.Block × ℕ) × E × List ℕ)) (m : ℕ) (wD κD : Array E) (γ : E) (p : ℕ) : E :=
+  wD.getD p 0 + (pd.map fun d ↦ indFrom m d.2.1 d.2.2 (cosetPoint m p) *
+    ((G.regionRole d.1.1 d.1.2).value γ (wD.getD p 0) (fun c ↦ wD.getD (p ^^^ (d.1.2 ^^^ c)) 0) +
+      wD.getD p 0)).sum + κD.getD p 0
 
 /-- **The holes' indicator at coset point `p`** (`1_S`): the port pairs' indicators. -/
-def holeAtCoset (m p : ℕ) : E :=
-  ∑ q ∈ G.pairs.filter (fun q ↦ (G.regionRole q.1 q.2).isPort = true), indAt G q (cosetPoint m p)
+def holeAtCoset (pd : List ((RecPiop.Block × ℕ) × E × List ℕ)) (m p : ℕ) : E :=
+  ((pd.filter fun d ↦ (G.regionRole d.1.1 d.1.2).isPort).map fun d ↦ indFrom m d.2.1 d.2.2 (cosetPoint m p)).sum
 
 /-- **`h`'s novel coefficients** (`2^m`). -/
 def hNovel (α β γ : E) : Array E := UniComplete.novelOfValuesE G.logN (hValues G w α β γ)
@@ -160,25 +175,26 @@ def qValues (α β γ : E) : Array E :=
   let σD := onCoset m (UniComplete.novelOfValuesE m (sigmaValues G))
   let κD := onCoset m (UniComplete.novelOfValuesE m (kappaValues G))
   let hD := onCoset m (hNovel G w α β γ)
+  let pd := pairData G
   Array.ofFn (n := 2 ^ (m + 2)) fun p ↦
     let x := cosetPoint m p.val
     let dPull := α + wD.getD p.val 0 + β * x
-    let dPush := α + pushAtCoset G m wD κD γ p.val + β * σD.getD p.val 0
-    (hD.getD p.val 0 * dPull * dPush + (1 + holeAtCoset G m p.val) * dPush + dPull) * (zvAt m x)⁻¹
+    let dPush := α + pushAtCoset G pd m wD κD γ p.val + β * σD.getD p.val 0
+    (hD.getD p.val 0 * dPull * dPush + (1 + holeAtCoset G pd m p.val) * dPush + dPull) * (zvAt m x)⁻¹
 
 /-- **`q`'s novel coefficients** (`4N`): the transform at the coset's offset. -/
 def qNovel (α β γ : E) : Array E :=
   PcsQuotient.Domain.coefficients (G.logN + 2) (cosetOffset G.logN) (qValues G w α β γ)
+
+/-- Limb `l` of an element of `E` (`0` past the third). -/
+def limbN (x : E) (l : ℕ) : K := if h : l < 3 then x.limb ⟨l, h⟩ else 0
 
 /-- **`Q`'s table**: entry `pd + 2^(m+2)(kind + 2 limb)` is limb `limb` of `h`'s (kind `0`, `pd < N`) or `q`'s (kind `1`)
 novel coefficient `pd` (`chunk = 8 limb + 4 kind + digit`). -/
 def qEntry (m : ℕ) (hN qN : Array E) (i : ℕ) : K :=
   let pd := i % 2 ^ (m + 2)
   let kl := i / 2 ^ (m + 2)
-  if h : kl / 2 < 3 then
-    if kl % 2 = 0 then (if pd < 2 ^ m then (hN.getD pd 0).limb ⟨kl / 2, h⟩ else 0)
-    else (qN.getD pd 0).limb ⟨kl / 2, h⟩
-  else 0
+  if kl % 2 = 0 then (if pd < 2 ^ m then limbN (hN.getD pd 0) (kl / 2) else 0) else limbN (qN.getD pd 0) (kl / 2)
 
 /-- **The fold values at `t`** (`folds`): `a_k = Σ_j eq(j; w_r(t), …, w_{m−1}(t)) T_{k + 2^r j}`, `k < 2^r`. -/
 def foldValues (m r : ℕ) (T : Array K) (t : E) : List E :=

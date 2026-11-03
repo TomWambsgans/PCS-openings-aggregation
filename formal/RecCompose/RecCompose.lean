@@ -23,8 +23,9 @@ import RecCompose.Bridge
 import RecCompose.Final
 import RecCompose.Tables
 import RecCompose.Real
-import RecCompose.Pi2Prover
 import RecCompose.FsClosed
+import RecCompose.Pi2Prover
+import RecCompose.Pi2HonestCount
 
 /-!
 # RecCompose: the recursive verifier's end theorems
