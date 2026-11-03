@@ -162,13 +162,19 @@ random streams.
 | `C2`: chunks in basis `B` | 0.94 |
 | `C2`: WHIR commit (`2^27`) | 0.50 |
 | values at `t` | 0.02 |
-| claims: dense weights (with the ring switch's) and the combined-claims check | 3.06 |
-| batching sumcheck (27 rounds over `2^27 + 2^27 + 2^24`) | 2.11 |
-| openings: WHIR (3) | 1.81 |
+| claims: weights (pieces on the stacks' blocks, with the ring switch's map) | 0.04 |
+| claims: the combined-claims check (a test's; not in the total) | 0.12 |
+| batching sumcheck (27 rounds over `2^27 + 2^27 + 2^24`, the first 6 on the stacks' words) | 0.50 |
+| openings: WHIR (3), the queried L0 rows from the kept codewords | 0.73 |
 | **total** (the trace's generation, by leanVM, apart) | **18.56** |
 
+- The claims, batching and openings rows are measured at `bbef4b9`, on jemalloc (the harness's allocator since
+  `a11ed4c`, as leanVM's own CLI's), the others earlier. On the main line (`FLOCK_MAIN`) the three are 0.04 / 0.56
+  / 0.78 s, and the whole prover 15.0 s at peak RSS 10.7 GB, where `a11ed4c` (dense weights and their check 2.90 s,
+  batching 1.13–1.15 s, openings 1.02–1.08 s) takes 16.2–17.1 s at 16.6 GB.
 - **Peak RSS 15.7 GB.** Without Flock it is 13.5 GB and 18.0 s. The dense weights (`2^27` E each for `C1` and
-  `C2`) and their first fold dominate it.
+  `C2`) and their first fold dominated it; no weight is written out at the stacks' size now, and the openings set
+  the peak (the three kept codewords, 3.6 GB, each freed after its opening).
 - **Proof.** The stream is 8,824 bytes: two roots, Flock's 224 scalars (5,376 bytes), 84 values, 27 rounds of 2
   scalars, and 3 values. The WHIR openings are 295,576 / 300,168 / 240,728 bytes (`C1`, `C2`, setup), which the
   block's `PCS_OPEN` aggregation carries.
@@ -190,8 +196,12 @@ measured): 2.12–2.46 s for the whole proof, peak RSS 10.1 GB. That is execute 
     columns: 1,152 NTTs of `2^18`, about 1.6 s.
   - XOR, MUL and DEREF take 16 sub-cosets of about 15 columns each.
   - A batched multi-column NTT, as leanVM's interleaved encode, would cut this.
-- The dense weights are written out instead of kept as eq tensors.
-- The batching sumcheck's first rounds run over `2^27` E-weights.
+- The batching sumcheck's first 6 rounds are memory-bound: each reads the three stacks' words (2 GB) at about 43 ms.
+  The ring switch's twisted piece adds about 60, 25 and 10 ms to rounds 0-2 (two GF(2)-linear maps per pair of
+  `q_flock`'s words, by GFNI). Writing the folded stacks and weights out at `2^21` takes about 70 ms (two reads
+  of `C1`'s and `C2`'s words), and the remaining folds about 40 ms.
+- An opening of a `2^27` stack is about 0.3 s: leanVM's WHIR, mostly its level commits (encode and Merkle at rates
+  `1/16` and below) and the lane rounds' passes over the stack.
 
 **Small trace** (32 signatures, 38,209 cycles): 2.66 s with Flock, 2.1 GB; stream 8,440 bytes; 257,890 gas. leanVM
 takes 0.14 s.
