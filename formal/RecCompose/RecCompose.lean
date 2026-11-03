@@ -4,6 +4,8 @@ import RecCompose.Part1
 import RecCompose.Part2
 import RecCompose.Complete
 import RecCompose.Numbers
+import RecCompose.Rpm
+import RecCompose.Couplings
 
 /-!
 # RecCompose: the recursive verifier's end theorems
