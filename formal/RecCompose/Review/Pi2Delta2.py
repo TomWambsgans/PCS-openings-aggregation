@@ -8,6 +8,10 @@
 At N = 2^50 block calls, et = 2^-200, epow = 2^-300 (the bounds `delta2_le` takes), it checks
 delta2 <= 2^-164, the Lean bound, and prints every term in bits.
 
+In `Pi2ProbStaged` (`recCompleteness2_pi2_staged`) epow is the grinding's N * (1 - 2^-17)^nonceFuel, nonceFuel = 2^25;
+`grind_le` proves it below 2^-300 at N <= 2^50 (from `E2ECompleteness.grinding_le`, 2^48 * ... <= 2^-304). Its exact
+value is too large a rational to form here; the float below is its log2 (2^-319.2 at N = 2^50).
+
 Run: python3 -I formal/RecCompose/Review/Pi2Delta2.py
 """
 from fractions import Fraction as Q
@@ -42,3 +46,5 @@ x = Q(1, 2**170)
 assert Q(1, 2**256) <= x and Q(M, 2**192) <= 16 * x and Q(ct, 2**192) == 32 * x
 assert et <= x and epow <= x and Q(N * N, 2**508) <= x
 print("delta2 <= 2^-164: ok")
+grind_bits = 50 + (2**25) * math.log2(1 - 2.0**-17)
+print(f"{'grinding N (1-2^-17)^(2^25)':32s} 2^{grind_bits:.1f} (<= 2^-300: {grind_bits <= -300})")
