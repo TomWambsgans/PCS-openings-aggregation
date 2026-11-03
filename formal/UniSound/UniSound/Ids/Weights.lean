@@ -699,4 +699,339 @@ theorem combineEq : CombineEq := by
     rw [← Array.foldl_toList, rd_mergedFold, rd_empty, zero_add]
     rfl
 
+/-! ## Merged points -/
+
+/-- A term's merged point: the longest of `combinePoints` extending it. -/
+theorem mergedPoint_spec (rels : List Relation) (p : List E)
+    (hp : ∃ r ∈ rels, ∃ tm ∈ r.terms, tm.point = p) :
+    ∃ b < (combinePoints rels).size, mergedPoint rels p = (combinePoints rels).getD b [] ∧
+      Extends p ((combinePoints rels).getD b []) := by
+  obtain ⟨i, hi⟩ := findIdx_of_mem ((mem_combinePoints rels p).mpr hp)
+  obtain ⟨hlt, hpi⟩ := findIdx_some hi
+  refine ⟨longestOf (combinePoints rels) i, longestOf_lt _ _ hlt, ?_, ?_⟩
+  · unfold mergedPoint
+    rw [hi, Option.getD_some]
+  · rw [← hpi]
+    exact longestOf_ext _ _
+
+/-- **A merged point extends the point** and is a term's point. -/
+theorem mergedPrefix : MergedPrefix := by
+  intro rels p hp
+  obtain ⟨b, hb, heq, hE⟩ := mergedPoint_spec rels p hp
+  rw [heq]
+  exact ⟨hE.2, (mem_combinePoints rels _).mp (getD_mem hb)⟩
+
+/-- **A point no longer point extends is not merged.** -/
+theorem mergedSelf : MergedSelf := by
+  intro rels p hp hno
+  obtain ⟨b, hb, heq, hE⟩ := mergedPoint_spec rels p hp
+  rw [heq]
+  obtain ⟨r, hr, tm, htm, hpt⟩ := (mem_combinePoints rels _).mp (getD_mem hb)
+  have hlen : ((combinePoints rels).getD b []).length ≤ p.length := by
+    by_contra hc
+    exact hno r hr tm htm (by rw [hpt]; omega) (by rw [hpt]; exact hE.2)
+  exact (List.take_of_length_le hlen).symm.trans hE.2
+
+/-! ## Weights on the cube -/
+
+theorem zero_ne_ringTwist : (0 : ℕ) ≠ ringTwist := by
+  unfold ringTwist
+  omega
+
+theorem slotView_of_ne {column : Column} (h : ∀ j, column ≠ .qflockSlot j) (point : List E) :
+    slotView column point = (column, point, 0) := by
+  unfold slotView
+  split
+  · rename_i j
+    exact absurd rfl (h j)
+  · rfl
+
+theorem rowEq_eq (point : List E) (len : ℕ) (r : List E) :
+    rowEq point len r = ((List.range len).map fun k ↦ 1 + point.getD k 0 + r.getD k 0).prod := by
+  unfold rowEq
+  rw [foldl_mul_map, one_mul]
+
+theorem rowEq_congr {p1 p2 : List E} {len : ℕ} (r : List E) (h : ∀ k < len, p1.getD k 0 = p2.getD k 0) :
+    rowEq p1 len r = rowEq p2 len r := by
+  rw [rowEq_eq, rowEq_eq]
+  exact congrArg List.prod (List.map_congr_left fun k hk ↦ by rw [h k (List.mem_range.mp hk)])
+
+theorem getD_of_take {l l' : List E} {n k : ℕ} (h : l.take n = l') (hk : k < n) :
+    l.getD k 0 = l'.getD k 0 := by
+  rw [← h, List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD, List.getElem?_take_of_lt hk]
+
+theorem twistPt_take (p q : List E) (tw : ℕ) (h : q.take p.length = p) :
+    (twistPt q tw).take p.length = twistPt p tw := by
+  rw [twistPt_eq_map, twistPt_eq_map, ← List.map_take, h]
+
+/-- **Merging changes no column's weight** but `q_flock`'s slot view's. -/
+theorem termWExtend : TermWExtend := by
+  intro L rm V col p q twist u hcol hL hq
+  rw [termW_eq, termW_eq]
+  unfold wSum
+  by_cases htw : twist = ringTwist
+  · rw [ite_eq_left htw, ite_eq_left htw]
+    refine congrArg List.sum (List.map_congr_left fun b hb ↦ ?_)
+    have hv := hL b hb
+    have : q.take b.2.1 = p.take b.2.1 := by
+      rw [← hq, List.take_take, min_eq_left hv]
+    simp only [ringRow, this]
+  · rw [ite_eq_right htw, ite_eq_right htw, slotView_of_ne hcol, slotView_of_ne hcol]
+    refine congrArg List.sum (List.map_congr_left fun b hb ↦ ?_)
+    have hv := hL b hb
+    have hlen : (if (0 : ℕ) > 0 then (0 : ℕ) else b.2.1) = b.2.1 := by simp
+    dsimp only
+    rw [hlen, rowEq_congr (bitsE u V) fun k hk ↦
+      getD_of_take (twistPt_take p q twist hq) (lt_of_lt_of_le hk hv)]
+
+theorem bitsE_getD (u n k : ℕ) :
+    (bitsE u n).getD k 0 = if k < n then (if u.testBit k then 1 else 0) else 0 := by
+  unfold bitsE
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map]
+  by_cases hk : k < n
+  · rw [List.getElem?_range hk]
+    simp [hk]
+  · rw [List.getElem?_eq_none (by simpa using hk)]
+    simp [hk]
+
+theorem bitsE_length (u n : ℕ) : (bitsE u n).length = n := by simp [bitsE]
+
+theorem bitsE_take (u n m : ℕ) (h : m ≤ n) : (bitsE u n).take m = bitsE u m := by
+  unfold bitsE
+  rw [← List.map_take, List.take_range, min_eq_left h]
+
+theorem bitsE_congr (u x n : ℕ) (h : ∀ k < n, u.testBit k = x.testBit k) : bitsE u n = bitsE x n := by
+  unfold bitsE
+  exact List.map_congr_left fun k hk ↦ by rw [h k (List.mem_range.mp hk)]
+
+theorem blockBase_testBit (off v V x k : ℕ) (hx : x < 2 ^ v) (hk : k < v) :
+    (blockBase off v V + x).testBit k = x.testBit k := by
+  unfold blockBase
+  rw [mul_comm, Nat.testBit_two_pow_mul_add _ hx]
+  simp [hk]
+
+theorem list_prod_range (f : ℕ → E) (n : ℕ) :
+    ((List.range n).map f).prod = ∏ k ∈ Finset.range n, f k := by
+  induction n with
+  | zero => simp
+  | succ n ih =>
+    rw [List.range_succ, List.map_append, List.prod_append, ih, Finset.prod_range_succ]
+    simp
+
+theorem rowEq_bits (pt : List E) (v V u : ℕ) (hv : v ≤ V) : rowEq pt v (bitsE u V) = cubeEq pt v u := by
+  rw [rowEq_eq, cubeEq, list_prod_range]
+  refine Finset.prod_congr rfl fun k hk ↦ ?_
+  have hk' : k < V := lt_of_lt_of_le (Finset.mem_range.mp hk) hv
+  rw [bitsE_getD]
+  simp only [hk', ↓reduceIte]
+
+theorem cubeEq_block (pt : List E) (off v V x : ℕ) (hx : x < 2 ^ v) :
+    cubeEq pt v (blockBase off v V + x) = cubeEq pt v x := by
+  unfold cubeEq
+  refine Finset.prod_congr rfl fun k hk ↦ ?_
+  rw [blockBase_testBit _ _ _ _ _ hx (Finset.mem_range.mp hk)]
+
+theorem prod_indicator {α : Type*} (P : α → Prop) [DecidablePred P] : ∀ l : List α,
+    (l.map fun k ↦ if P k then (1 : E) else 0).prod = if ∀ k ∈ l, P k then 1 else 0
+  | [] => by simp
+  | k :: l => by
+    rw [List.map_cons, List.prod_cons, prod_indicator P l]
+    by_cases hk : P k <;> by_cases hl : ∀ k ∈ l, P k <;> simp [hk, hl]
+
+theorem bits_iff (u V v off : ℕ) (hu : u < 2 ^ V) :
+    (∀ k ∈ List.range' v (V - v), off.testBit k = u.testBit k) ↔ u / 2 ^ v = off % 2 ^ V / 2 ^ v := by
+  constructor
+  · intro h
+    apply Nat.eq_of_testBit_eq
+    intro i
+    rw [Nat.testBit_div_two_pow, Nat.testBit_div_two_pow, Nat.testBit_mod_two_pow]
+    by_cases hi : i + v < V
+    · rw [h (i + v) (by rw [List.mem_range'_1]; omega)]
+      simp [hi]
+    · have : u < 2 ^ (i + v) := lt_of_lt_of_le hu (Nat.pow_le_pow_right (by norm_num) (by omega))
+      rw [Nat.testBit_lt_two_pow this]
+      simp [hi]
+  · intro h k hk
+    rw [List.mem_range'_1] at hk
+    have hkV : k < V := by omega
+    have := congrArg (fun n ↦ n.testBit (k - v)) h
+    simp only [Nat.testBit_div_two_pow, Nat.testBit_mod_two_pow, Nat.sub_add_cancel hk.1] at this
+    rw [this]
+    simp [hkV]
+
+/-- **The selector at a cube point**: `1` on the block's aligned range, `0` elsewhere. -/
+theorem selector_bits (u V v off : ℕ) (hu : u < 2 ^ V) :
+    selector (bitsE u V) v off = if u / 2 ^ v = off % 2 ^ V / 2 ^ v then 1 else 0 := by
+  unfold selector
+  rw [bitsE_length, foldl_mul_map, one_mul]
+  have hf : ∀ k ∈ List.range' v (V - v),
+      (if off.testBit k then (bitsE u V).getD k 0 else 1 + (bitsE u V).getD k 0) =
+        if off.testBit k = u.testBit k then 1 else 0 := by
+    intro k hk
+    have hkV : k < V := by rw [List.mem_range'_1] at hk; omega
+    rw [bitsE_getD]
+    simp only [hkV, ↓reduceIte]
+    cases off.testBit k <;> cases u.testBit k <;> simp [CharTwo.add_self_eq_zero]
+  rw [List.map_congr_left hf, prod_indicator (fun k ↦ off.testBit k = u.testBit k)]
+  have hiff := bits_iff u V v off hu
+  split_ifs with h1 h2 h2
+  · rfl
+  · exact absurd (hiff.mp h1) h2
+  · exact absurd (hiff.mpr h2) h1
+  · rfl
+
+/-- **A block's sum on the cube**: the selector keeps the block's aligned range. -/
+theorem block_sum (V v off : ℕ) (hv : v ≤ V) (w S : ℕ → E) :
+    ∑ u ∈ range (2 ^ V), w u * selector (bitsE u V) v off * S u =
+      ∑ x ∈ range (2 ^ v), w (blockBase off v V + x) * S (blockBase off v V + x) := by
+  have hbase : blockBase off v V = off % 2 ^ V / 2 ^ v * 2 ^ v := rfl
+  generalize hc : off % 2 ^ V / 2 ^ v = c at hbase
+  have hpos : 0 < 2 ^ v := by positivity
+  have h1 : ∑ u ∈ range (2 ^ V), w u * selector (bitsE u V) v off * S u =
+      ∑ u ∈ (range (2 ^ V)).filter (fun u ↦ u / 2 ^ v = c), w u * S u := by
+    rw [Finset.sum_filter]
+    refine Finset.sum_congr rfl fun u hu ↦ ?_
+    rw [selector_bits u V v off (Finset.mem_range.mp hu), hc]
+    split_ifs <;> ring
+  have hcl : c < 2 ^ (V - v) := by
+    rw [← hc, Nat.div_lt_iff_lt_mul hpos, ← pow_add, Nat.sub_add_cancel hv]
+    exact Nat.mod_lt _ (by positivity)
+  have hcV : (c + 1) * 2 ^ v ≤ 2 ^ V := by
+    have := Nat.mul_le_mul_right (2 ^ v) hcl
+    rwa [← pow_add, Nat.sub_add_cancel hv] at this
+  have h2 : (range (2 ^ V)).filter (fun u ↦ u / 2 ^ v = c) =
+      (range (2 ^ v)).image (fun x ↦ c * 2 ^ v + x) := by
+    ext u
+    simp only [Finset.mem_filter, Finset.mem_range, Finset.mem_image]
+    constructor
+    · rintro ⟨_, huc⟩
+      refine ⟨u % 2 ^ v, Nat.mod_lt _ hpos, ?_⟩
+      rw [← huc, mul_comm]
+      exact Nat.div_add_mod u (2 ^ v)
+    · rintro ⟨x, hx, rfl⟩
+      refine ⟨?_, ?_⟩
+      · calc c * 2 ^ v + x < c * 2 ^ v + 2 ^ v := Nat.add_lt_add_left hx _
+          _ = (c + 1) * 2 ^ v := by ring
+          _ ≤ 2 ^ V := hcV
+      · rw [mul_comm, Nat.mul_add_div hpos, Nat.div_eq_of_lt hx, add_zero]
+  rw [h1, h2, Finset.sum_image (fun x _ y _ h ↦ by simpa using h), hbase]
+
+theorem sum_listSum {α : Type*} (s : Finset ℕ) (l : List α) (g : ℕ → α → E) (c : ℕ → E) :
+    ∑ u ∈ s, (l.map (g u)).sum * c u = (l.map fun b ↦ ∑ u ∈ s, g u b * c u).sum := by
+  induction l with
+  | nil => simp
+  | cons b l ih => simp only [List.map_cons, List.sum_cons, add_mul, Finset.sum_add_distrib, ih]
+
+/-- **A weight on the cube against a zero-extended stack**, block by block. -/
+theorem cube_sum (V vars : ℕ) (C : Stk) (l : List (ℕ × ℕ × ℕ)) (hl : ∀ b ∈ l, b.2.1 ≤ V)
+    (w w' : ℕ × ℕ × ℕ → ℕ → E)
+    (hw : ∀ b ∈ l, ∀ x < 2 ^ b.2.1, w b (blockBase b.2.2 b.2.1 V + x) = w' b x) :
+    ∑ u ∈ range (2 ^ V), (l.map fun b ↦ limbScale b.1 * (w b u * selector (bitsE u V) b.2.1 b.2.2)).sum *
+        stE C vars u =
+      (l.map fun b ↦ limbScale b.1 *
+        ∑ x ∈ range (2 ^ b.2.1), w' b x * stE C vars (blockBase b.2.2 b.2.1 V + x)).sum := by
+  rw [sum_listSum (range (2 ^ V)) l
+    (fun u b ↦ limbScale b.1 * (w b u * selector (bitsE u V) b.2.1 b.2.2))]
+  refine congrArg List.sum (List.map_congr_left fun b hb ↦ ?_)
+  have h1 : ∑ x ∈ range (2 ^ b.2.1), w' b x * stE C vars (blockBase b.2.2 b.2.1 V + x) =
+      ∑ x ∈ range (2 ^ b.2.1), w b (blockBase b.2.2 b.2.1 V + x) * stE C vars (blockBase b.2.2 b.2.1 V + x) :=
+    Finset.sum_congr rfl fun x hx ↦ by rw [hw b hb x (Finset.mem_range.mp hx)]
+  rw [h1, ← block_sum V b.2.1 b.2.2 (hl b hb) (w b) (stE C vars), Finset.mul_sum]
+  exact Finset.sum_congr rfl fun u _ ↦ by ring
+
+/-- **A column's term on the cube**: its claim on the column's blocks. -/
+theorem termInner : TermInner := by
+  intro L rm V C col pt hcol hL
+  have h : ∀ u, termW L rm V col pt 0 u = ((L.limbs col).map fun b ↦
+      limbScale b.1 * (rowEq pt b.2.1 (bitsE u V) * selector (bitsE u V) b.2.1 b.2.2)).sum := by
+    intro u
+    rw [termW_eq, wSum, ite_eq_right zero_ne_ringTwist, slotView_of_ne hcol]
+    rfl
+  have hw : ∀ b ∈ L.limbs col, ∀ x < 2 ^ b.2.1,
+      rowEq pt b.2.1 (bitsE (blockBase b.2.2 b.2.1 V + x) V) = cubeEq pt b.2.1 x := by
+    intro b hb x hx
+    rw [rowEq_bits _ _ _ _ (hL b hb), cubeEq_block _ _ _ _ _ hx]
+  simp only [h]
+  exact cube_sum V L.vars C (L.limbs col) hL (fun b u ↦ rowEq pt b.2.1 (bitsE u V))
+    (fun b x ↦ cubeEq pt b.2.1 x) hw
+
+/-- **`q_flock`'s slot `j` on the cube**: its claim on `q_flock`'s blocks at `(bits(j), pt)`. -/
+theorem slotInner : SlotInner := by
+  intro L rm V C j pt hL
+  have h : ∀ u, termW L rm V (.qflockSlot j) pt 0 u = ((L.limbs .qflock).map fun b ↦
+      limbScale b.1 * (rowEq ((List.range 8).map (bitE j) ++ pt) b.2.1 (bitsE u V) *
+        selector (bitsE u V) b.2.1 b.2.2)).sum := by
+    intro u
+    have h0 : twistPt pt 0 = pt := rfl
+    rw [termW_eq, wSum, ite_eq_right zero_ne_ringTwist, h0]
+    refine congrArg List.sum (List.map_congr_left fun b hb ↦ ?_)
+    have hlen : ((List.range 8).map (bitE j) ++ pt).length = b.2.1 := by
+      rw [(hL b hb).1]
+      simp
+    simp only [slotView, hlen, gt_iff_lt, ite_self]
+  have hw : ∀ b ∈ L.limbs .qflock, ∀ x < 2 ^ b.2.1,
+      rowEq ((List.range 8).map (bitE j) ++ pt) b.2.1 (bitsE (blockBase b.2.2 b.2.1 V + x) V) =
+        cubeEq ((List.range 8).map (bitE j) ++ pt) b.2.1 x := by
+    intro b hb x hx
+    rw [rowEq_bits _ _ _ _ (hL b hb).2, cubeEq_block _ _ _ _ _ hx]
+  simp only [h]
+  exact cube_sum V L.vars C (L.limbs .qflock) (fun b hb ↦ (hL b hb).2)
+    (fun b u ↦ rowEq ((List.range 8).map (bitE j) ++ pt) b.2.1 (bitsE u V))
+    (fun b x ↦ cubeEq ((List.range 8).map (bitE j) ++ pt) b.2.1 x) hw
+
+/-- **The ring-switch term on the cube**: the tower weight at the cube's points of each block. -/
+theorem ringInner : RingInner := by
+  intro L map V C pt hL
+  have h : ∀ u, termW L (some map) V .qflock pt ringTwist u = ((L.limbs .qflock).map fun b ↦
+      limbScale b.1 * (Flock.towerWeightAt (pt.take b.2.1) (((bitsE u V).map (1 + ·)).take b.2.1) map *
+        selector (bitsE u V) b.2.1 b.2.2)).sum := by
+    intro u
+    rw [termW_eq, wSum, ite_eq_left rfl]
+    rfl
+  have hw : ∀ b ∈ L.limbs .qflock, ∀ x < 2 ^ b.2.1,
+      Flock.towerWeightAt (pt.take b.2.1)
+          (((bitsE (blockBase b.2.2 b.2.1 V + x) V).map (1 + ·)).take b.2.1) map =
+        Flock.towerWeightAt (pt.take b.2.1) ((bitsE x b.2.1).map (1 + ·)) map := by
+    intro b hb x hx
+    rw [← List.map_take, bitsE_take _ _ _ (hL b hb),
+      bitsE_congr _ x _ fun k hk ↦ blockBase_testBit _ _ _ _ _ hx hk]
+  simp only [h]
+  exact cube_sum V L.vars C (L.limbs .qflock) hL
+    (fun b u ↦ Flock.towerWeightAt (pt.take b.2.1) (((bitsE u V).map (1 + ·)).take b.2.1) map)
+    (fun b x ↦ Flock.towerWeightAt (pt.take b.2.1) ((bitsE x b.2.1).map (1 + ·)) map) hw
+
 end UniSound.Ids
+
+/-! ## Axioms -/
+
+/-- info: 'UniSound.Ids.weightAtLinear' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.weightAtLinear
+
+/-- info: 'UniSound.Ids.combineEq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.combineEq
+
+/-- info: 'UniSound.Ids.termInner' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.termInner
+
+/-- info: 'UniSound.Ids.slotInner' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.slotInner
+
+/-- info: 'UniSound.Ids.ringInner' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.ringInner
+
+/-- info: 'UniSound.Ids.mergedPrefix' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.mergedPrefix
+
+/-- info: 'UniSound.Ids.mergedSelf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.mergedSelf
+
+/-- info: 'UniSound.Ids.termWExtend' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.termWExtend
