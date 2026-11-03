@@ -17,6 +17,7 @@ import UniSound.FsCost
 import UniSound.FsGame
 import UniSound.FsCouple
 import UniSound.FsWalk
+import UniSound.FsVerifier
 import UniSound.PendingLink
 import UniSound.CodeBase
 import UniSound.CodeTables
@@ -54,6 +55,7 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `FsCost.lean` | `uniNumbers_of`: the composed verifier's calls of `π` below `2^80` (every query short), from the chain's `< 2^10` queries and every round's `≤ 2^30` scalars; `fsLayer_of_game'`. |
 | `FinalFs.lean` | **`uniKnowledgeSoundness_game`**: the end theorem with `FsLayer` replaced by `UniShapes`, `UniNumbers`, `UniGameLe`. |
 | `FsProof.lean` | **`fsLayer_of_game`**: `FsLayer` from the game bridge (`UniGameLe`) and the numbers (`UniNumbers`), through `Compose.knowledgeSoundness_listChainU_closed_rpm`: the setup's three trees, the openings' matches, the last link, the bound. |
+| `FsVerifier.lean` | **`uniVerifierBridge_of_walk`**: the verifier bridge `UniVerifierBridge` (`FsCouple.lean`) from the walk's two halves (`UniWalk`, `UniWalkReject`, `FsWalk.lean`) and `UniOutRoots`: the same chain on both sides, then the Statement's five `PCS_OPEN` calls as F2's early-stop openings (`Bridge.openingWith_eq_ourVerifier'`) below the composed ones, acceptance giving `uniCheck`. |
 
 ## What is proved, what is assumed
 
@@ -173,3 +175,7 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.uniKnowledgeSoundness_code' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.uniKnowledgeSoundness_code
+
+/-- info: 'UniSound.uniVerifierBridge_of_walk' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniVerifierBridge_of_walk
