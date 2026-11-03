@@ -897,3 +897,142 @@ noncomputable def pi2Model (hcol : Pi2SetupColumns D C) : RecPiop.Model (C.G roo
 end Model
 
 end RecCompose
+
+namespace RecCompose
+
+open RecStatement LeanVM.Parameters LeanVM.Protocol Finset Polynomial
+open scoped ENNReal
+
+/-! ### The run's points and values, by definition -/
+
+section Run
+
+variable {F : Type} [Field F] (S : CoreSpec F) (inp : Inputs F)
+
+theorem run_quotientPoint : (S.run inp).quotientPoint = (S.run inp).uList ++ [(S.run inp).rhoQ, S.y0, S.y1] := rfl
+theorem run_quotientValue : (S.run inp).quotientValue = S.scale * (S.run inp).digitsScale * (S.run inp).combination :=
+  rfl
+theorem run_sumPoint : (S.run inp).sumPoint = List.replicate S.logN 1 ++ [0, 0, 0] ++ [S.y0, S.y1] := rfl
+theorem run_sumValue : (S.run inp).sumValue = S.scale * (S.run inp).target := rfl
+theorem run_setupPoint : (S.run inp).setupPoint = (digitsList inp.t (S.logN + 3)).take S.logN ++ [inp.β] := rfl
+theorem run_witnessPoint : (S.run inp).witnessPoint =
+    (List.range S.logRow).map (sqIter inp.ρ) ++ ((digitsList inp.t (S.logN + 3)).drop S.logRow).take (S.logN - S.logRow) :=
+  rfl
+theorem run_uList_length : (S.run inp).uList.length = S.logN + 2 := by
+  show ((List.range (S.logN + 2)).map _).length = _
+  simp
+
+end Run
+
+theorem spec_core_logN (c : Circuit) : (Spec.of c).core.logN = c.logN := rfl
+theorem spec_core_logRow (c : Circuit) : (Spec.of c).core.logRow = c.logRow := rfl
+theorem spec_core_y0 (c : Circuit) : (Spec.of c).core.y0 = extension.1.1 := rfl
+theorem spec_core_y1 (c : Circuit) : (Spec.of c).core.y1 = extension.1.2 := rfl
+theorem spec_core_scale (c : Circuit) : (Spec.of c).core.scale = extension.2 := rfl
+
+theorem extension_scale_ne_zero : extension.2 ≠ 0 := by
+  rw [ext_scale]
+  exact inv_mul_ne_zero_gen one_add_yE_ne_zero one_add_yE_sq_ne_zero
+
+/-- The layouts at π2's `m ≥ 20`: `Q`'s and the setup's public layouts of `max(·, 24)`-variable stacks. -/
+theorem setupLayout_eq {m : ℕ} (hm : 20 ≤ m) : (layoutsOf m).2.2 =
+    PcsQuotient.Layout.ofChunks (m + 1) m (max (m + 1) minCertifiedStack) [(0, 2 ^ m), (1, 2 ^ m)] := by
+  simp only [layoutsOf, certifiedFrom, hm, ite_true]
+
+/-- **π2's tables' layer**: the model `pi2Model` and its link with the claims, from the circuit's facts and the setup's
+columns. -/
+noncomputable def pi2Tables (D : RecDeployment) (C : Pi2Circuits D) (Fa : Pi2Facts D C)
+    (hcol : Pi2SetupColumns D C) : Pi2Tables D C where
+  model roots := pi2Model Fa roots hcol
+  witness_eval roots c i hi := by
+    have hi' : i < 2 ^ (D.circuitAt roots.pi1).circuit.logN := by rw [pow_view_N Fa roots]; exact hi
+    exact wPoly_eval_pointE (by rw [view_logN24 Fa roots]; norm_num) (wTab D roots c) hi'
+  claims roots cW cQ inp hall hcl := by
+    obtain ⟨hW, hQ1, hQ2, hS3⟩ := hcl
+    have hS := Fa.spec roots
+    have hm := view_logN Fa roots
+    have hm24 := view_logN24 Fa roots
+    have hr4 := view_logRow4 Fa roots
+    set m := (D.circuitAt roots.pi1).circuit.logN with hmdef
+    set S := (Spec.of (D.circuitAt roots.pi1).circuit).core with hSdef
+    have hSm : S.logN = m := spec_core_logN _
+    have hSr : S.logRow = (D.circuitAt roots.pi1).circuit.logRow := spec_core_logRow _
+    have hm20 : 20 ≤ m := by omega
+    -- the digits
+    have hT : QuotientSecurity.sq^[(C.G roots).logN + 2] inp.t ≠ 0 := by
+      have h := hall
+      rw [run_all hS inp] at h
+      exact right_ne_zero_of_mul (left_ne_zero_of_mul h)
+    rw [← hm] at hT
+    have hw : ∀ l < m + 2, 1 + QuotientSecurity.sq^[l] inp.t ≠ 0 := fun l hl ↦ one_add_digit_ne_zero hT hl
+    have huw : ∀ l < m + 2, (S.run inp).uList.getD l 0 =
+        QuotientSecurity.sq^[l] inp.t / (1 + QuotientSecurity.sq^[l] inp.t) := fun l hl ↦
+      run_u hS inp hall (by rw [← hm]; exact hl)
+    have hu : (S.run inp).uList.length = m + 2 := by rw [run_uList_length, hSm]
+    have hD : (S.run inp).digitsScale = ∏ l ∈ range (m + 2), (1 + QuotientSecurity.sq^[l] inp.t)⁻¹ := by
+      rw [run_digitsScale hS inp hall, ← hm]
+    have hDne : ∏ l ∈ range (m + 2), (1 + QuotientSecurity.sq^[l] inp.t)⁻¹ ≠ 0 :=
+      prod_inv_ne_zero_gen (F := E) (n := m + 2) (f := fun l ↦ 1 + QuotientSecurity.sq^[l] inp.t) hw
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · -- `Q`'s first claim
+      unfold ClaimOn at hQ1
+      have hv : (layoutsOf m).2.1.vars = m + 5 := rfl
+      rw [hv, run_quotientPoint, run_quotientValue, spec_core_y0, spec_core_y1, spec_core_scale] at hQ1
+      have hc := claim_quotient (qZero hm20 cQ) hu hw huw (S.run inp).rhoQ
+      unfold qTable at hc
+      rw [hc, hD, mul_assoc, mul_assoc] at hQ1
+      have h2 := cancel_left_gen extension_scale_ne_zero hQ1
+      have h3 := cancel_left_gen hDne h2
+      show (S.run inp).combination = (1 + (S.run inp).rhoQ) * (hPoly (qTable m cQ) m).eval inp.t +
+        (S.run inp).rhoQ * (qPoly (qTable m cQ) m).eval inp.t
+      unfold hPoly qPoly qTable
+      rw [novP_eval_sq, novP_eval_sq]
+      exact h3.symm
+    · -- `Q`'s second claim
+      unfold ClaimOn at hQ2
+      have hv : (layoutsOf m).2.1.vars = m + 5 := rfl
+      rw [hv, run_sumPoint, run_sumValue, spec_core_y0, spec_core_y1, spec_core_scale, hSm] at hQ2
+      have hc := claim_sum (qZero hm20 cQ)
+      unfold qTable at hc
+      rw [hc] at hQ2
+      have h2 := cancel_left_gen extension_scale_ne_zero hQ2
+      show (S.run inp).target = ∑ i ∈ range (C.G roots).N, (hPoly (qTable m cQ) m).eval (pi2Omega i)
+      rw [← pow_view_N Fa roots]
+      unfold hPoly
+      rw [sum_novP_omega (by omega)]
+      unfold qTable
+      exact h2.symm
+    · -- the setup's claim
+      unfold ClaimOn at hS3
+      have hv : (layoutsOf m).2.2.vars = m + 1 := rfl
+      rw [hv, run_setupPoint, hSm, claim_setup] at hS3
+      have hlane : max (m + 1) minCertifiedStack - PcsQuotient.laneFold ≤ m := by
+        simp only [minCertifiedStack, PcsQuotient.laneFold]; omega
+      have hT0 : ∀ k < 2 ^ m, (layoutsOf m).2.2.readEntry (fun j ↦ (D.circuitAt roots.pi1).setupStack.getD j 0) k =
+          (kappaB D roots).getD k 0 := fun k hk ↦ by
+        rw [setupLayout_eq hm20, readEntry_ofChunks_two hlane _ (by rw [pow_succ]; omega)]
+        exact (setupStack_getD _ hk).1
+      have hT1 : ∀ k < 2 ^ m, (layoutsOf m).2.2.readEntry (fun j ↦ (D.circuitAt roots.pi1).setupStack.getD j 0) k +
+          (layoutsOf m).2.2.readEntry (fun j ↦ (D.circuitAt roots.pi1).setupStack.getD j 0) (k + 2 ^ m) =
+          (sigmaB D roots).getD k 0 := fun k hk ↦ by
+        rw [hT0 k hk, setupLayout_eq hm20, readEntry_ofChunks_two hlane _ (by rw [pow_succ]; omega),
+          (setupStack_getD _ hk).2]
+        show (kappaB D roots).getD k 0 + ((kappaB D roots).getD k 0 + (sigmaB D roots).getD k 0) = _
+        rw [← add_assoc, CharTwo.add_self_eq_zero, zero_add]
+      rw [wPoly_congr hT0, wPoly_congr hT1] at hS3
+      exact hS3.symm
+    · -- `W`'s claim
+      unfold ClaimOn at hW
+      have hv : (layoutsOf m).1.vars = m := rfl
+      rw [hv, run_witnessPoint, hSm, hSr] at hW
+      rw [claim_wFold (by omega) _ inp.t inp.ρ] at hW
+      have e : (C.G roots).logW = (D.circuitAt roots.pi1).circuit.logRow := (view_logRow Fa roots).symm
+      refine hW.symm.trans ?_
+      exact congrArg (fun r ↦ RecPiop.foldAt r (wFold m (D.circuitAt roots.pi1).circuit.logRow
+        (wTab D roots cW) inp.t) inp.ρ) e.symm
+
+end RecCompose
+
+/-- info: 'RecCompose.pi2Tables' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.pi2Tables
