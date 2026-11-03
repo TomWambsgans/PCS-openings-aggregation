@@ -371,6 +371,9 @@ def zeroNodes : List ℕ := c.zero.filter fun id => match c.nodes.getD id defaul
   | .const .. => false
   | _ => true
 
+/-- The number of zero ports before port `J`: the zero check port `J` carries. -/
+def zeroIndex (J : ℕ) : ℕ := ((c.circuit.ports.toList.take J).filter fun p => p.source == .zero).length
+
 /-- A port's limb values, by its source (the `m`-th zero port the `m`-th non-constant zero check's). -/
 def portValues (X : Ctx) (J : ℕ) : Array ℕ :=
   let p := c.circuit.ports.getD J default
@@ -378,11 +381,16 @@ def portValues (X : Ctx) (J : ℕ) : Array ℕ :=
   | .statement => c.statementLimb
   | .root i => c.rootLimbs.getD i #[]
   | .element e => c.limbsOf (c.elementNodes.getD e 0)
-  | .zero =>
-    let m := ((c.circuit.ports.toList.take J).filter fun p => p.source == .zero).length
-    c.limbsOf (c.zeroNodes.getD m 0)
+  | .zero => c.limbsOf (c.zeroNodes.getD (c.zeroIndex J) 0)
   | .pad =>
     (List.range 3).toArray.map fun l => X.cellAt (X.rowStart p.position + l)
+
+/-- Every element port's element and zero port's check exist. -/
+def sourcesOk : Bool := allBelow c.circuit.ports.size fun J =>
+  match (c.circuit.ports.getD J default).source with
+  | .element e => e < c.elementNodes.size
+  | .zero => c.zeroIndex J < c.zeroNodes.length
+  | _ => true
 
 /-- **Every port's limbs**: its row's cells `0..L` hold its source's values. -/
 def portsOk (X : Ctx) : Bool :=
@@ -459,6 +467,7 @@ def checks (r : Recorded) : List (String × Bool) :=
    ("graph", c.graphOk r),
    ("nodes", allBelow c.nodes.size fun id => !c.live.getD id false || c.nodeOk X r.iv packOf id),
    ("ports", c.portsOk X),
+   ("sources", c.sourcesOk),
    ("sizes", c.live.size == c.nodes.size && c.limbs.size == c.nodes.size && c.digests.size == c.nodes.size &&
       c.bitSelf.size == 8 * r.graph.streamLen && c.circuit.logWidth == 4 && c.circuit.logWidth ≤ c.circuit.logN)]
 
