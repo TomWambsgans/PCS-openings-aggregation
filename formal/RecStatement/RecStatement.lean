@@ -25,9 +25,12 @@ import RecStatement.Lemmas.SpecLink
   (`push_side`), the public side (`publicSide_eq`), the one inversion's two nonzero conditions (`all_ne_zero_iff`), and
   **`checks_claims_iff`**/**`checks_claims_iff_post2`**: the checks pass and the claims hold iff `t ∉ V_{m+2}`,
   `c_h + c_q ≠ 0` and `RecPiop.Post2`;
-* **the end statements** (`Security`): `RecKnowledgeSoundness` (for the explicit extractor `recExtractor`) and
-  `RecCompleteness` of the recursive verifier (π2's verifier and the six openings) against leanVM 42422001's relation
-  (`Lv42.Protocol.M3Holds`), stated, not proved.
+* **the end statements** (`Security`), in two parts: π2's, in the random-permutation model (`RecKnowledgeSoundness2`,
+  `RecCompleteness2`: the contract accepts only if π1-rec3's recorded graph, run with Keccak-f[1600], accepts a stream
+  π2's extractor outputs, its calls the contract's), and the end-to-end corollaries against leanVM 42422001's relation
+  (`RecKnowledgeSoundness`, `RecCompleteness`, `Lv42.Protocol.M3Holds`) under named hypotheses about π1-rec3 at
+  Keccak-f[1600] (`Pi1FsKeccak`, `Pi1HazardKeccak`, `Pi1CompletenessKeccak`: the Fiat–Shamir heuristic, justified by
+  π1-rec3's random-permutation theorems) and RecGraph's target (`Pi1GraphIsVerifier`); stated, not proved.
 
 The build fails if a headline definition or theorem uses an axiom beyond Lean's three standard ones.
 -/
@@ -52,9 +55,33 @@ The build fails if a headline definition or theorem uses an axiom beyond Lean's 
 #guard_msgs in
 #print axioms RecStatement.RecDeployment.Real
 
+/-- info: 'RecStatement.recExtractor2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.recExtractor2
+
+/-- info: 'RecStatement.RecKnowledgeSoundness2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.RecKnowledgeSoundness2
+
+/-- info: 'RecStatement.Pi1FsKeccak' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.Pi1FsKeccak
+
+/-- info: 'RecStatement.Pi1HazardKeccak' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.Pi1HazardKeccak
+
 /-- info: 'RecStatement.RecKnowledgeSoundness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecStatement.RecKnowledgeSoundness
+
+/-- info: 'RecStatement.RecCompleteness2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.RecCompleteness2
+
+/-- info: 'RecStatement.Pi1CompletenessKeccak' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.Pi1CompletenessKeccak
 
 /-- info: 'RecStatement.RecCompleteness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

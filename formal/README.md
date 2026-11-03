@@ -36,8 +36,13 @@ over any field, the six `PCS_OPEN` calls word for word), the circuit's tables as
 test), differential-tested on the real π1-rec3 + π2 proof and 63 other streams (64/64 agree on every value); the
 verifier-arithmetic lemmas that [`RecPiop/`](RecPiop)'s rounds consume (proved: the indicators' and the zero coset's
 closed forms, the siblings' fold, and `checks_claims_iff`: the checks pass and the claims hold iff `t ∉ V_{m+2}`,
-`c_h + c_q ≠ 0` and `RecPiop.Post2`); and the recursive verifier's end statements `RecKnowledgeSoundness`,
-`RecCompleteness` against `Lv42`'s `M3Holds` (stated, not proved).
+`c_h + c_q ≠ 0` and `RecPiop.Post2`); and the recursive verifier's end statements, stated, not proved, in two parts,
+since π2's circuit computes π1's Fiat–Shamir with the real Keccak-f[1600] while π1-rec3's soundness is proved in the
+random-permutation model: π2's part in that model (`RecKnowledgeSoundness2`, `RecCompleteness2`: the contract accepts
+only if π1-rec3's recorded graph, at Keccak-f[1600], accepts the stream π2's extractor outputs), and the end-to-end
+corollaries `RecKnowledgeSoundness`, `RecCompleteness` against `Lv42`'s `M3Holds` under named hypotheses about π1-rec3 at
+Keccak-f[1600] (`Pi1FsKeccak` and its kin: the Fiat–Shamir heuristic, justified by π1-rec3's random-permutation
+theorems).
 
 ## End-to-end theorems
 
