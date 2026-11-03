@@ -171,3 +171,14 @@ name = "UniComplete"
 srcDir = "../UniComplete"
 globs = ["UniComplete", "UniComplete.+"]
 leanOptions = { warningAsError = true }
+
+# π2's PIOP, generic over circuits (`crates/leanvm_rec`, `PI2.md`, branch `leanvm-rec` @ 4247e37),
+# `formal/RecPiop`: the circuit description and its `validate`, the copy argument in characteristic two
+# (set-based logUp, every tag twice, the holes left out of the pulls), the quotient identity and its
+# degrees, the dataflow lemma, and π2's rounds in `Compose.Piop`'s form (W → α, β, γ; Q → t; the values
+# → ρ). No Fiat–Shamir layer, no openings.
+[[lean_lib]]
+name = "RecPiop"
+srcDir = "../RecPiop"
+globs = ["RecPiop", "RecPiop.+"]
+leanOptions = { warningAsError = true }
