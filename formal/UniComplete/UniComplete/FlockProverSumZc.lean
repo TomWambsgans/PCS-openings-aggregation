@@ -130,4 +130,91 @@ theorem lincheck_init (q : Array K) (lowW chiIn chiRest : List E) (α : E) :
     sum_ite_eq' (range (2 ^ 14)) 512, if_pos h512]
   rw [e1, e2, e3]
 
+/-! ## The zerocheck's values -/
+
+/-- **The zerocheck's tables at its point**: a table at the skip's point (`T_z(b) = Σ_x skip[x] T(x + 2^k b)`),
+folded at `chi = row_low ++ chi_in ++ chi_rest`, is `Σ_t eq(chi_rest, t) Σ_row e(row) T(row + 2^14 t)`. -/
+theorem zc_fold_eq (zSkip : Option E) (low chiIn chiRest : List E) (k : ℕ) (hk : k ≤ 6)
+    (hskip : (rowLowWeights zSkip low).1.length = 2 ^ k) (hlow : low.length = 6 - k) (hin : chiIn.length = 8)
+    (T Tz : Array E) (hTz : Tz.size = 2 ^ (low ++ chiIn ++ chiRest).length)
+    (hTzE : ∀ b < 2 ^ (low ++ chiIn ++ chiRest).length,
+      Tz.getD b 0 = ∑ x ∈ range (2 ^ k), (rowLowWeights zSkip low).1.getD x 0 * T.getD (x + 2 ^ k * b) 0) :
+    ((low ++ chiIn ++ chiRest).foldl foldE Tz).getD 0 0 =
+      ∑ t ∈ range (2 ^ chiRest.length), eqB chiRest t *
+        ∑ row ∈ range (2 ^ 14), rowW (rowLowWeights zSkip low).2 chiIn row * T.getD (row + 2 ^ 14 * t) 0 := by
+  have hlc : (low ++ chiIn).length = 14 - k := by rw [List.length_append, hlow, hin]; omega
+  have h14 : 2 ^ (k + (14 - k)) = 2 ^ 14 := by rw [show k + (14 - k) = 14 by omega]
+  rw [foldl_foldE_getD _ _ hTz, List.length_append, sum_split (low ++ chiIn).length chiRest.length]
+  refine sum_congr rfl fun t ht ↦ ?_
+  have ht' := mem_range.mp ht
+  calc ∑ b ∈ range (2 ^ (low ++ chiIn).length), eqB (low ++ chiIn ++ chiRest) (b + 2 ^ (low ++ chiIn).length * t) *
+        Tz.getD (b + 2 ^ (low ++ chiIn).length * t) 0
+      = eqB chiRest t * ∑ b ∈ range (2 ^ (14 - k)), ∑ x ∈ range (2 ^ k),
+          rowW (rowLowWeights zSkip low).2 chiIn (x + 2 ^ k * b) * T.getD ((x + 2 ^ k * b) + 2 ^ 14 * t) 0 := by
+        rw [mul_sum, hlc]
+        refine sum_congr rfl fun b hb ↦ ?_
+        have hb' := mem_range.mp hb
+        have hbt : b + 2 ^ (14 - k) * t < 2 ^ (low ++ chiIn ++ chiRest).length := by
+          rw [List.length_append, hlc, pow_add]
+          calc b + 2 ^ (14 - k) * t < 2 ^ (14 - k) + 2 ^ (14 - k) * t := by omega
+            _ = 2 ^ (14 - k) * (t + 1) := by ring
+            _ ≤ 2 ^ (14 - k) * 2 ^ chiRest.length := Nat.mul_le_mul_left _ ht'
+        have hap := eqB_append (low ++ chiIn) chiRest (x := b) (by rw [hlc]; exact hb') t
+        rw [hlc] at hap
+        rw [hap, hTzE _ hbt, mul_sum, mul_sum]
+        refine sum_congr rfl fun x hx ↦ ?_
+        rw [rowW_split zSkip low chiIn k hk hskip hlow hin (mem_range.mp hx) hb',
+          show x + 2 ^ k * (b + 2 ^ (14 - k) * t) = (x + 2 ^ k * b) + 2 ^ 14 * t by
+            rw [← h14, pow_add]; ring]
+        ring
+    _ = eqB chiRest t * ∑ row ∈ range (2 ^ 14), rowW (rowLowWeights zSkip low).2 chiIn row *
+          T.getD (row + 2 ^ 14 * t) 0 := by
+        rw [← h14, sum_split k (14 - k)]
+
+/-! ## The relation on the prover's blocks -/
+
+/-- **Lv42's block is the prover's**: `batchBlock (bitTable q_flock) t = blockOf q t`. -/
+theorem batchBlock_eq (κ : ℕ) (q : Array K) (t : Fin (2 ^ κ)) :
+    Lv42.Protocol.BlockR1CS.batchBlock (s := Lv42.Parameters.Flock.kSkip) (m := Lv42.Parameters.Flock.kIn)
+      (Lv42.Protocol.bitTable (colOf κ q)) t = blockOf q t.val := by
+  apply Vector.ext
+  intro j hj
+  have hj' : j < 2 ^ 14 := hj
+  have h64 : j % 64 < 2 ^ Lv42.Parameters.Flock.kSkip := Nat.mod_lt _ (by decide)
+  have hd : j / 64 < 2 ^ Lv42.Parameters.Flock.kIn := by
+    show j / 64 < 2 ^ 8
+    rw [Nat.div_lt_iff_lt_mul (by norm_num)]; exact lt_of_lt_of_eq hj' (by norm_num)
+  have e : j % 64 + 2 ^ Lv42.Parameters.Flock.kSkip * (j / 64) = j := by
+    show j % 64 + 2 ^ 6 * (j / 64) = j
+    omega
+  have h := Lv42.Protocol.BlockR1CS.batchBlock_cubeIndex (s := Lv42.Parameters.Flock.kSkip)
+    (m := Lv42.Parameters.Flock.kIn) (Lv42.Protocol.bitTable (colOf κ q)) t ⟨j % 64, h64⟩ ⟨j / 64, hd⟩
+  simp only [Fin.getElem_fin, LeanVM.Protocol.cubeIndex_val] at h
+  simp only [e] at h
+  rw [h]
+  simp only [blockOf, Lv42.Protocol.bitTable, colOf, Vector.getElem_ofFn, Fin.getElem_fin, Vector.get_eq_getElem,
+    LeanVM.Protocol.cubeIndex_val]
+  rfl
+
+/-- **The R1CS on the prover's blocks**: from `FlockHolds`, for every block `t < 2^κ`, `A z_t ∘ B z_t = z_t` and
+the pin `z_t(512) = 1`. -/
+theorem blocks_hold (κ : ℕ) (q : Array K) (hF : FlockHolds κ q) {t : ℕ} (ht : t < 2 ^ κ) :
+    (∀ row < 2 ^ 14, aZ q t row * bZ q t row = zAt q t row) ∧ zAt q t 512 = 1 := by
+  obtain ⟨hH, hP⟩ := hF ⟨t, ht⟩
+  rw [batchBlock_eq] at hH hP
+  refine ⟨fun row hrow ↦ ?_, ?_⟩
+  · have := hH ⟨row, hrow⟩
+    rw [aZ, bZ, vec_toArray_getD _ hrow, vec_toArray_getD _ hrow, ← blockOf_getD q t hrow,
+      vec_toArray_getD _ hrow]
+    simpa only [Fin.getElem_fin] using this
+  · rw [← blockOf_getD q t (by norm_num), vec_toArray_getD _ (by norm_num)]
+    simpa only [Lv42.Parameters.Flock.constPos, Fin.getElem_fin] using hP
+
+/-- **The witness at the constant position** is `1`: `Ẑ_512 = Σ_t eq(chi_rest, t) = 1`. -/
+theorem lincheckWitness_pin (κ : ℕ) (q : Array K) (hF : FlockHolds κ q) (chiRest : List E)
+    (hcr : chiRest.length = κ) : (lincheckWitness q chiRest).getD 512 0 = 1 := by
+  rw [lincheckWitness_getD' q chiRest (by norm_num), ← sum_eqB chiRest]
+  refine sum_congr rfl fun t ht ↦ ?_
+  rw [(blocks_hold κ q hF (by rw [← hcr]; exact mem_range.mp ht)).2, mul_one]
+
 end UniComplete.FlockP
