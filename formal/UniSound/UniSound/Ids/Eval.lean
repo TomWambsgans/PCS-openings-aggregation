@@ -1285,4 +1285,124 @@ theorem qTerms_val (S : Shape) (c2 : Stk) (ev : Column → List E → E) (w : Li
     rw [h0, hw0, Polynomial.eval_add, Polynomial.eval_mul]
     ring
 
+/-! ## The constraint quotient's degree -/
+
+/-- `Shape.constraintDegree`'s step. -/
+def cdStep (S : Shape) (d : ℕ) (table : Table) : ℕ :=
+  let r := S.heights.getD table.opcode 0
+  let n := 2 ^ r
+  let d := if table.opcode = opJump then max d (degree n 2) else d
+  let d := max d (degree ((n - 1) * (1 + table.countColumns.length)) n)
+  if table.opcode = opBlake2s then max d (degree (r * (n / 2)) n) else d
+
+theorem crFold_deg (S : Shape) (gamma t : E) (w : List E) : ∀ (L : List (Table × TablePart))
+    (s : E × Array Term × E × ℕ), (L.foldl (crStep S gamma t w) s).2.2.2 =
+      (L.map Prod.fst).foldl (cdStep S) s.2.2.2
+  | [], _ => rfl
+  | x :: L, s => by
+    rw [List.foldl_cons, crFold_deg S gamma t w L, List.map_cons, List.foldl_cons]
+    congr 1
+    unfold crStep cdStep
+    dsimp only
+    by_cases hj : x.1.opcode = opJump
+    · have hb : ¬ x.1.opcode = opBlake2s := by rw [hj]; decide
+      simp only [ite_eq_left hj, ite_eq_right hb]
+    · by_cases hb : x.1.opcode = opBlake2s
+      · simp only [ite_eq_right hj, ite_eq_left hb]
+      · simp only [ite_eq_right hj, ite_eq_right hb]
+
+/-- **The constraint relation's degree is the shape's** (`constraintDegree`), with a part per table. -/
+theorem crOf_deg (S : Shape) (parts : List TablePart) (pw : List E) (gamma t cv : E) (w : List E)
+    (hlen : tables.length ≤ parts.length) : (crOf S parts pw gamma t cv w).2 = S.constraintDegree := by
+  unfold crOf Shape.constraintDegree
+  dsimp only
+  rw [crFold_deg, List.map_fst_zip hlen]
+  rfl
+
+/-! ## Small facts: digits, coordinates, lifts, `Z_act` -/
+
+theorem digits_length (t : E) (n : ℕ) (hn : 1 ≤ n) : (digits t n).length = n := by
+  unfold digits
+  have key : ∀ m : ℕ, ((List.range m).foldl (fun (ws : Array E) _ ↦
+      let w := ws.back?.getD t
+      ws.push (w * w + w)) #[t]).size = m + 1 := by
+    intro m
+    induction m with
+    | zero => rfl
+    | succ m ih => rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil, Array.size_push, ih]
+  rw [List.length_take, Array.length_toList, key]
+  omega
+
+theorem take_getD (w : List E) {k l : ℕ} (hl : l < k) : (w.take k).getD l 0 = w.getD l 0 := by
+  simp [List.getD_eq_getElem?_getD, hl]
+
+theorem sqn_eq (x : E) : ∀ m, sqn x m = x ^ (2 ^ m)
+  | 0 => by simp [sqn]
+  | m + 1 => by rw [sqn, sqn_eq (x * x) m, ← pow_two, ← pow_mul, pow_succ', mul_comm]
+
+theorem zip_sum_range (g : K × E → E) (hg : ∀ x, g (0, x) = 0) (f : ℕ → E) :
+    ∀ (n : ℕ) (l : List K), ((l.zip ((List.range n).map f)).map g).sum =
+      ((List.range n).map fun m ↦ g (l.getD m 0, f m)).sum
+  | 0, l => by simp
+  | n + 1, [] => by
+    simp only [List.zip_nil_left, List.map_nil, List.sum_nil, List.getD_nil, hg]
+    simp
+  | n + 1, a :: l => by
+    rw [List.range_succ_eq_map, List.map_cons, List.zip_cons_cons, List.map_cons, List.sum_cons,
+      List.map_map, zip_sum_range g hg (f ∘ Nat.succ) n l, List.map_cons, List.sum_cons, List.map_map]
+    congr 1
+
+/-- **`coordinatesAt` is the coordinate functionals' values at `t`.** -/
+theorem coordinatesAt_getD (t : E) (a : Array (Array K)) (l : ℕ) (hl : l < a.size) :
+    (coordinatesAt t a).getD l 0 = (yP a l).eval t := by
+  unfold coordinatesAt yP
+  rw [List.getD_eq_getElem _ _ (by simpa using hl), List.getElem_map, eval_listSum, List.map_map]
+  have hrow : a.toList[l]'(by simpa using hl) = a.getD l #[] := by
+    rw [Array.getElem_toList, Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem hl]
+    rfl
+  rw [hrow]
+  rw [Weights.foldl_eq_sum_of _ (fun p ↦ ofK p.1 * p.2) _ 0 (fun acc p _ ↦ by
+    obtain ⟨a', x⟩ := p
+    by_cases h : a' = 0
+    · simp [h]
+    · simp [h])]
+  rw [zero_add, zip_sum_range (fun p ↦ ofK p.1 * p.2) (fun x ↦ by simp) (sqn t) a.size]
+  refine congrArg List.sum (List.map_congr_left fun m _ ↦ ?_)
+  simp only [Function.comp_apply, Polynomial.eval_mul, eval_C, eval_pow, eval_X, sqn_eq]
+  simp [Array.getD_eq_getD_getElem?, List.getD_eq_getElem?_getD]
+
+theorem coordinatesAt_length (t : E) (a : Array (Array K)) : (coordinatesAt t a).length = a.size := by
+  simp [coordinatesAt]
+
+/-- **`vanishingRatio` is `liftP` at `t`.** -/
+theorem vanishingRatio_eval (w : List E) (t : E) (r m : ℕ) (hw : ∀ j < m, w.getD j 0 = (digitP j).eval t) :
+    vanishingRatio w r m = (liftP r m).eval t := by
+  unfold vanishingRatio liftP
+  rw [Weights.foldl_mul_map (fun j ↦ w.getD j 0 + 1), one_mul, eval_list_prod_of, List.map_map]
+  refine congrArg List.prod (List.map_congr_left fun j hj ↦ ?_)
+  rw [List.mem_range'_1] at hj
+  simp only [Function.comp_apply, Polynomial.eval_add, Polynomial.eval_one, hw j (by omega)]
+
+theorem eval_foldl_mul (f : ℕ → Polynomial E) (g : ℕ → E) (t : E) :
+    ∀ (l : List ℕ) (p : Polynomial E) (a : E), p.eval t = a → (∀ b ∈ l, (f b).eval t = g b) →
+      (l.foldl (fun prod b ↦ prod * f b) p).eval t = l.foldl (fun prod b ↦ prod * g b) a
+  | [], _, _, h, _ => h
+  | b :: l, p, a, h, hf => by
+    rw [List.foldl_cons, List.foldl_cons]
+    exact eval_foldl_mul f g t l _ _ (by rw [Polynomial.eval_mul, h, hf b (List.mem_cons_self ..)])
+      fun b' hb' ↦ hf b' (List.mem_cons_of_mem _ hb')
+
+/-- **`activeVanishingFromBits` is `zActP` at `t`.** -/
+theorem activeVanishing_eval (w bits : List E) (t : E) (r : ℕ)
+    (hw : ∀ j ≤ r, w.getD j 0 = (digitP j).eval t) :
+    activeVanishingFromBits w bits r = (zActP bits r).eval t := by
+  unfold activeVanishingFromBits zActP
+  symm
+  refine eval_foldl_mul _ _ t _ _ _ ?_ fun b hb ↦ ?_
+  · simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_one,
+      hw r le_rfl]
+  · rw [List.mem_range] at hb
+    simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_one,
+      hw b hb.le]
+
 end UniSound.Ids.Eval
