@@ -182,7 +182,7 @@ theorem pi2_accepts (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa : 
   have hmatch' := hmatch
   rw [hview] at hmatch
   -- the algebra (`lean-pi2-alg`'s `pi2_honest`), at the prover's inputs and stacks
-  obtain ⟨-, -, -, -, -, -, -, hi, hwsk, hqsk⟩ := runWith_honest Hk (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots)
+  obtain ⟨-, -, -, -, -, -, -, -, hi, hwsk, hqsk⟩ := runWith_honest Hk (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots)
     (D.circuitAt (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots.pi1).circuit
     (D.circuitAt (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots.pi1).setupStack (ivOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots)
     input.toList (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1

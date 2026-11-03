@@ -28,6 +28,7 @@ import RecCompose.Pi2Prover
 import RecCompose.Pi2ProverRun
 import RecCompose.Pi2CompleteEnd
 import RecCompose.Pi2ProbStaged
+import RecCompose.Pi2CallsOpen
 import RecCompose.ViewDefs
 import RecCompose.View
 import RecCompose.Valid

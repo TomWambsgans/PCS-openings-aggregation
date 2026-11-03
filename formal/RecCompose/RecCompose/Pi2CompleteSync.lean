@@ -207,6 +207,7 @@ theorem runWith_honest (Hk : List UInt8 → Digest) (G : RecPiop.Circuit E) (vie
     ∃ r, (Pi2H.runWithH (m := Id) (Pure.pure ∘ Hk) (Spec.of view) iv input
         (proverOut Hk G view setupStack iv input values w).stream).result = .ok r ∧
       r.inputs = (proverOut Hk G view setupStack iv input values w).inputs ∧
+      r.scalars = (proverOut Hk G view setupStack iv input values w).inputs.scalars ∧
       r.out = (Spec.of view).core.run r.inputs ∧
       (proverOut Hk G view setupStack iv input values w).stream.toList =
         publicWire (view.reads.zip values) ++
@@ -240,13 +241,13 @@ theorem runWith_honest (Hk : List UInt8 → Digest) (G : RecPiop.Circuit E) (vie
             (proverOut Hk G view setupStack iv input values w).inputs.β
             (proverOut Hk G view setupStack iv input values w).inputs.γ)) := by
   set seed := Hk (RecStatement.name ++ iv ++ input) with hseed
-  obtain ⟨r, b, pos', w', zs, ⟨hp, -, hv⟩, hpos, hstream, hinp, -, hout, hws, hwt, hqt, hi, hwsk, hqsk⟩ :=
+  obtain ⟨r, b, pos', w', zs, ⟨hp, -, hv⟩, hpos, hstream, hinp, hsc, hout, hws, hwt, hqt, hi, hwsk, hqsk⟩ :=
     reduce_steps Hk G view setupStack input values w seed hmatch hrow
   have hb : proverOut Hk G view setupStack iv input values w = b := by
     unfold proverOut
     rw [← hseed, hp]
   rw [hb]
-  refine ⟨r, ?_, hinp, hout, by rw [hstream, hws], hwt, hqt, hi, hwsk, hqsk⟩
+  refine ⟨r, ?_, hinp, hsc, hout, by rw [hstream, hws], hwt, hqt, hi, hwsk, hqsk⟩
   have e := hv b.stream #[] (by rw [hstream])
   rw [← UniComplete.chan_start_eq] at e
   unfold Pi2H.runWithH
