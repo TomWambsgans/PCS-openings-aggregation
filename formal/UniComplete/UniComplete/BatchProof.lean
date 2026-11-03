@@ -305,6 +305,23 @@ theorem aligned_layoutIn (stackLayouts : List (Commitment × StackLayout)) (h : 
   | none => intro _ _ _ _ hb; exact absurd hb (List.not_mem_nil)
   | some x => exact h x (List.mem_of_find?_eq_some hf)
 
+/-- The pending matrices' rounds, as `verifyDeferred` makes them (`Pending.new`): `k + 6 ≤ 12`. -/
+theorem pending_new_rounds_le (zSkip : Option E) (rowLow chiIn chiInPrime : List E) (alpha rLc : E)
+    (slices : Option (List E)) :
+    (Flock.Pending.new zSkip rowLow chiIn chiInPrime alpha rLc slices).rounds ≤ 12 := by
+  simp only [Flock.Pending.new, Flock.Pending.rounds, Flock.packing]
+  omega
+
+/-- The verifier's stacks have at least `15` variables (`StackLayout.new`'s `MIN_STACKED_LOG`). -/
+theorem batchVars_layouts_ge (shape : Shape) (c2Columns : List (Column × ℕ × Bool)) :
+    15 ≤ batchVars (layouts shape c2Columns) := by
+  have hmem : (Commitment.c2, StackLayout.new c2Columns) ∈ layouts shape c2Columns := by simp [layouts]
+  have h15 : 15 ≤ (StackLayout.new c2Columns).vars := by
+    unfold StackLayout.new
+    simp only
+    exact le_max_right _ _
+  exact le_trans h15 ((foldl_max_ge _ 0).2 _ (List.mem_map.mpr ⟨_, hmem, rfl⟩))
+
 /-! ## The collected value is zero -/
 
 /-- **The honest batch's hypotheses**: every combined claim holds of its stack, is well formed for its aligned

@@ -161,7 +161,23 @@ theorem syncs_sumcheck (lambda target : E) (vars : ℕ) (st : BatchState) (w : W
   rw [sumcheckH_eq, batchRounds_eq]
   exact Syncs.congr (Syncs.bind (syncs_loop H lambda vars 0 #[] target st w) (syncs_pure _ _ _)) (by simp) rfl
 
+/-- **The honest sumcheck, read**: from the target `Σ_k λ^k Σ_u W_k C_k + λ^n Σ G L̂ ŝ` (`targetOf`), on the batch's
+tables (`BatchWF`), the verifier's `sumcheckH` against the prover's `batchRounds` ends at the prover's point `rs` and
+the terminal `Σ_k λ^k W̃_k(r) C̃_k(r) Π_{j ≥ d_k} (1 + r_j)² + λ^n G̃ L̃ S̃(r) Π_{j ≥ k+6} (1 + r_j)` (`terminalOf`). -/
+theorem syncs_sumcheck_terminal (lambda : E) (k vars : ℕ) (pairs : List (Array E × Array E × ℕ))
+    (tables : Option PendingTables) (hwf : BatchWF k vars pairs tables) (w : Wr) :
+    Syncs (sumcheckH (m := Id) (Pure.pure ∘ H) (targetOf lambda pairs tables) 3 (List.replicate vars none))
+      (batchRounds (m := Id) (Pure.pure ∘ H) lambda vars (initState pairs tables)) w
+      (loopChallenges H lambda vars 0 (initState pairs tables) w,
+        terminalOf lambda pairs tables (loopChallenges H lambda vars 0 (initState pairs tables) w)) [] := by
+  refine Syncs.congr (syncs_sumcheck H lambda _ vars _ w) ?_ rfl
+  rw [batch_rounds lambda k vars pairs tables hwf _ (loopChallenges_length H lambda vars 0 _ w)]
+
 end UniComplete
+
+/-- info: 'UniComplete.syncs_sumcheck_terminal' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.syncs_sumcheck_terminal
 
 /-- info: 'UniComplete.syncs_sumcheck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

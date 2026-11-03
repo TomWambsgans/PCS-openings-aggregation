@@ -25,8 +25,9 @@ of the challenges:
   stack's pair give the square; the matrices' one (`eq(·, 0)` on the batch's other variables) a single power.
 
 Decisions: the tables' sizes are hypotheses (`BatchWF`): each stack's weight and words `2^{d_k}` entries, `d_k ≤ vars`;
-the matrices' three tables `2^{k+6}` entries with `k + 6 ≤ vars` and the structure above (`PendingShape`). The
-challenges are any list (`rs`): the Fiat–Shamir draws are the synchronisation layer's.
+the matrices' three tables `2^{k+6}` entries with `k + 6 ≤ vars` and the structure above (`LowDep`, `HighDep`;
+`BatchProof`'s `PendingShape` states it of Flock's tables). The challenges are any list (`rs`): the Fiat–Shamir draws
+are the synchronisation layer's (`BatchProofSync`).
 -/
 
 open LeanVM.Parameters
