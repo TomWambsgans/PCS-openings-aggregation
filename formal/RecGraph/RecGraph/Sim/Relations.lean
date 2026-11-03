@@ -828,4 +828,25 @@ theorem heapSpec : HeapSpec partR heapShape := by
     (chunks (reference.constraintDegree + 1))
   exact ⟨h.1, h.2.1, h.2.2, activeE, partsE, weightsE, betaE, hvE, cvE, mplE, mpsE, bplE, bpsE, ha6, hp6, hw16, rfl⟩
 
+theorem digits_lengthC (t : E) (n : Nat) : (UniStatement.digits t n).length = n := by
+  rw [digits_eq]
+  simp
+
+/-- **The constraint relation, its shape**: `UniStatement`'s at π1-rec3's shape, at some inputs,
+the point `tE` and the digits `wE`. -/
+def constraintShape (wE : List E) (tE : E) (b : Relation) : Prop :=
+  ∃ (partsE : List TablePart) (pwE : List E) (gammaE cvE : E),
+    b = (UniStatement.constraintRelation reference partsE pwE gammaE tE cvE wE).1
+
+/-- **`ConstraintSpec`**, `Compose`'s interface for the constraint quotient's identity. -/
+theorem constraintSpec : ConstraintSpec partR constraintShape := by
+  intro π iv publicInput stream st parts partsE pw pwE gamma t cv gammaE tE cvE w wE hg hseed hp hpw _ hgam ht hcv hw hwE
+  have h0 := rp_zero_of_seed π iv publicInput stream hg hseed
+  have hwlen : reference.constraintVars ≤ wE.length := by
+    rw [hwE, digits_lengthC]
+    unfold wLen
+    omega
+  have h := constraintRelation_phc π iv publicInput stream hg h0 hp hpw hgam ht hcv hw hwlen
+  exact ⟨h.1, h.2, partsE, pwE, gammaE, cvE, rfl⟩
+
 end RecGraph.Sim
