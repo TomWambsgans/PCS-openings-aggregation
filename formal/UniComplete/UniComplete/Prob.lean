@@ -24,7 +24,7 @@ bad `β` per `α`, `ct = 3 · 2^17` bad `t` per Flock point and `εt = 2^-200`:
 `UniCompleteness D (uniProverRP flock D) deltaUni`, where
 
   `deltaUni = (2^24 − 1) / 2^192 + 6 / 2^256 + (3 · 2^17 / 2^192 + 2^-200) + 2^-304 + (2^48)² / 2^508 < 2^-167`
-  (`deltaUni_lt`; about `2^-167.95`: the bus challenges' `2^-168`, `t`'s `2^-173.4`).
+  (`deltaUni_lt`; about `2^-167.97`: the bus challenges' `2^-168`, `t`'s `2^-173.4`).
 
 The block count at the reference shape (`totalCost_le`): the setup's `5 · 2^19 + 10 · 2^23` (its layout has at most
 `24` variables, `setupLayout_reference_vars`, through `List.mergeSort_perm`: the layout's offset is the sum of its
