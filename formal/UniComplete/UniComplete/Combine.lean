@@ -1,6 +1,9 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import UniComplete.Claims
 import UniComplete.Prover
+import UniComplete.BatchProofWeight
+import UniComplete.DomainCoord
+import UniComplete.DomainDigits
 
 /-!
 # Combining true relations with the powers of `ρ` gives a true weighted claim (milestone 4)
@@ -1075,13 +1078,19 @@ theorem quotientTerms_terms (column : ℕ → Column) (sizes : List ℕ) (w : Li
     exact ih _ (fun p' hp' ↦ hL p' (List.mem_cons_of_mem _ hp'))
       (pushT_good hacc (hQ p.1 p.2 (hL p (by simp)) _))
 
+theorem qflockSlot_lt {n : String} {j : ℕ} (h : qflockSlot n = some j) : j < 256 := by
+  unfold qflockSlot at h
+  obtain ⟨hj, -⟩ := List.findIdx?_eq_some_iff_getElem.mp h
+  have : blake2sSlots.length = 20 := rfl
+  omega
+
 /-- **`constraintRelation`'s terms**: the tables' columns and counter inverses at `w.take r`, `q_flock`'s slots
 at `y(t)` of BLAKE2S's height, the memory's limbs at `w.take lm`. -/
 theorem constraintRelation_terms (shape : Shape) (parts : List TablePart) (publicWords : List E)
     (gamma t constraintValue : E) (w : List E) (Q : Term → Prop)
     (htable : ∀ op c k, Q (term (.table op c) (w.take (shape.heights.getD op 0)) k))
     (hinv : ∀ op k, Q (term (.inverse op) (w.take (shape.heights.getD op 0)) k))
-    (hslot : ∀ op j k, op = opBlake2s →
+    (hslot : ∀ op j k, op = opBlake2s → j < 256 →
       Q (term (.qflockSlot j) (coordinatesAt t (coordinateFunctionals (shape.heights.getD op 0))) k))
     (hmem : ∀ k g, Q (term (.memory k) (w.take shape.logMemory) g)) :
     ∀ x ∈ (constraintRelation shape parts publicWords gamma t constraintValue w).1.terms, Q x := by
@@ -1096,13 +1105,13 @@ theorem constraintRelation_terms (shape : Shape) (parts : List TablePart) (publi
     · refine forIn_id_inv (fun s : Array Term × E ↦ ∀ x ∈ s.1.toList, Q x) _ (fun c s' hs' ↦ ?_) _ _
         (pushT_good (pushT_good hs (htable _ _ _)) (hinv _ _))
       split
-      · exact pushT_good (pushT_good hs' (htable _ _ _)) (hslot _ _ _ hb)
+      · next slot heq => exact pushT_good (pushT_good hs' (htable _ _ _)) (hslot _ _ _ hb (qflockSlot_lt heq))
       · exact hs'
     · exact pushT_good (pushT_good hs (htable _ _ _)) (hinv _ _)
     · refine forIn_id_inv (fun s : Array Term × E ↦ ∀ x ∈ s.1.toList, Q x) _ (fun c s' hs' ↦ ?_) _ _
         (pushT_good hs (hinv _ _))
       split
-      · exact pushT_good (pushT_good hs' (htable _ _ _)) (hslot _ _ _ hb')
+      · next slot heq => exact pushT_good (pushT_good hs' (htable _ _ _)) (hslot _ _ _ hb' (qflockSlot_lt heq))
       · exact hs'
     · exact pushT_good hs (hinv _ _)
 
@@ -1148,10 +1157,10 @@ the bytecode's final counts at `w.take lb`, `q_flock` at Flock's point; on the s
 quotients. -/
 def AtTForm (heights : List ℕ) (lm lb : ℕ) (w y alphas : List E) (flockOut : Option FlockOut) (c : Commitment)
     (x : Term) : Prop :=
-  x.column.commitment = c ∧ (c = .c2 ∨
+  x.column.commitment = c ∧ (x.twist = 0 ∨ x.column = .qflock) ∧ (c = .c2 ∨
     (∃ op col, x.column = .table op col ∧ x.point = w.take (heights.getD op 0)) ∨
     (∃ op, x.column = .inverse op ∧ x.point = w.take (heights.getD op 0)) ∨
-    (∃ j, x.column = .qflockSlot j ∧ x.point = y) ∨
+    (∃ j, x.column = .qflockSlot j ∧ x.point = y ∧ j < 256) ∨
     (∃ k, x.column = .memory k ∧ x.point = w.take lm) ∨
     (x.column = .bytecodeFinal ∧ x.point = w.take lb) ∨
     (x.column = .qflock ∧ ∃ out, flockOut = some out ∧ x.point = out.point) ∨
@@ -1191,10 +1200,11 @@ theorem atTOf_terms (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t :
       · exact ⟨.setup, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
       · exact ⟨.c1, constraintRelation_terms _ _ _ _ _ _ _ _ (fun _ _ _ ↦ by simp [AtTForm, term, Column.commitment])
           (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])
-          (fun _ _ _ hop ↦ by subst hop; simp [AtTForm, term, Column.commitment])
+          (fun _ j _ hop hj ↦ by subst hop; simp [AtTForm, term, Column.commitment, hj])
           (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])⟩
-      · exact ⟨.c2, heapRelations_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ (fun _ _ ↦ ⟨rfl, Or.inl rfl⟩)
-          (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) r hr⟩
+      · exact ⟨.c2, heapRelations_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ (fun _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩)
+          (fun _ _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩) (fun _ _ _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩)
+          (fun _ _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩) r hr⟩
       · refine ⟨.c1, fun x hx ↦ ?_⟩
         simp only [List.mem_singleton] at hx
         subst hx
@@ -1221,10 +1231,11 @@ theorem atTOf_terms (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t :
       · exact ⟨.setup, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
       · exact ⟨.c1, constraintRelation_terms _ _ _ _ _ _ _ _ (fun _ _ _ ↦ by simp [AtTForm, term, Column.commitment])
           (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])
-          (fun _ _ _ hop ↦ by subst hop; simp [AtTForm, term, Column.commitment])
+          (fun _ j _ hop hj ↦ by subst hop; simp [AtTForm, term, Column.commitment, hj])
           (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])⟩
-      · exact ⟨.c2, heapRelations_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ (fun _ _ ↦ ⟨rfl, Or.inl rfl⟩)
-          (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) r hr⟩
+      · exact ⟨.c2, heapRelations_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ (fun _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩)
+          (fun _ _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩) (fun _ _ _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩)
+          (fun _ _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩) r hr⟩
   · intro r hr
     simp only [Array.toList_push, Array.toList_append, List.mem_append, List.mem_singleton] at hr
     rcases hr with ((((((hr | rfl) | rfl) | rfl) | rfl) | rfl) | rfl) | hr
@@ -1247,10 +1258,11 @@ theorem atTOf_terms (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t :
     · exact ⟨.setup, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
     · exact ⟨.c1, constraintRelation_terms _ _ _ _ _ _ _ _ (fun _ _ _ ↦ by simp [AtTForm, term, Column.commitment])
         (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])
-        (fun _ _ _ hop ↦ by subst hop; simp [AtTForm, term, Column.commitment])
+        (fun _ j _ hop hj ↦ by subst hop; simp [AtTForm, term, Column.commitment, hj])
         (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])⟩
-    · exact ⟨.c2, heapRelations_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ (fun _ _ ↦ ⟨rfl, Or.inl rfl⟩)
-        (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) r hr⟩
+    · exact ⟨.c2, heapRelations_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ (fun _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩)
+        (fun _ _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩) (fun _ _ _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩)
+        (fun _ _ _ ↦ ⟨rfl, Or.inl rfl, Or.inl rfl⟩) r hr⟩
 
 /-! ### What the walk gives -/
 
@@ -1294,8 +1306,8 @@ theorem atTOf_slotsMaximal (tr : Trace) (c2 : C2Data) (alphas : List E) (beta ga
   have hfx := atTOf_form_of tr c2 alphas beta gamma t flockOut hr hx
   -- the slot's point is `y`
   have hy : x.point = coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD opBlake2s 0)) := by
-    obtain ⟨hcom, h⟩ := hfx
-    rcases h with h | ⟨_, _, h, -⟩ | ⟨_, h, -⟩ | ⟨_, h, hp⟩ | ⟨_, h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩
+    obtain ⟨hcom, -, h⟩ := hfx
+    rcases h with h | ⟨_, _, h, -⟩ | ⟨_, h, -⟩ | ⟨_, h, hp, -⟩ | ⟨_, h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩
     · rw [h, hj] at hcom
       cases hcom
     all_goals first | exact hp | (rw [hj] at h; cases h)
@@ -1306,8 +1318,8 @@ theorem atTOf_slotsMaximal (tr : Trace) (c2 : C2Data) (alphas : List E) (beta ga
   have hfx' := atTOf_form_of tr c2 alphas beta gamma t flockOut hr'.1 hx'
   rw [hr'.2] at hfx'
   rw [hy] at hpq ⊢
-  obtain ⟨hcom, h⟩ := hfx'
-  rcases h with h | ⟨_, _, -, h⟩ | ⟨_, -, h⟩ | ⟨_, -, h⟩ | ⟨_, -, h⟩ | ⟨-, h⟩ | ⟨-, out, hout, h⟩ | ⟨h, -⟩ | ⟨h, -⟩
+  obtain ⟨hcom, -, h⟩ := hfx'
+  rcases h with h | ⟨_, _, -, h⟩ | ⟨_, -, h⟩ | ⟨_, -, h, -⟩ | ⟨_, -, h⟩ | ⟨-, h⟩ | ⟨-, out, hout, h⟩ | ⟨h, -⟩ | ⟨h, -⟩
   · cases h
   · rw [h] at hpq; exact absurd (hpq.trans (List.take_prefix _ _)) hcond.1
   · rw [h] at hpq; exact absurd (hpq.trans (List.take_prefix _ _)) hcond.1
@@ -1318,6 +1330,227 @@ theorem atTOf_slotsMaximal (tr : Trace) (c2 : C2Data) (alphas : List E) (beta ga
   · rw [h] at hcom; cases hcom
   · rw [h] at hcom; cases hcom
 
+
+/-! ### The layouts' blocks -/
+
+/-- `StackLayout.new`'s blocks (its text, the matches as projections). -/
+theorem new_blocks (cols : List (Column × ℕ × Bool)) :
+    (StackLayout.new cols).blocks =
+      (((cols.flatMap fun x ↦ (List.range (if x.2.2 then 3 else 1)).map fun limb ↦ (x.1, limb, x.2.1)).mergeSort
+        fun a b ↦ b.2.2 ≤ a.2.2).foldl (fun (acc : Array (Column × ℕ × ℕ × ℕ) × ℕ) p ↦
+          (acc.1.push (p.1, p.2.1, p.2.2, acc.2), acc.2 + 2 ^ p.2.2)) (#[], 0)).1.toList := rfl
+
+theorem mem_blocks_fold : ∀ (L : List (Column × ℕ × ℕ)) (acc : Array (Column × ℕ × ℕ × ℕ) × ℕ)
+    (x : Column × ℕ × ℕ × ℕ),
+    x ∈ (L.foldl (fun (acc : Array (Column × ℕ × ℕ × ℕ) × ℕ) p ↦
+      (acc.1.push (p.1, p.2.1, p.2.2, acc.2), acc.2 + 2 ^ p.2.2)) acc).1.toList →
+    x ∈ acc.1.toList ∨ (x.1, x.2.1, x.2.2.1) ∈ L
+  | [], _, _, h => Or.inl h
+  | p :: L, acc, x, h => by
+    rcases mem_blocks_fold L _ x h with h | h
+    · rw [Array.toList_push, List.mem_append, List.mem_singleton] at h
+      rcases h with h | rfl
+      · exact Or.inl h
+      · exact Or.inr (by simp)
+    · exact Or.inr (List.mem_cons_of_mem _ h)
+
+/-- **A block of `StackLayout.new cols`** is one of `cols`' columns at its number of variables. -/
+theorem mem_limbs_new {cols : List (Column × ℕ × Bool)} {column : Column} {b : ℕ × ℕ × ℕ}
+    (hb : b ∈ (StackLayout.new cols).limbs column) : ∃ eV, (column, b.2.1, eV) ∈ cols := by
+  unfold StackLayout.limbs at hb
+  obtain ⟨⟨c, limb, vars, offset⟩, hblk, hb⟩ := List.mem_filterMap.mp hb
+  have hc : c = column ∧ b = (limb, vars, offset) := by
+    by_cases h : c = column
+    · subst h
+      simp only [beq_self_eq_true, ite_true, Option.some.injEq] at hb
+      exact ⟨rfl, hb.symm⟩
+    · simp [h] at hb
+  obtain ⟨rfl, rfl⟩ := hc
+  rw [new_blocks] at hblk
+  rcases mem_blocks_fold _ _ _ hblk with h | h
+  · simp at h
+  · rw [List.mem_mergeSort, List.mem_flatMap] at h
+    obtain ⟨x, hx, hmem⟩ := h
+    obtain ⟨l, -, he⟩ := List.mem_map.mp hmem
+    simp only [Prod.mk.injEq] at he
+    obtain ⟨rfl, -, rfl⟩ := he
+    exact ⟨x.2.2, by simpa using hx⟩
+
+/-- `C1`'s columns (`layouts`' text). -/
+def c1Columns (shape : Shape) : List (Column × ℕ × Bool) :=
+  [(.qflock, shape.heights.getD opBlake2s 0 + 8, false)] ++
+    tables.flatMap (fun t ↦
+      let h := shape.heights.getD t.opcode 0
+      (List.range t.width).map (fun c ↦ (Column.table t.opcode c, h, false)) ++
+        [(.inverse t.opcode, h, false)]) ++
+    (List.range 4).map (fun k ↦ (Column.memory k, shape.logMemory, false)) ++
+    [(.bytecodeFinal, shape.logBytecode, false)]
+
+theorem layoutIn_c1 (shape : Shape) (c2 : List (Column × ℕ × Bool)) :
+    layoutIn (layouts shape c2) .c1 = StackLayout.new (c1Columns shape) := rfl
+
+theorem layoutIn_setup (shape : Shape) (c2 : List (Column × ℕ × Bool)) :
+    layoutIn (layouts shape c2) .setup =
+      StackLayout.new [(.bytecodeTuple, shape.logBytecode + 4, false), (.address, shape.logMemory, false)] := rfl
+
+theorem layoutIn_c2 (shape : Shape) (c2 : List (Column × ℕ × Bool)) :
+    layoutIn (layouts shape c2) .c2 = StackLayout.new c2 := rfl
+
+/-- A column's variables on `C1`. -/
+def c1Vars (shape : Shape) : Column → ℕ
+  | .qflock => shape.heights.getD opBlake2s 0 + 8
+  | .table op _ => shape.heights.getD op 0
+  | .inverse op => shape.heights.getD op 0
+  | .memory _ => shape.logMemory
+  | .bytecodeFinal => shape.logBytecode
+  | _ => 0
+
+theorem vars_c1 {shape : Shape} {c2 : List (Column × ℕ × Bool)} {column : Column} {b : ℕ × ℕ × ℕ}
+    (hb : b ∈ (layoutIn (layouts shape c2) .c1).limbs column) : b.2.1 = c1Vars shape column := by
+  rw [layoutIn_c1] at hb
+  obtain ⟨eV, h⟩ := mem_limbs_new hb
+  generalize b.2.1 = v at h ⊢
+  unfold c1Columns at h
+  obtain (((h | h) | h) | h) : (((column, v, eV) ∈ [(Column.qflock, shape.heights.getD opBlake2s 0 + 8, false)] ∨
+      (column, v, eV) ∈ tables.flatMap (fun t ↦
+        (List.range t.width).map (fun c ↦ (Column.table t.opcode c, shape.heights.getD t.opcode 0, false)) ++
+          [(Column.inverse t.opcode, shape.heights.getD t.opcode 0, false)])) ∨
+      (column, v, eV) ∈ (List.range 4).map (fun k ↦ (Column.memory k, shape.logMemory, false))) ∨
+      (column, v, eV) ∈ [(Column.bytecodeFinal, shape.logBytecode, false)] := by
+    simpa only [List.mem_append] using h
+  · rw [List.mem_singleton, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, -⟩ := h
+    rfl
+  · obtain ⟨t, -, h⟩ := List.mem_flatMap.mp h
+    rcases List.mem_append.mp h with h | h
+    · obtain ⟨c, -, h⟩ := List.mem_map.mp h
+      simp only [Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl, -⟩ := h
+      rfl
+    · rw [List.mem_singleton, Prod.mk.injEq] at h
+      obtain ⟨rfl, rfl, -⟩ := h
+      rfl
+  · obtain ⟨k, -, h⟩ := List.mem_map.mp h
+    simp only [Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, -⟩ := h
+    rfl
+  · rw [List.mem_singleton, Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, -⟩ := h
+    rfl
+
+/-- A column's variables on the setup. -/
+def setupVars (shape : Shape) : Column → ℕ
+  | .bytecodeTuple => shape.logBytecode + 4
+  | .address => shape.logMemory
+  | _ => 0
+
+theorem vars_setup {shape : Shape} {c2 : List (Column × ℕ × Bool)} {column : Column} {b : ℕ × ℕ × ℕ}
+    (hb : b ∈ (layoutIn (layouts shape c2) .setup).limbs column) : b.2.1 = setupVars shape column := by
+  rw [layoutIn_setup] at hb
+  obtain ⟨eV, h⟩ := mem_limbs_new hb
+  generalize b.2.1 = v at h ⊢
+  simp only [List.mem_cons, Prod.mk.injEq, List.not_mem_nil, or_false] at h
+  rcases h with ⟨rfl, rfl, -⟩ | ⟨rfl, rfl, -⟩ <;> rfl
+
+/-! ### The lengths of the points -/
+
+theorem le_foldl_max : ∀ (l : List ℕ) (a : ℕ), a ≤ l.foldl max a ∧ ∀ x ∈ l, x ≤ l.foldl max a
+  | [], a => ⟨le_refl a, fun _ h ↦ absurd h (by simp)⟩
+  | y :: l, a => by
+    obtain ⟨h1, h2⟩ := le_foldl_max l (max a y)
+    refine ⟨(le_max_left a y).trans h1, fun x hx ↦ ?_⟩
+    rcases List.mem_cons.mp hx with rfl | hx
+    · exact (le_max_right a x).trans h1
+    · exact h2 x hx
+
+theorem height_le_constraintVars (shape : Shape) (op : ℕ) :
+    shape.heights.getD op 0 ≤ shape.constraintVars := by
+  unfold Shape.constraintVars
+  rw [List.getD_eq_getElem?_getD]
+  cases h : shape.heights[op]? with
+  | none => exact Nat.zero_le _
+  | some x =>
+    exact (le_foldl_max _ 0).2 x (List.mem_append_left _ (List.mem_of_getElem? h))
+
+theorem logMemory_le_constraintVars (shape : Shape) : shape.logMemory ≤ shape.constraintVars :=
+  (le_foldl_max _ 0).2 _ (List.mem_append_right _ (List.mem_singleton_self _))
+
+theorem le_log2Ceil {k n : ℕ} (h : 2 ^ k ≤ n) : k ≤ log2Ceil n := by
+  unfold log2Ceil
+  split_ifs with hn
+  · have h1 : 2 ^ k ≤ 1 := h.trans hn
+    by_contra hk
+    have : 2 ≤ 2 ^ k := by
+      calc 2 = 2 ^ 1 := rfl
+        _ ≤ 2 ^ k := Nat.pow_le_pow_right (by norm_num) (by omega)
+    omega
+  · rcases k with _ | k
+    · exact Nat.zero_le _
+    · have h0 := Nat.one_le_two_pow (n := k)
+      have h1 : 2 ^ k ≤ n - 1 := by rw [pow_succ] at h; omega
+      have := (Nat.le_log2 (by omega)).mpr h1
+      omega
+
+/-- The heap's height covers the bytecode (`2^lb` of its leaves). -/
+theorem logBytecode_le_h (shape : Shape) : shape.logBytecode ≤ shape.heap.h := by
+  show shape.logBytecode ≤ (HeapLayout.new shape.logMemory shape.logBytecode shape.heights).h
+  have e : (HeapLayout.new shape.logMemory shape.logBytecode shape.heights).h =
+      log2Ceil (((([(Leaves.memory, shape.logMemory), (Leaves.bytecode, shape.logBytecode)] ++
+        (List.range shape.heights.length).map fun t ↦ (Leaves.table t, shape.heights.getD t 0)).mergeSort
+          fun a b ↦ b.2 < a.2 || (a.2 == b.2 && a.1.order ≤ b.1.order)).map fun x ↦ 2 ^ x.2).sum) + 1 := rfl
+  rw [e]
+  refine le_trans (le_log2Ceil (List.le_sum_of_mem (List.mem_map.mpr
+    ⟨(Leaves.bytecode, shape.logBytecode), ?_, rfl⟩))) (Nat.le_succ _)
+  rw [List.mem_mergeSort]
+  simp
+
+theorem length_w (shape : Shape) (t : E) :
+    (digits t (max shape.heap.h (shape.constraintVars + 4) + 2)).length =
+      max shape.heap.h (shape.constraintVars + 4) + 2 := Domain.length_digits _ _
+
+theorem length_take_w {shape : Shape} {t : E} {n : ℕ} (hn : n ≤ shape.constraintVars ∨ n ≤ shape.heap.h) :
+    ((digits t (max shape.heap.h (shape.constraintVars + 4) + 2)).take n).length = n := by
+  rw [List.length_take, length_w]
+  omega
+
+/-! ### Covering on `C1` and the setup -/
+
+/-- **`C2`'s terms cover their columns** (the heap, the tree quotient, the constraint and leaf quotients' chunks
+at `w.take e`, `e` the chunk's size): not proved here; it needs every chunk size of the quotients to be at most
+`w`'s length `max h (r_W + 4) + 2` (a degree bound on the tables) and the chunks' columns matched to their
+terms (each chunk's column listed once in `c2Columns`, at its term's size). -/
+def AtTCoversC2 (shape : Shape) (a : AtT) : Prop :=
+  ∀ r ∈ a.relations, ∀ t ∈ r.terms, t.column.commitment = .c2 →
+    ∀ b ∈ (layoutIn (layouts shape a.c2Columns) .c2).limbs t.column, b.2.1 ≤ t.point.length
+
+/-- **Every term at `t` covers its column** (`AtTCovers`), on `C1` and the setup by the walk, for Flock's point
+of at least `q_flock`'s `h_B + 8` coordinates and four tuple weights; on `C2` by `AtTCoversC2`. -/
+theorem atTOf_covers (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t : E)
+    (flockOut : Option FlockOut) (halphas : alphas.length = 4)
+    (hflock : ∀ out, flockOut = some out → tr.shape.heights.getD opBlake2s 0 + 8 ≤ out.point.length)
+    (hc2 : AtTCoversC2 tr.shape (atTOf tr c2 alphas beta gamma t flockOut)) :
+    AtTCovers tr.shape (atTOf tr c2 alphas beta gamma t flockOut) := by
+  intro r hr x hx b hb
+  have hfx := atTOf_form_of tr c2 alphas beta gamma t flockOut hr hx
+  obtain ⟨hcom, -, h⟩ := hfx
+  have hvh := height_le_constraintVars tr.shape
+  have hlm := logMemory_le_constraintVars tr.shape
+  have hlb := logBytecode_le_h tr.shape
+  rcases h with h | ⟨op, col, hcol, hpt⟩ | ⟨op, hcol, hpt⟩ | ⟨j, hcol, -, -⟩ | ⟨k, hcol, hpt⟩ | ⟨hcol, hpt⟩ |
+      ⟨hcol, out, hout, hpt⟩ | ⟨hcol, hpt⟩ | ⟨hcol, hpt⟩
+  · rw [hcom, h] at hb
+    exact hc2 r hr x hx (hcom.trans h) b hb
+  all_goals rw [hcol] at hb
+  · rw [vars_c1 hb, hpt, length_take_w (Or.inl (hvh op))]; rfl
+  · rw [vars_c1 hb, hpt, length_take_w (Or.inl (hvh op))]; rfl
+  · rw [vars_c1 hb]; exact Nat.zero_le _
+  · rw [vars_c1 hb, hpt, length_take_w (Or.inl hlm)]; rfl
+  · rw [vars_c1 hb, hpt, length_take_w (Or.inr hlb)]; rfl
+  · rw [vars_c1 hb, hpt]; exact hflock out hout
+  · rw [vars_setup hb, hpt, List.length_append, halphas, length_take_w (Or.inr hlb)]
+    show tr.shape.logBytecode + 4 ≤ 4 + tr.shape.logBytecode
+    omega
+  · rw [vars_setup hb, hpt, length_take_w (Or.inl hlm)]; rfl
 
 end UniComplete
 
