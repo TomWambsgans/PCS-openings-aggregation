@@ -172,6 +172,26 @@ srcDir = "../UniComplete"
 globs = ["UniComplete", "UniComplete.+"]
 leanOptions = { warningAsError = true }
 
+# π2's PIOP, generic over circuits (`crates/leanvm_rec`, `PI2.md`, branch `leanvm-rec` @ 4247e37),
+# `formal/RecPiop`: the circuit description and its `validate`, the copy argument in characteristic two
+# (set-based logUp, every tag twice, the holes left out of the pulls), the quotient identity and its
+# degrees, the dataflow lemma, and π2's rounds in `Compose.Piop`'s form (W → α, β, γ; Q → t; the values
+# → ρ). No Fiat–Shamir layer, no openings.
+[[lean_lib]]
+name = "RecPiop"
+srcDir = "../RecPiop"
+globs = ["RecPiop", "RecPiop.+"]
+
+# The recursion's inner verifier as a graph (`formal/RecGraph`): π1-rec3's recorded verifier graph
+# (`crates/leanvm_rec/src/lean.rs` writes `RecGraph/Emitted.lean`, data only), its semantics over any permutation
+# (`evalGraph`), and the Lean recorder with "recording commutes with evaluation". The differential runner
+# (`RecGraphTest/Runner.lean`) runs with `lake env lean`, not built.
+[[lean_lib]]
+name = "RecGraph"
+srcDir = "../RecGraph"
+globs = ["RecGraph", "RecGraph.+"]
+leanOptions = { warningAsError = true }
+
 # π2's circuit (`crates/leanvm_rec/src/circuit`, branch `lean-rec-circuit`), `formal/RecCircuit`: the compiler from
 # π1's recorded verifier graph to π2's circuit, transcribed, and the proof that a satisfied compiled circuit's ports
 # carry the graph's outputs on the stream its free bits encode (the D16v Keccak-f template, Keccak-256's sponge, the
