@@ -2,7 +2,7 @@
 import RecCompose.Basic
 
 /-!
-# Part 1 ⇒ Part 2, completeness: `RecCompleteness D P1 P2 δ1 δh δ2` from `RecCompleteness2 D P2 δ2`
+# Part 1 ⇒ Part 2, completeness: `RecCompleteness D P1 P2 δ1 δh δ2` from `RecCompleteness2 D P1 P2 δ2`
 
 The recursive prover is π1-rec3's then π2's (`composeProver`). Its proof is rejected only if
 
@@ -39,10 +39,10 @@ def CompletenessPi1Coupling (D : RecDeployment) (P1 : Pi1Prover D) (P2 : Pi2Prov
           Pr{let z ← pi1HonestHazardExperiment D P1 input rows q}[
             ∃ iv s, z = some (iv, s) ∧ RecGraph.MergeHazard LeanVM.Semantics.keccakF1600 iv input.toList s]
 
-/-- **Part 1 ⇒ Part 2 (completeness)**: from π2's completeness `RecCompleteness2 D P2 δ2` and the couplings, the
+/-- **Part 1 ⇒ Part 2 (completeness)**: from π2's completeness `RecCompleteness2 D P1 P2 δ2` and the couplings, the
 end-to-end statement `RecCompleteness D P1 P2 δ1 δh δ2`, for every `δ1`, `δh`. -/
 theorem recCompleteness_of_part1 {D : RecDeployment} {P1 : Pi1Prover D} {P2 : Pi2Prover} {δ2 : ℝ≥0∞}
-    (h2 : RecCompleteness2 D P2 δ2) (hA : CompletenessAgree D P1 P2) (hC : CompletenessPi1Coupling D P1 P2)
+    (h2 : RecCompleteness2 D P1 P2 δ2) (hA : CompletenessAgree D P1 P2) (hC : CompletenessPi1Coupling D P1 P2)
     (δ1 δh : ℝ≥0∞) : RecCompleteness D P1 P2 δ1 δh δ2 := by
   intro hgv h1 hh input rows q hfit hhon
   rw [hA input rows q]
@@ -57,7 +57,7 @@ theorem recCompleteness_of_part1 {D : RecDeployment} {P1 : Pi1Prover D} {P2 : Pi
         prEvent_or_le _ _ _
     _ ≤ (δ1 + δh) + δ2 :=
         add_le_add ((hC hgv input rows q).trans (add_le_add (h1 input rows q hfit hhon) (hh input rows q hfit hhon)))
-          (h2 P1 input rows q)
+          (h2 input rows q hfit hhon)
 
 end RecCompose
 

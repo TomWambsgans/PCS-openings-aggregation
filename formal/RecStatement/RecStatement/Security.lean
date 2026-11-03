@@ -667,10 +667,16 @@ noncomputable def recCompletenessExperiment2 (D : RecDeployment) (P1 : Pi1Prover
       | none => return (a1, false)
       | some p2 => return (a1, ← D.verifierWith queryPermutation trees.roots input p2)
 
-/-- **π2's completeness** (over its own coins and `π`): a π1 proof on which π1-rec3's graph accepts at Keccak-f[1600],
-its openings verifying over `π`, is turned by `P2` into a proof the contract accepts, but with probability `δ2`. -/
-def RecCompleteness2 (D : RecDeployment) (P2 : Pi2Prover) (δ2 : ℝ≥0∞) : Prop :=
-  ∀ (P1 : Pi1Prover D) (input : Vector UInt8 32) (rows : List ℕ) (q : D.pi1.Stack rows),
+/-- **π2's completeness** (over its own coins and `π`), on π1-rec3's prover `P1`'s proofs of honest statements: a π1
+proof on which π1-rec3's graph accepts at Keccak-f[1600], its openings verifying over `π`, is turned by `P2` into a proof
+the contract accepts, but with probability `δ2`.
+
+(Composition, `lean-rec-compose`: for π1-rec3's prover, not every `P1`. A `P1` of unbounded queries can grind its
+proof, the graph still accepting, until π2's honest run on it hits one of π2's degenerate challenges (the one value the
+contract requires nonzero, `all = 0`), which no `δ2` below one bounds.) -/
+def RecCompleteness2 (D : RecDeployment) (P1 : Pi1Prover D) (P2 : Pi2Prover) (δ2 : ℝ≥0∞) : Prop :=
+  ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.pi1.Stack rows), D.pi1.shape.RowsFit rows →
+    D.pi1.HonestRelation rows input q →
     Pr{let v ← recCompletenessExperiment2 D P1 P2 input rows q}[v.1 = true ∧ v.2 = false] ≤ δ2
 
 /-- **π1-rec3's completeness experiment at Keccak-f[1600]**: the recursive setup, the prover's proof, π1-rec3's
