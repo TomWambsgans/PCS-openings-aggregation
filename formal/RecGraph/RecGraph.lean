@@ -6,6 +6,7 @@ import RecGraph.Commute
 import RecGraph.Values
 import RecGraph.Hazard
 import RecGraph.Pi1.Main
+import RecGraph.Sim.End
 
 /-!
 # RecGraph: π1-rec3's recorded verifier graph, its meaning, and the recorder
@@ -135,3 +136,11 @@ The build fails if a definition or theorem below uses an axiom beyond Lean's thr
 /-- info: 'RecGraph.Pi1.evalGraph_recordedGraph' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecGraph.Pi1.evalGraph_recordedGraph
+
+/-- info: 'RecGraph.Pi1.pi1Sim' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.Pi1.pi1Sim
+
+/-- info: 'RecGraph.Pi1.pi1GraphIsVerifier' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecGraph.Pi1.pi1GraphIsVerifier
