@@ -53,7 +53,12 @@ cargo test --release -p leanvm_rec                                              
 cargo test --release -p leanvm_rec --test pi2_real -- --ignored --nocapture real_gas           # gas on the real circuits
 cargo test --release -p leanvm_rec --test pi2_real -- --ignored --nocapture real_end_to_end    # π1-rec3 proof, then π2, then the contract (12 GB)
 python3 -I review/leanvm_rec_params.py                                                         # sizes, soundness, gas model
+cargo test --release -p leanvm_rec --test lean_statement -- --ignored statement_data_is_current # formal/RecStatement's data
+REC_STATEMENT_OUT=$PWD/v.txt cargo test --release -p leanvm_rec --test lean_statement -- --ignored lean_statement_vectors
 ```
+
+`formal/RecStatement` transcribes π2's verifier in Lean (`src/lean_statement.rs` writes its data and vectors;
+`pi2::verifier::reduce_traced` hands every intermediate value to the vectors).
 
 What the tests check:
 - **End to end.** π1-rec3's real proof, then π2's proof, then the contract accepts, with `PCS_OPEN` (a decoding

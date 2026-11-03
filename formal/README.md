@@ -30,6 +30,15 @@ permutation, the Lean recorder with "recording commutes with evaluation" (proved
 verifier at π1-rec3 (`UniStatement/UniStatement/Rec.lean`) by differential tests, with an oracle under which they
 differ (the verifier merges points by value, the graph by symbol).
 
+**The recursion's outer verifier** (`crates/leanvm_rec`, π2): [`RecStatement/`](RecStatement/README.md), a library of
+`EndToEnd/`: π2's verifier as computable Lean (the seed and IV, the public data in the stream, the arithmetic at `t`
+over any field, the six `PCS_OPEN` calls word for word), the circuit's tables as data the Rust emits (with a staleness
+test), differential-tested on the real π1-rec3 + π2 proof and 63 other streams (64/64 agree on every value); the
+verifier-arithmetic lemmas that [`RecPiop/`](RecPiop)'s rounds consume (proved: the indicators' and the zero coset's
+closed forms, the siblings' fold, and `checks_claims_iff`: the checks pass and the claims hold iff `t ∉ V_{m+2}`,
+`c_h + c_q ≠ 0` and `RecPiop.Post2`); and the recursive verifier's end statements `RecKnowledgeSoundness`,
+`RecCompleteness` against `Lv42`'s `M3Holds` (stated, not proved).
+
 ## End-to-end theorems
 
 `EndToEnd/` (a Lake workspace, `EndToEnd/lakefile.toml`) proves the Statement's end statements about the
