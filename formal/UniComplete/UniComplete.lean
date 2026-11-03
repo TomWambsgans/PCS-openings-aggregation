@@ -63,3 +63,4 @@ import UniComplete.ProverDuplex
 import UniComplete.ProverBounds
 import UniComplete.ProverCost
 import UniComplete.ProbBadT
+import UniComplete.FlockCost
