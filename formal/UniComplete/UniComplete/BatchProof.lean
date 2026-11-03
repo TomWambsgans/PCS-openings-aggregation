@@ -305,6 +305,13 @@ theorem aligned_layoutIn (stackLayouts : List (Commitment × StackLayout)) (h : 
   | none => intro _ _ _ _ hb; exact absurd hb (List.not_mem_nil)
   | some x => exact h x (List.mem_of_find?_eq_some hf)
 
+/-- **The verifier's layouts are aligned** (`layouts`: three `StackLayout.new`). -/
+theorem aligned_layouts (shape : Shape) (c2Columns : List (Column × ℕ × Bool)) :
+    ∀ x ∈ layouts shape c2Columns, Aligned x.2 := by
+  intro x hx
+  simp only [layouts, List.mem_cons, List.not_mem_nil, or_false] at hx
+  rcases hx with rfl | rfl | rfl <;> exact aligned_new _
+
 /-- The pending matrices' rounds, as `verifyDeferred` makes them (`Pending.new`): `k + 6 ≤ 12`. -/
 theorem pending_new_rounds_le (zSkip : Option E) (rowLow chiIn chiInPrime : List E) (alpha rLc : E)
     (slices : Option (List E)) :
