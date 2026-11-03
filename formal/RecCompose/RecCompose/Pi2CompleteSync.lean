@@ -143,7 +143,11 @@ theorem reduce_steps (F : KeccakState → Id KeccakState) (Hk : List UInt8 → D
     StepsE (RecStatement.reduceWith (m := Id) F (Spec.of view) (UniStatement.publicWordsOf input))
       (pi2ProveStreamWith (m := Id) (Pure.pure ∘ Hk) G view.reads setupStack input values w) 0 (Wr.start seed)
       (fun r out pos w' _ ↦ pos = w'.stream.size ∧ out.stream = w'.stream ∧ r.inputs = out.inputs ∧
-        r.scalars = out.inputs.scalars ∧ r.out = (Spec.of view).core.run r.inputs) := by
+        r.scalars = out.inputs.scalars ∧ r.out = (Spec.of view).core.run r.inputs ∧
+        w'.stream.toList = publicWire (view.reads.zip values) ++ rootWord (digestScalars out.wTree.root) ++
+          rootWord (digestScalars out.qTree.root) ++ (out.inputs.a ++ [out.inputs.ξ]).flatMap scalarWire ∧
+        out.wTree = E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk) (layoutsOf G.logN).1.logN out.wStack ∧
+        out.qTree = E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk) (layoutsOf G.logN).2.1.logN out.qStack) := by
   unfold RecStatement.reduceWith pi2ProveStreamWith
   dsimp only
   apply StepsE.pbind (sendPublic_writes _ _)
@@ -179,29 +183,49 @@ theorem reduce_steps (F : KeccakState → Id KeccakState) (Hk : List UInt8 → D
   case e => simp; omega
   apply StepsE.pget
   apply StepsE.pure
-  refine ⟨rfl, rfl, ?_, ?_, rfl⟩
+  refine ⟨rfl, rfl, ?_, ?_, rfl, ?_, rfl, rfl⟩
   · simp [publicScalarsOf]
   · simp [publicScalarsOf]
+  · simp [Wr.start]
+
+/-- **The honest prover's output** over Keccak-256 `Hk`, from the seed of the IV and the public input. -/
+def proverOut (Hk : List UInt8 → Digest) (G : RecPiop.Circuit E) (view : Circuit) (setupStack : Array K)
+    (iv input : List UInt8) (values : List PublicValue) (w : ℕ → K) : Pi2Out :=
+  ((pi2ProveStreamWith (m := Id) (Pure.pure ∘ Hk) G view.reads setupStack input values w).run
+    (Wr.start (Hk (RecStatement.name ++ iv ++ input)))).1
 
 /-- **π2's verifier accepts the run of the honest prover's stream**: over a pure permutation `F` (Keccak-256 `Hk`), at
 the seed of the IV and the public input, `runWith` returns the arithmetic on the prover's inputs, nothing of the stream
-left. -/
+left; the stream is the public values, `W`'s and `Q`'s roots' words and the values' scalars; the trees are the stacks'
+commitments. -/
 theorem runWith_honest (F : KeccakState → Id KeccakState) (Hk : List UInt8 → Digest)
     (hk : keccak256With (m := Id) F = Pure.pure ∘ Hk) (G : RecPiop.Circuit E) (view : Circuit)
     (setupStack : Array K) (iv input : List UInt8) (values : List PublicValue) (w : ℕ → K)
     (hmatch : List.Forall₂ ReadMatch view.reads values) (hrow : view.logRow = G.logW) :
     ∃ r, (RecStatement.runWith (m := Id) F (Spec.of view) iv input
-        ((pi2ProveStreamWith (m := Id) (Pure.pure ∘ Hk) G view.reads setupStack input values w).run
-          (Wr.start (Hk (RecStatement.name ++ iv ++ input)))).1.stream).result = .ok r ∧
-      r.inputs = ((pi2ProveStreamWith (m := Id) (Pure.pure ∘ Hk) G view.reads setupStack input values w).run
-          (Wr.start (Hk (RecStatement.name ++ iv ++ input)))).1.inputs ∧
-      r.out = (Spec.of view).core.run r.inputs := by
+        (proverOut Hk G view setupStack iv input values w).stream).result = .ok r ∧
+      r.inputs = (proverOut Hk G view setupStack iv input values w).inputs ∧
+      r.out = (Spec.of view).core.run r.inputs ∧
+      (proverOut Hk G view setupStack iv input values w).stream.toList =
+        publicWire (view.reads.zip values) ++
+          rootWord (digestScalars (proverOut Hk G view setupStack iv input values w).wTree.root) ++
+          rootWord (digestScalars (proverOut Hk G view setupStack iv input values w).qTree.root) ++
+          ((proverOut Hk G view setupStack iv input values w).inputs.a ++
+            [(proverOut Hk G view setupStack iv input values w).inputs.ξ]).flatMap scalarWire ∧
+      (proverOut Hk G view setupStack iv input values w).wTree =
+        E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk) (layoutsOf G.logN).1.logN
+          (proverOut Hk G view setupStack iv input values w).wStack ∧
+      (proverOut Hk G view setupStack iv input values w).qTree =
+        E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk) (layoutsOf G.logN).2.1.logN
+          (proverOut Hk G view setupStack iv input values w).qStack := by
   set seed := Hk (RecStatement.name ++ iv ++ input) with hseed
-  obtain ⟨r, b, pos', w', zs, ⟨hp, -, hv⟩, hpos, hstream, hinp, -, hout⟩ :=
+  obtain ⟨r, b, pos', w', zs, ⟨hp, -, hv⟩, hpos, hstream, hinp, -, hout, hws, hwt, hqt⟩ :=
     reduce_steps F Hk hk G view setupStack input values w seed hmatch hrow
-  rw [hp]
-  dsimp only
-  refine ⟨r, ?_, hinp, hout⟩
+  have hb : proverOut Hk G view setupStack iv input values w = b := by
+    unfold proverOut
+    rw [← hseed, hp]
+  rw [hb]
+  refine ⟨r, ?_, hinp, hout, by rw [hstream, hws], hwt, hqt⟩
   have e := hv b.stream #[] (by rw [hstream])
   rw [← UniComplete.chan_start_eq] at e
   have hsd : keccak256With (m := Id) F (RecStatement.name ++ iv ++ input) = seed := by
