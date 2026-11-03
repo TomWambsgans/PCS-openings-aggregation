@@ -24,6 +24,12 @@ and differential-tested, with its end statements `UniKnowledgeSoundness` and `Un
 its knowledge soundness is proved, with no hypothesis, in `UniSound/` and `FlockSound/`
 ([below](#the-univariate-verifier-for-leanvm-42422001-knowledge-soundness)).
 
+**The recursion's inner verifier as a graph** (`crates/leanvm_rec`, π1-rec3): [`RecGraph/`](RecGraph/README.md), a
+library of `EndToEnd/`: π1-rec3's recorded verifier graph (written by the Rust, data only), its semantics over any
+permutation, the Lean recorder with "recording commutes with evaluation" (proved), and graph = `UniStatement`'s
+verifier at π1-rec3 (`UniStatement/UniStatement/Rec.lean`) by differential tests, with an oracle under which they
+differ (the verifier merges points by value, the graph by symbol).
+
 ## End-to-end theorems
 
 `EndToEnd/` (a Lake workspace, `EndToEnd/lakefile.toml`) proves the Statement's end statements about the
