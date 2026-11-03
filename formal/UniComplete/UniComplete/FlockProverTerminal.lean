@@ -389,4 +389,49 @@ theorem pendingTerminalHolds (H : List UInt8 → Id LeanVM.Protocol.Digest) (log
     rw [h6 h0]
     rfl
 
+/-! ## The tables' shape (what the batch's `BatchWF` reads) -/
+
+/-- **The tables' shape** of `assemble`: `k + 6` rounds, three tables of `2^(k+6)` entries, `L̂` depending only on
+the low `k` bits of its index and `ŝ` only on the others. -/
+theorem assemble_tables_shape (fr : Front) (s : List E) (e : End) (k : ℕ) (hlow : fr.rowLow.length = 6 - k)
+    (hk : k ≤ 6) :
+    (assemble fr s e).tables.rounds = k + 6 ∧ (assemble fr s e).tables.g.size = 2 ^ (k + 6) ∧
+      (assemble fr s e).tables.l.size = 2 ^ (k + 6) ∧ (assemble fr s e).tables.s.size = 2 ^ (k + 6) ∧
+      (∀ i < 2 ^ (k + 6), (assemble fr s e).tables.l.getD i 0 = (assemble fr s e).tables.l.getD (i % 2 ^ k) 0) ∧
+      (∀ i < 2 ^ (k + 6),
+        (assemble fr s e).tables.s.getD i 0 = (assemble fr s e).tables.s.getD (2 ^ k * (i / 2 ^ k)) 0) := by
+  have hk' : packing - fr.rowLow.length = k := by rw [hlow]; unfold packing; omega
+  have hsz : 2 ^ k * kBits = 2 ^ (k + 6) := by unfold kBits; rw [pow_add]; rfl
+  simp only [assemble, hk']
+  refine ⟨rfl, ?_, ?_, ?_, fun i hi ↦ ?_, fun i hi ↦ ?_⟩
+  · simp [sliced, hsz]
+  · simp [skipTable, hsz]
+  · simp [sliceTable, hsz]
+  · have hi' : i < 2 ^ k * kBits := by rw [hsz]; exact hi
+    have hm : i % 2 ^ k < 2 ^ k * kBits := by
+      have := Nat.mod_lt i (Nat.two_pow_pos k)
+      have : 2 ^ k ≤ 2 ^ k * kBits := Nat.le_mul_of_pos_right _ (by unfold kBits; norm_num)
+      omega
+    rw [skipTable, E2ECompleteness.getD_ofFn' _ hi', E2ECompleteness.getD_ofFn' _ hm]
+    simp only [Nat.mod_mod]
+  · have hi' : i < 2 ^ k * kBits := by rw [hsz]; exact hi
+    have hm : 2 ^ k * (i / 2 ^ k) < 2 ^ k * kBits := lt_of_le_of_lt (Nat.mul_div_le i (2 ^ k)) hi'
+    rw [sliceTable, E2ECompleteness.getD_ofFn' _ hi', E2ECompleteness.getD_ofFn' _ hm]
+    simp only [Nat.mul_div_cancel_left _ (Nat.two_pow_pos k)]
+
+/-- **The tables' shape of the honest prover** (`k ≤ 6`, `log_n ≥ 14`). -/
+theorem tables_shape (H : List UInt8 → Id LeanVM.Protocol.Digest) (logN : ℕ) (variant : Variant) (q : Array K)
+    (w : Wr) (hk : variant.skip ≤ 6) (hN : 14 ≤ logN) :
+    let t := ((flockProve H logN variant q).run w).1.tables
+    t.rounds = variant.skip + 6 ∧ t.g.size = 2 ^ (variant.skip + 6) ∧ t.l.size = 2 ^ (variant.skip + 6) ∧
+      t.s.size = 2 ^ (variant.skip + 6) ∧
+      (∀ i < 2 ^ (variant.skip + 6), t.l.getD i 0 = t.l.getD (i % 2 ^ variant.skip) 0) ∧
+      (∀ i < 2 ^ (variant.skip + 6), t.s.getD i 0 = t.s.getD (2 ^ variant.skip * (i / 2 ^ variant.skip)) 0) := by
+  intro t
+  obtain ⟨frs, e, hfrs, hout⟩ := flockProve_eq H logN variant q w
+  obtain ⟨h1, -⟩ := frontW_shape H logN variant q w hk hN
+  rw [← hfrs] at h1
+  simp only [t, hout]
+  exact assemble_tables_shape frs.1 frs.2 e variant.skip h1 hk
+
 end UniComplete.FlockP
