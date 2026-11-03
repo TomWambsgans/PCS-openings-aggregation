@@ -819,6 +819,156 @@ theorem inv_seed (hc : c.Checked r) (hw : c.circuit.Satisfied w) {id : ℕ} (hid
       rfl
   · cases hok
 
+/-- A hashed stream bit, through its copy or not. -/
+theorem copy_or_self (hc : c.Checked r) {k : ℕ} (hk : k < c.bitSelf.size) (hs : (c.bitSelf.getD k none).isSome)
+    (G : c.ctx.Good w) :
+    c.ctx.val w ((c.bitCopy.getD k none).getD (c.streamBit k)) = c.ctx.val w (c.streamBit k) := by
+  obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp hs
+  have hsb : c.streamBit k = v := by simp [streamBit, hv]
+  cases hcp : c.bitCopy.getD k none with
+  | none => rfl
+  | some cp =>
+    simp only [Option.getD_some]
+    rw [hsb, Ctx.copy_val G (((bitsOk_parts hc.bits).1 k hk v hv).2 cp hcp)]
+
+theorem inv_hash (hc : c.Checked r) (hw : c.circuit.Satisfied w) {id : ℕ} (hid : id < c.nodes.size)
+    (hl : c.live.getD id false = true) {s f t : ℕ} (hnode : c.nodes.getD id default = .hash s f t)
+    (ih : c.StateInv r w s) : c.StateInv r w id := by
+  have G := hc.good hw
+  have hok := hc.nodes id hid hl
+  simp only [nodeOk, hnode] at hok
+  split at hok
+  · rename_i d hd
+    simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq, List.all_eq_true, List.mem_range] at hok
+    obtain ⟨⟨⟨⟨⟨⟨hds, _⟩, _⟩, hft⟩, _⟩, hall⟩, hsp⟩ := hok
+    obtain ⟨ds, hds', hds256, hlen32, hbits⟩ := ih
+    have hsz := hc.sizes.2.2.2.1
+    set state := ((c.valsW r w).getD s default).toState
+    set S := c.streamW r w
+    set data := state ++ slice S f (t - f)
+    have hsl : (slice S f (t - f)).length = t - f := by
+      by_cases hlt : f < t
+      · have htl : t ≤ r.graph.streamLen := by
+          have := hall (8 * (t - f) - 1) (by omega)
+          by_contra hcon
+          have : c.bitSelf.size ≤ 8 * f + (8 * (t - f) - 1) := by omega
+          simp [Array.getD_eq_getD_getElem?, this] at *
+        exact slice_length _ _ _ (by rw [streamW_length]; omega)
+      · have : t - f = 0 := by omega
+        simp [slice, this]
+    have hdl : data.length = 32 + (t - f) := by simp [data, hlen32, hsl]
+    have hmsz : (c.hashMessage s f t).size = 8 * data.length := by
+      simp [hashMessage, hds', hds256, hdl]; ring
+    have hm : Ctx.MsgOk c.ctx w (c.hashMessage s f t) (bitOf data) := by
+      intro i hi
+      rw [hmsz, hdl] at hi
+      unfold hashMessage
+      rw [arr_getD_append, hds', Option.getD_some, Array.size_map, hds256]
+      by_cases h1 : i < 256
+      · rw [if_pos h1, Array.getD_eq_getD_getElem?, Array.getElem?_map]
+        rw [show ds[i]? = some (ds.getD i NONE) by simp [Array.getD_eq_getD_getElem?, hds256, h1]]
+        show c.ctx.val w _ = _
+        rw [hbits i h1, bitOf_append_left _ _ _ (by rw [hlen32]; omega)]
+      · rw [if_neg h1]
+        set k := i - 256
+        have hk : k < 8 * (t - f) := by omega
+        rw [Array.getD_eq_getD_getElem?, List.getElem?_toArray, List.getElem?_map, List.getElem?_range hk,
+          Option.map_some, Option.getD_some]
+        show c.ctx.val w _ = _
+        have hbyte : ∀ j' < 8, (c.bitSelf.getD (8 * (f + k / 8) + j') none).isSome := by
+          intro j' hj'
+          have := hall (8 * (k / 8) + j') (by omega)
+          rwa [show 8 * f + (8 * (k / 8) + j') = 8 * (f + k / 8) + j' by ring] at this
+        have hks : 8 * f + k < c.bitSelf.size := by
+          have := hall k hk
+          by_contra hcon
+          simp [Array.getD_eq_getD_getElem?, show c.bitSelf.size ≤ 8 * f + k by omega] at this
+        rw [copy_or_self hc hks (hall k hk) G, show 8 * f + k = 8 * (f + k / 8) + k % 8 by omega,
+          stream_bit hc hw (by omega) (Nat.mod_lt _ (by norm_num)) hbyte,
+          bitOf_append_right _ _ _ (by rw [hlen32]; omega), hlen32]
+        simp only [bitOf]
+        rw [slice_getD _ _ _ _ (by omega), show (i - 8 * 32) / 8 = k / 8 by omega, show (i - 8 * 32) % 8 = k % 8 by omega]
+        rfl
+    refine ⟨d, hd, hds, ?_, ?_⟩
+    · rw [valsW_step hc hid hl, hnode]
+      simp [Graph.step, Value.toState, PcsCircuit.digestBytes_length]
+    · intro k hk
+      rw [digest_of_message hc G hsp hmsz hm k hk, valsW_step hc hid hl, hnode]
+      rfl
+  · cases hok
+
+/-! ## The induction -/
+
+theorem nodeOk_low_kind (hc : c.Checked r) {id h : ℕ} (hid : id < c.nodes.size) (hl : c.live.getD id false = true)
+    (hnode : c.nodes.getD id default = .low h ∨ c.nodes.getD id default = .narrow h) :
+    isStateNode (c.nodes.getD h default) = true := by
+  have hok := hc.nodes id hid hl
+  rcases hnode with hn | hn <;> simp only [nodeOk, hn, Bool.and_eq_true] at hok <;> exact hok.1
+
+/-- **Every live node carries its value** (by induction over the expanded graph). -/
+theorem node_inv (hc : c.Checked r) (hw : c.circuit.Satisfied w) :
+    ∀ id < c.nodes.size, c.live.getD id false = true → c.NodeInv r w id := by
+  intro id
+  induction id using Nat.strong_induction_on with
+  | _ id ih =>
+    intro hid hl
+    have G := hc.good hw
+    have hops := (graphOk_parts hc.graph).1 id hid hl
+    have IH : ∀ o ∈ (c.nodes.getD id default).ops, c.NodeInv r w o := fun o ho =>
+      ih o (hops o ho).1 (lt_trans (hops o ho).1 hid) (hops o ho).2
+    have hokv := hc.nodes id hid hl
+    -- An operand with three limbs is an element node.
+    have elemOf : ∀ o ∈ (c.nodes.getD id default).ops, (c.limbsOf o).size = 3 → c.ElemInv r w o := by
+      intro o ho h3
+      have := IH o ho
+      unfold NodeInv at this
+      rwa [elem_of_limbs3 hc (lt_trans (hops o ho).1 hid) (hops o ho).2 h3, if_neg (by simp)] at this
+    unfold NodeInv
+    cases hnode : c.nodes.getD id default with
+    | const c0 c1 c2 => simp only [isStateNode]; exact inv_const hc G hid hl hnode
+    | statement k => simp only [isStateNode]; exact inv_statement hc G hw hid hl hnode
+    | input off len =>
+      simp only [isStateNode]
+      cases hf : (c.freeReads.any fun e => e.1 == off && e.2 == c.limbsOf id)
+      · exact inv_input_hashed hc G hw hid hl hnode hf
+      · exact inv_input_free hc hw hid hl hnode hf
+    | low h =>
+      simp only [isStateNode]
+      have hk := nodeOk_low_kind hc hid hl (Or.inl hnode)
+      have := IH h (by simp [hnode, Node.ops])
+      unfold NodeInv at this; rw [if_pos hk] at this
+      exact inv_low hc G hid hl hnode this
+    | narrow h =>
+      simp only [isStateNode]
+      have hk := nodeOk_low_kind hc hid hl (Or.inr hnode)
+      have := IH h (by simp [hnode, Node.ops])
+      unfold NodeInv at this; rw [if_pos hk] at this
+      exact inv_narrow hc G hid hl hnode this
+    | bits v shift width => simp only [isStateNode]; exact inv_bits hc G hw hid hl hnode
+    | add x y =>
+      simp only [isStateNode]
+      simp only [nodeOk, hnode] at hokv
+      obtain ⟨_, hx, hy, _⟩ := arith_ok G hokv
+      exact inv_add hc G hid hl hnode (elemOf x (by simp [hnode, Node.ops]) hx) (elemOf y (by simp [hnode, Node.ops]) hy)
+    | mul x y =>
+      simp only [isStateNode]
+      simp only [nodeOk, hnode] at hokv
+      obtain ⟨_, hx, hy, _⟩ := arith_ok G hokv
+      exact inv_mul hc G hid hl hnode (elemOf x (by simp [hnode, Node.ops]) hx) (elemOf y (by simp [hnode, Node.ops]) hy)
+    | seed => simp only [isStateNode, ite_true]; exact inv_seed hc hw hid hl hnode
+    | hash s f t =>
+      simp only [isStateNode, ite_true]
+      have hok := hc.nodes id hid hl
+      simp only [nodeOk, hnode] at hok
+      have hk : isStateNode (c.nodes.getD s default) = true := by
+        split at hok
+        · simp only [Bool.and_eq_true] at hok; exact hok.1.1.2
+        · cases hok
+      have := IH s (by simp [hnode, Node.ops])
+      unfold NodeInv at this; rw [if_pos hk] at this
+      exact inv_hash hc hw hid hl hnode this
+    | ringWeight k n => exact absurd hnode (not_ringWeight hc hid hl k n)
+
 end Compiled
 
 end RecCircuit
