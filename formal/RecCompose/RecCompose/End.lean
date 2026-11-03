@@ -59,13 +59,11 @@ theorem recKnowledgeSoundness2_of_real (D : RecDeployment) (_hD : D.Real) (L : P
 /-- **π2's part at the real deployment, from its named inputs**: the compiled circuit (`C`: the Lean compiler's run on
 π1-rec3's graph at every π1 IV, at the emitted graph's roots; `hg`, the graphs agree, a run), its facts (`Fa`: `SpecOf`,
 validity, the shape, the ports), the tables' layer (`T`, open), π2's Fiat–Shamir layer (`hfs`, open), the bridge from
-RecCircuit's end theorem (`hb`, open, and true only with π1's corrected root words, `_hroot`, the fix on
-`fix-pi1-root`); the calldata's π1 openings are the contract's (`callsPure`, proved):
+RecCircuit's end theorem (`hb`: `circuitBridge`, `Bridge.lean`, with the root-word fix `pi1RootWordOk`); the calldata's π1 openings are the contract's (`callsPure`, proved):
 `RecKnowledgeSoundness2 D pi2Bound`,
 `pi2Bound Q ≤ 2^-64` for `Q ≤ 2^64`. -/
 theorem recKnowledgeSoundness2_real (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa : Pi2Facts D C)
     (T : Pi2Tables D C) (hfs : Pi2FsLayer D) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
-    (_hroot : Pi1RootWordOk)
     (hb : CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream)) :
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 :=
   recKnowledgeSoundness2_of_real D hD (pi2Layers_of C Fa T hfs (pi2CircuitAccepts_of_bridge C Fa hroots hg hb))
@@ -85,7 +83,6 @@ theorem recKnowledgeSoundness_end (D : RecDeployment) (hD : D.Real) (L : Pi2Laye
 circuit, its facts, the tables' layer, π2's Fiat–Shamir layer and the bridge from RecCircuit's end theorem. -/
 theorem recKnowledgeSoundness_end_real (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa : Pi2Facts D C)
     (T : Pi2Tables D C) (hfs : Pi2FsLayer D) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
-    (_hroot : Pi1RootWordOk)
     (hb : CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream))
     (ε1 εh : ℕ → ℝ≥0∞) : RecKnowledgeSoundness D pi2Bound ε1 εh :=
   recKnowledgeSoundness_end D hD (pi2Layers_of C Fa T hfs (pi2CircuitAccepts_of_bridge C Fa hroots hg hb)) ε1 εh

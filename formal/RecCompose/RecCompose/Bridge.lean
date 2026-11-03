@@ -576,8 +576,7 @@ theorem recKnowledgeSoundness2_real_bridge (D : RecDeployment) (hD : D.Real) (C 
     (hstmt : StatementPortMeaning D C Fa) (hzero : ZeroPortsMeaning D C Fa)
     (hcalls : CallWordsAgree D C Fa) (hlay : Pi1CallsLayouts D) :
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 :=
-  recKnowledgeSoundness2_real D hD C Fa T hfs hroots hg pi1RootWordOk
-    (circuitBridge D hD C Fa hroots hg hstmt hzero hcalls hlay)
+  recKnowledgeSoundness2_real D hD C Fa T hfs hroots hg (circuitBridge D hD C Fa hroots hg hstmt hzero hcalls hlay)
 
 end RecCompose
 
