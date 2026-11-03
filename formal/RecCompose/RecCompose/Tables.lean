@@ -778,3 +778,122 @@ theorem setupStack_getD (c : Pi2Circuit) {k : ℕ} (hk : k < 2 ^ c.circuit.logN)
     simp [hk]
 
 end RecCompose
+
+namespace RecCompose
+
+open RecStatement LeanVM.Parameters LeanVM.Protocol Finset Polynomial
+open scoped ENNReal
+
+/-! ## The tables' layer, assembled -/
+
+section Gen
+
+variable {F : Type} [Field F] [CharP F 2]
+
+theorem cancel_left_gen {a b c : F} (ha : a ≠ 0) (h : a * b = a * c) : b = c := mul_left_cancel₀ ha h
+
+theorem inv_mul_ne_zero_gen {a b : F} (ha : a ≠ 0) (hb : b ≠ 0) : (a * b)⁻¹ ≠ 0 := inv_ne_zero (mul_ne_zero ha hb)
+
+theorem prod_inv_ne_zero_gen {n : ℕ} {f : ℕ → F} (h : ∀ l < n, f l ≠ 0) : ∏ l ∈ range n, (f l)⁻¹ ≠ 0 :=
+  Finset.prod_ne_zero_iff.mpr fun l hl ↦ inv_ne_zero (h l (Finset.mem_range.mp hl))
+
+/-- `1 + w_l(t) ≠ 0` below a nonzero digit: `w_{l+1} = w_l (1 + w_l)`. -/
+theorem one_add_digit_ne_zero {t : F} {n : ℕ} (h : QuotientSecurity.sq^[n] t ≠ 0) {l : ℕ} (hl : l < n) :
+    1 + QuotientSecurity.sq^[l] t ≠ 0 := by
+  have := digit_ne_zero_of_le (l := l + 1) (by omega) h
+  rw [Function.iterate_succ_apply', sq_eq_mul] at this
+  exact right_ne_zero_of_mul this
+
+end Gen
+
+/-- **The deployment's setup columns are the compiled circuit's**, at every setup (every π1 IV): `κ` and `σ` of
+`D.circuitAt roots.pi1` (which the setup's table commits) are `C.G roots`'s (which the PIOP reads). At π1's reference
+IV, `RecDeployment.Real` pins `D`'s `σ`, `κ` by the circuit's digest and the setup's root (the Rust's), and
+`RecCircuitTest/Main.lean` compares the Lean compiler's `σ` (a hash of all `2^24` positions) and `κ` with the Rust's
+(compiled evaluation); at the other IVs (only `κ`'s IV constants move) it is how the deployment is meant to be built:
+**a run and a definition, not a proof**. -/
+def Pi2SetupColumns (D : RecDeployment) (C : Pi2Circuits D) : Prop :=
+  ∀ (roots : RecSetupRoots) (i : ℕ), i < 2 ^ (C.G roots).logN →
+    ofK ((D.circuitAt roots.pi1).kappa i) = (C.G roots).kappa i ∧
+      (D.circuitAt roots.pi1).sigma i = (C.G roots).sigma i
+
+section Model
+
+variable {D : RecDeployment} {C : Pi2Circuits D} (Fa : Pi2Facts D C) (roots : RecSetupRoots)
+
+theorem view_logN (Fa : Pi2Facts D C) (roots : RecSetupRoots) : (D.circuitAt roots.pi1).circuit.logN = (C.G roots).logN := (Fa.spec roots).logN
+
+theorem view_logRow (Fa : Pi2Facts D C) (roots : RecSetupRoots) : (D.circuitAt roots.pi1).circuit.logRow = (C.G roots).logW := (Fa.spec roots).logRow
+
+theorem view_logN24 (Fa : Pi2Facts D C) (roots : RecSetupRoots) : (D.circuitAt roots.pi1).circuit.logN = 24 := (view_logN Fa roots).trans (Fa.logN roots)
+
+theorem view_logRow4 (Fa : Pi2Facts D C) (roots : RecSetupRoots) : (D.circuitAt roots.pi1).circuit.logRow = 4 := (view_logRow Fa roots).trans (Fa.logW roots)
+
+theorem pow_view_N (Fa : Pi2Facts D C) (roots : RecSetupRoots) :
+    2 ^ (D.circuitAt roots.pi1).circuit.logN = (C.G roots).N := by
+  rw [view_logN Fa roots]; rfl
+
+theorem pow_view_N4 (Fa : Pi2Facts D C) (roots : RecSetupRoots) :
+    2 ^ ((D.circuitAt roots.pi1).circuit.logN + 2) = 4 * (C.G roots).N := by
+  rw [pow_add, pow_view_N Fa roots]; ring
+
+/-- `W`'s table: the stack read under `W`'s layout. -/
+def wTab (D : RecDeployment) (roots : RecSetupRoots) (c : Stk) (i : ℕ) : K := (wLayout D roots).readEntry c i
+
+/-- `κ`'s basis-`B` coefficients (the setup table's first half). -/
+def kappaB (D : RecDeployment) (roots : RecSetupRoots) : Array K :=
+  UniStatement.bCoefficients (D.circuitAt roots.pi1).circuit.logN
+    (Array.ofFn (n := 2 ^ (D.circuitAt roots.pi1).circuit.logN) fun i ↦ (D.circuitAt roots.pi1).kappa i.val)
+
+/-- `σ`'s points' basis-`B` coefficients (the setup table's halves' sum). -/
+def sigmaB (D : RecDeployment) (roots : RecSetupRoots) : Array K :=
+  UniStatement.bCoefficients (D.circuitAt roots.pi1).circuit.logN
+    (Array.ofFn (n := 2 ^ (D.circuitAt roots.pi1).circuit.logN) fun i ↦
+      UniStatement.point ((D.circuitAt roots.pi1).sigma i.val))
+
+/-- **The setup's polynomials**: `κ`'s and `σ`'s basis-`B` polynomials, which take `C.G roots`'s `κ` and `ω_σ` on
+`V_m` (`Pi2SetupColumns`). -/
+noncomputable def pi2SetupPolys (hcol : Pi2SetupColumns D C) : RecPiop.SetupPolys (C.G roots) pi2Omega where
+  σP := wPoly (D.circuitAt roots.pi1).circuit.logN fun i ↦ (sigmaB D roots).getD i 0
+  κP := wPoly (D.circuitAt roots.pi1).circuit.logN fun i ↦ (kappaB D roots).getD i 0
+  σ_deg := (natDegree_wPoly_lt _ _).trans_eq (pow_view_N Fa roots)
+  κ_deg := (natDegree_wPoly_lt _ _).trans_eq (pow_view_N Fa roots)
+  σ_eval i hi := by
+    have hi' : i < 2 ^ (D.circuitAt roots.pi1).circuit.logN := by rw [view_logN Fa roots]; exact hi
+    unfold sigmaB
+    rw [wPoly_bCoefficients (by rw [view_logN24 Fa roots]; norm_num) _ (by rw [Array.size_ofFn]) hi',
+      ← (hcol roots i hi).2, pi2Omega_eq]
+    rw [Array.getD_eq_getD_getElem?, Array.getElem?_ofFn]
+    simp [hi', UniStatement.pointE]
+  κ_eval i hi := by
+    have hi' : i < 2 ^ (D.circuitAt roots.pi1).circuit.logN := by rw [view_logN Fa roots]; exact hi
+    unfold kappaB
+    rw [wPoly_bCoefficients (by rw [view_logN24 Fa roots]; norm_num) _ (by rw [Array.size_ofFn]) hi',
+      ← (hcol roots i hi).1]
+    rw [Array.getD_eq_getD_getElem?, Array.getElem?_ofFn]
+    simp [hi']
+
+/-- **What the candidates stand for** at a setup: `W`'s basis-`B` polynomial and its true fold values, `Q`'s `h` and
+`q` in the novel basis, the setup's polynomials. -/
+noncomputable def pi2Model (hcol : Pi2SetupColumns D C) : RecPiop.Model (C.G roots) pi2Omega Stk where
+  setup := pi2SetupPolys Fa roots hcol
+  wP c := wPoly (D.circuitAt roots.pi1).circuit.logN (wTab D roots c)
+  wP_deg c := (natDegree_wPoly_lt _ _).trans_eq (pow_view_N Fa roots)
+  hP c := hPoly (qTable (D.circuitAt roots.pi1).circuit.logN c) (D.circuitAt roots.pi1).circuit.logN
+  hP_deg c := (UniComplete.AlgC.novP_natDegree_lt _ _).trans_eq (pow_view_N Fa roots)
+  qP c := qPoly (qTable (D.circuitAt roots.pi1).circuit.logN c) (D.circuitAt roots.pi1).circuit.logN
+  qP_deg c := (UniComplete.AlgC.novP_natDegree_lt _ _).trans_eq (pow_view_N4 Fa roots)
+  fold c t := wFold (D.circuitAt roots.pi1).circuit.logN (D.circuitAt roots.pi1).circuit.logRow (wTab D roots c) t
+  cells_fold c t x hx := by
+    have hx' : x < 2 ^ (D.circuitAt roots.pi1).circuit.logRow := by
+      rw [view_logRow Fa roots]; exact hx
+    have h := cells_wFold (m := (D.circuitAt roots.pi1).circuit.logN)
+      (by rw [view_logRow4 Fa roots, view_logN24 Fa roots]; norm_num) (wTab D roots c) t hx'
+      (by rw [view_logRow4 Fa roots]; norm_num)
+    have e : (C.G roots).logW = (D.circuitAt roots.pi1).circuit.logRow := (view_logRow Fa roots).symm
+    exact (congrArg (fun r ↦ RecPiop.cellsOf r pi2Omega (wFold (D.circuitAt roots.pi1).circuit.logN
+      (D.circuitAt roots.pi1).circuit.logRow (wTab D roots c) t) t x) e).trans h
+
+end Model
+
+end RecCompose
