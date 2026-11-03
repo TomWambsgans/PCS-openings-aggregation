@@ -71,6 +71,7 @@ open Lv42.Protocol.LeanIsa (Col IsLimb kappa blocks stackOrder leanIsaμ blockOf
   opIdx opcodeTable opcodeComponent)
 open Lv42.Protocol.Blake2sFlock (blake2sFlockSpec)
 open Lv42.Semantics (Program)
+open LeanVM.Protocol (cubeIndex)
 
 /-! ## `rowPosition` stays in its table -/
 
@@ -411,6 +412,199 @@ theorem lvConstraints (D : Deployment) : LvConstraints D := by
   rw [hb, hv, hw] at h
   exact h
 
+/-! ## `QFLOCK` is `q_flock` -/
+
+/-- `C1`'s layout as the identity model finds it (`layoutOf`) is the mapping's (`c1Layout`). -/
+theorem layoutOf_c1 (S : UniStatement.Shape) : layoutOf S .c1 = c1Layout S := rfl
+
+/-- **`QFLOCK`'s cell `u` of `C1`'s Lv42 stack is `q_flock`'s word** `qfOff + u mod 256 +
+256 · rowPosition (u / 256)` (`C1Limbs`: `q_flock` is one block of `h_B + 8` variables). -/
+theorem flock_lv42Stack_qf (D : Deployment) (hL : C1Limbs D.shape) (rows : List ℕ) (c : Stk)
+    (u : Fin (2 ^ (8 + (D.sizes rows).τ 5))) :
+    ((D.inst rows).column (lv42Stack D.prog (D.sizes rows) D.shape c) flockCol).values.get u =
+      c (qfOff D + (u.val % 256 +
+        256 * rowPosition (rows.getD 5 0) (D.shape.heights.getD opBlake2s 0) (u.val / 256))) := by
+  obtain ⟨off, hoff⟩ := hL.2.2.2.2
+  rw [layoutOf_c1] at hoff
+  refine (flock_lv42Stack D.prog (D.sizes rows) D.shape c u).trans ?_
+  have hqf : qfOff D = off := by simp [qfOff, hoff]
+  have hblock : c1Block (c1Layout D.shape) c .qflock =
+      Array.ofFn (n := 2 ^ (D.shape.heights.getD opBlake2s 0 + 8)) fun i ↦ c (off + i.val) := by
+    unfold c1Block
+    rw [hoff]
+  rw [hblock, hqf]
+  have hu : u.val / 256 < 2 ^ Nat.clog 2 (rows.getD 5 0) := by
+    have hp : 2 ^ (8 + (D.sizes rows).τ 5) = 2 ^ (D.sizes rows).τ 5 * 256 := by
+      rw [pow_add, mul_comm]; rfl
+    have h : u.val < 2 ^ (D.sizes rows).τ 5 * 256 := lt_of_lt_of_eq u.isLt hp
+    exact (Nat.div_lt_iff_lt_mul (by norm_num)).mpr h
+  have ht := rowPosition_lt (count := rows.getD 5 0) (r := D.shape.heights.getD opBlake2s 0) hu
+  have hm : u.val % 256 < 256 := Nat.mod_lt _ (by norm_num)
+  have hpow : 2 ^ (D.shape.heights.getD opBlake2s 0 + 8) =
+      2 ^ D.shape.heights.getD opBlake2s 0 * 256 := by
+    rw [pow_add]; rfl
+  have hb : u.val % 256 + 256 * rowPosition (rows.getD 5 0) (D.shape.heights.getD opBlake2s 0)
+      (u.val / 256) < 2 ^ (D.shape.heights.getD opBlake2s 0 + 8) := by
+    rw [hpow]; omega
+  show (Array.ofFn (n := 2 ^ (D.shape.heights.getD opBlake2s 0 + 8)) fun i ↦ c (off + i.val)).getD
+      (u.val % 256 + 256 * rowPosition (rows.getD 5 0) (D.shape.heights.getD opBlake2s 0) (u.val / 256)) 0 = _
+  rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem (by rw [Array.size_ofFn]; exact hb),
+    Option.getD_some, Array.getElem_ofFn]
+
+/-- **A `BLAKE2S` limb of `C1`'s Lv42 stack is `q_flock`'s slot**: limb `k` at Lv42's row `x` is `C1`'s
+word `qfOff + slot k + 256 · rowPosition x`, the word `CopiesOf` equates with `C1`'s copy of the limb at
+row `rowPosition x` (`slots_agree`: the slot is `qflockSlot` of the limb's name). -/
+theorem limb_lv42Stack_qf (D : Deployment) (hL : C1Limbs D.shape) (rows : List ℕ) (c : Stk) (k : Fin 18)
+    (x : Fin (2 ^ (D.sizes rows).τ 5)) :
+    ((D.inst rows).column (lv42Stack D.prog (D.sizes rows) D.shape c) (limbCol k)).values.get x =
+      c (qfOff D + (blake2sFlockSpec.slot k).val +
+        256 * rowPosition (rows.getD 5 0) (D.shape.heights.getD opBlake2s 0) x.val) := by
+  refine ((limb_lv42Stack D.prog (D.sizes rows) D.shape c k x).trans
+    (column_lv42Stack D.prog (D.sizes rows) D.shape c flockCol
+      Lv42.Protocol.LeanIsa.not_isLimb_flockCol _).symm).trans ?_
+  refine (flock_lv42Stack_qf D hL rows c _).trans ?_
+  have hs : (blake2sFlockSpec.slot k).val < 256 := (blake2sFlockSpec.slot k).isLt
+  have e1 : ((blake2sFlockSpec.slot k).val + 256 * x.val) % 256 = (blake2sFlockSpec.slot k).val := by
+    omega
+  have e2 : ((blake2sFlockSpec.slot k).val + 256 * x.val) / 256 = x.val := by omega
+  show c (qfOff D + (((blake2sFlockSpec.slot k).val + 256 * x.val) % 256 +
+    256 * rowPosition (rows.getD 5 0) (D.shape.heights.getD opBlake2s 0)
+      (((blake2sFlockSpec.slot k).val + 256 * x.val) / 256))) = _
+  rw [e1, e2, Nat.add_assoc]
+
+/-! ## Flock's region -/
+
+/-- A batch's block depends only on its cells: blocks `t`, `t'` of two batches agree when every
+table's cells `cubeIndex jin t`, `cubeIndex jin t'` do. -/
+theorem batchBlock_congr {R : Type*} [CommRing R] {s m κ κ' : ℕ}
+    (z : Fin (2 ^ s) → CompPoly.CMlPolynomialEval R (m + κ))
+    (z' : Fin (2 ^ s) → CompPoly.CMlPolynomialEval R (m + κ')) (t : Fin (2 ^ κ)) (t' : Fin (2 ^ κ'))
+    (h : ∀ jsk jin, (z jsk)[cubeIndex jin t] = (z' jsk)[cubeIndex jin t']) :
+    Lv42.Protocol.BlockR1CS.batchBlock z t = Lv42.Protocol.BlockR1CS.batchBlock z' t' := by
+  apply Vector.ext
+  intro j hj
+  simp only [Lv42.Protocol.BlockR1CS.batchBlock, Vector.getElem_ofFn]
+  exact h _ _
+
+/-- The bit tables' cells are the column's cells' bits. -/
+theorem bitTable_get {n : ℕ} (c : LeanVM.Protocol.Column n) (i : Fin (2 ^ Lv42.Parameters.Flock.kSkip))
+    (u : Fin (2 ^ n)) : (Lv42.Protocol.bitTable c i)[u] = Lv42.Protocol.cellBit (c.values.get u) i := by
+  simp [Lv42.Protocol.bitTable]
+
+/-- **Flock's predicate on `C1`'s `q_flock` is Lv42's region's** (`aux`): the region's block `t` is
+`q_flock`'s block `rowPosition (rows 5) h_B t`, below `2^h_B` (`rowPosition_lt`), cell for cell. -/
+theorem lvAux (D : Deployment) (hL : C1Limbs D.shape) : LvAux D := by
+  intro s c hF r hr
+  obtain rfl := (Option.some.inj (Option.mem_def.mp hr)).symm
+  intro t
+  have ht : rowPosition (s.2.getD 5 0) (D.shape.heights.getD opBlake2s 0) t.val <
+      2 ^ D.shape.heights.getD opBlake2s 0 := rowPosition_lt (count := s.2.getD 5 0) t.isLt
+  have key : Lv42.Protocol.BlockR1CS.batchBlock
+      (Lv42.Protocol.bitTable ((D.inst s.2).flockColumn
+        (Lv42.Protocol.LeanIsa.flockRegion D.prog (D.sizes s.2) blake2sFlockSpec)
+        (lv42Stack D.prog (D.sizes s.2) D.shape c))) t =
+      Lv42.Protocol.BlockR1CS.batchBlock
+        (Lv42.Protocol.bitTable (qfOf D c (D.shape.heights.getD opBlake2s 0))) ⟨_, ht⟩ := by
+    refine batchBlock_congr _ _ _ _ fun jsk jin ↦ ?_
+    rw [bitTable_get, bitTable_get]
+    congr 1
+    refine (flock_lv42Stack_qf D hL s.2 c (cubeIndex jin t)).trans ?_
+    have hj : jin.val < 256 := jin.isLt
+    have e1 : (jin.val + 256 * t.val) % 256 = jin.val := by omega
+    have e2 : (jin.val + 256 * t.val) / 256 = t.val := by omega
+    simp only [qfOf, Vector.get_ofFn]
+    show c (qfOff D + ((jin.val + 256 * t.val) % 256 + 256 * rowPosition (s.2.getD 5 0)
+      (D.shape.heights.getD opBlake2s 0) ((jin.val + 256 * t.val) / 256))) =
+        c (qfOff D + (jin.val + 256 * rowPosition (s.2.getD 5 0) (D.shape.heights.getD opBlake2s 0) t.val))
+    rw [e1, e2]
+  rw [key]
+  exact hF ⟨_, ht⟩
+
+/-! ## The bus counts -/
+
+/-- **The bus bound** at a shape: every table's flushes (the verifier's push tuples, as many as its
+pulls) times its height, the memory's and the bytecode's blocks, the state boundary. -/
+def busBound (S : UniStatement.Shape) : ℕ :=
+  ∑ j ∈ Finset.range 6, (tables.getD j default).flushes.push.length * 2 ^ S.heights.getD j 0 +
+    2 ^ S.logMemory + 2 ^ S.logBytecode + 1
+
+/-- **Lv42's push flushes are the verifier's**, table by table (`5, 5, 3, 5, 5, 11`). -/
+theorem pushes_eq : ∀ j : Fin 6,
+    ((Lv42.Protocol.LeanIsa.flushes (opIdx j)).filter fun f ↦
+      decide (f.1 = Lv42.Protocol.Side.push)).length = (tables.getD j.val default).flushes.push.length := by
+  decide +kernel
+
+/-- **Lv42's pull flushes are as many**, table by table. -/
+theorem pulls_eq : ∀ j : Fin 6,
+    ((Lv42.Protocol.LeanIsa.flushes (opIdx j)).filter fun f ↦
+      decide (f.1 = Lv42.Protocol.Side.pull)).length = (tables.getD j.val default).flushes.push.length := by
+  decide +kernel
+
+/-- A side of the bus has at most `busBound` tuples at counts in range. -/
+theorem busCount_le (D : Deployment) (rows : List ℕ) (hfit : CountsFit D.shape rows)
+    (side : Lv42.Protocol.Side)
+    (hside : ∀ j : Fin 6, ((Lv42.Protocol.LeanIsa.flushes (opIdx j)).filter fun f ↦
+      decide (f.1 = side)).length = (tables.getD j.val default).flushes.push.length) :
+    Heap.busCount (D.inst rows) side ≤ busBound D.shape := by
+  have hb : (((D.inst rows).boundary.filter fun b ↦ decide (b.side = side)).map fun b ↦ 2 ^ b.κ).sum =
+      2 ^ 0 + (2 ^ D.shape.logMemory + (2 ^ D.shape.logBytecode + 0)) := by
+    rw [D.logBytecode_eq]
+    cases side <;> rfl
+  let g : ℕ → ℕ := fun j ↦ if 3 ≤ j then
+    (tables.getD (j - 3) default).flushes.push.length * 2 ^ D.shape.heights.getD (j - 3) 0 else 0
+  have hle : ∀ j : Fin (D.inst rows).ntab,
+      (((D.inst rows).flushes j).filter fun f ↦ decide (f.1 = side)).length * (D.inst rows).rows j ≤
+        g j.val := by
+    intro j
+    rcases j with ⟨_ | _ | _ | j, hj⟩
+    · have h0 : (D.inst rows).flushes ⟨0, hj⟩ = [] := rfl
+      rw [h0]
+      simp
+    · have h0 : (D.inst rows).flushes ⟨1, hj⟩ = [] := rfl
+      rw [h0]
+      simp
+    · have h0 : (D.inst rows).flushes ⟨2, hj⟩ = [] := rfl
+      rw [h0]
+      simp
+    · have h9 : (D.inst rows).ntab = 9 := rfl
+      have hj6 : j < 6 := by omega
+      have hlen : (((D.inst rows).flushes ⟨j + 1 + 1 + 1, hj⟩).filter fun f ↦
+          decide (f.1 = side)).length = (tables.getD j default).flushes.push.length := hside ⟨j, hj6⟩
+      have hrows : (D.inst rows).rows ⟨j + 1 + 1 + 1, hj⟩ = rows.getD j 0 := rfl
+      have hg : g (j + 1 + 1 + 1) =
+          (tables.getD j default).flushes.push.length * 2 ^ D.shape.heights.getD j 0 := by
+        simp only [g, show 3 ≤ j + 1 + 1 + 1 by omega, show j + 1 + 1 + 1 - 3 = j by omega, ↓reduceIte]
+      rw [hlen, hrows]
+      show _ ≤ g (j + 1 + 1 + 1)
+      rw [hg]
+      exact Nat.mul_le_mul_left _ (hfit.2 j hj6)
+  have hA : ((List.finRange (D.inst rows).ntab).map fun j ↦
+      (((D.inst rows).flushes j).filter fun f ↦ decide (f.1 = side)).length * (D.inst rows).rows j).sum ≤
+        ∑ j ∈ Finset.range 6, (tables.getD j default).flushes.push.length *
+          2 ^ D.shape.heights.getD j 0 := by
+    rw [← Fin.sum_univ_def]
+    calc _ ≤ ∑ j : Fin 9, g j.val := Finset.sum_le_sum fun j _ ↦ hle j
+      _ = ∑ j ∈ Finset.range 9, g j := Fin.sum_univ_eq_sum_range g 9
+      _ = ∑ j ∈ Finset.range 3, g j + ∑ x ∈ Finset.range 6, g (3 + x) := Finset.sum_range_add g 3 6
+      _ = _ := by
+        rw [Finset.sum_eq_zero (fun x hx ↦ by
+          have : x < 3 := Finset.mem_range.mp hx
+          simp only [g, show ¬ 3 ≤ x by omega, ↓reduceIte]), zero_add]
+        refine Finset.sum_congr rfl fun x _ ↦ ?_
+        simp only [g, show 3 ≤ 3 + x by omega, show 3 + x - 3 = x by omega, ↓reduceIte]
+  unfold Heap.busCount busBound
+  rw [hb]
+  omega
+
+/-- **The bus counts**: at counts in range, at most `busBound` tuples a side. -/
+theorem lvBusCount (D : Deployment) : LvBusCount D (busBound D.shape) := fun rows hfit ↦
+  ⟨busCount_le D rows hfit _ pushes_eq, busCount_le D rows hfit _ pulls_eq⟩
+
+/-- **The reference shape's bus bound fits**: `busBound reference = 10,878,977` (heights
+`18, 18, 18, 18, 17, 18`, the memory `2^21`, the bytecode `2^19`). -/
+theorem busBound_reference : 4 * busBound reference + 100 ≤ 2 ^ 32 := by
+  decide +kernel
+
 /-! ## Axioms -/
 
 /-- info: 'UniSound.Ids.lvReadBack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -428,5 +622,21 @@ theorem lvConstraints (D : Deployment) : LvConstraints D := by
 /-- info: 'UniSound.Ids.slots_agree' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms slots_agree
+
+/-- info: 'UniSound.Ids.lvAux' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms lvAux
+
+/-- info: 'UniSound.Ids.limb_lv42Stack_qf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms limb_lv42Stack_qf
+
+/-- info: 'UniSound.Ids.lvBusCount' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms lvBusCount
+
+/-- info: 'UniSound.Ids.busBound_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms busBound_reference
 
 end UniSound.Ids
