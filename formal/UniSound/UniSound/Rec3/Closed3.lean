@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. The statement is `formal/UniStatement`'s
 -- `UniKnowledgeSoundnessRec3` (`RecSecurity.lean`); the assembly follows `Closed.lean` (the main line's).
 import UniSound.Rec3.Numbers3
+import UniSound.Rec3.CodeLink3
 
 /-!
 # Knowledge soundness of π1-rec3 at the reference deployment
@@ -38,8 +39,32 @@ theorem uniKnowledgeSoundness_rec3_of_code (D : Deployment) (hD : D.shape = refe
         exact valsCount_le.trans (by decide)))
       (uniOutRoots3_of D (flock3Ref D hw) _ 13 C hroots))
 
+theorem nV_ref3 (D : Deployment) (hD : D.shape = reference) (hw : WalkSpec (D.shape.heights.getD opBlake2s 0)) :
+    (ids3Ref D hD hw).nV = valsCount := by
+  show nVOf D.shape = valsCount
+  exact nVOf_eq_of D.shape (by have h : tablesReads + 7 ≤ 122 := valsCount_le; omega)
+
+/-- **π1-rec3's code-level link at the reference** (`uniCode3At`). -/
+noncomputable def code3Ref (D : Deployment) (hD : D.shape = reference)
+    (hw : WalkSpec (D.shape.heights.getD opBlake2s 0)) :
+    UniCode3 D (flock3Ref D hw) (ids3Ref D hD hw).nV 13 :=
+  uniCode3At D (flock3Ref D hw) rfl _ 13 (nV_ref3 D hD hw) (by rw [hD, varsOf_reference])
+
+/-- **π1-rec3 at the reference deployment, from the walk and the last link.** -/
+theorem uniKnowledgeSoundness_rec3_of_final (D : Deployment) (hD : D.shape = reference)
+    (hIv : D.programIv = programIv) (hw : WalkSpec (D.shape.heights.getD opBlake2s 0))
+    (hFin : UniFinal3 D (flock3Ref D hw) (ids3Ref D hD hw) (pairBatchRec3 13) (code3Ref D hD hw)) :
+    UniKnowledgeSoundnessRec3 D (uniBound3 (((2 ^ 35 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
+      ∀ Q ≤ 2 ^ 64, uniBound3 (((2 ^ 35 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
+  uniKnowledgeSoundness_rec3_of_code D hD hIv hw (code3Ref D hD hw)
+    (uniCode3At_roots D (flock3Ref D hw) rfl _ 13 (nV_ref3 D hD hw) (by rw [hD, varsOf_reference])) hFin
+
 end UniSound.Rec3Ref
 
 /-- info: 'UniSound.Rec3Ref.uniKnowledgeSoundness_rec3_of_code' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.Rec3Ref.uniKnowledgeSoundness_rec3_of_code
+
+/-- info: 'UniSound.Rec3Ref.uniKnowledgeSoundness_rec3_of_final' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Rec3Ref.uniKnowledgeSoundness_rec3_of_final
