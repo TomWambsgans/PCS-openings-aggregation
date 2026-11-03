@@ -22,6 +22,50 @@ proved for every deployment:
 
 namespace UniSound.Ids
 
+/-! ## `JUMP`'s constraints at a row -/
+
+section JumpRow
+
+open Lv42.Parameters Lv42.Semantics Lv42.Arithmetization LeanVM.Parameters
+open Air.Flat (Component)
+
+/-- The `JUMP` table has fourteen columns. -/
+theorem jump_width : (Lv42.Protocol.LeanIsa.opcodeComponent 4).width = 14 := by decide +kernel
+
+/-- A `JUMP` row has twelve columns before its two local witnesses. -/
+theorem jumpRow_size : size JumpRow = 12 := rfl
+
+/-- **`JUMP`'s Clean constraints hold at a row of fourteen cells** whose cells `13, 5, 12`
+(`b`, `v_cond`, `w`, as `jumpColumns` names them) satisfy `b + v_cond·w = 0` and `v_cond·(b + 1) = 0`
+(Lv42's `jump_constraints_iff`, the row read by its cells). -/
+theorem jump_constraintsHold (row : Fin (Lv42.Protocol.LeanIsa.opcodeComponent 4).width → K)
+    (data : ProverData K)
+    (h1 : row ⟨13, by rw [jump_width]; omega⟩ + row ⟨5, by rw [jump_width]; omega⟩ *
+      row ⟨12, by rw [jump_width]; omega⟩ = 0)
+    (h2 : row ⟨5, by rw [jump_width]; omega⟩ * (row ⟨13, by rw [jump_width]; omega⟩ + 1) = 0) :
+    (⟨jumpTable⟩ : Component K).operations.ConstraintsHold
+      (Environment.fromArray (Array.ofFn row) data) := by
+  rw [Component.constraintsHold_iff, Component.rowOperations_mk]
+  have hget : ∀ (i : ℕ) (hi : i < 14), (Environment.fromArray (Array.ofFn row) data).get i =
+      row ⟨i, by rw [jump_width]; exact hi⟩ := by
+    intro i hi
+    show ((Array.ofFn row)[i]?).getD 0 = _
+    rw [Array.getElem?_ofFn]
+    simp [jump_width, hi]
+  have hv : (eval (Environment.fromArray (Array.ofFn row) data)
+      (varFromOffset JumpRow 0 : Var JumpRow K)).vcond =
+        (Environment.fromArray (Array.ofFn row) data).get 5 := by
+    rw [eval_varFromOffset_valueFromOffset]
+    simp [valueFromOffset, explicit_provable_type, circuit_norm]
+  refine (jump_constraints_iff (varFromOffset JumpRow 0) (Environment.fromArray (Array.ofFn row) data)
+    (size JumpRow) _ rfl ((Environment.fromArray (Array.ofFn row) data).get 12)
+    ((Environment.fromArray (Array.ofFn row) data).get 13) (by rw [jumpRow_size])
+    (by rw [jumpRow_size])).mpr ?_
+  rw [hv, hget 5 (by omega), hget 12 (by omega), hget 13 (by omega)]
+  exact ⟨h1, h2⟩
+
+end JumpRow
+
 open LeanVM.Parameters UniStatement
 open Lv42.Protocol.LeanIsa (Col IsLimb kappa blocks stackOrder leanIsaμ blockOf flockCol limbCol memCol
   opIdx opcodeTable opcodeComponent)
@@ -208,6 +252,165 @@ end Read
 theorem lvReadBack (D : Deployment) : LvReadBack D := fun rows c col hcol x ↦
   column_lv42Stack D.prog (D.sizes rows) D.shape c col hcol x
 
+/-! ## The tables agree -/
+
+/-- **Lv42's count columns are the verifier's** (`Table.countColumns`, the names starting `cnt`), table
+by table and in order: the coordinate-`1` variables of the memory and bytecode pulls. -/
+theorem counts_eq : ∀ j : Fin 6,
+    (opcodeTable j).count.map (·.val) = (tables.getD j.val default).countColumns := by
+  decide +kernel
+
+/-- `BLAKE2S`'s count columns are past its limbs. -/
+theorem counts_past_limbs : ∀ j : Fin 6, ∀ k ∈ (opcodeTable j).count, j = 5 → 27 ≤ k.val := by
+  decide +kernel
+
+/-- A count column is committed (not a `BLAKE2S` limb). -/
+theorem counts_not_limb (j : Fin 6) (k : Fin (opcodeTable j).width) (hk : k ∈ (opcodeTable j).count) :
+    ¬ IsLimb ⟨opIdx j, k⟩ := fun hl ↦ by
+  have h5 : j = 5 := Fin.ext (by have := congrArg Fin.val hl.1; simp [opIdx] at this; omega)
+  have h27 := counts_past_limbs j k hk h5
+  have hk27 : k.val < 27 := hl.2.2
+  omega
+
+/-- **The tables' widths agree**: Lv42's opcode components and the verifier's tables. -/
+theorem widths_eq : ∀ j : Fin 6, (opcodeComponent j).width = (tables.getD j.val default).width := by
+  decide +kernel
+
+/-- **`JUMP`'s columns**: `b`, `v_cond`, `w` are columns `13, 5, 12`, Lv42's `JumpRow` order with its
+witnesses `w, b` last. -/
+theorem jump_idx : colIdx jumpColumns "b" = 13 ∧ colIdx jumpColumns "v_cond" = 5 ∧
+    colIdx jumpColumns "w" = 12 := by decide
+
+/-- **The limbs' slots agree**: `BLAKE2S`'s column `9 + k` (`blake2sColumns`) is `q_flock`'s slot
+`qflockSlot` of its name, Lv42's `blake2sFlockSpec.slot k`. -/
+theorem slots_agree : ∀ k : Fin 18,
+    qflockSlot (blake2sColumns.getD (9 + k.val) "") = some (blake2sFlockSpec.slot k).val := by
+  decide +kernel
+
+/-! ## The constraints, the counts, the public lines -/
+
+section Constraints
+
+variable (D : Deployment) (rows : List ℕ) (c : Stk)
+
+/-- A row of an opcode table of `C1`'s Lv42 stack: `C1`'s values at `rowPosition`. -/
+theorem row_lv42Stack (j : Fin 6) (x : Fin (2 ^ (D.sizes rows).τ j))
+    (i : Fin (Lv42.Protocol.LeanIsa.width (opIdx j))) (h : ¬ IsLimb ⟨opIdx j, i⟩) :
+    (D.inst rows).row (lv42Stack D.prog (D.sizes rows) D.shape c) (opIdx j) x i =
+      c1Val D c (.table j.val i.val) (D.shape.heights.getD j.val 0)
+        (rowPosition (rows.getD j.val 0) (D.shape.heights.getD j.val 0) x.val) :=
+  table_lv42Stack D.prog (D.sizes rows) D.shape c j i h x
+
+/-- **`ConstraintsVanish`** from `JUMP`'s two constraints on every row of `C1` (the other tables have
+none, `opcode_constraints_nil`). -/
+theorem constraintsVanish_lv42Stack (hjump : ∀ x < 2 ^ D.shape.heights.getD opJump 0,
+      c1Val D c (.table opJump 13) (D.shape.heights.getD opJump 0) x +
+          c1Val D c (.table opJump 5) (D.shape.heights.getD opJump 0) x *
+            c1Val D c (.table opJump 12) (D.shape.heights.getD opJump 0) x = 0 ∧
+        c1Val D c (.table opJump 5) (D.shape.heights.getD opJump 0) x *
+          (c1Val D c (.table opJump 13) (D.shape.heights.getD opJump 0) x + 1) = 0) :
+    (D.inst rows).ConstraintsVanish (lv42Stack D.prog (D.sizes rows) D.shape c) := by
+  intro j C hC x
+  rcases j with ⟨_ | _ | _ | j, hj⟩
+  · exact absurd hC List.not_mem_nil
+  · exact absurd hC List.not_mem_nil
+  · exact absurd hC List.not_mem_nil
+  · have h9 : (D.inst rows).ntab = 9 := rfl
+    have hj6 : j < 6 := by omega
+    by_cases h4 : j = 4
+    · subst h4
+      have hpos : rowPosition (rows.getD 4 0) (D.shape.heights.getD opJump 0) x.val <
+          2 ^ D.shape.heights.getD opJump 0 := rowPosition_lt (count := rows.getD 4 0) x.isLt
+      obtain ⟨h1, h2⟩ := hjump _ hpos
+      let row : Fin (opcodeComponent 4).width → K := fun i ↦
+        c1Val D c (.table 4 i.val) (D.shape.heights.getD 4 0)
+          (rowPosition (rows.getD 4 0) (D.shape.heights.getD 4 0) x.val)
+      have hrow : (D.inst rows).row (lv42Stack D.prog (D.sizes rows) D.shape c) ⟨4 + 3, hj⟩ x = row := by
+        funext i
+        exact row_lv42Stack D rows c 4 x i (fun hl ↦ by have := congrArg Fin.val hl.1; simp [opIdx] at this)
+      rw [hrow]
+      have hl := List.isEmpty_iff.mp (Lv42.Protocol.LeanIsa.opcode_lookups 4)
+      exact (LeanVM.Protocol.toM3_constraints_iff (opcodeComponent 4) Lv42.Arithmetization.channelSep
+        Lv42.Arithmetization.channelDir Lv42.Protocol.LeanIsa.counted hl row (fun _ _ ↦ #[])).mpr
+          (jump_constraintsHold row _ h1 h2) C hC
+    · exact absurd (List.length_pos_of_mem hC) (by
+        change ¬ 0 < (opcodeTable ⟨j, hj6⟩).constraints.length
+        rw [Lv42.Protocol.LeanIsa.opcode_constraints_nil ⟨j, hj6⟩ (fun h ↦ h4 (congrArg Fin.val h))]
+        omega)
+
+/-- **`CountsNonzero`** from the counters' inverse `z·Πc = 1` on every row of `C1`: every count column of
+Lv42 is a counter of the verifier's (`counts_eq`), and a factor of a product `1` is nonzero. -/
+theorem countsNonzero_lv42Stack (hcnt : ∀ o < 6, ∀ x < 2 ^ D.shape.heights.getD o 0,
+    c1Val D c (.inverse o) (D.shape.heights.getD o 0) x *
+      ((tables.getD o default).countColumns.map fun j ↦
+        c1Val D c (.table o j) (D.shape.heights.getD o 0) x).prod = 1) :
+    (D.inst rows).CountsNonzero (lv42Stack D.prog (D.sizes rows) D.shape c) := by
+  intro j i hi x _hx
+  rcases j with ⟨_ | _ | _ | j, hj⟩
+  · exact absurd hi List.not_mem_nil
+  · exact absurd hi List.not_mem_nil
+  · exact absurd hi List.not_mem_nil
+  · have h9 : (D.inst rows).ntab = 9 := rfl
+    have hj6 : j < 6 := by omega
+    have hmem : i.val ∈ (tables.getD j default).countColumns := by
+      rw [← counts_eq ⟨j, hj6⟩]
+      exact List.mem_map_of_mem hi
+    refine (table_lv42Stack D.prog (D.sizes rows) D.shape c ⟨j, hj6⟩ i
+      (counts_not_limb ⟨j, hj6⟩ i hi) x).trans_ne ?_
+    intro h0
+    have hc := hcnt j hj6 _ (rowPosition_lt (count := rows.getD j 0) x.isLt)
+    rw [List.prod_eq_zero (List.mem_map.mpr ⟨i.val, hmem, h0⟩), mul_zero] at hc
+    exact zero_ne_one hc
+
+/-- `E`'s zero has a zero base limb. -/
+theorem toK_zero : toK (0 : E) = 0 := by
+  show (0 : E).limb 0 = 0
+  simpa using limb_ofK (0 : K) 0
+
+/-- **`PublicLinesHold`** from the public lines on `C1`: `MEM_LO`'s cells `0, 1` are the words `0, 2`,
+`MEM_HI`'s the words `1, 3`, `MEM_TOP`'s zero (`linesOf (publicWordsOf ·)` against `publicInputOf`,
+both the calldata's big-endian words). -/
+theorem publicLinesHold_lv42Stack (bytes : List UInt8) (hlines : ∀ k < 3,
+    c1Val D c (.memory k) D.shape.logMemory 0 = toK ((linesOf (publicWordsOf bytes)).getD k (0, 0)).1 ∧
+      c1Val D c (.memory k) D.shape.logMemory 1 = toK ((linesOf (publicWordsOf bytes)).getD k (0, 0)).2) :
+    (D.inst rows).PublicLinesHold (publicInputOf bytes) (lv42Stack D.prog (D.sizes rows) D.shape c) := by
+  intro l hl
+  have hls : ((D.inst rows).publicLines (publicInputOf bytes)).toList =
+      [⟨memCol 0, (publicInputOf bytes).lanes 0, (publicInputOf bytes).lanes 2, false,
+          (D.sizes rows).logMem_pos⟩,
+        ⟨memCol 1, (publicInputOf bytes).lanes 1, (publicInputOf bytes).lanes 3, false,
+          (D.sizes rows).logMem_pos⟩,
+        ⟨memCol 2, 0, 0, false, (D.sizes rows).logMem_pos⟩] := rfl
+  rw [hls] at hl
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hl
+  have hm : ∀ (k : Fin 4) (x : ℕ) (hx : x < 2 ^ (D.sizes rows).logMem),
+      ((D.inst rows).column (lv42Stack D.prog (D.sizes rows) D.shape c) (memCol k)).values.get ⟨x, hx⟩ =
+        c1Val D c (.memory k.val) D.shape.logMemory x :=
+    fun k x hx ↦ mem_lv42Stack D.prog (D.sizes rows) D.shape c k ⟨x, hx⟩
+  rcases hl with rfl | rfl | rfl
+  · refine ⟨(hm 0 0 _).trans ((hlines 0 (by norm_num)).1.trans ?_),
+      (hm 0 1 _).trans ((hlines 0 (by norm_num)).2.trans ?_)⟩ <;>
+      simp [linesOf, publicWordsOf, publicInputOf, toK, eK, eNew]
+  · refine ⟨(hm 1 0 _).trans ((hlines 1 (by norm_num)).1.trans ?_),
+      (hm 1 1 _).trans ((hlines 1 (by norm_num)).2.trans ?_)⟩ <;>
+      simp [linesOf, publicWordsOf, publicInputOf, toK, eK, eNew]
+  · refine ⟨(hm 2 0 _).trans ((hlines 2 (by norm_num)).1.trans ?_),
+      (hm 2 1 _).trans ((hlines 2 (by norm_num)).2.trans ?_)⟩ <;>
+      simp [linesOf, toK_zero]
+
+end Constraints
+
+/-- **The constraints on `C1`'s rows are Lv42's** `ConstraintsVanish`, `CountsNonzero`,
+`PublicLinesHold` of `C1`'s Lv42 stack (the counts' range is not needed: `rowPosition_lt`). -/
+theorem lvConstraints (D : Deployment) : LvConstraints D := by
+  intro s c _ hR
+  obtain ⟨hb, hv, hw⟩ := jump_idx
+  refine ⟨constraintsVanish_lv42Stack D s.2 c fun x hx ↦ ?_, countsNonzero_lv42Stack D s.2 c hR.counters,
+    publicLinesHold_lv42Stack D s.2 c s.1.toList hR.lines⟩
+  have h := hR.jump x hx
+  rw [hb, hv, hw] at h
+  exact h
+
 /-! ## Axioms -/
 
 /-- info: 'UniSound.Ids.lvReadBack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -217,5 +420,13 @@ theorem lvReadBack (D : Deployment) : LvReadBack D := fun rows c col hcol x ↦
 /-- info: 'UniSound.Ids.limb_lv42Stack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms limb_lv42Stack
+
+/-- info: 'UniSound.Ids.lvConstraints' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms lvConstraints
+
+/-- info: 'UniSound.Ids.slots_agree' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms slots_agree
 
 end UniSound.Ids
