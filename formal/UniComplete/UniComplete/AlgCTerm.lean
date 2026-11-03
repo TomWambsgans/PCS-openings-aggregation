@@ -1,10 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. Uses leanerVM (https://github.com/Verified-zkEVM/leanerVM,
 -- branch `mumbai`, commit 6175f1a0, MIT OR Apache-2.0): `eqEval`, `eqKernel`, `boolPoint` and their lemmas
 -- (`Protocol/Whir/Complete/Tables.lean`), through `UniComplete.Whir`'s `foldl_foldOnce`.
-import UniComplete.Honest
-import UniComplete.Domain
-import UniComplete.Whir
-import Bridge.Ntt
+import UniComplete.AlgCBasis
 import Field.F192
 
 /-!
@@ -666,16 +663,6 @@ theorem c1Names_count_qflock : c1Names.count .qflock = 1 := by decide +kernel
 theorem termCount_c1 (shape : Shape) {column : Column} (h : c1Names.count column = 1) :
     ((c1ColsOf shape).map Prod.fst).count column = 1 := by
   rw [c1ColsOf_fst]; exact h
-
-theorem subsetSums_size (r : ℕ) (d : Array K) : (subsetSums r d).size = d.size := by
-  unfold subsetSums
-  generalize List.range r = L
-  induction L generalizing d with
-  | nil => rfl
-  | cons x L ih => rw [List.foldl_cons, ih, Array.size_ofFn]
-
-theorem bCoefficients_size (r : ℕ) (v : Array K) : (bCoefficients r v).size = v.size := by
-  rw [bCoefficients, subsetSums_size, Bridge.Ntt.coefficients_size]
 
 theorem inverseColumn_size (tr : Trace) (t : ℕ) : (inverseColumn tr t).size = 2 ^ tr.height t := by
   unfold inverseColumn
