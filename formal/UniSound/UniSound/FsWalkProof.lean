@@ -684,4 +684,216 @@ theorem progRun {α : Type} (P : ChainProg α) (F : KeccakState → m KeccakStat
 
 end Monad
 
+/-! ## The walk: the seed, the main line, `finish` -/
+
+/-- **The verdict and result of a walk** from what `obsOf` keeps of the main line's run: an error is
+rejected; a result with the stream read to its end (`finish`) is accepted when every collected value
+is zero, with the stream not read to its end it is `StreamNotConsumed`. -/
+def walkOf (o : Except UniError Reduced × Option (Array UInt8 × ℕ × ℕ × Digest × Array E × Bool)) :
+    Bool × Except UniError Reduced :=
+  match o with
+  | (.error e, _) => (false, .error e)
+  | (.ok r, some (d, cur, _, _, _, z)) =>
+    if cur = d.size then (z, .ok r) else (false, .error .streamNotConsumed)
+  | (.ok _, none) => (false, .error .streamNotConsumed)
+
+theorem walkOf_ok (x : Except UniError Reduced × Chan) (r : Reduced) (h1 : x.1 = .ok r)
+    (h2 : x.2.cursor = x.2.data.size) : walkOf (obsOf x) = (x.2.zeros.all (· == 0), .ok r) := by
+  rcases x with ⟨res, c⟩
+  simp only at h1 h2
+  subst h1
+  simp [obsOf, walkOf, h2]
+
+section Monad
+
+variable {m : Type → Type} [Monad m] [LawfulMonad m]
+
+theorem finish_run (c : Chan) :
+    (finish (m := m)).run.run c =
+      if c.cursor = c.data.size then pure (.ok (), c) else pure (.error .streamNotConsumed, c) := by
+  simp only [finish, ExceptT.run_bind, StateT.run_bind, chan_get_run, pure_bind]
+  split_ifs <;> rfl
+
+/-- **The walk's verdict and result** are `walkOf` of what `obsOf` keeps of `reduceWith`'s run from
+the seed's channel. -/
+theorem runWith_pair (F : KeccakState → m KeccakState) (shape : UniStatement.Shape) (iv input : List UInt8)
+    (stream : Array UInt8) (bl : Blake2s) (mode : ClaimsMode) :
+    (fun o : Outcome => (o.accepts, o.result)) <$> runWith F shape iv input stream bl mode =
+      seedWith F iv input >>= fun seed => (fun x => walkOf (obsOf x)) <$>
+        (reduceWith F shape (publicWordsOf input) bl mode).run.run (Chan.start seed stream) := by
+  simp only [runWith, map_bind]
+  congr 1
+  funext seed
+  simp only [ExceptT.run_bind, StateT.run_bind, bind_assoc]
+  rw [map_eq_bind_pure_comp]
+  congr 1
+  funext x
+  rcases x with ⟨r, c⟩
+  cases r with
+  | error e => simp [walkOf, obsOf, Outcome.accepts]
+  | ok a =>
+    simp only [StateT.run_bind, finish_run]
+    split_ifs with h <;> simp [walkOf, obsOf, Outcome.accepts, h]
+
+/-- The chain over an encoding, from its label's answer. -/
+theorem chainU_eq {F' St : Type} (U : ChainSpecU F' St) (H : List UInt8 → m Bytes32) (s : St)
+    (ms : List (RMsg F')) :
+    U.chain H s ms = H (U.label s) >>= fun st0 =>
+      (fun sts => groupK U.K.rounds (sts.map (chalL U.K.lim))) <$>
+        steps H st0 (U.absorbsS s U.K.rounds ms) := by
+  simp only [ChainSpecU.chain, runM_eq_steps, map_bind, Functor.map_map]
+  rfl
+
+end Monad
+
+theorem intAt_eq (b : Array UInt8) (o : ℕ) :
+    intAt b o = (bytesAt b o 4).foldl (fun acc x => acc * 256 + x.toNat) 0 := by
+  rw [intAt, ← Array.foldl_toList, toList_extract_eq, Nat.add_sub_cancel_left]
+
+theorem rowBytes_getD (b : Array UInt8) (i : ℕ) (hi : i < 24) :
+    (rowBytes b).toArray.getD i 0 = b.getD i 0 := by
+  simp [rowBytes, hi]
+
+/-- **The row counts `readCounts` reads** are the statement's (`rowsOf` of the first 24 bytes). -/
+theorem countsAt_rows (b : Array UInt8) (h : 24 ≤ b.size) :
+    countsAt b 0 6 = rowsOfBytes (rowBytes b) := by
+  unfold countsAt rowsOfBytes rowsOf
+  apply List.map_congr_left
+  intro k hk
+  have hk6 : k < 6 := List.mem_range.mp hk
+  rw [intAt_eq, bytesAt_eq_map _ _ _ (by omega), List.foldl_map]
+  apply foldl_congr_mem
+  intro j hj acc
+  rw [List.mem_range] at hj
+  rw [rowBytes_getD b _ (by omega), Nat.zero_add]
+
+
+/-! ## The chain's specification, read off -/
+
+theorem uniSpec_label (rs : List RoundSpec) (s : FSt) :
+    (uniSpec rs).label s = name ++ s.1.toList ++ s.2.1.toList := rfl
+
+theorem uniSpec_lim (rs : List RoundSpec) : (uniSpec rs).K.lim = uLimbs := rfl
+
+theorem uniSpec_absorbsS (rs : List RoundSpec) (s : FSt) (ms : List (RMsg E)) :
+    (uniSpec rs).absorbsS s rs ms =
+      absorbsI (fun j m => if j = 0 then s.2.2.toList ++ uniEnc m else uniEnc m) 0 rs ms := rfl
+
+theorem uView_eq (rs : List RoundSpec) (π : UPf) :
+    uView rs π = ((π.iv, π.input, rowBytes π.proof.stream), (msgsAt π.proof.stream 24 rs).map toRMsg) :=
+  rfl
+
+theorem progOut_fst {α : Type} (P : ChainProg α) (c : Chan) (sts : List Bytes32) :
+    (progOut P c sts).1 = .ok (P.out (runOut P P.rounds [] c sts).1
+      (scalarsAt (runOut P P.rounds [] c sts).2.data (runOut P P.rounds [] c sts).2.cursor P.tail)) :=
+  rfl
+
+theorem progOut_data {α : Type} (P : ChainProg α) (c : Chan) (sts : List Bytes32) :
+    (progOut P c sts).2.data = c.data := by
+  simp only [progOut, collectZ, runOut_data]
+
+theorem progOut_cursor {α : Type} (P : ChainProg α) (c : Chan) (sts : List Bytes32) :
+    (progOut P c sts).2.cursor = c.cursor + roundsBytes P.rounds + 24 * P.tail := by
+  simp only [progOut, collectZ, runOut_cursor]
+
+theorem progOut_zeros {α : Type} (P : ChainProg α) (c : Chan) (sts : List Bytes32) :
+    (progOut P c sts).2.zeros.toList = c.zeros.toList ++ zerosFrom P [] (runOut P P.rounds [] c sts).1 ++
+      P.tailZeros (runOut P P.rounds [] c sts).1
+        (scalarsAt (runOut P P.rounds [] c sts).2.data (runOut P P.rounds [] c sts).2.cursor P.tail) := by
+  simp only [progOut, collectZ, foldl_push_toList, runOut_zeros, runOut_done, List.nil_append]
+
+theorem all_zero_iff (a : Array E) : a.all (· == 0) = true ↔ ∀ z ∈ a.toList, z = 0 := by
+  simp only [Array.all_eq_true_iff_forall_mem, Array.mem_def, beq_iff_eq]
+
+/-! ## WALK -/
+
+/-- **WALK**: on a stream of the main line's length, the walk is the chain: its verdict `uAccB`, its
+result `uOut`, at the chain's challenges over Keccak-256 `= keccak256With F`. -/
+theorem uniWalk (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ) (C : UniCode D Fl nV V) :
+    UniWalk D Fl nV V C := by
+  intro m _ _ F π hlen
+  have hsz : π.proof.stream.size = 24 + roundsBytes (uRounds Fl nV V) + 24 * 5 := hlen
+  have hsz' : π.proof.stream.size = 24 + roundsBytes (uniRounds Fl.prog.rounds nV V) + 24 * 5 := hlen
+  have h6 : D.shape.heights.length = 6 := D.valid.1
+  have hrows : countsAt π.proof.stream 0 6 = (uSt Fl nV V π).2 := countsAt_rows _ (by omega)
+  rw [runWith_pair]
+  have hlink : ∀ c, (fun x => walkOf (obsOf x)) <$>
+      (reduceWith F D.shape (publicWordsOf π.input.toList) (.flock flockMain) .point).run.run c =
+      (fun x => walkOf (obsOf x)) <$>
+        (readCounts D.shape.heights >>= fun rows => (C.prog π.input rows).run F).run.run c := by
+    intro c
+    have h := congrArg (fun z => walkOf <$> z) (C.link π.input F c)
+    simpa only [Functor.map_map] using h
+  simp only [hlink]
+  have hrc : ∀ seed : Digest,
+      (readCounts D.shape.heights >>= fun rows => (C.prog π.input rows).run F).run.run
+          (Chan.start seed π.proof.stream) =
+        ((C.prog (uSt Fl nV V π).1 (uSt Fl nV V π).2).run F).run.run
+          (collectZ { Chan.start seed π.proof.stream with cursor := 24 }
+            (countZeros D.shape.heights (uSt Fl nV V π).2)) := by
+    intro seed
+    rw [run_bind_ok (readCounts_ok D.shape.heights _ (by simp only [Chan.start, h6]; omega))]
+    simp only [Chan.start, h6, hrows]
+    rfl
+  simp only [hrc]
+  have hpr : ∀ seed : Digest,
+      ((C.prog (uSt Fl nV V π).1 (uSt Fl nV V π).2).run F).run.run
+          (collectZ { Chan.start seed π.proof.stream with cursor := 24 }
+            (countZeros D.shape.heights (uSt Fl nV V π).2)) =
+        progOut (C.prog (uSt Fl nV V π).1 (uSt Fl nV V π).2)
+            (collectZ { Chan.start seed π.proof.stream with cursor := 24 }
+              (countZeros D.shape.heights (uSt Fl nV V π).2)) <$>
+          steps (kB F) (toB seed)
+            (wAbs π.proof.stream 24 (bytesAt π.proof.stream 0 24) (uRounds Fl nV V)) := by
+    intro seed
+    rw [progRun _ F _ (by simp [collectZ, Chan.start])
+      (by simp only [collectZ, Chan.start, C.rounds_eq, C.tail_eq]; omega)]
+    simp only [preOf, collectZ, Chan.start, toList_extract_eq, C.rounds_eq, Nat.sub_zero]
+  simp only [hpr]
+  rw [seedWith, keccak_eq, bind_map_left]
+  change _ = _ <$> (uSpec Fl nV V).chain (kB F) _ _
+  rw [chainU_eq, map_bind, uView_eq]
+  simp only [uniSpec_label, uniSpec_absorbsS, uniSpec_rounds, uniSpec_lim,
+    rowBytes_toList _ (by omega : 24 ≤ π.proof.stream.size)]
+  rw [absorbsI_wAbs π.proof.stream _ 0 24 _ (by omega)]
+  simp only [↓reduceIte]
+  refine congrArg (fun f => kB F (name ++ π.iv.toList ++ π.input.toList) >>= f) (funext fun st0 => ?_)
+  rw [toB_ofB, Functor.map_map, Functor.map_map]
+  refine congrArg (fun f => f <$> steps (kB F) st0
+    (wAbs π.proof.stream 24 (bytesAt π.proof.stream 0 24) (uRounds Fl nV V))) (funext fun sts => ?_)
+  set P := C.prog (uSt Fl nV V π).1 (uSt Fl nV V π).2 with hP
+  set c1 := collectZ { Chan.start (ofB st0) π.proof.stream with cursor := 24 }
+    (countZeros D.shape.heights (uSt Fl nV V π).2) with hc1
+  have hd : c1.data = π.proof.stream := rfl
+  have hcu : c1.cursor = 24 := rfl
+  have hz0 : c1.zeros.toList = countZeros D.shape.heights (uSt Fl nV V π).2 := by
+    simp only [hc1, collectZ, Chan.start, foldl_push_toList, List.nil_append]
+  set ch := groupK (uRounds Fl nV V) (List.map (chalL uLimbs) sts) with hch
+  have hN : (runOut P P.rounds [] c1 sts).1 = uDone (uRounds Fl nV V) π ch := by
+    rw [runOut_done, C.rounds_eq, List.nil_append, hd, hcu]
+    rfl
+  have htl : scalarsAt (runOut P P.rounds [] c1 sts).2.data (runOut P P.rounds [] c1 sts).2.cursor
+      P.tail = uTail (uRounds Fl nV V) π := by
+    rw [runOut_data, runOut_cursor, C.rounds_eq, C.tail_eq, hd, hcu]
+    rfl
+  have hcur : (progOut P c1 sts).2.cursor = (progOut P c1 sts).2.data.size := by
+    rw [progOut_cursor, progOut_data, C.rounds_eq, C.tail_eq, hd, hcu]
+    omega
+  rw [walkOf_ok _ _ (progOut_fst P c1 sts) hcur, hN, htl]
+  refine Prod.ext ?_ rfl
+  show _ = uAccB D Fl nV V C π ch
+  rw [Bool.eq_iff_iff, all_zero_iff, uAccB, @decide_eq_true_iff _ (Classical.propDecidable _),
+    progOut_zeros, hN, htl, hz0]
+  unfold UAcc ChainProg.ZerosVanish
+  have hzf := zerosFrom_iff P [] (uDone (uRounds Fl nV V) π ch)
+  simp only [List.nil_append] at hzf
+  rw [← hzf]
+  simp only [List.mem_append]
+  constructor
+  · intro h
+    exact ⟨fun z hz => h z (Or.inl (Or.inl hz)), fun z hz => h z (Or.inl (Or.inr hz)),
+      fun z hz => h z (Or.inr hz)⟩
+  · rintro ⟨h1, h2, h3⟩ z ((hz | hz) | hz)
+    exacts [h1 z hz, h2 z hz, h3 z hz]
+
 end UniSound
