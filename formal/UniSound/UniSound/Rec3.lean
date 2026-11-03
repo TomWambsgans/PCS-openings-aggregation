@@ -10,6 +10,12 @@ import UniSound.Rec3.Pairs
 import UniSound.Rec3.Batch3
 import UniSound.Rec3.Ids3
 import UniSound.Rec3.Ref3
+import UniSound.Rec3.FsFinal3
+import UniSound.Rec3.Numbers3
+import UniSound.Rec3.CodeLink3
+import UniSound.Rec3.Closed3
+import UniSound.Rec3.FinalLink3
+import UniSound.Rec3.FinalRef3
 
 /-!
 # π1-rec3: knowledge soundness of the recursion's inner verifier
@@ -32,6 +38,18 @@ main line's at the expanded transcripts (`Ids3.lean`: `ids3Of`, the batch withou
 (`Fs3.lean`: `UniCode3`, `UniFinal3`, `FsLayer3`, `uniBound3` with three openings) and the end theorem from them
 (`Final3.lean`: `uniKnowledgeSoundness3`, `uniBound3_le_bits`); the reference deployment (`Ref3.lean`).
 -/
+
+/-- info: 'UniSound.Rec3Ref.uniKnowledgeSoundness_rec3_of_walk' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Rec3Ref.uniKnowledgeSoundness_rec3_of_walk
+
+/-- info: 'UniSound.fsLayer3_holds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.fsLayer3_holds
+
+/-- info: 'UniSound.Rec3Ref.uniFinal3_ref' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Rec3Ref.uniFinal3_ref
 
 /-- info: 'UniSound.uniPiop3' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
