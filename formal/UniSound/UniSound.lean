@@ -33,6 +33,7 @@ import UniSound.FsSetup
 import UniSound.Ids.Assembly
 import UniSound.Ids.Remaining
 import UniSound.Ids.Align
+import UniSound.Ids.WeightMle
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001
@@ -266,3 +267,6 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.Ids.nVOf_eq_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.Ids.nVOf_eq_of
+/-- info: 'UniSound.Ids.combAt_mle' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.combAt_mle
