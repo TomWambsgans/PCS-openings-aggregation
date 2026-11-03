@@ -691,4 +691,153 @@ theorem sim_gate (cw : Array E) (sigma : List ℕ) (ri g : ℕ) (lanes : List �
   rw [hw', hb', e]
   exact sim_gate_core cw w σ hl hr hfit v hv a b c d (wrel_msg cw ix) (wrel_msg cw iy)
 
+theorem glanes_eq : blake2sGLanes.zip (List.range blake2sGLanes.length) =
+    [([0, 4, 8, 12], 0), ([1, 5, 9, 13], 1), ([2, 6, 10, 14], 2), ([3, 7, 11, 15], 3),
+      ([0, 5, 10, 15], 4), ([1, 6, 11, 12], 5), ([2, 7, 8, 13], 6), ([3, 4, 9, 14], 7)] := rfl
+
+/-- **The simulation so far**, from the walk state `w0` and the builder state `σ0`, `n` gates recorded. -/
+structure GInv (cw : Array E) (w0 : Array E × Array E × Array WalkWord) (σ0 : BuildState bm) (n : ℕ)
+    (w : Array E × Array E × Array WalkWord) (b : Vector (Word bm) 16 × BuildState bm) : Prop where
+  grow : Grow cw w0.1 w0.2.1 σ0 w.1 w.2.1 b.2 n
+  srel : SRel cw w.2.2 b.1
+  lsize : w.1.size = 2 ^ bm
+  rsize : w.2.1.size = 2 ^ bm
+
+theorem GInv.cast {cw : Array E} {w0 w : Array E × Array E × Array WalkWord} {σ0 : BuildState bm} {n n' : ℕ}
+    {b : Vector (Word bm) 16 × BuildState bm} (H : GInv cw w0 σ0 n w b) (h : n = n') : GInv cw w0 σ0 n' w b :=
+  h ▸ H
+
+theorem GInv.start (cw : Array E) (w : Array E × Array E × Array WalkWord) (σ : BuildState bm)
+    (v : Vector (Word bm) 16) (hv : SRel cw w.2.2 v) (hl : w.1.size = 2 ^ bm) (hr : w.2.1.size = 2 ^ bm) :
+    GInv cw w σ 0 w (v, σ) :=
+  ⟨Grow.refl _ _ _ _, hv, hl, hr⟩
+
+/-- One more mixing step (gate `g` of round `ri`), the invariant carried; the arithmetic on `σ0.next + n`. -/
+theorem GInv.step {cw : Array E} {w0 : Array E × Array E × Array WalkWord} {σ0 : BuildState bm} {n : ℕ}
+    {w : Array E × Array E × Array WalkWord} {b : Vector (Word bm) 16 × BuildState bm}
+    (H : GInv cw w0 σ0 n w b) (sigma : List ℕ) (ri g : ℕ) (lanes : List ℕ) (la lb lc ld ix iy : Fin 16)
+    (hla : lanes.getD 0 0 = la) (hlb : lanes.getD 1 0 = lb) (hlc : lanes.getD 2 0 = lc) (hld : lanes.getD 3 0 = ld)
+    (hix : sigma.getD (2 * g) 0 = ix) (hiy : sigma.getD (2 * g + 1) 0 = iy)
+    (hσ : σ0.next + n = 1280 + 184 * (ri * 8 + g)) (hfit : σ0.next + n + 184 ≤ 2 ^ bm)
+    (w' : Array E × Array E × Array WalkWord) (hw' : w' = gateStep cw sigma ri w (lanes, g))
+    (b' : Vector (Word bm) 16 × BuildState bm)
+    (hb' : b' = (Blake2sCircuit.gW b.1 la lb lc ld msgV[ix] msgV[iy]).run b.2) :
+    GInv cw w0 σ0 (n + 184) w' b' := by
+  have hn := H.grow.next
+  have G := sim_gate cw sigma ri g lanes la lb lc ld ix iy hla hlb hlc hld hix hiy w b.2 (by omega) H.lsize H.rsize
+    (by omega) b.1 H.srel w' hw' b' hb'
+  exact ⟨H.grow.trans G.1, G.2, G.1.lsize.trans H.lsize, G.1.rsize.trans H.rsize⟩
+
+theorem fit_le {a b c d : ℕ} (h : a + d ≤ b) (hc : c ≤ d) : a + c ≤ b := le_trans (Nat.add_le_add_left hc a) h
+
+/-- A round's message indices, as the walk reads them. -/
+def rowList (s : Vector (Fin 16) 16) : List ℕ := s.toList.map Fin.val
+
+theorem rowList_getD (s : Vector (Fin 16) 16) (j : ℕ) (h : j < 16) : (rowList s).getD j 0 = (s[j]'h : ℕ) := by
+  simp [rowList, List.getD_eq_getElem?_getD, h]
+
+/-- **A round**: the walk's round follows `roundW`, 1472 more rows. -/
+theorem sim_round (cw : Array E) (s : Vector (Fin 16) 16) (ri : ℕ) {w0 w : Array E × Array E × Array WalkWord}
+    {σ0 : BuildState bm} {n : ℕ} {b : Vector (Word bm) 16 × BuildState bm} (H : GInv cw w0 σ0 n w b)
+    (hσ : σ0.next + n = 1280 + 1472 * ri) (hfit : σ0.next + n + 1472 ≤ 2 ^ bm) :
+    GInv cw w0 σ0 (n + 1472) (roundStep cw w (rowList s, ri)) ((Blake2sCircuit.roundW b.1 msgV s).run b.2) := by
+  have hs : ∀ j (h : j < 16), (rowList s).getD j 0 = (s[j]'h : ℕ) := rowList_getD s
+  have A0 : σ0.next + (n) = 1280 + 184 * (ri * 8 + 0) := by
+    rw [show σ0.next + (n) = σ0.next + n + 184 * 0 by ring, hσ]; ring
+  have F0 : σ0.next + (n) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n) + 184 = σ0.next + n + 184 * 1 by ring]; exact fit_le hfit (by norm_num)
+  have A1 : σ0.next + (n + 184) = 1280 + 184 * (ri * 8 + 1) := by
+    rw [show σ0.next + (n + 184) = σ0.next + n + 184 * 1 by ring, hσ]; ring
+  have F1 : σ0.next + (n + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184) + 184 = σ0.next + n + 184 * 2 by ring]; exact fit_le hfit (by norm_num)
+  have A2 : σ0.next + (n + 184 + 184) = 1280 + 184 * (ri * 8 + 2) := by
+    rw [show σ0.next + (n + 184 + 184) = σ0.next + n + 184 * 2 by ring, hσ]; ring
+  have F2 : σ0.next + (n + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184) + 184 = σ0.next + n + 184 * 3 by ring]; exact fit_le hfit (by norm_num)
+  have A3 : σ0.next + (n + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 3) := by
+    rw [show σ0.next + (n + 184 + 184 + 184) = σ0.next + n + 184 * 3 by ring, hσ]; ring
+  have F3 : σ0.next + (n + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 4 by ring]; exact fit_le hfit (by norm_num)
+  have A4 : σ0.next + (n + 184 + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 4) := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184) = σ0.next + n + 184 * 4 by ring, hσ]; ring
+  have F4 : σ0.next + (n + 184 + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 5 by ring]; exact fit_le hfit (by norm_num)
+  have A5 : σ0.next + (n + 184 + 184 + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 5) := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184) = σ0.next + n + 184 * 5 by ring, hσ]; ring
+  have F5 : σ0.next + (n + 184 + 184 + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 6 by ring]; exact fit_le hfit (by norm_num)
+  have A6 : σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 6) := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184) = σ0.next + n + 184 * 6 by ring, hσ]; ring
+  have F6 : σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 7 by ring]; exact fit_le hfit (by norm_num)
+  have A7 : σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 7) := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184 + 184) = σ0.next + n + 184 * 7 by ring, hσ]; ring
+  have F7 : σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 8 by ring]; exact fit_le hfit (by norm_num)
+  obtain ⟨w1, hw1⟩ : ∃ q, q = gateStep cw (rowList s) ri w ([0, 4, 8, 12], 0) := ⟨_, rfl⟩
+  obtain ⟨b1, hb1⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b.1 0 4 8 12 (msgV[s[0]'(by decide)]'(Fin.isLt _)) (msgV[s[1]'(by decide)]'(Fin.isLt _))).run b.2 := ⟨(Blake2sCircuit.gW b.1 0 4 8 12 (msgV[s[0]'(by decide)]'(Fin.isLt _)) (msgV[s[1]'(by decide)]'(Fin.isLt _))).run b.2, rfl⟩
+  have R1 := H.step (rowList s) ri 0 [0, 4, 8, 12] 0 4 8 12 (s[0]'(by decide)) (s[1]'(by decide)) rfl rfl rfl rfl
+    (hs (0) (by decide)) (hs (1) (by decide)) A0 F0 w1 hw1 b1 hb1
+  obtain ⟨w2, hw2⟩ : ∃ q, q = gateStep cw (rowList s) ri w1 ([1, 5, 9, 13], 1) := ⟨_, rfl⟩
+  obtain ⟨b2, hb2⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b1.1 1 5 9 13 (msgV[s[2]'(by decide)]'(Fin.isLt _)) (msgV[s[3]'(by decide)]'(Fin.isLt _))).run b1.2 := ⟨(Blake2sCircuit.gW b1.1 1 5 9 13 (msgV[s[2]'(by decide)]'(Fin.isLt _)) (msgV[s[3]'(by decide)]'(Fin.isLt _))).run b1.2, rfl⟩
+  have R2 := R1.step (rowList s) ri 1 [1, 5, 9, 13] 1 5 9 13 (s[2]'(by decide)) (s[3]'(by decide)) rfl rfl rfl rfl
+    (hs (2) (by decide)) (hs (3) (by decide)) A1 F1 w2 hw2 b2 hb2
+  obtain ⟨w3, hw3⟩ : ∃ q, q = gateStep cw (rowList s) ri w2 ([2, 6, 10, 14], 2) := ⟨_, rfl⟩
+  obtain ⟨b3, hb3⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b2.1 2 6 10 14 (msgV[s[4]'(by decide)]'(Fin.isLt _)) (msgV[s[5]'(by decide)]'(Fin.isLt _))).run b2.2 := ⟨(Blake2sCircuit.gW b2.1 2 6 10 14 (msgV[s[4]'(by decide)]'(Fin.isLt _)) (msgV[s[5]'(by decide)]'(Fin.isLt _))).run b2.2, rfl⟩
+  have R3 := R2.step (rowList s) ri 2 [2, 6, 10, 14] 2 6 10 14 (s[4]'(by decide)) (s[5]'(by decide)) rfl rfl rfl rfl
+    (hs (4) (by decide)) (hs (5) (by decide)) A2 F2 w3 hw3 b3 hb3
+  obtain ⟨w4, hw4⟩ : ∃ q, q = gateStep cw (rowList s) ri w3 ([3, 7, 11, 15], 3) := ⟨_, rfl⟩
+  obtain ⟨b4, hb4⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b3.1 3 7 11 15 (msgV[s[6]'(by decide)]'(Fin.isLt _)) (msgV[s[7]'(by decide)]'(Fin.isLt _))).run b3.2 := ⟨(Blake2sCircuit.gW b3.1 3 7 11 15 (msgV[s[6]'(by decide)]'(Fin.isLt _)) (msgV[s[7]'(by decide)]'(Fin.isLt _))).run b3.2, rfl⟩
+  have R4 := R3.step (rowList s) ri 3 [3, 7, 11, 15] 3 7 11 15 (s[6]'(by decide)) (s[7]'(by decide)) rfl rfl rfl rfl
+    (hs (6) (by decide)) (hs (7) (by decide)) A3 F3 w4 hw4 b4 hb4
+  obtain ⟨w5, hw5⟩ : ∃ q, q = gateStep cw (rowList s) ri w4 ([0, 5, 10, 15], 4) := ⟨_, rfl⟩
+  obtain ⟨b5, hb5⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b4.1 0 5 10 15 (msgV[s[8]'(by decide)]'(Fin.isLt _)) (msgV[s[9]'(by decide)]'(Fin.isLt _))).run b4.2 := ⟨(Blake2sCircuit.gW b4.1 0 5 10 15 (msgV[s[8]'(by decide)]'(Fin.isLt _)) (msgV[s[9]'(by decide)]'(Fin.isLt _))).run b4.2, rfl⟩
+  have R5 := R4.step (rowList s) ri 4 [0, 5, 10, 15] 0 5 10 15 (s[8]'(by decide)) (s[9]'(by decide)) rfl rfl rfl rfl
+    (hs (8) (by decide)) (hs (9) (by decide)) A4 F4 w5 hw5 b5 hb5
+  obtain ⟨w6, hw6⟩ : ∃ q, q = gateStep cw (rowList s) ri w5 ([1, 6, 11, 12], 5) := ⟨_, rfl⟩
+  obtain ⟨b6, hb6⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b5.1 1 6 11 12 (msgV[s[10]'(by decide)]'(Fin.isLt _)) (msgV[s[11]'(by decide)]'(Fin.isLt _))).run b5.2 := ⟨(Blake2sCircuit.gW b5.1 1 6 11 12 (msgV[s[10]'(by decide)]'(Fin.isLt _)) (msgV[s[11]'(by decide)]'(Fin.isLt _))).run b5.2, rfl⟩
+  have R6 := R5.step (rowList s) ri 5 [1, 6, 11, 12] 1 6 11 12 (s[10]'(by decide)) (s[11]'(by decide)) rfl rfl rfl rfl
+    (hs (10) (by decide)) (hs (11) (by decide)) A5 F5 w6 hw6 b6 hb6
+  obtain ⟨w7, hw7⟩ : ∃ q, q = gateStep cw (rowList s) ri w6 ([2, 7, 8, 13], 6) := ⟨_, rfl⟩
+  obtain ⟨b7, hb7⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b6.1 2 7 8 13 (msgV[s[12]'(by decide)]'(Fin.isLt _)) (msgV[s[13]'(by decide)]'(Fin.isLt _))).run b6.2 := ⟨(Blake2sCircuit.gW b6.1 2 7 8 13 (msgV[s[12]'(by decide)]'(Fin.isLt _)) (msgV[s[13]'(by decide)]'(Fin.isLt _))).run b6.2, rfl⟩
+  have R7 := R6.step (rowList s) ri 6 [2, 7, 8, 13] 2 7 8 13 (s[12]'(by decide)) (s[13]'(by decide)) rfl rfl rfl rfl
+    (hs (12) (by decide)) (hs (13) (by decide)) A6 F6 w7 hw7 b7 hb7
+  obtain ⟨w8, hw8⟩ : ∃ q, q = gateStep cw (rowList s) ri w7 ([3, 4, 9, 14], 7) := ⟨_, rfl⟩
+  obtain ⟨b8, hb8⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b7.1 3 4 9 14 (msgV[s[14]'(by decide)]'(Fin.isLt _)) (msgV[s[15]'(by decide)]'(Fin.isLt _))).run b7.2 := ⟨(Blake2sCircuit.gW b7.1 3 4 9 14 (msgV[s[14]'(by decide)]'(Fin.isLt _)) (msgV[s[15]'(by decide)]'(Fin.isLt _))).run b7.2, rfl⟩
+  have R8 := R7.step (rowList s) ri 7 [3, 4, 9, 14] 3 4 9 14 (s[14]'(by decide)) (s[15]'(by decide)) rfl rfl rfl rfl
+    (hs (14) (by decide)) (hs (15) (by decide)) A7 F7 w8 hw8 b8 hb8
+  have hwalk : roundStep cw w (rowList s, ri) = w8 := by
+    rw [hw8, hw7, hw6, hw5, hw4, hw3, hw2, hw1, roundStep, glanes_eq]
+    simp only [List.foldl_cons, List.foldl_nil, Prod.mk.eta]
+  have hrun : (Blake2sCircuit.roundW b.1 msgV s).run b.2 = b8 := by
+    rw [hb8, hb7, hb6, hb5, hb4, hb3, hb2, hb1]
+    simp only [Blake2sCircuit.roundW, StateT.run_bind]
+    rfl
+  rw [hwalk, hrun]
+  exact R8.cast (by ring)
+
+theorem run_foldlM_cons {α : Type} (f : α → Vector (Fin 16) 16 → Builder bm α) (s : Vector (Fin 16) 16)
+    (L : List (Vector (Fin 16) 16)) (v : α) (σ : BuildState bm) :
+    ((s :: L).foldlM f v).run σ = (L.foldlM f ((f v s).run σ).1).run ((f v s).run σ).2 := by
+  rw [List.foldlM_cons, StateT.run_bind]
+  rfl
+
+/-- **The rounds**: the walk's rounds follow `roundW`'s fold, 1472 rows each. -/
+theorem sim_rounds (cw : Array E) (w0 : Array E × Array E × Array WalkWord) (σ0 : BuildState bm) :
+    ∀ (L : List (Vector (Fin 16) 16)) (ri n : ℕ) (w : Array E × Array E × Array WalkWord)
+      (b : Vector (Word bm) 16 × BuildState bm), GInv cw w0 σ0 n w b →
+      σ0.next + n = 1280 + 1472 * ri → σ0.next + n + 1472 * L.length ≤ 2 ^ bm →
+      GInv cw w0 σ0 (n + 1472 * L.length) (((L.map rowList).zip (List.range' ri L.length)).foldl (roundStep cw) w)
+        ((L.foldlM (fun v s ↦ Blake2sCircuit.roundW v msgV s) b.1).run b.2)
+  | [], _, n, w, b, H, _, _ => H.cast (by simp)
+  | s :: L, ri, n, w, b, H, hσ, hfit => by
+    rw [List.map_cons, List.length_cons, List.range'_succ, List.zip_cons_cons, List.foldl_cons,
+      run_foldlM_cons]
+    rw [List.length_cons] at hfit
+    have R := sim_round cw s ri H hσ (fit_le hfit (Nat.le_mul_of_pos_right _ (Nat.succ_pos _)))
+    exact (sim_rounds cw w0 σ0 L (ri + 1) (n + 1472) _ _ R
+      (by rw [show σ0.next + (n + 1472) = σ0.next + n + 1472 by ring, hσ]; ring)
+      (by rw [show σ0.next + (n + 1472) + 1472 * L.length = σ0.next + n + 1472 * (L.length + 1) by ring]
+          exact hfit)).cast (by ring)
+
 end FlockSound.Uni.Walk
