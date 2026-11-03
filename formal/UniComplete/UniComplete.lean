@@ -25,3 +25,10 @@ import UniComplete.Mapping
 import UniComplete.BatchProofSync
 import UniComplete.BatchProof
 import UniComplete.SyncTable
+import UniComplete.AlgCBasis
+import UniComplete.AlgCChunks
+import UniComplete.AlgCRun
+import UniComplete.AlgCTerm
+import UniComplete.AlgCQuot
+import UniComplete.AlgCConstraint
+import UniComplete.AlgCRel
