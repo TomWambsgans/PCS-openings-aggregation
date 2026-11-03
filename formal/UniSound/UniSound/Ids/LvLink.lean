@@ -38,6 +38,11 @@ they use only `q_flock`'s one block; nothing else is assumed):
 
 namespace UniSound.Ids
 
+/-! The bridges (`lvReadBack`, `lvConstraints`, `lvAux`, `lvBusCount`) and `busBound` are in
+`UniSound.Ids`; the helpers in `UniSound.Ids.LvLink`, clear of the other bridge files' names. -/
+
+namespace LvLink
+
 /-! ## `JUMP`'s constraints at a row -/
 
 section JumpRow
@@ -82,12 +87,17 @@ theorem jump_constraintsHold (row : Fin (Lv42.Protocol.LeanIsa.opcodeComponent 4
 
 end JumpRow
 
+end LvLink
+
 open LeanVM.Parameters UniStatement
 open Lv42.Protocol.LeanIsa (Col IsLimb kappa blocks stackOrder leanIsaμ blockOf flockCol limbCol memCol
   opIdx opcodeTable opcodeComponent)
 open Lv42.Protocol.Blake2sFlock (blake2sFlockSpec)
 open Lv42.Semantics (Program)
 open LeanVM.Protocol (cubeIndex)
+open LvLink
+
+namespace LvLink
 
 /-! ## `rowPosition` stays in its table -/
 
@@ -265,9 +275,13 @@ theorem flock_lv42Stack (x : Fin (2 ^ (8 + s.τ 5))) :
 
 end Read
 
+end LvLink
+
 /-- **Lv42's columns of `C1`'s Lv42 stack are `lv42Column`'s.** -/
 theorem lvReadBack (D : Deployment) : LvReadBack D := fun rows c col hcol x ↦
   column_lv42Stack D.prog (D.sizes rows) D.shape c col hcol x
+
+namespace LvLink
 
 /-! ## The tables agree -/
 
@@ -417,6 +431,8 @@ theorem publicLinesHold_lv42Stack (bytes : List UInt8) (hlines : ∀ k < 3,
 
 end Constraints
 
+end LvLink
+
 /-- **The constraints on `C1`'s rows are Lv42's** `ConstraintsVanish`, `CountsNonzero`,
 `PublicLinesHold` of `C1`'s Lv42 stack (the counts' range is not needed: `rowPosition_lt`). -/
 theorem lvConstraints (D : Deployment) : LvConstraints D := by
@@ -427,6 +443,8 @@ theorem lvConstraints (D : Deployment) : LvConstraints D := by
   have h := hR.jump x hx
   rw [hb, hv, hw] at h
   exact h
+
+namespace LvLink
 
 /-! ## `QFLOCK` is `q_flock` -/
 
@@ -529,6 +547,8 @@ theorem bitTable_get {n : ℕ} (c : LeanVM.Protocol.Column n) (i : Fin (2 ^ Lv42
     (u : Fin (2 ^ n)) : (Lv42.Protocol.bitTable c i)[u] = Lv42.Protocol.cellBit (c.values.get u) i := by
   simp [Lv42.Protocol.bitTable]
 
+end LvLink
+
 /-- **Flock's predicate on `C1`'s `q_flock` is Lv42's region's** (`aux`): the region's block `t` is
 `q_flock`'s block `rowPosition (rows 5) h_B t`, below `2^h_B` (`rowPosition_lt`), cell for cell. -/
 theorem lvAux (D : Deployment) (hL : C1Limbs D.shape) : LvAux D := by
@@ -565,6 +585,8 @@ pulls) times its height, the memory's and the bytecode's blocks, the state bound
 def busBound (S : UniStatement.Shape) : ℕ :=
   ∑ j ∈ Finset.range 6, (tables.getD j default).flushes.push.length * 2 ^ S.heights.getD j 0 +
     2 ^ S.logMemory + 2 ^ S.logBytecode + 1
+
+namespace LvLink
 
 /-- **Lv42's push flushes are the verifier's**, table by table (`5, 5, 3, 5, 5, 11`). -/
 theorem pushes_eq : ∀ j : Fin 6,
@@ -634,6 +656,8 @@ theorem busCount_le (D : Deployment) (rows : List ℕ) (hfit : CountsFit D.shape
   rw [hb]
   omega
 
+end LvLink
+
 /-- **The bus counts**: at counts in range, at most `busBound` tuples a side. -/
 theorem lvBusCount (D : Deployment) : LvBusCount D (busBound D.shape) := fun rows hfit ↦
   ⟨busCount_le D rows hfit _ pushes_eq, busCount_le D rows hfit _ pulls_eq⟩
@@ -649,7 +673,7 @@ theorem busBound_reference : 4 * busBound reference + 100 ≤ 2 ^ 32 := by
 #guard_msgs in
 #print axioms lvReadBack
 
-/-- info: 'UniSound.Ids.limb_lv42Stack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+/-- info: 'UniSound.Ids.LvLink.limb_lv42Stack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms limb_lv42Stack
 
@@ -657,7 +681,7 @@ theorem busBound_reference : 4 * busBound reference + 100 ≤ 2 ^ 32 := by
 #guard_msgs in
 #print axioms lvConstraints
 
-/-- info: 'UniSound.Ids.slots_agree' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+/-- info: 'UniSound.Ids.LvLink.slots_agree' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms slots_agree
 
@@ -665,11 +689,11 @@ theorem busBound_reference : 4 * busBound reference + 100 ≤ 2 ^ 32 := by
 #guard_msgs in
 #print axioms lvAux
 
-/-- info: 'UniSound.Ids.limb_lv42Stack_qf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+/-- info: 'UniSound.Ids.LvLink.limb_lv42Stack_qf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms limb_lv42Stack_qf
 
-/-- info: 'UniSound.Ids.blake2sRow_lv42Stack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+/-- info: 'UniSound.Ids.LvLink.blake2sRow_lv42Stack' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms blake2sRow_lv42Stack
 
