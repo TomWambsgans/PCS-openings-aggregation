@@ -19,6 +19,7 @@ import UniSound.FsCouple
 import UniSound.FsWalk
 import UniSound.FsExtract
 import UniSound.FsVerifier
+import UniSound.FsWalkProof
 import UniSound.PendingLink
 import UniSound.CodeBase
 import UniSound.CodeTables
@@ -63,6 +64,7 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `FsSetup.lean` | **`uniSetupBridge_of_small`**: `UniSetupBridge` under `LayoutVarsSmall` (false without: a layout word's byte reads the setup's variables mod `256`). |
 | `FsExtract.lean` | **`uniExtractBridge`**: `UniExtractBridge` under `LayoutVarsSmall` (the Statement's word is mumbai's committed leaves, the two Merkle words agree, the list decoder's list holds the candidate), as `Soundness/Extract.lean`. |
 | `FsVerifier.lean` | **`uniVerifierBridge_of_walk`**: the verifier bridge `UniVerifierBridge` (`FsCouple.lean`) from the walk's two halves (`UniWalk`, `UniWalkReject`, `FsWalk.lean`) and `UniOutRoots`: the same chain on both sides, then the Statement's five `PCS_OPEN` calls as F2's early-stop openings (`Bridge.openingWith_eq_ourVerifier'`) below the composed ones, acceptance giving `uniCheck`. |
+| `FsWalkProof.lean` | **`uniWalk`**, **`uniWalkReject`**: the verifier bridge's walk (`FsWalk.lean`'s `UniWalk`, `UniWalkReject`) for every code-level link: on a stream of the main line's length the walk is the chain (`progRun`: any chain program on a stream holding its bytes is the chain's steps; the row counts, the seed, `finish`), on another length every outcome rejects (`Consumes`). |
 
 ## What is proved, what is assumed
 
@@ -191,3 +193,11 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.uniVerifierBridge_of_walk' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.uniVerifierBridge_of_walk
+
+/-- info: 'UniSound.uniWalk' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniWalk
+
+/-- info: 'UniSound.uniWalkReject' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniWalkReject
