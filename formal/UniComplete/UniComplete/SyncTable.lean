@@ -312,3 +312,15 @@ theorem atTFold_snd : ∀ (ts : List Table) (s : Array E × Array Relation × Ar
 end Tables
 
 end UniComplete
+
+/-- info: 'UniComplete.countBits_reads' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.countBits_reads
+
+/-- info: 'UniComplete.tablePart_reads' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.tablePart_reads
+
+/-- info: 'UniComplete.tablesLoop_reads' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.tablesLoop_reads

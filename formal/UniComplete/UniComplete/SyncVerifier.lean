@@ -2,6 +2,51 @@
 import UniComplete.SyncTable
 import UniComplete.DomainCount
 
+/-!
+# The verifier reads back the honest prover's stream
+
+At a pure Keccak-256 `H` (`Id`, `pure ∘ H`), `reduceWithH` run on the stream `proveStreamWith` writes from the seed
+reads every message the prover wrote and draws the same challenges, in `reduceWith`'s order:
+
+0. the six counts (`countBits_reads`: the counts, their bits `countBitsOf`, their range checks `countChecks`
+   collected); 1. `C1`'s root (`nextRoot_reads`: the halves without top limbs, `rootRead`); `α ∈ E^4`, `β`, `γ`
+   (`Steps.samples`, `Steps.sample`); 2. Flock (the hypothesis `FlockSyncs`; its end is a ring switch's,
+   `verifyDeferredH_end`); 3. `C2`'s root; `t`; 4. the values at `t` (each table's through `tablePart`, as `atTOf`
+   runs it on its own bytes: `tablesLoop_reads`; the memory's three, the bytecode's two, `T(t)`, `Q_W(t)`:
+   `tailAtT`, `atTOf_values`); 5.–7. the pure `constraintRelation`, `heapRelations` and Flock's ring term: the
+   verifier's relations and `C2`'s columns are `atTOf`'s (both unfold to the same terms once `atTOf`'s loop is a
+   fold, `atTLoop_eq`, `atTFold_snd`, and the active rows' polynomials agree, `countBits_zip_map`); 8. `ρ`, the
+   combined claims (the prover's `combined`); the batching sumcheck (the hypothesis `BatchSyncsAt`: `BatchSyncs` at
+   the prover's state when the batch starts, `frontOf`); `finish`.
+
+Headline theorems:
+
+* `reduce_steps` (main line: Flock (a′) in tower order, point claims) and `reduce_steps_omitted` (no Flock, the
+  differential test's configuration): the joint steps, with the run's ends: the openings are the prover's point
+  claims (`pointOpening`, in the combined claims' order), the matrices' claim the prover's, the roots its halves
+  (`rootRead`), the position the end of the prover's final stream, the collected values the counts' checks then the
+  batch's terminal.
+* `runWithH_syncs`, `runWithH_syncs_omitted`: `runWithH` returns `.ok R` with those `R`, its channel at the end of
+  the prover's stream (`finish` succeeded) with the prover's final sponge and challenges.
+* `runWithH_accepts`, `runWithH_accepts_omitted`: the verdict is `true` when the batch's terminal is zero (the
+  counts' checks vanish: `countChecks_zero`, from `RowsFit`).
+
+Decisions:
+
+* **`StepsE`** (the ends existential) is what the main proofs step: a `Steps` whose result, prover result, position,
+  writer and collected values are only known at the end, the property `K` accumulating the collected values. Step
+  lemmas are applied to the unfolded `reduceWithH`/`proveStreamWith` (`apply`, the loop bodies unified from the
+  goal), the intermediate values named by `set` (let-bound, so defeq to what `frontOf` computes).
+* **`frontOf`** restates the prover's steps 0–8 as a pure function of the writer, in the step lemmas' normal forms
+  (`Wr.append`, `Wr.sampled`, `samplesW`'s run, Flock's run), so that `BatchSyncsAt` names the batch's inputs and
+  the writer where it starts: the downstream algebra reads them off `frontOf`.
+* `BatchSyncs` takes the terminal as a function of the writer (`terminal : Wr → E`): its prover proves the
+  read-back, the algebra that it vanishes (`runWithH_accepts`'s `hterm`).
+* The matches the verifier and `atTOf` take on Flock's end are reduced by `fo.end_ = .ring map target`
+  (`verifyDeferredH_end`, from `FlockSyncs`' run), never by unfolding the Flock prover.
+* `reduce_steps_omitted` needs `maxRecDepth 100000` for the kernel's check (the elaborator's is fast).
+-/
+
 namespace UniComplete
 
 open UniStatement LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash
@@ -201,6 +246,9 @@ theorem pget {v : ChanM Id α} {g : Wr → WrM Id δ} {pos : ℕ} {w : Wr} {K : 
 theorem vpure {f : α → ChanM Id γ} {p : WrM Id δ} {x : α} {pos : ℕ} {w : Wr} {K : γ → δ → ℕ → Wr → List E → Prop}
     (h : StepsE (f x) p pos w K) : StepsE ((Pure.pure x : ChanM Id α) >>= f) p pos w K := h
 
+theorem ppure {v : ChanM Id α} {g : β → WrM Id δ} {x : β} {pos : ℕ} {w : Wr} {K : α → δ → ℕ → Wr → List E → Prop}
+    (h : StepsE v (g x) pos w K) : StepsE v ((Pure.pure x : WrM Id β) >>= g) pos w K := h
+
 theorem prog_eq {v : ChanM Id α} {p p' : WrM Id β} {pos : ℕ} {w : Wr} {K : α → β → ℕ → Wr → List E → Prop}
     (e : p = p') (h : StepsE v p' pos w K) : StepsE v p pos w K := by
   subst e; exact h
@@ -384,6 +432,13 @@ theorem countBits_zip_map (w : List E) : ∀ (rows heights : List ℕ), rows.len
     rw [← countBitsOf, countBits_zip_map w rows heights (by simpa using h)]
   | [], _ :: _, h => by simp at h
   | _ :: _, [], h => by simp at h
+
+/-- `batchH`'s inputs, rewritten. -/
+theorem batchH_congr (H : List UInt8 → Digest) {c1 c2 : List (Commitment × Combined)}
+    {l1 l2 : List (Commitment × StackLayout)} {b1 b2 : Option Combined} (r : Option (List E))
+    (p : Option (Flock.Pending × List E)) (hc : c1 = c2) (hl : l1 = l2) (hb : b1 = b2) :
+    batchH (m := Id) (Pure.pure ∘ H) c1 l1 b1 r p = batchH (m := Id) (Pure.pure ∘ H) c2 l2 b2 r p := by
+  subst hc hl hb; rfl
 
 /-! ## The prover's state when the batching sumcheck starts -/
 
@@ -571,10 +626,8 @@ theorem reduce_steps (H : List UInt8 → Digest) (commit : Commitment → ℕ �
     rfl
   apply StepsE.bind_veq (h1 := hB.steps)
   case e =>
-    congr 1
-    · congr 1
-      funext c
-      congr 2
+    refine batchH_congr H _ _ ?_ ?_ (by simp [combine])
+    · refine congrArg (fun rels ↦ commitments.filterMap fun c ↦ (combine rels c rho).map (c, ·)) ?_
       rw [ha, countBits_zip_map _ _ _ hlen]
       unfold atTOf
       dsimp only
@@ -582,7 +635,7 @@ theorem reduce_steps (H : List UInt8 → Digest) (commit : Commitment → ℕ �
       case hb => intro _ _; rfl
       rw [pure_bind, hend, atTFold_snd]
       rfl
-    · congr 1
+    · refine congrArg (layouts tr.shape) ?_
       rw [ha, countBits_zip_map _ _ _ hlen]
       unfold atTOf
       dsimp only
@@ -602,4 +655,343 @@ theorem reduce_steps (H : List UInt8 → Digest) (commit : Commitment → ℕ �
   · simp only [List.nil_append, List.append_nil]
     rfl
 
+set_option maxHeartbeats 4000000 in
+set_option maxRecDepth 100000 in
+theorem reduce_steps_omitted (H : List UInt8 → Digest) (commit : Commitment → ℕ → Array K → Id Committed)
+    (flock : FlockProver Id) (tr : Trace) (seed : Digest) (hvalid : tr.shape.validate false = true)
+    (hlen : tr.rows.length = tr.shape.heights.length) (h32 : ∀ n ∈ tr.rows, n < 2 ^ 32)
+    (terminal : Wr → E) (hbatch : BatchSyncsAt H commit flock .omitted tr seed terminal) :
+    StepsE (reduceWithH (m := Id) (Pure.pure ∘ H) tr.shape (publicWordsOf tr.publicInput) .omitted .point)
+      (proveStreamWith (m := Id) (Pure.pure ∘ H) commit flock .omitted tr) 0 (Wr.start seed)
+      (fun R out posF wF zs ↦ posF = wF.stream.size ∧ out.stream = wF.stream ∧
+        R.openings = out.claims.map pointOpening ∧ R.matrices = out.matrices ∧
+        R.roots = (rootRead out.c1.2.halves, rootRead out.c2.2.halves) ∧
+        zs = countChecks tr.rows tr.shape.heights ++
+          [terminal (frontOf H commit flock .omitted tr (Wr.start seed)).2]) := by
+  have hv' : (!tr.shape.validate (Blake2s.omitted != Blake2s.omitted)) = false := by
+    rw [show (Blake2s.omitted != Blake2s.omitted) = false by decide, hvalid]; rfl
+  unfold reduceWithH proveStreamWith
+  simp only [hv', Bool.false_eq_true, ↓reduceIte]
+  apply StepsE.pbind (rows_writes tr.rows _ (fun _ _ ↦ rfl) _)
+  apply StepsE.plift
+  apply StepsE.pbind (sendRoot_writes _ _)
+  apply StepsE.vread (P := []) (Q := rootWord (commit .c1 (c1Layout tr.shape).vars (c1Stack tr)).halves)
+    (countBits_reads hlen h32)
+  · simp [Wr.start]
+  apply StepsE.pos_start (pos0 := (tr.rows.flatMap fun n ↦ integerWire n 4).length) (by simp)
+  apply StepsE.vread (Q := []) (nextRoot_reads (commit .c1 (c1Layout tr.shape).vars (c1Stack tr)).halves)
+  · simp [Wr.start]
+  apply StepsE.bind_pos (h1 := Steps.samples H 4 _)
+  case e => simp [Wr.start]
+  set w2 := ((Wr.start seed).append (tr.rows.flatMap fun n ↦ integerWire n 4)).append
+    (rootWord (commit .c1 (c1Layout tr.shape).vars (c1Stack tr)).halves) with hw2
+  set alphas := ((samplesW (m := Id) (Pure.pure ∘ H) 4).run w2).1 with halphas
+  set w3 := ((samplesW (m := Id) (Pure.pure ∘ H) 4).run w2).2 with hw3
+  apply StepsE.bind_pos (h1 := Steps.sample H w3)
+  case e => rw [hw3, samplesW_stream]
+  set beta := (Wr.sampled H w3).1 with hbeta
+  set w4 := (Wr.sampled H w3).2 with hw4
+  apply StepsE.bind_pos (h1 := Steps.sample H w4)
+  case e => rfl
+  set gamma := (Wr.sampled H w4).1 with hgamma
+  set w5 := (Wr.sampled H w4).2 with hw5
+  apply StepsE.vpure
+  apply StepsE.ppure
+  apply StepsE.plift
+  apply StepsE.pbind (sendRoot_writes _ _)
+  apply StepsE.vreadEnd (nextRoot_reads _)
+  set c2 := c2DataOf tr (eqKernel alphas) beta gamma with hc2
+  set committed2 := commit .c2 (((layoutsOf tr.shape).lookup .c2).getD default).vars c2.stack with hcm2
+  apply StepsE.bind_pos (h1 := Steps.sample H _)
+  case e => simp
+  set w7 := w5.append (rootWord committed2.halves) with hw7
+  set t := (Wr.sampled H w7).1 with ht
+  set w8 := (Wr.sampled H w7).2 with hw8
+  set a := atTOf tr c2 alphas beta gamma t none with ha
+  have hvals := atTOf_values tr c2 alphas beta t gamma none
+  apply StepsE.pbind (sendScalars_writes _ _)
+  apply StepsE.vreadD (R := (tailAtT tr c2 alphas beta t).flatMap scalarWire)
+    (tablesLoop_reads tr (eqKernel alphas) beta (wOf tr t) _ ?hb tables (#[], #[]))
+  case hb => intro _ _; rfl
+  case hpos => simp [hw8, ha, hvals]
+  case hd => simp [hw8, ha, hvals, List.flatMap_append]
+  intro hd0
+  unfold tailAtT at hd0
+  apply StepsE.vscalarD hd0; intro hd1
+  apply StepsE.vscalarD hd1; intro hd2
+  apply StepsE.vscalarD hd2; intro hd3
+  apply StepsE.vscalarD hd3; intro hd4
+  apply StepsE.vscalarD hd4; intro hd5
+  apply StepsE.vscalarD hd5; intro hd6
+  apply StepsE.vscalarD hd6; intro _
+  dsimp only
+  apply StepsE.bind_pos (h1 := Steps.sample H _)
+  case e => simp [hw8, ha, hvals, tailAtT, List.flatMap_append]; omega
+  set w9 := w8.append (a.values.flatMap scalarWire) with hw9
+  set rho := (Wr.sampled H w9).1 with hrho
+  set w10 := (Wr.sampled H w9).2 with hw10
+  have hpend : a.pending = none := by rw [ha, atTOf_pending]; rfl
+  have hring : a.ringMap = none := atTOf_ringMap_none tr c2 alphas beta t gamma
+  simp only [hpend, hring]
+  have hB := hbatch w10
+  generalize hF : (frontOf H commit flock .omitted tr (Wr.start seed)).1 = F at hB
+  have hFp : F.atT.pending = none := by rw [← hF]; exact hpend
+  have hFr : F.atT.ringMap = none := by rw [← hF]; exact hring
+  have hFc : F.combined = commitments.filterMap (fun c ↦ (combine a.relations c rho).map (c, ·)) := by
+    rw [← hF]; rfl
+  have hFl : F.stackLayouts = layouts tr.shape a.c2Columns := by rw [← hF]; rfl
+  have hFs : F.stackOf = stacksOf (c1Stack tr) c2.stack (setupStackOf tr) := by rw [← hF]; rfl
+  have hFt : F.flockOut.map (·.tables) = none := by rw [← hF]; rfl
+  rw [hFp, hFr, hFc, hFl, hFs, hFt] at hB
+  apply StepsE.prog_eq (p' := batchProver (Pure.pure ∘ H)
+    (commitments.filterMap fun c ↦ (combine a.relations c rho).map (c, ·)) (layouts tr.shape a.c2Columns)
+    (stacksOf (c1Stack tr) c2.stack (setupStackOf tr)) none none none >>=
+      fun cm ↦ (get : WrM Id Wr) >>= fun c ↦ Pure.pure ⟨c.stream, (c1Stack tr, commit .c1 (c1Layout tr.shape).vars
+        (c1Stack tr)), (c2.stack, committed2), setupStackOf tr, cm.1, cm.2,
+        commitments.filterMap fun c ↦ (combine a.relations c rho).map (c, ·), c2.heapVals⟩)
+  case e =>
+    simp only [batchProver, bind_assoc, pure_bind]
+    rfl
+  apply StepsE.bind_veq (h1 := hB.steps)
+  case e =>
+    refine batchH_congr H _ _ ?_ ?_ (by simp [combine])
+    · refine congrArg (fun rels ↦ commitments.filterMap fun c ↦ (combine rels c rho).map (c, ·)) ?_
+      rw [ha, countBits_zip_map _ _ _ hlen]
+      unfold atTOf
+      dsimp only
+      rw [atTLoop_eq tr (eqKernel alphas) beta (wOf tr t) _ ?hb]
+      case hb => intro _ _; rfl
+      rw [pure_bind, atTFold_snd]
+      rfl
+    · refine congrArg (layouts tr.shape) ?_
+      rw [ha, countBits_zip_map _ _ _ hlen]
+      unfold atTOf
+      dsimp only
+      rw [atTLoop_eq tr (eqKernel alphas) beta (wOf tr t) _ ?hb]
+      case hb => intro _ _; rfl
+      rw [pure_bind, atTFold_snd]
+      rfl
+  apply StepsE.pget
+  apply StepsE.vite
+  apply StepsE.pure
+  refine ⟨rfl, rfl, ?_, ?_, ?_, ?_⟩
+  · split <;> rfl
+  · split
+    · rfl
+    · exact (Option.not_isSome_iff_eq_none.mp (by assumption)).symm
+  · split <;> rfl
+  · simp only [List.nil_append, List.append_nil]
+    rfl
+
+
+/-! ## The counts' checks are zero -/
+
+/-- **The counts' range checks vanish** for counts `c ≤ 2^r`, `r ≤ 31` (the domain's `intBits_high`,
+`intBits_range`). -/
+theorem countChecks_zero : ∀ (rows heights : List ℕ), (∀ p ∈ rows.zip heights, p.1 ≤ 2 ^ p.2 ∧ p.2 ≤ 31) →
+    ∀ z ∈ countChecks rows heights, z = 0
+  | [], _, _ => by simp [countChecks]
+  | _ :: _, [], _ => by simp [countChecks]
+  | n :: rows, r :: heights, h => by
+    intro z hz
+    simp only [countChecks, List.zipWith_cons_cons, List.flatten_cons, List.mem_append, List.mem_cons,
+      List.not_mem_nil, or_false] at hz
+    have h0 := h (n, r) (by simp)
+    rcases hz with (rfl | rfl) | hz
+    · exact Domain.intBits_high h0.1
+    · exact Domain.intBits_range h0.1 h0.2
+    · exact countChecks_zero rows heights (fun p hp ↦ h p (List.mem_cons_of_mem _ hp)) z hz
+
+/-- Row counts that fit a shape of six heights, each at most `31` (`Shape.validate`, with or without Flock): each
+`c ≤ 2^r`, `r ≤ 31`. -/
+theorem rowsFit_zip {s : Shape} {rows : List ℕ} {b : Bool} (hl : s.heights.length = 6) (hv : s.validate b = true)
+    (hf : s.RowsFit rows) : ∀ p ∈ rows.zip s.heights, p.1 ≤ 2 ^ p.2 ∧ p.2 ≤ 31 := by
+  intro p hp
+  obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hp
+  simp only [List.length_zip] at hi
+  have hi1 : i < rows.length := by omega
+  have hi2 : i < s.heights.length := by omega
+  have h6 : i < 6 := by rw [hf.1] at hi1; exact hi1
+  have hfit := (hf.2 i h6).2
+  rw [List.getD_eq_getElem _ _ hi1, List.getD_eq_getElem _ _ hi2] at hfit
+  simp only [Shape.validate, Bool.not_eq_true', Bool.or_eq_false_iff, List.any_eq_false, decide_eq_false_iff_not,
+    not_lt] at hv
+  refine ⟨by simpa using hfit, ?_⟩
+  have := hv.1.2 (s.heights[i]) (List.getElem_mem hi2)
+  simpa using this
+
+/-- Counts that fit are below `2^32`. -/
+theorem rows_lt_32 {s : Shape} {rows : List ℕ} {b : Bool} (hl6 : s.heights.length = 6) (hv : s.validate b = true)
+    (hf : s.RowsFit rows) : ∀ n ∈ rows, n < 2 ^ 32 := by
+  intro n hn
+  obtain ⟨i, hi, rfl⟩ := List.getElem_of_mem hn
+  have hl : rows.length = s.heights.length := by rw [hf.1, hl6]
+  have hz := rowsFit_zip hl6 hv hf (rows[i], s.heights[i]'(hl ▸ hi)) (by
+    rw [List.mem_iff_getElem]
+    exact ⟨i, by simp only [List.length_zip]; omega, by simp⟩)
+  calc rows[i] ≤ 2 ^ s.heights[i]'(hl ▸ hi) := hz.1
+    _ ≤ 2 ^ 31 := Nat.pow_le_pow_right (by norm_num) hz.2
+    _ < 2 ^ 32 := by norm_num
+
+/-! ## The run on calldata -/
+
+/-- The seed of the contract's IV and the public input, at `H`. -/
+def seedAt (H : List UInt8 → Digest) (iv publicInput : List UInt8) : Digest := H (name ++ iv ++ publicInput)
+
+/-- **The honest prover's run** from the seed (`proveStreamWith` at `pure ∘ H`): its output and its final writer. -/
+def proverRun (H : List UInt8 → Digest) (commit : Commitment → ℕ → Array K → Id Committed) (flock : FlockProver Id)
+    (blake2s : Blake2s) (tr : Trace) (iv : List UInt8) : CoreOut × Wr :=
+  (proveStreamWith (m := Id) (Pure.pure ∘ H) commit flock blake2s tr).run (Wr.start (seedAt H iv tr.publicInput))
+
+/-- `runWithH` at `pure ∘ H`: the walk and `finish` from the seed. -/
+theorem runWithH_eq (H : List UInt8 → Digest) (shape : Shape) (iv publicInput : List UInt8) (stream : Array UInt8)
+    (blake2s : Blake2s) (mode : ClaimsMode) :
+    runWithH (m := Id) (Pure.pure ∘ H) shape iv publicInput stream blake2s mode =
+      ⟨((reduceWithH (m := Id) (Pure.pure ∘ H) shape (publicWordsOf publicInput) blake2s mode >>= fun r ↦
+          finish (m := Id) >>= fun _ ↦ Pure.pure r).run.run (Chan.start (seedAt H iv publicInput) stream)).1,
+        ((reduceWithH (m := Id) (Pure.pure ∘ H) shape (publicWordsOf publicInput) blake2s mode >>= fun r ↦
+          finish (m := Id) >>= fun _ ↦ Pure.pure r).run.run (Chan.start (seedAt H iv publicInput) stream)).2⟩ :=
+  rfl
+
+/-- The walk then `finish`, from steps ending at the end of the data. -/
+theorem walk_finish {β : Type} {v : ChanM Id Reduced} {p : WrM Id β} {seed : Digest} {R : Reduced} {b : β}
+    {posF : ℕ} {wF : Wr} {zs : List E} (h : Steps v p 0 (Wr.start seed) R b posF wF zs)
+    (hpos : posF = wF.stream.size) :
+    (v >>= fun r ↦ finish (m := Id) >>= fun _ ↦ Pure.pure r).run.run (Chan.start seed wF.stream) =
+      (.ok R, chanAt wF.stream wF.stream.size wF zs.toArray) := by
+  rw [chan_run_bind, h.run_start, hpos]
+  dsimp only
+  rw [chan_run_bind, finish_chanAt]
+  rfl
+
+/-- **The verifier on the honest prover's stream, main line** (Flock (a′) in tower order, `PCS_OPEN`'s point
+claims), at a pure Keccak-256 `H`, from a valid shape and row counts that fit, any commitment function, Flock's prover
+synchronising (`FlockSyncs`) and the batching sumcheck's (`BatchSyncsAt`, its terminal `terminal`): the run returns
+`R`, its openings the prover's point claims (in the combined claims' order), its matrices' claim the prover's, its
+roots the prover's halves (`rootRead`: without their top limbs, none for a real root); the channel is at the end of the
+stream (so `finish` succeeded), synchronised with the prover's final writer, and has collected the counts' checks then
+the batch's terminal at the writer where the batch starts. -/
+theorem runWithH_syncs (H : List UInt8 → Digest) (commit : Commitment → ℕ → Array K → Id Committed)
+    (flock : FlockProver Id) (tr : Trace) (iv : List UInt8) (hvalid : tr.shape.Valid)
+    (hfit : tr.shape.RowsFit tr.rows)
+    (hflock : FlockSyncs H flock (blake2sR1csLogSize + tr.shape.heights.getD opBlake2s 0) flockMain tr.qflock)
+    (terminal : Wr → E)
+    (hbatch : BatchSyncsAt H commit flock (.flock flockMain) tr (seedAt H iv tr.publicInput) terminal) :
+    ∃ R : Reduced,
+      runWithH (m := Id) (Pure.pure ∘ H) tr.shape iv tr.publicInput
+          (proverRun H commit flock (.flock flockMain) tr iv).1.stream (.flock flockMain) .point =
+        ⟨.ok R, chanAt (proverRun H commit flock (.flock flockMain) tr iv).1.stream
+          (proverRun H commit flock (.flock flockMain) tr iv).1.stream.size
+          (proverRun H commit flock (.flock flockMain) tr iv).2
+          (countChecks tr.rows tr.shape.heights ++
+            [terminal (frontOf H commit flock (.flock flockMain) tr
+              (Wr.start (seedAt H iv tr.publicInput))).2]).toArray⟩ ∧
+      R.openings = (proverRun H commit flock (.flock flockMain) tr iv).1.claims.map pointOpening ∧
+      R.matrices = (proverRun H commit flock (.flock flockMain) tr iv).1.matrices ∧
+      R.roots = (rootRead (proverRun H commit flock (.flock flockMain) tr iv).1.c1.2.halves,
+        rootRead (proverRun H commit flock (.flock flockMain) tr iv).1.c2.2.halves) := by
+  have hlen : tr.rows.length = tr.shape.heights.length := by rw [hfit.1, hvalid.1]
+  obtain ⟨R, out, posF, wF, zs, hs, hpos, hstr, hop, hmat, hroot, hzs⟩ :=
+    reduce_steps H commit flock tr _ hvalid.2 hlen (rows_lt_32 hvalid.1 hvalid.2 hfit) hflock terminal hbatch
+  have hP : proverRun H commit flock (.flock flockMain) tr iv = (out, wF) := hs.1
+  rw [hP]
+  refine ⟨R, ?_, hop, hmat, hroot⟩
+  dsimp only
+  rw [hstr, runWithH_eq, walk_finish hs hpos, hzs]
+
+/-- **The main line accepts** when the batch's terminal vanishes: no error, every collected value zero. -/
+theorem runWithH_accepts (H : List UInt8 → Digest) (commit : Commitment → ℕ → Array K → Id Committed)
+    (flock : FlockProver Id) (tr : Trace) (iv : List UInt8) (hvalid : tr.shape.Valid)
+    (hfit : tr.shape.RowsFit tr.rows)
+    (hflock : FlockSyncs H flock (blake2sR1csLogSize + tr.shape.heights.getD opBlake2s 0) flockMain tr.qflock)
+    (terminal : Wr → E)
+    (hbatch : BatchSyncsAt H commit flock (.flock flockMain) tr (seedAt H iv tr.publicInput) terminal)
+    (hterm : terminal (frontOf H commit flock (.flock flockMain) tr (Wr.start (seedAt H iv tr.publicInput))).2 = 0) :
+    (runWithH (m := Id) (Pure.pure ∘ H) tr.shape iv tr.publicInput
+      (proverRun H commit flock (.flock flockMain) tr iv).1.stream (.flock flockMain) .point).accepts = true := by
+  obtain ⟨R, hrun, -⟩ := runWithH_syncs H commit flock tr iv hvalid hfit hflock terminal hbatch
+  rw [hrun]
+  simp only [Outcome.accepts, chanAt, Bool.true_and, Array.all_eq_true', beq_iff_eq]
+  intro z hz
+  rw [List.mem_toArray, List.mem_append, List.mem_singleton] at hz
+  rcases hz with hz | rfl
+  · exact countChecks_zero _ _ (rowsFit_zip hvalid.1 hvalid.2 hfit) z hz
+  · exact hterm
+
+/-- **The verifier on the honest prover's stream, without Flock** (`Blake2s.omitted`, point claims: the
+differential test's configuration): as `runWithH_syncs`, no Flock prover, no pending matrices (`R.matrices` the
+prover's, `none`). -/
+theorem runWithH_syncs_omitted (H : List UInt8 → Digest) (commit : Commitment → ℕ → Array K → Id Committed)
+    (flock : FlockProver Id) (tr : Trace) (iv : List UInt8) (hl6 : tr.shape.heights.length = 6)
+    (hvalid : tr.shape.validate false = true) (hfit : tr.shape.RowsFit tr.rows) (terminal : Wr → E)
+    (hbatch : BatchSyncsAt H commit flock .omitted tr (seedAt H iv tr.publicInput) terminal) :
+    ∃ R : Reduced,
+      runWithH (m := Id) (Pure.pure ∘ H) tr.shape iv tr.publicInput
+          (proverRun H commit flock .omitted tr iv).1.stream .omitted .point =
+        ⟨.ok R, chanAt (proverRun H commit flock .omitted tr iv).1.stream
+          (proverRun H commit flock .omitted tr iv).1.stream.size (proverRun H commit flock .omitted tr iv).2
+          (countChecks tr.rows tr.shape.heights ++
+            [terminal (frontOf H commit flock .omitted tr (Wr.start (seedAt H iv tr.publicInput))).2]).toArray⟩ ∧
+      R.openings = (proverRun H commit flock .omitted tr iv).1.claims.map pointOpening ∧
+      R.matrices = (proverRun H commit flock .omitted tr iv).1.matrices ∧
+      R.roots = (rootRead (proverRun H commit flock .omitted tr iv).1.c1.2.halves,
+        rootRead (proverRun H commit flock .omitted tr iv).1.c2.2.halves) := by
+  have hlen : tr.rows.length = tr.shape.heights.length := by rw [hfit.1, hl6]
+  obtain ⟨R, out, posF, wF, zs, hs, hpos, hstr, hop, hmat, hroot, hzs⟩ :=
+    reduce_steps_omitted H commit flock tr _ hvalid hlen (rows_lt_32 hl6 hvalid hfit) terminal hbatch
+  have hP : proverRun H commit flock .omitted tr iv = (out, wF) := hs.1
+  rw [hP]
+  refine ⟨R, ?_, hop, hmat, hroot⟩
+  dsimp only
+  rw [hstr, runWithH_eq, walk_finish hs hpos, hzs]
+
+/-- **Without Flock, the run accepts** when the batch's terminal vanishes. -/
+theorem runWithH_accepts_omitted (H : List UInt8 → Digest) (commit : Commitment → ℕ → Array K → Id Committed)
+    (flock : FlockProver Id) (tr : Trace) (iv : List UInt8) (hl6 : tr.shape.heights.length = 6)
+    (hvalid : tr.shape.validate false = true) (hfit : tr.shape.RowsFit tr.rows) (terminal : Wr → E)
+    (hbatch : BatchSyncsAt H commit flock .omitted tr (seedAt H iv tr.publicInput) terminal)
+    (hterm : terminal (frontOf H commit flock .omitted tr (Wr.start (seedAt H iv tr.publicInput))).2 = 0) :
+    (runWithH (m := Id) (Pure.pure ∘ H) tr.shape iv tr.publicInput
+      (proverRun H commit flock .omitted tr iv).1.stream .omitted .point).accepts = true := by
+  obtain ⟨R, hrun, -⟩ := runWithH_syncs_omitted H commit flock tr iv hl6 hvalid hfit terminal hbatch
+  rw [hrun]
+  simp only [Outcome.accepts, chanAt, Bool.true_and, Array.all_eq_true', beq_iff_eq]
+  intro z hz
+  rw [List.mem_toArray, List.mem_append, List.mem_singleton] at hz
+  rcases hz with hz | rfl
+  · exact countChecks_zero _ _ (rowsFit_zip hl6 hvalid hfit) z hz
+  · exact hterm
+
 end UniComplete
+
+/-- info: 'UniComplete.reduce_steps' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.reduce_steps
+
+/-- info: 'UniComplete.reduce_steps_omitted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.reduce_steps_omitted
+
+/-- info: 'UniComplete.runWithH_syncs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.runWithH_syncs
+
+/-- info: 'UniComplete.runWithH_accepts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.runWithH_accepts
+
+/-- info: 'UniComplete.runWithH_syncs_omitted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.runWithH_syncs_omitted
+
+/-- info: 'UniComplete.runWithH_accepts_omitted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.runWithH_accepts_omitted
+
+/-- info: 'UniComplete.countChecks_zero' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.countChecks_zero
+
+/-- info: 'UniComplete.verifyDeferredH_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.verifyDeferredH_end
