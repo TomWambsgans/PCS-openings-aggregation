@@ -5,6 +5,7 @@ import FlockSoundUni.PendingShape
 import UniSound.FsWalk
 import UniSound.FsSetup
 import UniSound.FsExtract
+import FlockSoundUni.GameNumbers
 
 /-!
 # The end theorem with the Fiat–Shamir layer reduced to its bridge facts
@@ -56,8 +57,37 @@ theorem uniKnowledgeSoundness_bridges {D : Deployment} (κ : ℕ)
       (uniExtractBridge D (flockSoundInstance κ) J.nV J.V hs hsmall)) hB hFl hdeg
     hrel
 
+/-- **Knowledge soundness at the reference deployment** (`reference`'s shape, leanVM's program IV):
+`uniKnowledgeSoundness_bridges` at `κ = 18` with the deployment's numbers (`GameNumbers.lean`:
+`hκ_reference`, `uniShapes_reference`, `layoutVarsSmall_reference`, `uniIv_of`, `hnQ_flock'`,
+`hnv_flock'`, `hFl_flock`) and the setup's and extractor's bridges in place. What is left: the bus
+model and the identity model's rest (`B`, `J`, `hB`, `hdeg`, `hrel`, the batch `hprod`, `htarget`),
+`WeightMle`, and the verifier's bridge `UniVerifierBridge`. -/
+theorem uniKnowledgeSoundness_reference_game {D : Deployment} (hD : D.shape = reference)
+    (hIv : D.programIv = programIv) (B : BusModel D 18) (J : UniIdsRest D (flockSoundInstance 18) B)
+    (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
+    (hprod : ∀ s c1 ch fd c2 t vals rho lam,
+      J.prod s c1 ch fd c2 t vals rho lam = batchProd D (flockSoundInstance 18) s c1 ch fd c2 t vals rho lam)
+    (htarget : ∀ s c1 ch fd c2 t vals rho lam,
+      J.target s c1 ch fd c2 t vals rho lam = batchTargetOf D (flockSoundInstance 18) s ch fd t vals rho lam)
+    (hW : WeightMle D (flockSoundInstance 18))
+    (hVer : UniVerifierBridge D (flockSoundInstance 18) J.nV J.V
+      (uniCodeAt D (flockSoundInstance 18) (hκ_reference D hD) J.nV J.V hnV hV)
+      (uniShapes_reference D hD))
+    (hB : 4 * B.N + B.ncv ≤ 2 ^ 32) (hdeg : J.degSum ≤ 2 ^ 32) (hrel : J.nRel + 2 ≤ 2 ^ 32) :
+    UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
+      ∀ Q ≤ 2 ^ 64,
+        uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
+  uniKnowledgeSoundness_reference hD hIv B J hnV hV hprod htarget hW
+    (uniSetupBridge_of_small D _ (layoutVarsSmall_reference D hD)) hVer
+    (uniExtractBridge D _ J.nV J.V _ (layoutVarsSmall_reference D hD)) hB hdeg hrel
+
 end FlockSound.Uni
 
 /-- info: 'FlockSound.Uni.uniKnowledgeSoundness_bridges' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms FlockSound.Uni.uniKnowledgeSoundness_bridges
+
+/-- info: 'FlockSound.Uni.uniKnowledgeSoundness_reference_game' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.uniKnowledgeSoundness_reference_game
