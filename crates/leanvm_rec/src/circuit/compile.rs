@@ -20,6 +20,7 @@
 use std::collections::BTreeMap;
 
 use leanvm_flock_gas::evm::codegen::Word;
+use leanvm_flock_gas::evm::machine::root_word;
 use leanvm_flock_gas::evm::record::{Graph, Node, Sym, record};
 use leanvm_flock_gas::field::{E, K};
 use leanvm_flock_gas::ring_tower;
@@ -58,9 +59,11 @@ pub fn expand(graph: &Graph) -> (Graph, Vec<u32>) {
     (expanded, map)
 }
 
-/// What the compiler needs besides the graph: the transcript's IV (the contract's), the public input and the stream.
+/// What the compiler needs besides the graph: the program's IV (leanVM's digest of the bytecode and the R1CS), from
+/// which the contract's transcript IV is derived with `recorded` (`Recorded::iv`: its shape, setup roots and
+/// variant; REVIEW-REC.md L2), the public input and the stream.
 pub struct Inputs<'a> {
-    pub iv: [u8; 32],
+    pub program_iv: [u8; 32],
     pub public: [u8; 32],
     pub stream: &'a [u8],
 }
@@ -68,6 +71,8 @@ pub struct Inputs<'a> {
 /// The compiled circuit with its witness, and what the tests compare.
 pub struct Compiled {
     pub finished: Finished,
+    /// π1's contract IV, which the circuit's seed hashes (κ constants): `recorded.iv(program_iv)`.
+    pub pi1_iv: [u8; 32],
     pub public: PublicInputs,
     /// The expanded graph, the original nodes' images in it, and each live element node's limbs.
     pub expanded: Graph,
@@ -88,6 +93,11 @@ fn be_bits(bit: &dyn Fn(usize) -> Value, first: usize, nbytes: usize) -> Vec<(us
     (0..8 * nbytes)
         .map(|e| (e, bit(8 * (first + nbytes - 1 - e / 8) + e % 8)))
         .collect()
+}
+
+/// The values of a little-endian integer of `nbytes` bytes starting at byte `first`, as `(exponent, bit)`.
+fn le_bits(bit: &dyn Fn(usize) -> Value, first: usize, nbytes: usize) -> Vec<(usize, Value)> {
+    (0..8 * nbytes).map(|e| (e, bit(8 * (first + e / 8) + e % 8))).collect()
 }
 
 /// `π2`'s two layouts (SPEC-REC.md §2.4, §2.6).
@@ -125,6 +135,7 @@ pub fn compile<P: Permutation>(
     inputs: &Inputs,
 ) -> Compiled {
     let (g, map) = expand(&recorded.graph);
+    let pi1_iv = recorded.iv(&inputs.program_iv);
     let stream = inputs.stream;
     assert_eq!(stream.len(), recorded.stream_len);
     let call_words: Vec<Vec<Word>> = calls(recorded);
@@ -211,7 +222,7 @@ pub fn compile<P: Permutation>(
         match *node {
             Node::Seed if live[id] => {
                 let mut message = constant_bits(&NAME);
-                message.extend(constant_bits(&inputs.iv));
+                message.extend(constant_bits(&pi1_iv));
                 message.extend(public_copy.iter().map(|&c| Bit::V(c)));
                 digests.insert(id as u32, sponge.keccak256(&mut b, &message));
             }
@@ -377,23 +388,29 @@ pub fn compile<P: Permutation>(
     ports.port(&mut b, &statement_limb, Source::Statement);
     let mut roots: Vec<[u8; 32]> = Vec::new();
     let mut root_of: BTreeMap<usize, u32> = BTreeMap::new();
+    // A root is public as `PCS_OPEN`'s root word (REVIEW-REC.md M1: one ABI for the eight calls), each 16-byte half
+    // of the stream's bytes reversed: its limbs `L_l` (the word's big-endian 8-byte words, the lowest first) are the
+    // little-endian words of the stream's bytes 16..24, 24..32, 0..8, 8..16.
     for &at in &recorded.roots_at {
         assert!(hashed[at..at + 32].iter().all(|&h| h), "a root is hashed");
-        let root_limbs: Vec<Value> = (0..4)
-            .map(|l| packer.pack(&mut b, &mut sponge.constants, &be_bits(&stream_bit, at + 24 - 8 * l, 8)))
+        let root_limbs: Vec<Value> = [16, 24, 0, 8]
+            .into_iter()
+            .map(|first| packer.pack(&mut b, &mut sponge.constants, &le_bits(&stream_bit, at + first, 8)))
             .collect();
         packings += 1;
         root_of.insert(at, roots.len() as u32);
         ports.port(&mut b, &root_limbs, Source::Root(roots.len() as u32));
-        roots.push(stream[at..at + 32].try_into().expect("32 bytes"));
+        roots.push(root_word(&stream[at..at + 32].try_into().expect("32 bytes")));
     }
     let mut element_of: BTreeMap<u32, u32> = BTreeMap::new();
     let mut element_nodes: Vec<u32> = Vec::new();
     let mut circuit_calls: Vec<Vec<CallWord>> = Vec::new();
     for call in &call_words {
         let mut words = Vec::new();
-        for w in call {
+        for (k, w) in call.iter().enumerate() {
             words.push(match *w {
+                // A setup root (word 0): `PCS_OPEN`'s root word (M1).
+                Word::Const(bytes) if k == 0 => CallWord::Const(root_word(&bytes)),
                 Word::Const(bytes) => CallWord::Const(bytes),
                 Word::Stream(at) => CallWord::Root(root_of[&at]),
                 Word::Node(id) => match g.nodes[id as usize] {
@@ -438,6 +455,7 @@ pub fn compile<P: Permutation>(
             elements,
         },
         finished,
+        pi1_iv,
         expanded: g,
         map,
         limbs,

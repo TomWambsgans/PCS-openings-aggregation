@@ -7,6 +7,7 @@ circuit, SPEC-REC.md §10) merged. Code in `crates/leanvm_rec/src/pi2/`. No form
 Every number below is **measured** on h1 (AMD Ryzen 7 PRO 8700GE, 8 cores, 16 threads), unless marked modelled.
 
 ```sh
+export RUSTFLAGS="-C target-cpu=native"   # the field's AVX-512/GFNI paths: without it the real prover takes 547 s, not 8.4 s
 cargo test --release -p leanvm_rec --lib pi2                                                  # indicators, inverse, WHIR queries
 cargo test --release -p leanvm_rec --test pi2 -- --nocapture                                   # synthetic circuits, contract parity
 cargo test --release -p leanvm_rec --test pi2_real -- --ignored --nocapture real_gas            # the real circuits' gas
@@ -168,7 +169,11 @@ and the setup's (one; its root a constant). Layout words: π1's as the vector's;
    identity's pull term carries `1 + 1_S`, `1_S` the sum of the port pairs' indicators, which the verifier has computed
    anyway; the holes' closed-form sums (one recursion and one fraction a coset) are not needed. A hole's value is then
    unconstrained: `adapt` checks that no formula of a port's region reads a hole (the circuit compiler never places a
-   value there), and panics otherwise. Same degree, same soundness argument.
+   value there), and panics otherwise; since the review (L1) `Circuit::validate` is asserted on the setup path
+   (`Spec::of`, `Setup::new`, `contract::Instance::new`) too. Same degree, same soundness argument, with one case to
+   account for (REVIEW-REC.md N1): at a hole the identity reads `d_pull (h d_push + 1) = 0`, so if
+   `α + w(x) + βx = 0` there, `h(x)` is free, and so is `Σ h`. `w` at a hole is committed in `W` before `α, β`: this is
+   the vanishing-denominator event, at most `67 L_W / 2^192`, inside SPEC-REC §5's `4N/2^192` term.
 2. **The ports' fingerprints are not `Σ γ^l L_l`.** Three limbs (an element, a zero check) are `L_0 + Y L_1 + Y² L_2`: the
    element itself, so the verifier's term is `α + x + βτ` with no product. Four limbs (the statement, a root) are
    `(L_0 + Y L_1) + γ (L_2 + Y L_3)`: a root's two 16-byte halves as `next_root` reads them, one product. Both bind the
@@ -219,5 +224,40 @@ The rounds are SPEC-REC §5's, with:
 - `t`: the identity, degree below `5N`, over `W`'s and `Q`'s lists (140.6 bits after the union, §5);
 - `ρ`: `W`'s fold (degree `2^r - 1`), `Q`'s combination of `h(t)` and `q(t)` (degree 1), the setup (degree 1).
 
-What remains (SPEC-REC §7 R3 step 4): an adversarial review of the PIOP (the pull-less holes, the ports' fingerprints,
-`h(t)` sent), then Lean for the virtual-push copy argument and the composition.
+The review (R3 step 4, `REVIEW-REC.md`) found no attack; its fixes are §8. What remains: Lean for the virtual-push copy
+argument and the composition.
+
+## 8. The review's fixes (`REVIEW-REC.md`, branch `leanvm-rec-opt`)
+
+- **M1, one `PCS_OPEN` ABI for the eight calls.** Every call is `machine.rs`'s `root word, layout word, k, k × (point,
+  value)`:
+  - every root word is `PCS_OPEN`'s, `s_0 · 2^128 + s_1` (`machine::root_word`: each 16-byte half of the hash
+    reversed). π2's `W`, `Q` and setup roots were already; π1's `C1`, `C2` are now in calldata so (the circuit's root
+    ports pack the stream's root bytes in that order, `circuit::compile`), and π1's setup roots `F`, `A0`, `B0` are
+    constants so;
+  - every layout word names its stack: π1's are `leanvm_univariate::contract::layout_word`'s (shape, code, variables,
+    words placed); π2's are now `prover::layout_word`'s, in the same format (the tag `"pi2"`, `log_n`, the codes
+    `0x5601` `W`, `0x5602` `Q`, `0x5603` setup, the variables, the words placed), instead of `quotient::opening::
+    layout_id`'s hash. π2's IV hashes these words (`"leanvm-rec-iv-v2"`);
+  - a precompile is a registry keyed by the layout word (`contract::registry`): π1's five layouts are opened by
+    `leanvm_univariate`'s opening, π2's three by `quotient::opening`; `Q`'s two claims stay in one call (one opening).
+  - The mock now decodes (`leanvm_flock_gas::evm::machine::{decode, PcsOpen::decoding}`): an input attests only if it
+    decodes under the registry (a known layout word, which fixes the variables; `k ≥ 1`; the exact length; every
+    element's top 64 bits zero) into a registered opening (the root as its opening has it, the layout word, the
+    claims). The end-to-end tests register π1's openings from the vector's inputs (`contract::pi1_opening`) and π2's
+    from the proof's roots and the reduction (`contract::openings`), so a call in another format fails them. The
+    measuring runs use the decoding mock too (every well-formed call attested). No gas changes: the words are
+    constants or calldata either way.
+- **L1, the holes on the setup path.** `Spec::of` and `Setup::new` assert `Circuit::validate`, which now also requires
+  `κ` zero off the expression slots. `tests/review_pi2.rs`'s E3b now checks that the forged circuit is refused.
+- **L2, derived instances.** The circuit compiler takes the program's IV (`compile::Inputs::program_iv`) and derives
+  π1's contract IV from the recorded verifier (`Recorded::iv`: its shape, setup roots and variant), kept as
+  `Compiled::pi1_iv`. `contract::Instance::new` builds the instance from the validated circuit, its spec, the setup root,
+  π1's IV and calls, and computes π2's IV.
+- **N2, π1's IV binds its variant.** `leanvm_univariate::contract::contract_iv_for` appends `"fs-rec"`, the skip and the
+  slices' code to the IV's preimage for every Fiat–Shamir shape other than `Main` (the main line's and its measured
+  variants' IVs, and so their vectors and the Lean transcription, are unchanged). π1-rec's vector is regenerated:
+  `main_line_rec.txt`, stream keccak `f32d7f4b6855f8fc…` (4.93 s, 10.4 GB; 181,019 / 191,296 gas as before).
+- **N4, N5, text.** `review/leanvm_rec_params.py`: γ is the four-limb ports' fingerprint, degree 1 (177.1 bits after
+  the union); ρ's errors add over the three commitments, `(15 L_W + L_Q + 1)/2^192`, 174.8 bits. SPEC-REC §2.4.6, §4,
+  §5 and §10.4.2 and `circuit/spec.rs` say what is built; the commands take `RUSTFLAGS="-C target-cpu=native"`.

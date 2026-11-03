@@ -393,7 +393,9 @@ impl Circuit {
 
     /// The structure the protocol assumes: sizes, aligned pairs on distinct positions, formulas of degree 2 reading
     /// their row (internal pushes in `K`), distinct push tags, an outside push for every pull-less position and a
-    /// public term for every outside push, and no formula reading a pull-less position's value.
+    /// public term for every outside push, no formula reading a pull-less position's value, and `κ` zero off the
+    /// expression slots (pulling pairs). `Spec::of` and `Setup::new` assert it (REVIEW-REC.md L1): a formula reading
+    /// a hole would be unconstrained.
     pub fn validate(&self) -> Result<(), String> {
         let (n, width) = (self.n(), self.width());
         if self.sigma.len() != n || self.kappa.len() != n {
@@ -418,6 +420,11 @@ impl Circuit {
         }
         let pair_of = self.pair_of();
         let pulls = self.pulls();
+        for (i, k) in self.kappa.iter().enumerate() {
+            if *k != F64::ZERO && (pair_of[i] == NONE || !self.pairs[pair_of[i] as usize].pulls) {
+                return Err(format!("κ at position {i}, not an expression slot"));
+            }
+        }
         let mut pushed = vec![false; n];
         let mut outside = vec![];
         for i in 0..n {

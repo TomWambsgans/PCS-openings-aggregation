@@ -10,8 +10,15 @@
 //! root word, the layout's id, `k`, then each claim's `v` coordinates and its value, a field element being the low
 //! 192 bits of its word. It returns the word 1 if the block's openings hold exactly these claims on that commitment
 //! under that layout. A call carries every claim on its commitment. Gas: `call_gas` a call and `claim_gas` a claim.
+//!
+//! The mock has two modes. The **byte-string** mode (no layouts registered) attests an input if it is one of the
+//! registered inputs, byte for byte: what `crates/leanvm_univariate`'s vectors use. The **decoding** mode
+//! (`crates/leanvm_rec/REVIEW-REC.md`, M1) is a registry keyed by the layout word: an input attests only if it
+//! decodes under the ABI ([`decode`]: the root word `s_0 · 2^128 + s_1` of [`root_word`], a layout word the registry
+//! knows, which fixes `v`, `k ≥ 1`, the exact length, every element's top 64 bits zero) into a registered opening
+//! (the root as the opening has it, the layout word, the claims). A call in another format then fails its test.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::field::E;
 use revm::bytecode::Bytecode;
@@ -63,10 +70,85 @@ pub fn element_word(x: E) -> [u8; 32] {
     U256::from_limbs([x.c0, x.c1, x.c2, 0]).to_be_bytes()
 }
 
+/// `PCS_OPEN`'s root word (`crates/evm/src/machine.rs`): `s_0 · 2^128 + s_1`, `s_h` the little-endian number of the
+/// root's bytes `16 h .. 16 h + 16`, that is each 16-byte half reversed. Its own inverse.
+pub fn root_word(root: &[u8; 32]) -> [u8; 32] {
+    let mut out = *root;
+    out[..16].reverse();
+    out[16..].reverse();
+    out
+}
+
+/// The root a root word names ([`root_word`] is an involution).
+pub fn root_of_word(word: &[u8; 32]) -> [u8; 32] {
+    root_word(word)
+}
+
+/// A `PCS_OPEN` call, decoded: the commitment's root (as its opening has it), the layout word, the claims.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Opening {
+    pub root: [u8; 32],
+    pub layout: [u8; 32],
+    pub claims: Vec<(Vec<E>, E)>,
+}
+
+impl Opening {
+    /// The input that names this opening: [`decode`]'s inverse.
+    pub fn input(&self) -> Vec<u8> {
+        let mut out = root_word(&self.root).to_vec();
+        out.extend(self.layout);
+        out.extend(U256::from(self.claims.len()).to_be_bytes::<32>());
+        for (point, value) in &self.claims {
+            for &x in point.iter().chain([value]) {
+                out.extend(element_word(x));
+            }
+        }
+        out
+    }
+}
+
+/// Decode `input` under the ABI, the table's variables `vars(layout word)` (`None`: a layout the precompile does not
+/// know). `None` unless the input is exactly `3 + k (v + 1)` words with `1 ≤ k`, and every element's top 64 bits are
+/// zero.
+pub fn decode(input: &[u8], vars: impl Fn(&[u8; 32]) -> Option<usize>) -> Option<Opening> {
+    let word = |k: usize| -> Option<[u8; 32]> { input.get(32 * k..32 * k + 32)?.try_into().ok() };
+    let (root, layout, count) = (word(0)?, word(1)?, word(2)?);
+    let v = vars(&layout)?;
+    if count[..24].iter().any(|&b| b != 0) {
+        return None;
+    }
+    let k = u64::from_be_bytes(count[24..].try_into().ok()?) as usize;
+    if k == 0 || input.len() != 32 * (3 + k * (v + 1)) {
+        return None;
+    }
+    let element = |w: [u8; 32]| -> Option<E> {
+        if w[..8].iter().any(|&b| b != 0) {
+            return None;
+        }
+        let [c0, c1, c2, _] = U256::from_be_bytes(w).into_limbs();
+        Some(E::new(c0, c1, c2))
+    };
+    let mut claims = Vec::with_capacity(k);
+    for c in 0..k {
+        let at = 3 + c * (v + 1);
+        let point = (0..v).map(|j| element(word(at + j)?)).collect::<Option<Vec<E>>>()?;
+        claims.push((point, element(word(at + v)?)?));
+    }
+    Some(Opening {
+        root: root_of_word(&root),
+        layout,
+        claims,
+    })
+}
+
 /// A mock of `PCS_OPEN`: the openings standing for a block's, each as the one input that names it, and its prices.
 #[derive(Clone, Debug, Default)]
 pub struct PcsOpen {
     attested: HashSet<Vec<u8>>,
+    /// The decoding mode's registry: the layouts the precompile knows (layout word → the table's variables), and the
+    /// block's openings, decoded.
+    layouts: HashMap<[u8; 32], usize>,
+    openings: Vec<Opening>,
     /// Attest every call: a measuring run, whose claims are not those of a valid proof.
     pub attest_all: bool,
     pub call_gas: u64,
@@ -84,7 +166,30 @@ impl PcsOpen {
     }
 
     pub fn register(&mut self, input: Vec<u8>) {
+        assert!(self.layouts.is_empty(), "the decoding mode registers openings, not inputs");
         self.attested.insert(input);
+    }
+
+    /// The decoding mode: a precompile that knows these layouts (layout word, the table's variables).
+    pub fn decoding(layouts: impl IntoIterator<Item = ([u8; 32], usize)>) -> Self {
+        let layouts: HashMap<[u8; 32], usize> = layouts.into_iter().collect();
+        assert!(!layouts.is_empty(), "a registry of at least one layout");
+        Self {
+            layouts,
+            ..Self::default()
+        }
+    }
+
+    /// An opening of the block (decoding mode): its root, layout word and claims, which must be of a known layout.
+    pub fn register_opening(&mut self, opening: Opening) {
+        let v = self.layouts.get(&opening.layout).expect("a layout the precompile knows");
+        assert!(!opening.claims.is_empty() && opening.claims.iter().all(|(p, _)| p.len() == *v));
+        self.openings.push(opening);
+    }
+
+    /// `input` decoded as this precompile does (decoding mode).
+    pub fn decode(&self, input: &[u8]) -> Option<Opening> {
+        decode(input, |w| self.layouts.get(w).copied())
     }
 
     /// What a call with `input` costs, and whether it attests.
@@ -93,7 +198,14 @@ impl PcsOpen {
             .get(64..96)
             .map_or(0, |k| U256::from_be_slice(k).saturating_to::<u64>());
         let gas = self.claim_gas.saturating_mul(claims).saturating_add(self.call_gas);
-        (gas, self.attest_all || self.attested.contains(input))
+        let attested = if self.layouts.is_empty() {
+            self.attest_all || self.attested.contains(input)
+        } else {
+            // A known layout and a well-formed input, even in a measuring run.
+            self.decode(input)
+                .is_some_and(|o| self.attest_all || self.openings.contains(&o))
+        };
+        (gas, attested)
     }
 }
 

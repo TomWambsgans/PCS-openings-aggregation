@@ -104,6 +104,7 @@ pub fn record_derived(shape: &Shape, blake2s: Blake2s, mode: Claims, derived: BT
     (
         Recorded {
             shape: *shape,
+            blake2s,
             roots: SetupRoots::REFERENCE,
             graph,
             reduced,

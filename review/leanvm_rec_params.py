@@ -164,9 +164,14 @@ def pi2_rounds(s, split=False, design="D16v"):
         t = (f"t: the copy identity h · d · d' (3N) and the gate's (2N/{w})", 3 * n + 2 * n // w)
     return lw, lq, [
         ("copy argument (α, β): 2N fractions, unique tags both sides, and no vanishing denominator", 4 * n / q, lw),
-        ("γ: the public elements' limb fingerprints c0 + γ c1 + γ² c2 (≤ 128)", 2 * 128 / q, lw),
+        # As built (pi2/adapt.rs; REVIEW-REC.md N4): a three-limb port's fingerprint is the element itself (no γ);
+        # the four-limb ones (the statement, pi1's two roots) are (L0 + Y L1) + γ (L2 + Y L3), degree 1 in γ.
+        ("γ: the four-limb ports' fingerprints (L0 + Y L1) + γ (L2 + Y L3), degree 1 (3 ports)", 3 / q, lw),
         (t[0], t[1] / q, lw * lq),
-        ("ρ: the row's fold and the claims' combination", 64 / q, lw * lq),
+        # ρ's claims are on three commitments, each its own polynomial in ρ (REVIEW-REC.md N4): W's fold of degree
+        # 15 over W's list, Q's combination of degree 1 over Q's, the setup's of degree 1 (L = 1): the errors add.
+        ("ρ: W's fold (degree 15), Q's combination and the setup's (degree 1), on 3 commitments", 1 / q,
+         15 * lw + lq + 1),
     ]
 
 

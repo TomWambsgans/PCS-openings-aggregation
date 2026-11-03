@@ -312,12 +312,8 @@ fn contract_checks(design: Design) {
     deep(move || {
         let f = built(&design);
         let pi1 = small_pi1();
-        let inst = Instance {
-            spec: &f.spec,
-            iv: f.iv,
-            setup_root: f.setup.root(),
-            pi1: &pi1,
-        };
+        let inst = Instance::new(&f.circuit, &f.spec, f.setup.root(), &PI1_IV, &pi1);
+        assert_eq!(inst.iv, f.iv, "the instance's IV is the prover's");
         let recorded = record_verifier(&f.spec);
         let proved = prove(
             &f.circuit,
@@ -347,7 +343,8 @@ fn contract_checks(design: Design) {
             .map(|words| words.concat())
             .collect();
         let data = calldata(&f.public_input, &stream);
-        let (accepted, calls) = contract::run(&inst, &recorded, &data, &expected);
+        let block = contract::expected_openings(&inst, &recorded, &reduced, &roots, &stream);
+        let (accepted, calls) = contract::run(&inst, &recorded, &data, &block);
         assert!(accepted, "the contract accepts the honest proof");
         assert_eq!(calls, expected);
         // π2's calls are the claims `opening::verify` accepted: their words, read back.
@@ -360,7 +357,7 @@ fn contract_checks(design: Design) {
             let mut bad = data.clone();
             bad[at] ^= 1;
             assert!(
-                !contract::run(&inst, &recorded, &bad, &expected).0,
+                !contract::run(&inst, &recorded, &bad, &block).0,
                 "calldata byte {at} flipped"
             );
         }
@@ -406,12 +403,7 @@ fn target_report(name: &str, design: Design) {
             pi1.roots <= 2 && pi1.elements <= 51,
             "the synthetic circuit's public data hold π1's"
         );
-        let inst = Instance {
-            spec: &spec,
-            iv: [0x33; 32],
-            setup_root: [0x44; 32],
-            pi1: &pi1.calls,
-        };
+        let inst = Instance::new(circuit, &spec, [0x44; 32], &[0x33; 32], &pi1.calls);
         let recorded = record_verifier(&spec);
         let report = contract::measure(&inst, &recorded, true);
         print!("{}", report.table(&name));

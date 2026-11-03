@@ -77,20 +77,23 @@ fn holds(witness: &Table, quotient: &Table, setup: &Setup, r: &Reduced<E>) -> [b
 }
 
 /// A `PCS_OPEN` input of π2's, decoded: the root (the word is `contract::root_word`: each 16-byte half of the hash
-/// reversed), the layout its id names among `known`, and the claims (a word's low 192 bits; its top 64 must be zero).
+/// reversed), the layout its word names among `known` (since REVIEW-REC.md M1's fix, π2's layout words are
+/// `prover::layout_word`'s, which name the stack's code, variables and placed words, not `layout_id`'s hash), and
+/// the claims (a word's low 192 bits; its top 64 must be zero).
 fn decode<'a>(
     input: &[u8],
-    known: &[&'a quotient::opening::Layout],
+    known: &[(&'a quotient::opening::Layout, [u8; 32])],
 ) -> (fiat_shamir::merkle::Hash, &'a quotient::opening::Layout, Vec<quotient::opening::Claim>) {
     let word = |k: usize| -> [u8; 32] { input[32 * k..32 * k + 32].try_into().unwrap() };
     let mut hash = word(0);
     hash[..16].reverse();
     hash[16..].reverse();
     assert_eq!(contract::root_word(&hash), word(0));
-    let layout = *known
+    let layout = known
         .iter()
-        .find(|l| quotient::opening::layout_id(l) == word(1))
-        .expect("a layout PCS_OPEN knows");
+        .find(|(_, w)| *w == word(1))
+        .expect("a layout PCS_OPEN knows")
+        .0;
     let k = u64::from_be_bytes(word(2)[24..].try_into().unwrap()) as usize;
     assert!(word(2)[..24].iter().all(|&b| b == 0));
     assert_eq!(input.len(), 32 * (3 + k * (layout.vars + 1)), "the input's length");
@@ -162,14 +165,10 @@ fn check(design: Design) {
         } = synth::build(&design, 0x5eed);
         let spec = Spec::of(&circuit);
         let setup = Setup::new(&circuit);
-        let iv = prover::iv(&[0x11; 32], &circuit.digest(), &setup.root(), circuit.log_n);
         let pi1 = small_pi1();
-        let inst = Instance {
-            spec: &spec,
-            iv,
-            setup_root: setup.root(),
-            pi1: &pi1,
-        };
+        let inst = Instance::new(&circuit, &spec, setup.root(), &[0x11; 32], &pi1);
+        let iv = inst.iv;
+        assert_eq!(iv, prover::iv(&[0x11; 32], &circuit.digest(), &setup.root(), circuit.log_n));
         let recorded = record_verifier(&spec);
         let proved: Proved = prove(&circuit, &spec, &setup, &iv, &public_input, &values, &witness);
         let stream = proved.stream.clone();
@@ -271,13 +270,20 @@ fn check(design: Design) {
         // π2's three calls, decoded as a precompile following crates/evm's ABI would (root word = s_0 2^128 + s_1,
         // the layout by its id, k, then k claims of `vars + 1` element words), are what `opening::verify` accepts.
         let l = prover::layouts(circuit.log_n);
+        let [lw, lq, ls] = prover::layout_words(circuit.log_n);
+        let known = [(&l.witness, lw), (&l.quotient, lq), (&l.setup, ls)];
         let proofs = [&openings.witness, &openings.quotient, &openings.setup];
         for (input, proof) in outcome.pcs_calls[pi1.len()..].iter().zip(proofs) {
-            let (hash, layout, claims) = decode(input, &[&l.witness, &l.quotient, &l.setup]);
+            let (hash, layout, claims) = decode(input, &known);
             quotient::opening::verify(layout, &hash, &claims, &quotient::opening::wire_proof(proof))
                 .expect("a decoded call of π2's is what its opening proves");
         }
-        assert_eq!(decode(&outcome.pcs_calls[pi1.len() + 1], &[&l.quotient]).2.len(), 2);
+        assert_eq!(decode(&outcome.pcs_calls[pi1.len() + 1], &known[1..2]).2.len(), 2);
+        // The decoding mock (M1's fix) attests exactly the honest openings: π1's calls decoded under the registry,
+        // π2's from the proof's roots and the reduction's claims.
+        let honest = contract::expected_openings(&inst, &recorded, &reduced, &roots, &stream);
+        assert!(contract::run(&inst, &recorded, &calldata(&public_input, &stream), &honest).0);
+        assert!(!contract::run(&inst, &recorded, &calldata(&public_input, &stream), &honest[..7]).0);
         println!(
             "2^{} positions, rows of {}: {} mutations, each the Rust verifier's word for word (parity and verifying builds) and rejected by the openings; lengths ±1 and the selector revert",
             circuit.log_n,

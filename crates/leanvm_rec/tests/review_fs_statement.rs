@@ -28,7 +28,7 @@ use leanvm_flock_gas::transcript::keccak_seed;
 use leanvm_rec::circuit::compile::{Inputs, Layout, pi2};
 use leanvm_rec::circuit::spec::{CallWord, Failure, Source};
 use leanvm_rec::eval::{Value, checks, evaluate};
-use leanvm_univariate::contract::{NAME, SetupRoots, calls, contract_iv, record_verifier, rust_verifier_with};
+use leanvm_univariate::contract::{NAME, SetupRoots, calls, record_verifier, rust_verifier_with};
 use leanvm_univariate::{Claims, Opening};
 
 const STREAM_AT: usize = 4 + 32;
@@ -72,7 +72,7 @@ fn review_fs_graph_is_the_rust_verifier_on_random_streams() {
         let v = vector("main_line_rec");
         let blake2s = vectors::blake2s_of(&v.config);
         let recorded = record_verifier(&v.shape, blake2s, Claims::Point);
-        let iv = contract_iv(&v.shape, &PROGRAM_IV, &SetupRoots::REFERENCE);
+        let iv = recorded.iv(&PROGRAM_IV);
         let real = v.calldata[STREAM_AT..].to_vec();
         assert_eq!(real.len(), recorded.stream_len);
         let mut seed = 0x5eed_f00d_1234_9876u64;
@@ -265,16 +265,19 @@ fn review_fs_circuit_is_the_graph_on_a_random_stream() {
             stream[4 * k..4 * k + 4].copy_from_slice(&c.to_be_bytes());
         }
         let public = random32(&mut seed);
-        let iv = random32(&mut seed);
+        // A random program IV, so a random contract IV (REVIEW-REC L2: the compiler derives it from `recorded`).
+        let program_iv = random32(&mut seed);
         let c = pi2(
             &recorded,
             layout,
             &Inputs {
-                iv,
+                program_iv,
                 public,
                 stream: &stream,
             },
         );
+        let iv = c.pi1_iv;
+        assert_eq!(iv, recorded.iv(&program_iv));
         let values = evaluate(&c.expanded, keccak_seed(&NAME, &iv, &public), &public, &stream);
         for (&id, digest) in &c.digests {
             let mut bytes = [0u8; 32];
@@ -367,7 +370,7 @@ fn review_fs_circuit_is_the_graph_on_a_random_stream() {
             &recorded,
             layout,
             &Inputs {
-                iv: [0x77; 32],
+                program_iv: [0x77; 32],
                 public,
                 stream: &stream,
             },

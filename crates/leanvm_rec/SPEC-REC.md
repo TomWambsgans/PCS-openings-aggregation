@@ -14,7 +14,7 @@ No Lean for now (the user's instruction: no proofs until the gas is close to 100
 - **modelled**: computed by `review/leanvm_rec_params.py` from measured counts.
 
 ```sh
-cargo test --release -p leanvm_rec -- --include-ignored --nocapture --test-threads 1   # §1, §2.1 (measured)
+RUSTFLAGS="-C target-cpu=native" cargo test --release -p leanvm_rec -- --include-ignored --nocapture --test-threads 1   # §1, §2.1 (measured)
 python3 -I review/leanvm_rec_params.py                                                # §2-§6 (modelled)
 ```
 
@@ -414,9 +414,10 @@ The public inputs are:
 
 That is 57 elements and 13 zero checks.
 
-**Each element `J` binds through one outside tag `τ_J ∉ V_m`.** Its producing row pushes the fingerprint
-`F_J = c₀ + γc₁ + γ²c₂` there (`+ γ³c₃` for a root's or the public input's fourth limb), and the verifier adds `1/(α + F_J + βτ_J)` to the sum's target. That is 70 fractions
-in one batched inversion.
+**Each element `J` binds through one outside tag `τ_J ∉ V_m`.** Its producing row pushes a fingerprint `F_J` there,
+and the verifier adds `1/(α + F_J + βτ_J)` to the sum's target: 70 fractions in one batched inversion. *As built
+(PI2.md §4.2; REVIEW-REC.md N4) the fingerprint is not `c₀ + γc₁ + γ²c₂ (+ γ³c₃)`: a three-limb port's is the element
+itself, `L₀ + YL₁ + Y²L₂`, and a four-limb port's (the statement, a root) `(L₀ + YL₁) + γ(L₂ + YL₃)`.*
 
 **Measured (§10.4, 2–3):** the row counts need not be public (67 fractions), and the ports' positions are holes of `σ`
 (nothing pushes to them), whose pulls (0) are in the target too: 3 coset sums.
@@ -477,7 +478,8 @@ What each option shows:
 - **Setup** (code constants in the contract):
   - the root of `(σ, κ)`;
   - π2's IV: `keccak("leanvm-rec-iv" ‖ π1's contract IV (SPEC.md §13, F2) ‖ the setup root ‖ the shape ‖ π2's layout
-    words)`;
+    words)`; *as built (`prover::iv`; REVIEW-REC.md N4, M1): `keccak("leanvm-rec-iv-v2" ‖ π1's contract IV ‖ the setup
+    root ‖ the circuit's digest ‖ the three layout words)`, the layout words `prover::layout_word`'s;*
   - π1's setup roots (`F`, `A0`, `B0`) and layout words, which π1's calls need.
 - **Public inputs:**
   - the public input (32 B);
@@ -485,7 +487,9 @@ What each option shows:
   - π1's roots `C1`, `C2`;
   - π1's claims: `r` (27), `p`'s other 19 coordinates, and the values `C1(r)`, `C2(r)`, `F(r)`, `a`, `b`.
 - **The transcript** (Keccak-256, on chain, `KeccakChannel`'s shape):
-  1. The seed `keccak("leanvm-rec-v1" ‖ IV ‖ D)`, where `D = keccak(public data)`, about 1.35 KB.
+  1. The seed `keccak("leanvm-rec-v1" ‖ IV ‖ D)`, where `D = keccak(public data)`, about 1.35 KB. *As built (PI2.md
+     §4.7; N4): the seed is `keccak("leanvm-rec-pi2v1" ‖ IV ‖ the public input)`, and the public data is in the stream,
+     absorbed by the first challenge.*
   2. `W`'s root, then `α`, `β`, `γ`.
   3. `Q`'s root, then `t`.
   4. The 18 values: the row's 16 fold values `a_k = ĉ_W(k, w_4(t), …, w_23(t))`, then `σ(t)`, `κ(t)`. Then `ρ`.
@@ -521,9 +525,9 @@ takes no OOD sample at level 0). The setup is honest, so `L = 1`.
 | π1-rec: `t` (unchanged; the PIOP's minimum) | 166.6 | **142.3** |
 | π1-rec: `γ`, `ρ`, `λ` and the batch | ≥ 185.7 | ≥ 161.4 |
 | π2: the copy argument `(α, β)` (`4N/2^192`, over `W`'s list 9,952) | 166.0 | 152.7 |
-| π2: `γ`, the public fingerprints | 184.0 | 170.7 |
+| π2: `γ`, the four-limb ports' fingerprints, degree 1 (3 ports; the three-limb ones are the element) | 190.4 | 177.1 |
 | π2: `t`, the identity of degree `5N` (over `W` and `Q`: `2^25.1`) | 165.7 | **140.6** |
-| π2: `ρ`, the fold and the combination | 186.0 | 160.9 |
+| π2: `ρ`, W's fold (degree 15), Q's and the setup's combinations (degree 1): three commitments, the errors add, `(15 L_W + L_Q + 1)/2^192` (ρ is reused for the setup claim, PI2.md §4.5) | 192.0 | 174.8 |
 
 **The openings.** WHIR's openings are 8: π1's 5 and π2's 3, at 128.97 bits each. That is 126.0 bits by a plain union,
 about 129 in the query-bounded random-permutation model, as SPEC.md §9 counts π1's 5.
@@ -678,8 +682,8 @@ Branch `leanvm-rec-circuit`, `crates/leanvm_rec/src/circuit/`. Measured on h1 by
 1,000-signature proofs: π1-rec's `main_line_rec`, and the main line's `main_line`.
 
 ```sh
-cargo test --release -p leanvm_rec --test circuit -- --nocapture --test-threads 1   # 4 configurations, about 190 s
-cargo test --release -p leanvm_rec --lib                                           # templates, packings, spec
+RUSTFLAGS="-C target-cpu=native" cargo test --release -p leanvm_rec --test circuit -- --nocapture --test-threads 1   # 4 configurations, about 190 s
+RUSTFLAGS="-C target-cpu=native" cargo test --release -p leanvm_rec --lib                                           # templates, packings, spec
 ```
 
 ### 10.1 What exists
@@ -768,6 +772,10 @@ side is roughly 2,850 operations, against D16v's 1,040. At 13.85 gas an operatio
 2. **The public side has holes (a correction to §2.4.6).**
    - A push to an outside tag leaves its position's tag unpushed: `σ` has as many holes as ports, and their pulls
      must be in the target too.
+   - *Superseded by PI2.md §4.1 (REVIEW-REC.md N1, N4): the PIOP leaves the holes out of the pulls (the identity's
+     pull term times `1 + 1_S`) instead of summing them into the target, so a hole's value is unconstrained, which is
+     harmless because no formula reads a hole (`pi2::circuit::Circuit::validate`, asserted by `Spec::of` and
+     `Setup::new`). The text below is the R2 design.*
    - The holes are the ports' own positions, with pull 0. A port is the last role of a port row, and the port rows
      are blocks, so the holes are cosets.
    - The target is `Σ_J 1/D(F_J, τ_J) + Σ_holes 1/D(0, ω_h)`. Each coset's sum is `Z_U'/(β·Z_U(α/β + c))`, a short

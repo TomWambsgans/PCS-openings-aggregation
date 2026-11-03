@@ -101,7 +101,9 @@ pub struct Setup {
 }
 
 impl Setup {
+    /// The setup of `circuit`, which must be valid ([`Circuit::validate`], REVIEW-REC.md L1).
     pub fn new(circuit: &Circuit) -> Self {
+        circuit.validate().unwrap_or_else(|e| panic!("the circuit is not valid: {e}"));
         let (m, n) = (circuit.log_n, circuit.n());
         let mut sigma: Vec<F64> = parallel::map_collect(n, |i| point(circuit.sigma[i] as usize));
         ntt::coefficients(&mut sigma, F64::ZERO);
@@ -129,25 +131,56 @@ impl Setup {
     }
 }
 
-/// π2's IV: Keccak-256 of a tag, π1's contract IV, the setup root, the circuit's digest and the three layouts' ids.
-pub fn iv(pi1_iv: &[u8; 32], circuit_digest: &[u8; 32], setup_root: &Hash, log_n: usize) -> [u8; 32] {
+/// The codes of π2's tables in their `PCS_OPEN` layout words (π1's are `0x5501` … `0x5505`).
+pub const WITNESS_CODE: u16 = 0x5601;
+pub const QUOTIENT_CODE: u16 = 0x5602;
+pub const SETUP_CODE: u16 = 0x5603;
+
+/// A `PCS_OPEN` layout word of π2's tables (REVIEW-REC.md M1), in π1's format (`leanvm_univariate::contract::
+/// layout_word`): bytes 0..8 the tag `"pi2"` then `log_n` (π1's are its shape's bytes, each below 32), the table's
+/// code (bytes 22..24), its variables (byte 24) and the words its lanes fill (`placed`, bytes 25..32). A precompile's
+/// registry maps it to the layout (`quotient::opening::Layout`, a function of `log_n` and the code: [`layouts`]),
+/// whose opening it checks (`quotient::opening::verify`, whose transcript hashes that layout's id).
+pub fn layout_word(code: u16, log_n: usize, layout: &Layout) -> [u8; 32] {
+    assert!(layout.vars < 256 && layout.placed() < 1 << 56 && log_n < 256);
+    let mut word = [0u8; 32];
+    word[..4].copy_from_slice(b"pi2\0");
+    word[4] = log_n as u8;
+    word[22..24].copy_from_slice(&code.to_be_bytes());
+    word[24] = layout.vars as u8;
+    word[25..].copy_from_slice(&(layout.placed() as u64).to_be_bytes()[1..]);
+    word
+}
+
+/// The three tables' layout words: `W`, `Q`, the setup.
+pub fn layout_words(log_n: usize) -> [[u8; 32]; 3] {
     let l = layouts(log_n);
+    [
+        layout_word(WITNESS_CODE, log_n, &l.witness),
+        layout_word(QUOTIENT_CODE, log_n, &l.quotient),
+        layout_word(SETUP_CODE, log_n, &l.setup),
+    ]
+}
+
+/// π2's IV: Keccak-256 of a tag, π1's contract IV, the setup root, the circuit's digest and the three layout words.
+pub fn iv(pi1_iv: &[u8; 32], circuit_digest: &[u8; 32], setup_root: &Hash, log_n: usize) -> [u8; 32] {
+    let [w, q, s] = layout_words(log_n);
     primitives::hash::hash(
         &[
-            b"leanvm-rec-iv-v1".as_slice(),
+            b"leanvm-rec-iv-v2".as_slice(),
             pi1_iv,
             setup_root,
             circuit_digest,
-            &opening::layout_id(&l.witness),
-            &opening::layout_id(&l.quotient),
-            &opening::layout_id(&l.setup),
+            &w,
+            &q,
+            &s,
         ]
         .concat(),
     )
 }
 
-/// A public value as the stream carries it, one per [`Read`]: an integer, 32 bytes as they are (π1's roots, which
-/// its `PCS_OPEN` calls take as words), an element of `E`.
+/// A public value as the stream carries it, one per [`Read`]: an integer, 32 bytes as they are (π1's roots as
+/// `PCS_OPEN`'s root words, which its calls take as they are), an element of `E`.
 #[derive(Clone, Copy, Debug)]
 pub enum PublicValue {
     Integer(u64),

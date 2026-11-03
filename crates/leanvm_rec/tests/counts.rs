@@ -20,7 +20,7 @@ use leanvm_flock_gas::transcript::{FsShape, keccak_seed};
 use leanvm_rec::count::{Counts, count, shared};
 use leanvm_rec::eval::{call_inputs, checks, evaluate};
 use leanvm_rec::{REFERENCE, permutations};
-use leanvm_univariate::contract::{NAME, Recorded, SetupRoots, calls, contract_iv, record_verifier};
+use leanvm_univariate::contract::{NAME, Recorded, calls, record_verifier};
 use leanvm_univariate::{Blake2s, Claims, FLOCK_LEANVM_SKIP, FLOCK_MAIN, FLOCK_REC};
 
 fn deep<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
@@ -53,7 +53,7 @@ fn the_graph_is_the_verifier_on_real_proofs() {
             assert_eq!(stream.len(), recorded.stream_len);
             let seed = keccak_seed(
                 &NAME,
-                &contract_iv(&v.shape, &PROGRAM_IV, &SetupRoots::REFERENCE),
+                &recorded.iv(&PROGRAM_IV),
                 &v.public,
             );
             let values = evaluate(&recorded.graph, seed, &v.public, stream);

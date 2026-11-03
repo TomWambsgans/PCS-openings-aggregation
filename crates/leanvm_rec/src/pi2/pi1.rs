@@ -1,13 +1,15 @@
 // Part of this repository. The mapping of π1's call words follows `crate::circuit::compile` (the ports). MIT OR
 // Apache-2.0; see NOTICE.md.
 //! π1's five `PCS_OPEN` calls as the circuit's interface names their words (`circuit::spec::CallWord`), from π1-rec's
-//! recorded verifier (`leanvm_univariate::contract`, 1,000-signature reference shape): constants, π1's two roots
-//! (`C1`, `C2`), and its claims' distinct elements in first appearance. The contract of a synthetic circuit appends
+//! recorded verifier (`leanvm_univariate::contract`, 1,000-signature reference shape): constants (the setup roots as
+//! `PCS_OPEN`'s root words), π1's two roots (`C1`, `C2`, root words in calldata), and its claims' distinct elements in
+//! first appearance. The contract of a synthetic circuit appends
 //! these, its words from calldata, as the real circuit's contract does.
 
 use std::collections::BTreeMap;
 
 use leanvm_flock_gas::evm::codegen::Word;
+use leanvm_flock_gas::evm::machine::root_word;
 use leanvm_flock_gas::evm::record::Node;
 use leanvm_flock_gas::field::E;
 use leanvm_univariate::contract::{calls, record_verifier};
@@ -39,7 +41,10 @@ pub fn pi1_calls() -> Pi1Calls {
         .iter()
         .map(|call| {
             call.iter()
-                .map(|w| match *w {
+                .enumerate()
+                .map(|(k, w)| match *w {
+                    // A setup root: `PCS_OPEN`'s root word (REVIEW-REC.md M1), as `circuit::compile` makes it.
+                    Word::Const(bytes) if k == 0 => CallWord::Const(root_word(&bytes)),
                     Word::Const(bytes) => CallWord::Const(bytes),
                     Word::Stream(at) => CallWord::Root(roots[&at]),
                     Word::Node(id) => match graph.nodes[id as usize] {

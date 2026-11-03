@@ -25,7 +25,7 @@ use super::stack::{Stack, c1_columns, c2_columns};
 use super::trace::Trace;
 use super::weight::Weight;
 use crate::claims::{Column, Combined, Commitment};
-use crate::contract::{NAME, SetupRoots, contract_iv, layout_words};
+use crate::contract::{NAME, SetupRoots, contract_iv_for, layout_words};
 use crate::heap::Leaves;
 use crate::stacks::StackLayout;
 use crate::verifier::{Blake2s, Claims, Opening, Shape, chunks, degree, reduce, sent_columns};
@@ -175,7 +175,7 @@ pub struct Config {
 }
 
 /// Prove `trace`'s execution (its rows placed: [`Trace::place`]) for the contract of the program's IV `iv` (the
-/// contract's own binds the setup roots and the shape: `contract::contract_iv`); with Flock, from leanVM's Flock
+/// contract's own binds the setup roots and the shape: `contract::contract_iv_for`, which also binds π1-rec's variant); with Flock, from leanVM's Flock
 /// inputs `flock`, placed likewise.
 pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: Config) -> Result<(Proof, Report), String> {
     let mut report = Report::default();
@@ -236,7 +236,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
 
     // 0. The seed (the contract's IV binds the setup roots), then the six row counts (SPEC.md §13, F1), absorbed with
     // C1's root.
-    let seed = keccak_seed(&NAME, &contract_iv(&shape, iv, &roots), &public);
+    let seed = keccak_seed(&NAME, &contract_iv_for(&shape, config.blake2s, iv, &roots), &public);
     let mut writer = KeccakWriter::new(seed);
     for &rows in &trace.rows {
         writer.send_integer(rows, 4);

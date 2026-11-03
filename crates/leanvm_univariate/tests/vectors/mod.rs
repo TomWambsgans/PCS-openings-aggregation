@@ -11,7 +11,7 @@
 
 use leanvm_flock_gas::evm::codegen::{Ending, Entry, compile_deployable};
 use leanvm_flock_gas::evm::contract::{Deployed, deploy};
-use leanvm_univariate::contract::{NAME, Recorded, calls, contract_iv};
+use leanvm_univariate::contract::{NAME, Recorded, calls};
 use leanvm_univariate::{Blake2s, FLOCK_BIT_SLICE, FLOCK_LEANVM_SKIP, FLOCK_MAIN, FLOCK_REC, Shape};
 
 /// The program's IV the vectors' contracts are built with (`leanvm_flock_gas::shapes::PROGRAM_IV`).
@@ -128,7 +128,7 @@ pub fn deployable(recorded: &Recorded) -> Deployed {
     let ending = Ending::PcsOpen(call_words.iter().map(Vec::len).collect());
     let entry = Entry {
         name: NAME,
-        iv: contract_iv(&recorded.shape, &PROGRAM_IV, &recorded.roots),
+        iv: recorded.iv(&PROGRAM_IV),
         stream_len: recorded.stream_len,
         measure: false,
     };

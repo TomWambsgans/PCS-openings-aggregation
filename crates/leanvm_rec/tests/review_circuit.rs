@@ -23,7 +23,7 @@ use leanvm_rec::circuit::compile::{Compiled, Inputs, Layout, pi2};
 use leanvm_rec::circuit::spec::{self, CallWord, Formula, Source, word_limbs};
 use leanvm_rec::eval::{call_inputs, checks, evaluate};
 use leanvm_univariate::Claims;
-use leanvm_univariate::contract::{NAME, Recorded, SetupRoots, contract_iv, record_verifier};
+use leanvm_univariate::contract::{NAME, Recorded, record_verifier};
 
 const STREAM_AT: usize = 4 + 32;
 
@@ -54,7 +54,7 @@ fn layout_of_env() -> Layout {
 fn setup(name: &str) -> (vectors::Vector, Recorded, [u8; 32], Vec<u8>) {
     let v = vector(name);
     let recorded = record_verifier(&v.shape, vectors::blake2s_of(&v.config), Claims::Point);
-    let iv = contract_iv(&v.shape, &PROGRAM_IV, &SetupRoots::REFERENCE);
+    let iv = recorded.iv(&PROGRAM_IV);
     let stream = v.calldata[STREAM_AT..].to_vec();
     (v, recorded, iv, stream)
 }
@@ -196,11 +196,12 @@ fn review_free_inputs() {
             &recorded,
             layout,
             &Inputs {
-                iv,
+                program_iv: PROGRAM_IV,
                 public: v.public,
                 stream: &stream,
             },
         );
+        assert_eq!(c.pi1_iv, iv, "the circuit's seed hashes the contract IV");
         let circuit = &c.finished.circuit;
         let (n, w) = (circuit.n(), circuit.width());
         let row_regions = circuit.row_regions();
@@ -487,14 +488,32 @@ fn port_limbs(c: &spec::Circuit, w: &[K]) -> Vec<Vec<u64>> {
 
 /// E2 on one stream: the witness satisfies the internal pushes; its ports are the evaluated graph's outputs.
 fn differential(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 32], stream: &[u8], label: &str) {
-    let c: Compiled = pi2(recorded, layout, &Inputs { iv, public, stream });
+    let c: Compiled = pi2(
+        recorded,
+        layout,
+        &Inputs {
+            program_iv: PROGRAM_IV,
+            public,
+            stream,
+        },
+    );
+    assert_eq!(c.pi1_iv, iv, "{label}: the circuit's seed hashes the contract IV");
     let circuit = &c.finished.circuit;
     let w = &c.finished.witness;
     internal_check(circuit, w).unwrap_or_else(|e| panic!("{label}: {e}"));
     // The reference: π1's graph evaluated on this stream.
     let seed = keccak_seed(&NAME, &iv, &public);
     let values = evaluate(&recorded.graph, seed, &public, stream);
-    let expected_calls = call_inputs(recorded, &values, stream);
+    // π1's own contract's call inputs, in PCS_OPEN's ABI (REVIEW-REC.md M1's fix: the root word
+    // `machine::root_word` of the hash, which π1's own contract passes as it is).
+    let expected_calls: Vec<Vec<u8>> = call_inputs(recorded, &values, stream)
+        .into_iter()
+        .map(|mut x| {
+            let raw: [u8; 32] = x[..32].try_into().expect("a root");
+            x[..32].copy_from_slice(&leanvm_flock_gas::evm::machine::root_word(&raw));
+            x
+        })
+        .collect();
     let (zero_values, _) = checks(&recorded.graph, &values);
     // Elements by index, from the reference's call bytes.
     let mut elements: std::collections::BTreeMap<u32, E> = Default::default();
@@ -536,7 +555,8 @@ fn differential(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 
             Source::Root(i) => {
                 seen[1] += 1;
                 let at = recorded.roots_at[i as usize];
-                word_limbs(&stream[at..at + 32].try_into().unwrap()).to_vec()
+                word_limbs(&leanvm_flock_gas::evm::machine::root_word(&stream[at..at + 32].try_into().unwrap()))
+                    .to_vec()
             }
             Source::Element(e) => {
                 seen[2] += 1;

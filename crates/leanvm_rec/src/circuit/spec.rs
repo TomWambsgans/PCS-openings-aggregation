@@ -21,13 +21,18 @@
 //! 1. `σ` is injective. Its image is every position but the **holes**, plus the ports' tags. The holes are exactly
 //!    the ports' positions, and port `J` (`ports[J]`) pushes to `N + J`.
 //! 2. Every push to a position equals that position's pull: `w_(σ_i) = P_i` whenever `σ_i < N`.
-//! 3. Every hole's pull is `0`.
+//! 3. Every hole's pull is `0`. *Stronger than π2's PIOP (REVIEW-REC.md N1): the PIOP leaves the holes out of the
+//!    pulls (`PI2.md` §1, §4.1), so a hole's value is unconstrained there; that is harmless because no formula reads
+//!    a hole, which `pi2::circuit::Circuit::validate` checks and `Spec::of` and `Setup::new` assert (L1).*
 //! 4. Port `J`'s push is the public fingerprint `F_J = Σ_l γ^l · L_(J,l)`, the limbs `L_J` given by the public
 //!    inputs ([`Circuit::public_limbs`]). The check compares the limbs, which is the fingerprint for every `γ`.
 //!
 //! **The copy argument** this is (SPEC-REC §2.3): with `D(v, τ) = α + v + β·ω(τ)`, (1)–(4) give, in characteristic 2,
 //!
 //! `Σ_(i<N) [1/D(w_i, i) + 1/D(P_i, σ_i)] = Σ_J 1/D(F_J, N + J) + Σ_(holes h) 1/D(0, h)`.
+//!
+//! *π2's PIOP proves the pull-less form (`PI2.md` §1; REVIEW-REC.md N1), which (1), (2) and (4) give without (3):*
+//! `Σ_(i<N, i not a hole) 1/D(w_i, i) + Σ_(i<N) 1/D(P_i, σ_i) = Σ_J 1/D(F_J, N + J)`.
 //!
 //! The holes are cosets ([`Circuit::hole_cosets`]): the role-`k` positions of a block of `2^s` aligned rows starting
 //! at row `y0`, that is `ω(W·y0 + k) + span(β_log_width, …, β_(log_width + s − 1))`. Their sum has a closed form

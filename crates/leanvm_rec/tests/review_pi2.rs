@@ -7,9 +7,10 @@
 //!   circuit construction) and `pi2::circuit::Circuit::validate` (called by tests) check: `Spec::of`, the prover and
 //!   the contract's generator do not.
 //! - `review_hole_read_is_forgeable` (E3b): the same circuit with role 1's formula reading the hole (built directly as
-//!   the PIOP's `Circuit`, as `adapt` would refuse): the verifier's `Spec::of` and the prover take it, and a witness
-//!   whose role-1 push is computed from a garbage hole value is accepted — the push it carries is then whatever the
-//!   prover chose. The verifier does not itself guarantee the property `adapt` checks.
+//!   the PIOP's `Circuit`, as `adapt` would refuse): at the review, the verifier's `Spec::of` and the prover took it,
+//!   and a witness whose role-1 push is computed from a garbage hole value was accepted — the push it carries then
+//!   whatever the prover chose. **Fixed (L1):** `Spec::of` and `Setup::new` assert `Circuit::validate`, so the setup
+//!   path refuses this circuit; the test now checks that (and that `validate` refuses `κ` off an expression slot).
 //!
 //! `cargo test --release -p leanvm_rec --test review_pi2 -- --nocapture`
 
@@ -106,9 +107,15 @@ fn review_hole_read_is_forgeable() {
     let mut witness = adapt::witness(&w);
     witness[hole] = F64(target);
     let _ = public_scalars(&public_input, &values);
-    println!("a port reading its own hole, the hole set to the forged limb {target:#x}:");
-    assert!(
-        accepted(&circuit, &public_input, &values, &witness),
-        "the verifier accepts a public element the circuit never computed"
-    );
+    println!("a port reading its own hole, the hole set to the forged limb {target:#x}: refused at setup (L1)");
+    let refused = |f: Box<dyn FnOnce() + std::panic::UnwindSafe>| std::panic::catch_unwind(f).is_err();
+    let (c1, c2) = (circuit.clone(), circuit.clone());
+    assert!(refused(Box::new(move || drop(Spec::of(&c1)))), "Spec::of refuses the circuit (L1)");
+    assert!(refused(Box::new(move || drop(Setup::new(&c2)))), "Setup::new refuses the circuit (L1)");
+    // κ off an expression slot: a forward position (in no pair) given a constant.
+    let mut kappa_off = adapt::adapt(&c);
+    let pair_of = kappa_off.pair_of();
+    let forward = (0..kappa_off.n()).find(|&i| pair_of[i] == u32::MAX).expect("a forward position");
+    kappa_off.kappa[forward] = F64(5);
+    assert!(kappa_off.validate().is_err(), "validate refuses κ off an expression slot (L1)");
 }

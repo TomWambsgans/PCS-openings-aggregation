@@ -85,7 +85,10 @@ pub fn normalised_constants(e: &[F64]) -> Vec<F64> {
 }
 
 impl Spec {
+    /// The verifier of `circuit`, which must be valid ([`Circuit::validate`], REVIEW-REC.md L1: no formula reads a
+    /// hole, `κ` only at expression slots).
     pub fn of(circuit: &Circuit) -> Self {
+        circuit.validate().unwrap_or_else(|e| panic!("the circuit is not valid: {e}"));
         let (m, r) = (circuit.log_n, circuit.log_row);
         let e = coset_constants(r, m - r);
         let pairs: Vec<SpecPair> = circuit

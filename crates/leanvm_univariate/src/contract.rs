@@ -18,7 +18,7 @@ use leanvm_flock_gas::evm::codegen::{CALLS, Contract, ENTRY, Ending, Entry, MEAS
 use leanvm_flock_gas::evm::machine::{Outcome, PcsOpen, call};
 use leanvm_flock_gas::evm::record::{Graph, Recorder, Sym, record};
 use leanvm_flock_gas::field::E;
-use leanvm_flock_gas::transcript::{Checks, KeccakChannel, keccak_seed};
+use leanvm_flock_gas::transcript::{Checks, FsShape, KeccakChannel, keccak_seed};
 
 use crate::claims::{Combined, Commitment};
 use crate::verifier::{Blake2s, Claims, Opening, Reduced, Shape, reduce};
@@ -126,15 +126,70 @@ pub fn contract_iv(shape: &Shape, program_iv: &[u8; 32], roots: &SetupRoots) -> 
     leanvm_flock_gas::transcript::keccak256(&data)
 }
 
+/// What the IV appends for `blake2s` (`crates/leanvm_rec/REVIEW-REC.md`, N2): nothing on the Fiat–Shamir shape
+/// `Main` (the main line's IV and its measured variants' are unchanged, as their vectors and the Lean transcription
+/// take them); with π1-rec's shape ([`FsShape::Rec`]) the tag `"fs-rec"`, then the skip, the slices' code and, for the
+/// variant's batching challenges, their width in bytes. A Rec contract's IV is then the Keccak-256 of a longer
+/// preimage than any Main contract's (`contract_iv`'s is of fixed length), so the two never share a seed.
+pub fn variant_bytes(blake2s: Blake2s) -> Vec<u8> {
+    use leanvm_flock_gas::flock_min::Slices;
+    let Blake2s::Flock(v) = blake2s else {
+        return vec![];
+    };
+    if v.fs == FsShape::Main {
+        return vec![];
+    }
+    let slices = match v.slices {
+        Slices::InContract => 0,
+        Slices::Weighted => 1,
+        Slices::Claim => 2,
+        Slices::Tower => 3,
+    };
+    let mut out = b"fs-rec".to_vec();
+    out.extend([v.skip as u8, slices]);
+    out
+}
+
+/// The IV of the contract for `blake2s` (N2): [`contract_iv`], with [`variant_bytes`] appended to its preimage when
+/// there are any.
+pub fn contract_iv_for(shape: &Shape, blake2s: Blake2s, program_iv: &[u8; 32], roots: &SetupRoots) -> [u8; 32] {
+    let extra = variant_bytes(blake2s);
+    if extra.is_empty() {
+        return contract_iv(shape, program_iv, roots);
+    }
+    let words = layout_words(shape);
+    let mut data = b"leanVM-univar-iv".to_vec();
+    data.extend_from_slice(program_iv);
+    for root in [roots.f, roots.a0, roots.b0] {
+        data.extend_from_slice(&root);
+    }
+    data.extend_from_slice(&shape_bytes(shape));
+    for w in &words {
+        data.extend_from_slice(w);
+    }
+    data.extend_from_slice(&extra);
+    leanvm_flock_gas::transcript::keccak256(&data)
+}
+
 /// The verifier for one shape, recorded.
 pub struct Recorded {
     pub shape: Shape,
+    /// The BLAKE2s argument (and so the Fiat–Shamir shape) it was recorded for: the IV binds it ([`contract_iv_for`]).
+    pub blake2s: Blake2s,
     pub roots: SetupRoots,
     pub graph: Graph,
     pub reduced: Reduced<Sym>,
     pub stream_len: usize,
     pub roots_at: [usize; 2],
     pub reads: Vec<(&'static str, u32)>,
+}
+
+impl Recorded {
+    /// The contract's IV for the program's `program_iv` ([`contract_iv_for`] of the shape, the variant and the roots
+    /// it was recorded with).
+    pub fn iv(&self, program_iv: &[u8; 32]) -> [u8; 32] {
+        contract_iv_for(&self.shape, self.blake2s, program_iv, &self.roots)
+    }
 }
 
 pub fn record_verifier(shape: &Shape, blake2s: Blake2s, mode: Claims) -> Recorded {
@@ -153,6 +208,7 @@ pub fn record_verifier_with(shape: &Shape, blake2s: Blake2s, mode: Claims, setup
     assert_eq!(roots.len(), 2, "two commitments in the stream");
     Recorded {
         shape: *shape,
+        blake2s,
         roots: *setup,
         graph,
         reduced,
@@ -241,7 +297,7 @@ pub fn calls(recorded: &Recorded) -> Vec<Vec<Word>> {
 pub fn compile_verifier(recorded: &Recorded, program_iv: &[u8; 32], measure: bool) -> Contract {
     let entry = Entry {
         name: NAME,
-        iv: contract_iv(&recorded.shape, program_iv, &recorded.roots),
+        iv: recorded.iv(program_iv),
         stream_len: recorded.stream_len,
         measure,
     };
@@ -290,7 +346,7 @@ pub fn rust_verifier_with(
     blake2s: Blake2s,
     mode: Claims,
 ) -> Result<(Reduced<E>, Vec<E>, Vec<E>), leanvm_flock_gas::VerifierError> {
-    let seed = keccak_seed(&NAME, &contract_iv(shape, iv, setup), public_words);
+    let seed = keccak_seed(&NAME, &contract_iv_for(shape, blake2s, iv, setup), public_words);
     let mut channel = KeccakChannel::new(
         seed,
         stream,
@@ -499,7 +555,7 @@ pub fn parity_with(
     let recorded = record_verifier_with(shape, blake2s, mode, setup);
     let entry = Entry {
         name: NAME,
-        iv: contract_iv(shape, iv, &recorded.roots),
+        iv: recorded.iv(iv),
         stream_len: recorded.stream_len,
         measure: true,
     };
@@ -527,7 +583,7 @@ pub fn parity_with(
 fn ends(recorded: &Recorded, iv: &[u8; 32], verify: bool, measure: bool) -> (Vec<Word>, Ending, Entry) {
     let entry = Entry {
         name: NAME,
-        iv: contract_iv(&recorded.shape, iv, &recorded.roots),
+        iv: recorded.iv(iv),
         stream_len: recorded.stream_len,
         measure,
     };
