@@ -55,7 +55,7 @@ def TableSpec (PR : PartRep) (TS : Table → List E → TablePart × List Relati
   ∀ (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8) (st : RecState)
     (t : Table), t ∈ tables →
     ∀ (weights : Array Nat) (weightsE : Array E) (beta : Nat) (betaE : E) (w : List Nat) (wE : List E),
-    RpL π iv publicInput stream st weights.toList weightsE.toList → weightsE.size = 16 →
+    st.nodes[0]? = some Node.seed → RpL π iv publicInput stream st weights.toList weightsE.toList → weightsE.size = 16 →
     Rp π iv publicInput stream st beta betaE → RpL π iv publicInput stream st w wE → wE.length = wLen →
     Sim π iv publicInput stream st (Pi1.tablePart t (reference.heights.getD t.opcode 0) weights beta w)
       (UniStatement.tablePart (m := Id) t (reference.heights.getD t.opcode 0) weightsE betaE wE) (nT t) 0
@@ -67,7 +67,7 @@ def ConstraintSpec (PR : PartRep) (CS : List E → E → Relation → Prop) : Pr
   ∀ (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8) (st : RecState)
     (parts : List TablePartS) (partsE : List TablePart) (pw : List Nat) (pwE : List E) (gamma t cv : Nat)
     (gammaE tE cvE : E) (w : List Nat) (wE : List E),
-    Good st → List.Forall₂ (PR π iv publicInput stream st) parts partsE → RpL π iv publicInput stream st pw pwE →
+    Good st → st.nodes[0]? = some Node.seed → List.Forall₂ (PR π iv publicInput stream st) parts partsE → RpL π iv publicInput stream st pw pwE →
     pwE.length = 4 → Rp π iv publicInput stream st gamma gammaE → Rp π iv publicInput stream st t tE →
     Rp π iv publicInput stream st cv cvE → RpL π iv publicInput stream st w wE → wE = digits tE wLen →
     PSim st (Pi1.constraintRelation reference parts pw gamma t cv w)
@@ -85,7 +85,7 @@ def HeapSpec (PR : PartRep) (HS : List E → List Relation × List (Column × Na
     (active : List Nat) (activeE : List E) (parts : List TablePartS) (partsE : List TablePart)
     (weights : Array Nat) (weightsE : Array E) (beta hv cv mpl mps bpl bps : Nat)
     (betaE hvE cvE mplE mpsE bplE bpsE : E) (w : List Nat) (wE : List E),
-    Good st → RpL π iv publicInput stream st active activeE → activeE.length = 6 →
+    Good st → st.nodes[0]? = some Node.seed → RpL π iv publicInput stream st active activeE → activeE.length = 6 →
     List.Forall₂ (PR π iv publicInput stream st) parts partsE → partsE.length = 6 →
     RpL π iv publicInput stream st weights.toList weightsE.toList → weightsE.size = 16 →
     Rp π iv publicInput stream st beta betaE → Rp π iv publicInput stream st hv hvE →
