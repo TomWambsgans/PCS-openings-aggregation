@@ -45,7 +45,10 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 fn coeff_text(c: &Coeff) -> String {
-    format!("⟨0x{:x}, 0x{:x}, 0x{:x}, {}⟩", c.value[0], c.value[1], c.value[2], c.gamma)
+    format!(
+        "⟨0x{:x}, 0x{:x}, 0x{:x}, {}⟩",
+        c.value[0], c.value[1], c.value[2], c.gamma
+    )
 }
 
 fn lin_text(l: &Lin) -> String {
@@ -137,7 +140,11 @@ pub fn render(circuit: &Circuit, calls: &[Vec<CallWord>], c: &Constants) -> Stri
         calls.len()
     )
     .unwrap();
-    writeln!(w, "the circuit's digest bind them; the verifier reads neither). Data only.").unwrap();
+    writeln!(
+        w,
+        "the circuit's digest bind them; the verifier reads neither). Data only."
+    )
+    .unwrap();
     writeln!(w, "-/").unwrap();
     writeln!(w).unwrap();
     writeln!(w, "namespace RecStatement.Data").unwrap();
@@ -156,7 +163,11 @@ pub fn render(circuit: &Circuit, calls: &[Vec<CallWord>], c: &Constants) -> Stri
     writeln!(w, "/-- The formulas (`Circuit::formulas`). -/").unwrap();
     writeln!(w, "def formulas : List Formula := {}", names.join(" ++ ")).unwrap();
     writeln!(w).unwrap();
-    writeln!(w, "/-- The (block, role) pairs (`Circuit::pairs`): first row, rows' log, role, formula, pulls. -/").unwrap();
+    writeln!(
+        w,
+        "/-- The (block, role) pairs (`Circuit::pairs`): first row, rows' log, role, formula, pulls. -/"
+    )
+    .unwrap();
     writeln!(w, "def pairs : List Pair := [").unwrap();
     let items: Vec<String> = circuit
         .pairs
@@ -178,7 +189,11 @@ pub fn render(circuit: &Circuit, calls: &[Vec<CallWord>], c: &Constants) -> Stri
     )
     .unwrap();
     writeln!(w).unwrap();
-    writeln!(w, "/-- The public side (`Circuit::public`): each term's tag and value. -/").unwrap();
+    writeln!(
+        w,
+        "/-- The public side (`Circuit::public`): each term's tag and value. -/"
+    )
+    .unwrap();
     writeln!(w, "def publicTerms : List PublicTerm := [").unwrap();
     let items: Vec<String> = circuit
         .public
@@ -195,16 +210,32 @@ pub fn render(circuit: &Circuit, calls: &[Vec<CallWord>], c: &Constants) -> Stri
     )
     .unwrap();
     writeln!(w).unwrap();
-    writeln!(w, "/-- π1's contract IV (`Compiled::pi1_iv`: π1-rec3's at the reference setup roots). -/").unwrap();
+    writeln!(
+        w,
+        "/-- π1's contract IV (`Compiled::pi1_iv`: π1-rec3's at the reference setup roots). -/"
+    )
+    .unwrap();
     writeln!(w, "def pi1Iv : List UInt8 := hexBytes \"{}\"", hex(&c.pi1_iv)).unwrap();
     writeln!(w).unwrap();
-    writeln!(w, "/-- The setup's root (`prover::Setup::new(circuit).root()`: the commitment of `κ`, `κ + σ`). -/").unwrap();
+    writeln!(
+        w,
+        "/-- The setup's root (`prover::Setup::new(circuit).root()`: the commitment of `κ`, `κ + σ`). -/"
+    )
+    .unwrap();
     writeln!(w, "def setupRoot : List UInt8 := hexBytes \"{}\"", hex(&c.setup_root)).unwrap();
     writeln!(w).unwrap();
-    writeln!(w, "/-- The circuit's digest (`Circuit::digest`: its encoding with `σ`'s and `κ`'s hashes). -/").unwrap();
+    writeln!(
+        w,
+        "/-- The circuit's digest (`Circuit::digest`: its encoding with `σ`'s and `κ`'s hashes). -/"
+    )
+    .unwrap();
     writeln!(w, "def digest : List UInt8 := hexBytes \"{}\"", hex(&c.digest)).unwrap();
     writeln!(w).unwrap();
-    writeln!(w, "/-- π1's `PCS_OPEN` calls as the circuit names their words (`spec::Circuit::calls`). -/").unwrap();
+    writeln!(
+        w,
+        "/-- π1's `PCS_OPEN` calls as the circuit names their words (`spec::Circuit::calls`). -/"
+    )
+    .unwrap();
     writeln!(w, "def pi1Calls : List (List CallWord) := [").unwrap();
     let items: Vec<String> = calls
         .iter()
@@ -315,17 +346,21 @@ pub fn header(inst: &Instance, recorded: &Recorded) -> String {
     .unwrap();
     writeln!(w, "CONST beta1 {}", e_text(cantor_beta1())).unwrap();
     let ([y0, y1], scale) = extension();
-    writeln!(w, "CONST extension {} {} {}", e_text(to_e(y0)), e_text(to_e(y1)), e_text(to_e(scale))).unwrap();
+    writeln!(
+        w,
+        "CONST extension {} {} {}",
+        e_text(to_e(y0)),
+        e_text(to_e(y1)),
+        e_text(to_e(scale))
+    )
+    .unwrap();
     writeln!(w, "CONST streamlen {}", recorded.stream_len).unwrap();
     out
 }
 
 /// The Rust verifier on `E` with the Keccak-256 chain (`contract::rust_verifier`), every check collected, and its
 /// trace.
-pub type Traced = (
-    Result<(Reduced<E>, Vec<E>), VerifierError>,
-    Vec<(&'static str, Vec<E>)>,
-);
+pub type Traced = (Result<(Reduced<E>, Vec<E>), VerifierError>, Vec<(&'static str, Vec<E>)>);
 
 pub fn traced(inst: &Instance, public_input: &[u8; 32], stream: &[u8]) -> Traced {
     let seed = keccak_seed(&NAME, &inst.iv, public_input);
@@ -338,9 +373,12 @@ pub fn traced(inst: &Instance, public_input: &[u8; 32], stream: &[u8]) -> Traced
         },
     );
     let mut steps: Vec<(&'static str, Vec<E>)> = Vec::new();
-    let result = reduce_traced(inst.spec, statement_words(public_input), &mut channel, &mut |name, values| {
-        steps.push((name, values.to_vec()))
-    })
+    let result = reduce_traced(
+        inst.spec,
+        statement_words(public_input),
+        &mut channel,
+        &mut |name, values| steps.push((name, values.to_vec())),
+    )
     .and_then(|reduced| {
         channel.finish()?;
         let Checks::Collect { nonzero, .. } = &channel.checks else {
@@ -416,7 +454,11 @@ pub fn vector(
                 let expected: Vec<Vec<u8>> = calls.iter().map(|words| words.concat()).collect();
                 let all_nonzero = nonzero.iter().all(|&x| x != E::default());
                 if all_nonzero {
-                    assert_eq!(made, &expected[..], "{name}: the contract's PCS_OPEN inputs are the Rust's");
+                    assert_eq!(
+                        made,
+                        &expected[..],
+                        "{name}: the contract's PCS_OPEN inputs are the Rust's"
+                    );
                 } else {
                     assert!(made.is_empty(), "{name}: the contract reverts before its calls");
                 }
