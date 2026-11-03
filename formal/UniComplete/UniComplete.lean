@@ -12,3 +12,7 @@ import UniComplete.Honest
 import UniComplete.Setup
 import UniComplete.Whir
 import UniComplete.Domain
+import UniComplete.VerifierH
+import UniComplete.VerifierHSim
+import UniComplete.VerifierHDuplex
+import UniComplete.VerifierHCost
