@@ -427,18 +427,50 @@ def pi1GraphChecks (iv1 : List UInt8) (input : Vector UInt8 32) (s : Array UInt8
   | some out => out.zeros.all (· == 0) && out.nonzeros.all (· != 0)
   | none => false
 
+/-- **`Pi1GraphAccepts`, decided**: the graph's checks hold at Keccak-f[1600] and its three calls, decoded, are the
+openings `ops` (their layouts and claims, `C1`'s and `C2`'s roots). -/
+def pi1GraphAcceptsB (iv1 : List UInt8) (input : Vector UInt8 32) (s : Array UInt8) (ops : List Pi1Opening) : Bool :=
+  match RecGraph.evalGraphDeployed RecGraph.Pi1.pi1Graph iv1 input.toList s with
+  | none => false
+  | some out =>
+    out.zeros.all (· == 0) && out.nonzeros.all (· != 0) &&
+      match out.calls.mapM decodePi1Call with
+      | none => false
+      | some gops => decide (gops.map (·.2) = ops.map (·.2) ∧ (gops.take 2).map (·.1) = (ops.take 2).map (·.1))
+
+/-- **The contract's π1 openings from the calldata alone**: π2's run over Keccak-f[1600] (any IV: π1's three calls read
+only the stream's public data, π1's roots and claims' elements, and the setup's root, not the transcript's hashes),
+its first three calls decoded under the registry (`contractPi1Openings`). Composition: `RecCompose.pi1OpsOf_eq`. -/
+def pi1OpsOf (D : RecDeployment) (roots : RecSetupRoots) (input : Vector UInt8 32) (stream : Array UInt8) :
+    Option (List Pi1Opening) :=
+  let c := (D.circuitAt roots.pi1).circuit
+  match (run (Spec.of c) [] input.toList stream).result with
+  | .error _ => none
+  | .ok r => contractPi1Openings (registryOf D.pi1.shape c.logN)
+      (pcsCalls c (pi1CallsWith D.pi1Calls roots.pi1.bytecode) (digestBytes roots.pi2) stream r)
+
 /-- **π2's extractor on given preimages**: for each candidate of π2's `W` (its root after π1's public data), π1's stream
-its witness values hold (`pi1Stream`); the first on which π1-rec3's graph's checks hold at Keccak-f[1600]. -/
+its witness values hold (`pi1Stream`); the first on which π1-rec3's graph accepts at Keccak-f[1600] with the contract's
+π1 openings (`pi1GraphAcceptsB`: its checks, and its three calls those the contract makes, `pi1OpsOf`).
+
+(Composition, `lean-rec-compose`: the search must test the calls too, not only the graph's checks. `W`'s list may hold
+two candidates whose π1 streams both pass the checks, the first one's calls not the contract's: the adversary commits a
+word within the list-decoding radius of two codewords, `c'` first in the list, its stream an honest π1 proof of another
+transcript, and `c` the one the openings' claims hold of. Searching by the checks alone, the extractor would output
+`c'`'s stream, on which `Pi1GraphAccepts` with the contract's openings fails.) -/
 def recExtractFrom2 (D : RecDeployment) (roots : RecSetupRoots) (input : Vector UInt8 32)
     (pre : Digest → ℕ → Option (List UInt8)) (proof : RecProof) : Option (Array UInt8) :=
   let c := (D.circuitAt roots.pi1).circuit
   let at' := rootsAt c.reads
   let wL := (layoutsOf c.logN).1
   let wWord := committedWord pre wL.logN (streamRoot proof.stream (at'.getD (rootReads c.reads) 0))
-  (candidates wL.logN wWord).findSome? fun w ↦
-    let table := Array.ofFn (n := 2 ^ c.logN) fun i ↦ wL.readEntry (fun j ↦ w.toArray.getD j 0) i.val
-    let s := D.pi1Stream fun i ↦ UniStatement.basisValue table c.logN i
-    if pi1GraphChecks (D.pi1IvAt roots.pi1) input s then some s else none
+  match pi1OpsOf D roots input proof.stream with
+  | none => none
+  | some ops =>
+    (candidates wL.logN wWord).findSome? fun w ↦
+      let table := Array.ofFn (n := 2 ^ c.logN) fun i ↦ wL.readEntry (fun j ↦ w.toArray.getD j 0) i.val
+      let s := D.pi1Stream fun i ↦ UniStatement.basisValue table c.logN i
+      if pi1GraphAcceptsB (D.pi1IvAt roots.pi1) input s ops then some s else none
 
 /-- The unique preimages of the setup's evaluations and the transcript's (the lengths a Merkle tree hashes). -/
 def preimagesOf (setupEvals : List (List UInt8 × Digest)) (T : OracleQueryLog) :
@@ -511,9 +543,15 @@ def RecKnowledgeSoundness2 (D : RecDeployment) (ε2 : ℕ → ℝ≥0∞) : Prop
 
 /-! ## The hypotheses about π1-rec3 at Keccak-f[1600] -/
 
-/-- A π1 adversary of the recursive setup: given its roots, a public input and π1's proof. -/
+/-- A π1 adversary of the recursive setup: given its roots and its trees' Keccak-256 evaluations (the setup is public;
+the derived adversary runs π2's extractor, which reads them), a public input and π1's proof.
+
+(Composition, `lean-rec-compose`: with the roots alone, the adversary built from π2's must recompute the setup, `2^27`
+and more calls of `π` that `ε1` would be charged at, and whose transcript `uniExtractor` would read with π2's
+adversary's.) -/
 abbrev Pi1Adversary : Type :=
-  RecSetupRoots → OracleComp RandomPermutationOracles (Vector UInt8 32 × UniStatement.UniProof)
+  RecSetupRoots → List (List UInt8 × Digest) →
+    OracleComp RandomPermutationOracles (Vector UInt8 32 × UniStatement.UniProof)
 
 /-- **π1-rec3's knowledge-soundness experiment at Keccak-f[1600]**: the recursive setup over `π`, the adversary, then
 π1-rec3's verifier with its Fiat–Shamir over Keccak-f[1600] and its openings over `π` (`pi1KeccakVerifierWith`). -/
@@ -521,7 +559,7 @@ noncomputable def pi1KeccakSoundnessExperiment (D : RecDeployment) (A : Pi1Adver
     ProbComp UniStatement.UniOutcome :=
   runWithRandomPermutation do
     let trees ← D.setupTreesWith queryPermutation
-    let (z, transcript) ← (simulateQ loggedOracles (A trees.roots)).run []
+    let (z, transcript) ← (simulateQ loggedOracles (A trees.roots trees.evaluations)).run []
     let accepted ← pi1KeccakVerifierWith queryPermutation D.pi1 trees.roots.pi1 z.1 z.2
     return ((z, accepted), trees.evaluations, transcript)
 
@@ -531,27 +569,29 @@ they run π2's adversary and π2's extractor). Its justification is π1-rec3's r
 (`UniSound.Rec3Ref.uniKnowledgeSoundness_closed_rec3`, 128.49 bits): **the Fiat–Shamir heuristic for Keccak-f[1600]**;
 it is not provable, as the earlier proofs' caveat says (AGENTS.md). -/
 def Pi1FsKeccak (D : RecDeployment) (ε1 : ℕ → ℝ≥0∞) : Prop :=
-  ∀ (A : Pi1Adversary) (Q : ℕ), (∀ roots, QueryCostAtMost (A roots) permutationCallCost Q) →
+  ∀ (A : Pi1Adversary) (Q : ℕ), (∀ roots evals, QueryCostAtMost (A roots evals) permutationCallCost Q) →
     Pr{let z ← pi1KeccakSoundnessExperiment D A}[
       UniStatement.UniBreaksKnowledgeSoundness D.pi1 (UniStatement.uniExtractor D.pi1) z] ≤ ε1 Q
 
-/-- An adversary choosing a public input and π1's stream, given the recursive setup's roots. -/
+/-- An adversary choosing a public input and π1's stream, given the recursive setup's roots and its trees' Keccak-256
+evaluations (as `Pi1Adversary`). -/
 abbrev Pi1StreamAdversary : Type :=
-  RecSetupRoots → OracleComp RandomPermutationOracles (Vector UInt8 32 × Array UInt8)
+  RecSetupRoots → List (List UInt8 × Digest) →
+    OracleComp RandomPermutationOracles (Vector UInt8 32 × Array UInt8)
 
 /-- The merge hazard's experiment: the recursive setup, the adversary's public input and stream, π1's IV. -/
 noncomputable def pi1HazardExperiment (D : RecDeployment) (B : Pi1StreamAdversary) :
     ProbComp (List UInt8 × Vector UInt8 32 × Array UInt8) :=
   runWithRandomPermutation do
     let trees ← D.setupTreesWith queryPermutation
-    let (z, _) ← (simulateQ loggedOracles (B trees.roots)).run []
+    let (z, _) ← (simulateQ loggedOracles (B trees.roots trees.evaluations)).run []
     return (D.pi1IvAt trees.roots.pi1, z)
 
 /-- **Hypothesis: π1-rec3's run at Keccak-f[1600] avoids the merge hazard** (`RecGraph.MergeHazard`: the challenges at
 which the recorded graph, merging by symbol, and the verifier, merging by value, may differ), but with probability
 `εh Q`. Justified by `RecGraph.hazard_prob` (`2^19/|E|` a challenge) for random challenges: the same heuristic. -/
 def Pi1HazardKeccak (D : RecDeployment) (εh : ℕ → ℝ≥0∞) : Prop :=
-  ∀ (B : Pi1StreamAdversary) (Q : ℕ), (∀ roots, QueryCostAtMost (B roots) permutationCallCost Q) →
+  ∀ (B : Pi1StreamAdversary) (Q : ℕ), (∀ roots evals, QueryCostAtMost (B roots evals) permutationCallCost Q) →
     Pr{let z ← pi1HazardExperiment D B}[
       RecGraph.MergeHazard LeanVM.Semantics.keccakF1600 z.1 z.2.1.toList z.2.2] ≤ εh Q
 
