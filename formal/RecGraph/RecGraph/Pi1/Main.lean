@@ -39,8 +39,8 @@ def Pi1GraphIsVerifier : Prop :=
 /-- **A recorded graph's evaluation is its program's run on `E`** (`record_eval`), for any program: on a stream of
 the graph's length, the outputs read off the run's values; on another, none. -/
 theorem evalGraph_recorded {α : Type} (π : KeccakState → KeccakState) (iv publicInput : List UInt8)
-    (stream : Array UInt8) (p : Prog α) (calls : List (List Word)) (len : Nat) (g : Graph)
-    (hg : g = (p.record RecState.start).2.graph calls len) :
+    (stream : Array UInt8) (p : Prog α) (g : Graph) (hn : g.nodes = (p.record RecState.start).2.nodes)
+    (hk : g.kernels = (p.record RecState.start).2.kernels) :
     evalGraph (m := Id) (fun s ↦ pure (π s)) g iv publicInput stream =
       if stream.size = g.streamLen then
         some (outputsOf g stream
@@ -48,8 +48,10 @@ theorem evalGraph_recorded {α : Type} (π : KeccakState → KeccakState) (iv pu
       else none := by
   have h : Id.run (evalNodes (m := Id) (fun s ↦ pure (π s)) g iv publicInput stream) =
       (p.run π iv publicInput stream (RecState.start, evalAll π iv publicInput stream RecState.start)).2.2 := by
-    rw [hg]
-    exact record_eval π iv publicInput stream p calls len
+    have he := record_eval π iv publicInput stream p g.calls g.streamLen
+    rw [← he]
+    unfold evalNodes RecState.graph
+    rw [hn, hk]
   unfold evalGraph
   split
   · rw [← h]
@@ -64,7 +66,7 @@ theorem evalGraph_recordedGraph (π : KeccakState → KeccakState) (iv publicInp
         some (outputsOf (recordedGraph p) stream
           (p.run π iv publicInput stream (RecState.start, evalAll π iv publicInput stream RecState.start)).2.2)
       else none :=
-  evalGraph_recorded π iv publicInput stream p _ _ (recordedGraph p) rfl
+  evalGraph_recorded π iv publicInput stream p (recordedGraph p) rfl rfl
 
 /-- **What is left**: the program's run on `E` computes `UniStatement`'s π1-rec3 outputs, off the merge hazard. -/
 def Pi1Sim : Prop :=

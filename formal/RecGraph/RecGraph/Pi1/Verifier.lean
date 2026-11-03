@@ -585,10 +585,12 @@ def callsOf (st : RecState) (red : ReducedS) : List (List Word) :=
       | .setup => (.const (beNat (LeanVM.Protocol.KeccakHash.digestBytes referenceRoots.bytecode)), words.getD 2 [])
     [root, .const (beNat layout), .const 1] ++ point.map Word.node ++ [.node value]
 
-/-- A program's recorded graph, from the recorder's start, with its calls' words and its stream's length. -/
+/-- A program's recorded graph, from the recorder's start: its nodes, zero checks and kernels, its calls' words and
+its stream's length. It has no nonzero check: π1-rec3's verifier requires nothing nonzero (no `Prog.nonzero` in
+`pi1Rec3`; the Rust's recording has none either, which `RecGraphTest/Pi1Check.lean` checks). -/
 def recordedGraph (p : Prog ReducedS) : Graph :=
-  (p.record RecState.start).2.graph (callsOf (p.record RecState.start).2 (p.record RecState.start).1)
-    (p.record RecState.start).2.cursor
+  { (p.record RecState.start).2.graph (callsOf (p.record RecState.start).2 (p.record RecState.start).1)
+      (p.record RecState.start).2.cursor with nonzero := [] }
 
 /-- **π1-rec3's graph, recorded in Lean**: `pi1Rec3` on the recorder from its start, with its calls' words and its
 stream's length. -/
