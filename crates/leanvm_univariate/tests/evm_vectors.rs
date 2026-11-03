@@ -120,7 +120,10 @@ fn fiat_shamir_shapes_do_not_cross() {
             let all = PcsOpen::attesting_all(0);
             let own = call(&straight.code, &[], &other.calldata, &all);
             assert_eq!(own.output.as_deref(), Some(&one[..]), "{contract}'s contract accepts its own proof");
-            assert!(call(&straight.code, &[], &v.calldata, &all).output.is_none(), "{contract}'s straight build rejects {proof}'s proof");
+            assert!(
+                call(&straight.code, &[], &v.calldata, &all).output.is_none(),
+                "{contract}'s straight build rejects {proof}'s proof"
+            );
             assert!(
                 deployed.chain.call(deployed.address, &v.calldata, &all).output.is_none(),
                 "{contract}'s deployable build rejects {proof}'s proof"

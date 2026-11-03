@@ -214,7 +214,8 @@ fn rec_contract_is_the_rust_verifier() {
             for seed in [1u64, 2] {
                 let stream = sample_stream(recorded.stream_len, seed);
                 let public: [u8; 32] = std::array::from_fn(|i| (seed as u8).wrapping_mul(29) ^ i as u8);
-                leanvm_univariate::contract::parity(&shape, &PROGRAM_IV, &public, &stream, Blake2s::Flock(FLOCK_REC), mode);
+                let rec = Blake2s::Flock(FLOCK_REC);
+                leanvm_univariate::contract::parity(&shape, &PROGRAM_IV, &public, &stream, rec, mode);
             }
         }
     });

@@ -250,7 +250,8 @@ fn zerocheck_at_six_is_leanvms() {
 #[test]
 fn zerocheck_skips_verify_and_are_faithful() {
     let mut rng = Rng(0x5eed_0003);
-    for (k, (eq, fs)) in (3..=6).flat_map(|k| [(k, (EqPoint::Sampled, FsShape::Main)), (k, (EqPoint::Squares, FsShape::Rec))]) {
+    let shapes = [(EqPoint::Sampled, FsShape::Main), (EqPoint::Squares, FsShape::Rec)];
+    for (k, (eq, fs)) in (3..=6).flat_map(|k| shapes.map(|shape| (k, shape))) {
         for m in [k + 8, 14, 17] {
             let padding = PaddingSpec {
                 k_log: 14,
