@@ -354,6 +354,84 @@ theorem SimQ.of_cond {Q : Chan → Prop} {st : RecState} {α β : Type} {p : Pro
   · exact h hP c hc hle
   · exact absurd hq (hQ hP c hc)
 
+/-! ## The judgment without counts: success, or failure past the stream's end -/
+
+variable (π iv publicInput stream) in
+/-- **`u`'s run from a coupled channel ending in `Q`**: succeeds, coupled with `p`'s recorded state (the cursor still
+in the stream), the outputs related; or fails, `p` recorded past the stream's end. No byte or challenge count: the
+composition of a verifier whose counts depend on its outputs (`reduce`'s tail). -/
+def SimE (Q : Chan → Prop) (st : RecState) {α β : Type} (p : Prog α) (u : ChanM Id β)
+    (R : RecState → α → β → Prop) : Prop :=
+  ∀ c, Couple π iv publicInput stream st c → c.cursor ≤ c.data.size → Q ((u.run).run c).2 →
+    (∃ b c', (u.run).run c = (.ok b, c') ∧ Couple π iv publicInput stream (p.record st).2 c' ∧
+        c'.cursor ≤ c'.data.size ∧ Grows st (p.record st).2 ∧ R (p.record st).2 (p.record st).1 b) ∨
+      ((∃ e c', (u.run).run c = (.error e, c')) ∧ c.data.size < (p.record st).2.cursor)
+
+theorem SimE.of_sim {Q : Chan → Prop} {st : RecState} {α β : Type} {p : Prog α} {u : ChanM Id β} {n ch : Nat}
+    {R : RecState → α → β → Prop} (h : Sim π iv publicInput stream st p u n ch R) :
+    SimE π iv publicInput stream Q st p u R := by
+  intro c hc hle _
+  obtain ⟨hs, hf⟩ := h c hc hle
+  by_cases hn : c.cursor + n ≤ c.data.size
+  · obtain ⟨b, c', hu, hc', hcur, _, hg, hR⟩ := hs hn
+    have hd : c'.data = c.data := hc'.data.trans hc.data.symm
+    exact Or.inl ⟨b, c', hu, hc', by rw [hd, hcur]; exact hn, hg, hR⟩
+  · exact Or.inr (hf (by omega))
+
+theorem SimE.of_good {Q : Chan → Prop} {st : RecState} {α β : Type} {p : Prog α} {u : ChanM Id β}
+    {R : RecState → α → β → Prop} (h : Good st → SimE π iv publicInput stream Q st p u R) :
+    SimE π iv publicInput stream Q st p u R :=
+  fun c hc hle hq ↦ h hc.good c hc hle hq
+
+theorem SimE.congr {Q : Chan → Prop} {st : RecState} {α β : Type} {p p' : Prog α} {u u' : ChanM Id β}
+    {R : RecState → α → β → Prop} (hp : p = p') (hu : u = u') (h : SimE π iv publicInput stream Q st p u R) :
+    SimE π iv publicInput stream Q st p' u' R := by
+  subst hp hu; exact h
+
+/-- **A `Sim` first, then a `SimE`.** -/
+theorem SimE.bind {Q : Chan → Prop} {st : RecState} {α β γ δ : Type} {p : Prog α} {u : ChanM Id β} {n ch : Nat}
+    {R : RecState → α → β → Prop} {k : α → Prog γ} {f : β → ChanM Id δ} {S : RecState → γ → δ → Prop}
+    (h1 : Sim π iv publicInput stream st p u n ch R)
+    (h2 : ∀ st' a b, Good st' → Grows st st' → R st' a b → SimE π iv publicInput stream Q st' (k a) (f b) S) :
+    SimE π iv publicInput stream Q st (p >>= k) (u >>= f) S := by
+  intro c hc hle hq
+  obtain ⟨hs1, hf1⟩ := h1 c hc hle
+  rw [record_bind]
+  by_cases hn : c.cursor + n ≤ c.data.size
+  · obtain ⟨b, c', hu, hc', hcur, _, hg, hR⟩ := hs1 hn
+    have hd : c'.data = c.data := hc'.data.trans hc.data.symm
+    rw [run_bind_ok f hu] at hq
+    rcases h2 _ _ _ hc'.good hg hR c' hc' (by rw [hd, hcur]; exact hn) hq with
+      ⟨b2, c2, hu2, hc2, hle2, hg2, hS⟩ | ⟨⟨e, c2, hu2⟩, hlt⟩
+    · exact Or.inl ⟨b2, c2, by rw [run_bind_ok f hu, hu2], hc2, hle2, hg.trans hg2, hS⟩
+    · exact Or.inr ⟨⟨e, c2, by rw [run_bind_ok f hu, hu2]⟩, by rw [← hd]; exact hlt⟩
+  · obtain ⟨⟨e, c', hu⟩, hlt⟩ := hf1 (by omega)
+    exact Or.inr ⟨⟨e, c', run_bind_error f hu⟩, lt_of_lt_of_le hlt (record_cursor_le _ _)⟩
+
+/-- **A pure part first, then a `SimE`**: the continuation from the pure step's end. -/
+theorem SimE.pbind {Q : Chan → Prop} {st : RecState} {α β γ δ : Type} {p : Prog α} {b : β}
+    {R : RecState → α → β → Prop} {k : α → Prog γ} {u : ChanM Id δ} {S : RecState → γ → δ → Prop}
+    (h1 : PSim st p b R)
+    (h2 : ∀ st' a, PStep st st' → R st' a b → SimE π iv publicInput stream Q st' (k a) u S) :
+    SimE π iv publicInput stream Q st (p >>= k) u S := by
+  intro c hc hle hq
+  obtain ⟨hp, hR⟩ := h1
+  have hc' := hc.pstep π iv publicInput stream hp
+  rw [record_bind]
+  rcases h2 _ _ hp hR c hc' hle hq with ⟨b2, c2, hu2, hc2, hle2, hg2, hS⟩ | hf
+  · exact Or.inl ⟨b2, c2, hu2, hc2, hle2, hp.grows.trans hg2, hS⟩
+  · exact Or.inr hf
+
+/-- **A `SimE` under a premise `P`**; off `P`, no run from a coupled channel ends in `Q`. -/
+theorem SimE.of_cond {Q : Chan → Prop} {st : RecState} {α β : Type} {p : Prog α} {u : ChanM Id β}
+    {R : RecState → α → β → Prop} (P : Prop) (h : P → SimE π iv publicInput stream Q st p u R)
+    (hQ : ¬ P → ∀ c, Couple π iv publicInput stream st c → ¬ Q ((u.run).run c).2) :
+    SimE π iv publicInput stream Q st p u R := by
+  intro c hc hle hq
+  by_cases hP : P
+  · exact h hP c hc hle hq
+  · exact absurd hq (hQ hP c hc)
+
 /-- **The cursor**, `n` further. -/
 theorem Sim.withCursor {st : RecState} {α β : Type} {p : Prog α} {u : ChanM Id β} {n ch : Nat}
     {R : RecState → α → β → Prop} (h : Sim π iv publicInput stream st p u n ch R) :
