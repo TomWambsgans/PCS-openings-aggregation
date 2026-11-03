@@ -270,7 +270,28 @@ theorem walkLemma_of_rows (hR : RowsSpec) : WalkLemma := by
   rw [hc]
   exact CharTwo.add_eq_zero.mp (by linear_combination hz)
 
+/-- **The converse** (for completeness): the pending claim its sum gives the walk's zero. -/
+theorem walkLemmaConverse_of_rows (hR : RowsSpec) :
+    ∀ (z : E) (rowLow chiIn chiInPrime s : List E) (alpha rLc : E), rowLow.length = 3 → chiIn.length = 8 →
+      chiInPrime.length = 8 → s.length = 64 →
+      PendingHolds (Flock.Pending.new (some z) rowLow chiIn chiInPrime alpha rLc (some s)) →
+        Flock.walkedTerminal (some z) rowLow chiIn chiInPrime s alpha + rLc = 0 := by
+  intro z rowLow chiIn chiInPrime s alpha rLc hl h8 h8' hs hp
+  rw [pendingHolds_iff (k := 3) (l := 3) rfl (by decide) z alpha rLc rowLow chiIn chiInPrime s hl h8,
+    ← matrixSum_spec hR z alpha rowLow chiIn chiInPrime s hl h8 h8' hs] at hp
+  have hc : (Flock.Pending.new (some z) rowLow chiIn chiInPrime alpha rLc (some s)).claim =
+      rLc + ((knownWeights alpha chiIn chiInPrime).1 * dot (rowLowWeights (some z) rowLow).2 s +
+        (knownWeights alpha chiIn chiInPrime).2 * s.getD (constantColumn % kBits) 0) := rfl
+  rw [hc] at hp
+  rw [walkedTerminal_eq, ← hp]
+  linear_combination (rLc + (knownWeights alpha chiIn chiInPrime).1 * dot (rowLowWeights (some z) rowLow).2 s +
+    (knownWeights alpha chiIn chiInPrime).2 * s.getD (constantColumn % kBits) 0) * two_eq_zero_E
+
 end FlockSound.Uni
+
+/-- info: 'FlockSound.Uni.walkLemmaConverse_of_rows' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.walkLemmaConverse_of_rows
 
 /-- info: 'FlockSound.Uni.walkLemma_of_rows' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
