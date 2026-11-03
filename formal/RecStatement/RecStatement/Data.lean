@@ -295,10 +295,10 @@ def circuit : Circuit := ⟨24, 4, formulas, pairs, reads, publicTerms⟩
 def pi1Iv : List UInt8 := hexBytes "b64dacfd5e63bf47f8601ef74de51666fa02acbd959fcf6500192f96d4d7fef9"
 
 /-- The setup's root (`prover::Setup::new(circuit).root()`: the commitment of `κ`, `κ + σ`). -/
-def setupRoot : List UInt8 := hexBytes "484b568132e26090872a49e901e37d902045226c42a934689e814783c6f68ceb"
+def setupRoot : List UInt8 := hexBytes "792968e91e97b69f7d2a303474962e9217ac405720ec9900b43dc24fbe07d870"
 
 /-- The circuit's digest (`Circuit::digest`: its encoding with `σ`'s and `κ`'s hashes). -/
-def digest : List UInt8 := hexBytes "71e89a565b849ab73957b0e4f054766a24dade035544e02038bc8afd6f0c2394"
+def digest : List UInt8 := hexBytes "6fbe9c1cf44e6a12fc8c2bb23477347a97807ec37f97956e05c5922b9387e96c"
 
 /-- π1's `PCS_OPEN` calls as the circuit names their words (`spec::Circuit::calls`). -/
 def pi1Calls : List (List CallWord) := [
