@@ -348,11 +348,11 @@ def nodeOk (X : Ctx) (iv : List UInt8) (packOf : Array (Option ℕ)) (id : ℕ) 
   | .mul x y => arithOk X (if x == y then .square else .mul) l (c.limbsOf x) (c.limbsOf y)
   | .seed =>
     match c.digests.getD id none with
-    | some d => d.size == 256 && c.spongeIs d (c.seedMessage iv)
+    | some d => d.size == 256 && (c.limbs.getD id none).isNone && c.spongeIs d (c.seedMessage iv)
     | none => false
   | .hash s f t =>
     match c.digests.getD id none with
-    | some d => d.size == 256 && (c.digests.getD s none).isSome && f ≤ t &&
+    | some d => d.size == 256 && (c.limbs.getD id none).isNone && (c.digests.getD s none).isSome && f ≤ t &&
       (List.range (8 * (t - f))).all (fun k => (c.bitSelf.getD (8 * f + k) none).isSome) &&
       c.spongeIs d (c.hashMessage s f t)
     | none => false
@@ -413,11 +413,28 @@ def statementOk (packOf : Array (Option ℕ)) : Bool :=
   allBelow 4 fun k => c.packIs packOf (c.statementLimb.getD k NONE) (beBits (fun i => c.publicSelf.getD i NONE) (8 * k) 8)
 
 /-- The never-hashed reads are disjoint 24-byte reads. -/
-def freeReadsOk : Bool :=
-  c.freeReads.all (fun e => e.2.size == 3) &&
+def freeReadsOk (streamLen : ℕ) : Bool :=
+  c.freeReads.all (fun e => e.2.size == 3 && e.1 + 24 ≤ streamLen &&
+    allBelow 192 (fun k => (c.bitSelf.getD (8 * e.1 + k) none).isNone)) &&
   allBelow c.freeReads.size fun a => allBelow c.freeReads.size fun b =>
     a == b || (c.freeReads.getD a default).1 + 24 ≤ (c.freeReads.getD b default).1 ||
       (c.freeReads.getD b default).1 + 24 ≤ (c.freeReads.getD a default).1
+
+/-- A node's operands (a ring weight's are its kernel's; the expanded graph has none). -/
+def _root_.RecCircuit.Node.ops : Node → List ℕ
+  | .add a b | .mul a b => [a, b]
+  | .hash s _ _ => [s]
+  | .low h | .narrow h | .bits h _ _ => [h]
+  | _ => []
+
+/-- The expanded graph: every live node reads earlier live nodes; the zero checks are the graph's, mapped; the zero
+ports' and the elements' nodes are live. -/
+def graphOk (r : Recorded) : Bool :=
+  allBelow c.nodes.size (fun id => !c.live.getD id false ||
+    (c.nodes.getD id default).ops.all (fun o => o < id && c.live.getD o false)) &&
+  c.zero == r.graph.zero.map (fun id => c.map.getD id 0) &&
+  (c.zeroNodes ++ c.elementNodes.toList).all (fun id => id < c.nodes.size && c.live.getD id false) &&
+  r.iv.length == 32
 
 /-- **Everything the theorems need**, checked. -/
 def checks (r : Recorded) : List (String × Bool) :=
@@ -430,7 +447,8 @@ def checks (r : Recorded) : List (String × Bool) :=
    ("bits", c.bitsOk X),
    ("statement", c.statementOk packOf),
    ("roots", c.rootsOk r.rootsAt packOf),
-   ("free reads", c.freeReadsOk),
+   ("free reads", c.freeReadsOk r.graph.streamLen),
+   ("graph", c.graphOk r),
    ("nodes", allBelow c.nodes.size fun id => !c.live.getD id false || c.nodeOk X r.iv packOf id),
    ("ports", c.portsOk X),
    ("sizes", c.live.size == c.nodes.size && c.limbs.size == c.nodes.size && c.digests.size == c.nodes.size &&
