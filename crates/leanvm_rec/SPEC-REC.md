@@ -35,7 +35,7 @@ The design has three parts:
 | | π2 = D16v, π1 = π1-rec (**recommended**) | today (π1 on chain) |
 |---|---|---|
 | π2's positions | `2^24`, 86% used (modelled) | |
-| π2's commitments | witness `W` `2^24` words; quotient table `Q` `2^27.89` words (`≤ 2^28`); setup `(σ, κ)` `2^25` | |
+| π2's commitments | witness `W` `2^24` words; quotient table `Q` `2^27.91` words (`≤ 2^28`); setup `(σ, κ)` `2^25` | |
 | proof commitments, union bound | 2 (`W`, `Q`); π2's PIOP 140.6 bits; π1-rec's 142.3 | 2; 142.3 |
 | calldata | 1,844 B (π1's claims 1,224 of it) | 7,108 B |
 | execution | ≈ 41.4K (modelled) | 192,392 (measured) |
@@ -57,8 +57,8 @@ What the table shows:
 - rows of 16 cells (C16) need `2^25` positions and a `2^28.2`-word quotient table;
 - split into three proof commitments, C16's `t` keeps 128.5 bits, no margin (§3).
 
-**The fallback**, if D16v's 7% margin on `2^28` is lost: **D32v** (slice rows of 32 positions, §2.6). It needs no
-change to π1 (`2^23` positions, `Q` `2^26.90`) and sends 34 values: 88,670 at `c = 0`.
+**The fallback**, if D16v's 6% margin on `2^28` is lost: **D32v** (slice rows of 32 positions, §2.6). It needs no
+change to π1 (`2^23` positions, `Q` `2^26.91`) and sends 34 values: 88,670 at `c = 0`.
 
 ## 1. π1's verifier, measured
 
@@ -267,15 +267,29 @@ values, also distinct. So both sides are sets of (value, tag) pairs, and mod-2 e
 `crates/quotient`, SPEC.md §5.1). Hence every position's value is the push meant for it. Each value then travels from
 its producing expression slot through forwards to exactly one consumer whose own push is an expression (its *end*).
 
+**The layout's invariant** (review R1, finding 1). A position's push is a formula of its *row*, not of its own pull,
+so a pull constrains nothing unless some formula of its row reads it, or it is forwarded. So:
+
+- every pull that is an end is an input of its row's formula;
+- the only exception is a segment of a constant, ending in a spare slot, whose value is irrelevant.
+
+The Keccak rows of §2.4.1 satisfy it:
+
+- `A_{j-1}` and `D_j` are read by the χ formula;
+- `P_{y'-1}` is read by the partial sum;
+- `C[x-1][z]` is read by the D unit.
+
+R2's layout compiler checks it for every row type.
+
 **Booleanity.** A free bit is a self-loop pushing `b²` to itself, so `b = b²`. Every other value is a degree-2
 function of bits and limbs, so by induction every Keccak value is a bit.
 
 **What it costs.**
 
-- **The degree.** The indicators have degree `< N` and `E` degree `≤ 2N`, so `deg P < 3N`. The identity has degree
-  `< 5N`, and `q` has degree `< 3.94N`. A product of a region selector by a role selector, unreduced, would make it
-  `4N`: the indicators must be those of the (block, role) cosets.
-- **The words.** The quotient table is `h` (`3N` words) plus `q` (`11.81N`): **`14.81N` words**.
+- **The degree.** The indicators have degree `N − 2^s < N` (about `N` for a small block) and `E` degree `≤ 2N`, so
+  `deg P < 3N`. The identity has degree `< 5N`, and `q` has degree `< 4N`. A product of a region selector by a role
+  selector, unreduced, would make it `4N`: the indicators must be those of the (block, role) cosets.
+- **The words.** The quotient table is `h` (`3N` words) plus `q` in 4 chunks (`12N`): **`15N` words**.
 - **What it saves.** No position is spent on outputs, and no gate quotient is needed: every constraint is a push.
 
 ### 2.4 D16v: the recommended layout
@@ -387,7 +401,7 @@ The verifier also hashes the public data into π2's seed (§4).
 | commitment | content | words | stack, list |
 |---|---|---:|---|
 | `W` (proof) | `w`: `2^24` `K`-words | `2^24` | `2^24`, 9,952 |
-| `Q` (proof, after `α, β, γ`) | `h` (`3N`), `q` in 4 chunks (`11.81N`) | `2^27.89` (248M; 7% under `2^28`) | `2^28`, 3,564 |
+| `Q` (proof, after `α, β, γ`) | `h` (`3N`), `q` in 4 chunks (`12N`) | `2^27.91` (252M; 6% under `2^28`) | `2^28`, 3,564 |
 | setup | `σ` (`N`), `κ` (`N`) | `2^25` | `L = 1` |
 
 ### 2.6 D32v: the fallback
@@ -399,7 +413,7 @@ The verifier also hashes the public data into π2's seed (§4).
   `C`'s.
 
 There are no forwards in Keccak at all. Per permutation, 25 × 64 × 32 = 51,200 positions, a θ-prep slice row
-included. π1 needs no change (131 permutations): 7.07M positions in `2^23` (84%), `Q` `2^26.90`. The verifier gets 32
+included. π1 needs no change (131 permutations): 7.07M positions in `2^23` (84%), `Q` `2^26.91`. The verifier gets 32
 values plus `σ`, `κ`: 34 values, +384 B.
 
 ## 3. Options and their sizes (modelled; `review/leanvm_rec_params.py`)
@@ -409,9 +423,9 @@ values plus `σ`, `κ`: 34 values, +384 B.
 | B4: `crates/quotient`'s gate | 452,456 | main / rec | `2^26` | `2^29.78` ✗ | — | 5 | — | — | — |
 | C16: cell outputs, 16-cell rows | 196,608 | rec | `2^25` (64%) | `2^28.20` ✗ | 3 if split | 18 | 128.5 (split) | 1,876 B | 74,650 |
 | C64: cell outputs, slice rows | 98,304 | main | `2^24` (79%) | `2^27.18` | 2 | 66 | ≈ 141 | 2,996 B | 119,300 |
-| **D16v** | 130,736 | **rec** | **`2^24` (86%)** | **`2^27.89`** | **2** | **18** | **140.6** | **1,844 B** | **73,370** |
-| D16v | 130,736 | main | `2^25` (52%) | `2^28.89` ✗ | — | 18 | — | — | — |
-| **D32v** (fallback) | 51,200 | main | `2^23` (84%) | `2^26.90` | 2 | 34 | 141.3 | 2,228 B | 88,670 |
+| **D16v** | 130,736 | **rec** | **`2^24` (86%)** | **`2^27.91`** | **2** | **18** | **140.6** | **1,844 B** | **73,370** |
+| D16v | 130,736 | main | `2^25` (52%) | `2^28.91` ✗ | — | 18 | — | — | — |
+| **D32v** (fallback) | 51,200 | main | `2^23` (84%) | `2^26.91` | 2 | 34 | 141.3 | 2,228 B | 88,670 |
 | chain π1 → π2 (D32v) → π3 (D16v of π2's verifier) | | main | `2^23`, then `2^21` | | 2 + 2 | 18 | ≥ 140 | 2,052 B | 81,660 |
 
 What each option shows:
@@ -590,13 +604,13 @@ adds 9 claims' worth.
 
 ## 8. Risks
 
-1. **D16v's margins.** 86% of `2^24` positions, and `Q` at `2^27.89` (7% under `2^28`). Any underestimate pushes `N`
+1. **D16v's margins.** 86% of `2^24` positions, and `Q` at `2^27.91` (6% under `2^28`). Any underestimate pushes `N`
    to `2^25` and `Q` over `2^28`, for instance:
    - forwards for values of high fan-out;
    - sink slots;
    - an identity of higher degree.
 
-   R2 measures it. The fallback (D32v, `2^26.90`) costs 15K gas.
+   R2 measures it. The fallback (D32v, `2^26.91`) costs 15K gas.
 2. **The virtual-push copy argument is new.** Its soundness is the set argument of §2.3, which `crates/quotient`'s
    relies on too. But the balancing of slots, the selectors' degree and the outside tags need a written proof and an
    adversarial review before R3's numbers mean much.

@@ -86,8 +86,9 @@ DESIGNS = {
     "C16": dict(W=16, qwords=9 + 3 / 16, extra=2, note="cell outputs, chi5+theta rows"),
     "C64": dict(W=64, qwords=9 + 3 / 64, extra=2, note="cell outputs, slice rows"),
     # extra: sigma(t) and kappa(t), the setup's wiring and constants columns
-    "D16v": dict(W=16, qwords=3 + 3 * (4 - 1 / 16), extra=2, note="virtual pushes, chi5+theta + partial sums"),
-    "D32v": dict(W=32, qwords=3 + 3 * (4 - 1 / 32), extra=2, note="virtual pushes, slice rows"),
+    # q < 4N: a (block, role) indicator has degree N - 2^s, about N for a small block (the review's finding 4)
+    "D16v": dict(W=16, qwords=3 + 3 * 4, extra=2, note="virtual pushes, chi5+theta + partial sums"),
+    "D32v": dict(W=32, qwords=3 + 3 * 4, extra=2, note="virtual pushes, slice rows"),
 }
 
 
