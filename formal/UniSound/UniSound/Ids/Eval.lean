@@ -2594,6 +2594,245 @@ theorem lbFits (S : Shape) : LbFits S := by
   have h3 := (Nat.pow_le_pow_iff_right (by norm_num)).mp (h1.trans (le_pow_log2Ceil _))
   omega
 
+/-! ## The quotients' chunks fit the digits (`ChunksFit`), proved -/
+
+/-- `chunks`' loop body, on (sizes, left). -/
+def chunkStep (s : Array ℕ × ℕ) (_ : ℕ) : Array ℕ × ℕ :=
+  if s.2 > 0 then
+    if s.1.size = 2 ∧ s.2 ≠ 2 ^ Nat.log2 s.2 then (s.1.push (Nat.log2 s.2 + 1), 0)
+    else (s.1.push (Nat.log2 s.2), s.2 - 2 ^ Nat.log2 s.2)
+  else s
+
+/-- **`chunks` is its loop** (its `Id.run do`, unfolded). -/
+theorem chunks_eq (count : ℕ) :
+    chunks count = ((List.range' 0 4).foldl chunkStep (#[], count)).1.toList := by
+  unfold chunks
+  simp only [Id.run]
+  rw [Std.Legacy.Range.forIn_eq_forIn_range', forIn_id_eq_foldl' _ _ _ chunkStep]
+  · simp [Std.Legacy.Range.size]
+    rfl
+  · intro x s
+    unfold chunkStep
+    split_ifs <;> rfl
+
+/-- `chunks`' invariant: every chunk at most the count, what is left at most the count and below the
+last chunk. -/
+def ChunkInv (count : ℕ) (s : Array ℕ × ℕ) : Prop :=
+  (∀ e ∈ s.1.toList, 2 ^ e ≤ count) ∧ s.2 ≤ count ∧ ∀ e, s.1.back? = some e → s.2 < 2 ^ e
+
+theorem chunkStep_inv (count : ℕ) (s : Array ℕ × ℕ) (x : ℕ) (h : ChunkInv count s) :
+    ChunkInv count (chunkStep s x) := by
+  obtain ⟨h1, h2, h3⟩ := h
+  unfold chunkStep
+  by_cases h0 : s.2 > 0
+  · rw [ite_eq_left h0]
+    have hne : s.2 ≠ 0 := by omega
+    have hle := Nat.log2_self_le hne
+    have hlt := Nat.lt_log2_self (n := s.2)
+    by_cases hs : s.1.size = 2 ∧ s.2 ≠ 2 ^ Nat.log2 s.2
+    · rw [ite_eq_left hs]
+      have hb : s.1.back? = some (s.1.getD 1 0) := by
+        rw [Array.back?_eq_getElem?, Array.getD_eq_getD_getElem?]
+        rw [hs.1]
+        simp [Array.getElem?_eq_getElem (show 1 < s.1.size by omega)]
+      have hlast := h3 _ hb
+      have hmem : s.1.getD 1 0 ∈ s.1.toList := by
+        rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem (show 1 < s.1.size by omega)]
+        simp
+      have hc := h1 _ hmem
+      have hlog : Nat.log2 s.2 < s.1.getD 1 0 := (Nat.log2_lt hne).mpr hlast
+      refine ⟨fun e he ↦ ?_, Nat.zero_le _, fun e he ↦ ?_⟩
+      · simp only [Array.toList_push, List.mem_append, List.mem_singleton] at he
+        rcases he with he | rfl
+        · exact h1 e he
+        · exact (Nat.pow_le_pow_right (by norm_num) hlog).trans hc
+      · simp only [Array.back?_push, Option.some.injEq] at he
+        subst he
+        exact Nat.two_pow_pos _
+    · rw [ite_eq_right hs]
+      refine ⟨fun e he ↦ ?_, by dsimp only; omega, fun e he ↦ ?_⟩
+      · simp only [Array.toList_push, List.mem_append, List.mem_singleton] at he
+        rcases he with he | rfl
+        · exact h1 e he
+        · omega
+      · simp only [Array.back?_push, Option.some.injEq] at he
+        subst he
+        dsimp only
+        rw [pow_succ] at hlt
+        omega
+  · rw [ite_eq_right h0]
+    exact ⟨h1, h2, h3⟩
+
+/-- **A chunk is at most the count**: `2^e ≤ count` for every `e ∈ chunks count`. -/
+theorem chunks_pow_le (count : ℕ) : ∀ e ∈ chunks count, 2 ^ e ≤ count := by
+  rw [chunks_eq]
+  have key : ∀ (l : List ℕ) (s : Array ℕ × ℕ), ChunkInv count s → ChunkInv count (l.foldl chunkStep s) := by
+    intro l
+    induction l with
+    | nil => intro s h; exact h
+    | cons x l ih => intro s h; exact ih _ (chunkStep_inv count s x h)
+  exact (key _ _ ⟨by simp, le_rfl, by simp⟩).1
+
+theorem chunk_lt (count n : ℕ) (h : count < 2 ^ n) : ∀ e ∈ chunks count, e < n := by
+  intro e he
+  have := (chunks_pow_le count e he).trans_lt h
+  exact (Nat.pow_lt_pow_iff_right (by norm_num)).mp this
+
+theorem tupleDegree_le (tuple : List Form) (k : ℕ) (hk : 1 ≤ k)
+    (h : ∀ f ∈ tuple, ∀ mc ∈ f, mc.1.length ≤ k) : tupleDegree tuple ≤ k := by
+  unfold tupleDegree
+  refine max_le hk ?_
+  have inner : ∀ (f : Form) (d : ℕ), d ≤ k → (∀ mc ∈ f, mc.1.length ≤ k) →
+      f.foldl (fun d (mc : List ℕ × E) ↦ if mc.2 = 0 then d else max d mc.1.length) d ≤ k := by
+    intro f
+    induction f with
+    | nil => intro d hd _; exact hd
+    | cons mc f ih =>
+      intro d hd hm
+      rw [List.foldl_cons]
+      refine ih _ ?_ fun m hm' ↦ hm m (List.mem_cons_of_mem _ hm')
+      split_ifs
+      · exact hd
+      · exact max_le hd (hm mc (List.mem_cons_self ..))
+  have outer : ∀ (l : List Form) (d : ℕ), d ≤ k → (∀ f ∈ l, ∀ mc ∈ f, mc.1.length ≤ k) →
+      l.foldl (fun d (form : Form) ↦
+        form.foldl (fun d (mc : List ℕ × E) ↦ if mc.2 = 0 then d else max d mc.1.length) d) d ≤ k := by
+    intro l
+    induction l with
+    | nil => intro d hd _; exact hd
+    | cons f l ih =>
+      intro d hd hm
+      rw [List.foldl_cons]
+      exact ih _ (inner f d hd (hm f (List.mem_cons_self ..))) fun g hg ↦ hm g (List.mem_cons_of_mem _ hg)
+  exact outer tuple 0 (Nat.zero_le _) h
+
+/-- **The tables' shapes, as the degrees read them**: at most eleven flushes, monomials of degree at
+most two, at most ten counters. -/
+def TablesDeg : Prop :=
+  ∀ tab ∈ tables, (tab.flushes.pull.zip tab.flushes.push).length ≤ 11 ∧
+    (∀ fl ∈ tab.flushes.pull.zip tab.flushes.push, ∀ f ∈ fl.1 ++ fl.2, ∀ mc ∈ f, mc.1.length ≤ 2) ∧
+    tab.countColumns.length ≤ 10
+
+set_option maxRecDepth 100000 in
+/-- The tables' shapes (the kernel checks their monomials and counters, not their coefficients). -/
+theorem tablesDeg : TablesDeg := by
+  unfold TablesDeg
+  decide +kernel
+
+theorem sum_le_of {l : List ℕ} {k : ℕ} (h : ∀ x ∈ l, x ≤ k) : l.sum ≤ l.length * k := by
+  induction l with
+  | nil => simp
+  | cons x l ih =>
+    simp only [List.sum_cons, List.length_cons]
+    have := ih fun y hy ↦ h y (List.mem_cons_of_mem _ hy)
+    have := h x (List.mem_cons_self ..)
+    rw [Nat.succ_mul]
+    omega
+
+/-- A table's leaf degrees are at most `23`. -/
+theorem tableDegrees_le (tab : Table) (htab : tab ∈ tables) :
+    (tableDegrees tab).1 ≤ 23 ∧ (tableDegrees tab).2 ≤ 23 := by
+  obtain ⟨hn, hm, -⟩ := tablesDeg tab htab
+  rw [tableDegrees_eq]
+  have h1 : ∀ x ∈ (tab.flushes.pull.zip tab.flushes.push).map (fun fl ↦ tupleDegree fl.1), x ≤ 2 := by
+    intro x hx
+    obtain ⟨fl, hfl, rfl⟩ := List.mem_map.mp hx
+    exact tupleDegree_le _ 2 (by norm_num) fun f hf mc hmc ↦ hm fl hfl f (List.mem_append_left _ hf) mc hmc
+  have h2 : ∀ x ∈ (tab.flushes.pull.zip tab.flushes.push).map (fun fl ↦ tupleDegree fl.2), x ≤ 2 := by
+    intro x hx
+    obtain ⟨fl, hfl, rfl⟩ := List.mem_map.mp hx
+    exact tupleDegree_le _ 2 (by norm_num) fun f hf mc hmc ↦ hm fl hfl f (List.mem_append_right _ hf) mc hmc
+  have s1 := sum_le_of h1
+  have s2 := sum_le_of h2
+  rw [List.length_map] at s1 s2
+  dsimp only
+  constructor <;> omega
+
+/-- A valid shape's heights are at most `31`. -/
+theorem heights_le (D : Deployment) (o : ℕ) : D.shape.heights.getD o 0 ≤ 31 := by
+  have h := D.valid.2
+  unfold Shape.validate at h
+  simp at h
+  by_cases ho : o < D.shape.heights.length
+  · rw [List.getD_eq_getElem _ _ ho]
+    exact h.1.2 _ (List.getElem_mem ho)
+  · rw [List.getD_eq_default _ _ (by omega)]
+    omega
+
+/-- **The constraint quotient's degree is below `2^(r_W + 4)`.** -/
+theorem constraintDegree_lt (D : Deployment) :
+    D.shape.constraintDegree < 2 ^ (D.shape.constraintVars + 4) := by
+  set rW := D.shape.constraintVars
+  have hB : 2 ^ (rW + 4) = 16 * 2 ^ rW := by rw [pow_add]; ring
+  have key : ∀ (L : List Table) (d : ℕ), d < 16 * 2 ^ rW → (∀ tab ∈ L, tab ∈ tables) →
+      L.foldl (cdStep D.shape) d < 16 * 2 ^ rW := by
+    intro L
+    induction L with
+    | nil => intro d hd _; exact hd
+    | cons tab L ih =>
+      intro d hd hL
+      rw [List.foldl_cons]
+      refine ih _ ?_ fun t ht ↦ hL t (List.mem_cons_of_mem _ ht)
+      have htab := hL tab (List.mem_cons_self ..)
+      have hcnt := (tablesDeg tab htab).2.2
+      have hr := height_le_rW D.shape tab.opcode
+      have hr31 := heights_le D tab.opcode
+      have hn : 2 ^ D.shape.heights.getD tab.opcode 0 ≤ 2 ^ rW := Nat.pow_le_pow_right (by norm_num) hr
+      have hpos := Nat.two_pow_pos (D.shape.heights.getD tab.opcode 0)
+      unfold cdStep UniStatement.degree
+      dsimp only
+      generalize 2 ^ D.shape.heights.getD tab.opcode 0 = n at hn hpos ⊢
+      generalize D.shape.heights.getD tab.opcode 0 = r at hr hr31 ⊢
+      have h1 : (n - 1) * (1 + tab.countColumns.length) ≤ (n - 1) * 11 := Nat.mul_le_mul_left _ (by omega)
+      have h2 : r * (n / 2) ≤ 31 * (n / 2) := Nat.mul_le_mul_right _ hr31
+      split_ifs <;> simp only [max_lt_iff] <;> omega
+  unfold Shape.constraintDegree UniStatement.degree
+  dsimp only
+  rw [hB]
+  have hlm : 2 ^ D.shape.logMemory ≤ 2 ^ rW := Nat.pow_le_pow_right (by norm_num) (logMemory_le_rW D.shape)
+  have := Nat.two_pow_pos rW
+  refine max_lt (key tables 0 (by positivity) fun _ h ↦ h) ?_
+  omega
+
+/-- **The quotients' chunks fit the digits**, at a valid shape whose heap's blocks are `HeapGood`'s:
+the constraint quotient's chunks are at most `r_W + 4`, a table's leaf quotient's at most its height
+plus `4` (`23` fingerprint degrees), the memory's and the bytecode's at most their blocks'. -/
+theorem chunksFit (D : Deployment) (hH : HeapGood D.shape) : ChunksFit D.shape := by
+  have hN := rW_lt_nDigits D
+  refine ⟨fun e he ↦ ?_, fun b hb d hd e he ↦ ?_⟩
+  · have := chunk_lt _ (D.shape.constraintVars + 5) (by
+      have := constraintDegree_lt D
+      rw [pow_succ]; omega) e he
+    omega
+  · have hbr := block_r_lt D.shape hH b hb
+    have hhN := h_lt_nDigits D
+    have hblk := hH.2.2.2.2.2 b hb
+    have hpos := Nat.two_pow_pos b.r
+    unfold Shape.leafDegree at hd
+    rcases hlv : b.leaves with _ | _ | tt | _ <;> rw [hlv] at hd hblk
+    · simp only [Option.some.injEq] at hd
+      subst hd
+      have := chunk_lt _ (b.r + 1) (by unfold UniStatement.degree; rw [pow_succ]; omega) e he
+      omega
+    · simp only [Option.some.injEq] at hd
+      subst hd
+      have := chunk_lt _ (b.r + 1) (by unfold UniStatement.degree; rw [pow_succ]; omega) e he
+      omega
+    · obtain ⟨ht6, hrt⟩ := hblk
+      dsimp only at hd
+      simp only [Option.some.injEq] at hd
+      subst hd
+      obtain ⟨hp1, hp2⟩ := tableDegrees_le _ (tables_mem tt ht6)
+      have hr := height_le_rW D.shape tt
+      have hmax : max (tableDegrees (tables.getD tt default)).1 (tableDegrees (tables.getD tt default)).2 ≤ 23 :=
+        max_le hp1 hp2
+      have hm : max (tableDegrees (tables.getD tt default)).1 (tableDegrees (tables.getD tt default)).2 *
+          (2 ^ b.r - 1) ≤ 23 * (2 ^ b.r - 1) := Nat.mul_le_mul_right _ hmax
+      have h32 : 2 ^ (b.r + 5) = 32 * 2 ^ b.r := by rw [pow_add]; ring
+      have := chunk_lt _ (b.r + 5) (by unfold UniStatement.degree; omega) e he
+      omega
+    · simp at hd
+
 end UniSound.Ids.Eval
 
 namespace UniSound.Ids
@@ -2637,5 +2876,16 @@ theorem diffsEval_of (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hC : Chun
 /-- info: 'UniSound.Ids.diffsEval_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms diffsEval_of
+
+/-- **The verifier's relations at `t`, all zero, give every identity polynomial at `t`**
+(`DiffsEvalP`), for a deployment whose heap's blocks fill the leaves (`HeapGood`, proved at the
+reference shape by `heapGood_reference`). -/
+theorem diffsEvalP_of_heapGood (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hH : HeapGood D.shape) :
+    DiffsEvalP D Fl :=
+  diffsEval_of D Fl (chunksFit D hH) hH
+
+/-- info: 'UniSound.Ids.diffsEvalP_of_heapGood' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms diffsEvalP_of_heapGood
 
 end UniSound.Ids
