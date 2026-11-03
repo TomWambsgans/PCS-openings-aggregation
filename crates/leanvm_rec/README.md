@@ -42,8 +42,21 @@ attack found).
 | soundness after the union bounds (modelled, `review/leanvm_rec_params.py`) | PIOP 129.0 bits | copy argument 152.7, `t` 140.6 |
 
 WHIR's six openings are about 129 bits in the query-bounded model, or 126.4 by a plain union. These figures are
-modelled and reviewed, not proven. The Lean proofs (`formal/`) cover `leanvm_univariate`'s main line; for the
-recursion they are the next step.
+modelled and reviewed, not proven.
+
+**Lean** (`formal/RecCompose`, `formal/README.md` "The recursive verifier"): π2's part of the end statement,
+`RecKnowledgeSoundness2 D pi2Bound`, holds in the random-permutation model from π2's named layers, with
+`pi2Bound(2^64) = 2^-64.93`, i.e. 128.93 bits. Its route is π2's PIOP (`RecPiop`), the verifier's arithmetic
+(`RecStatement`), the circuit (`RecCircuit.pi1rec3_end`) and the contract's π1 openings (`callsPure`). It implies the
+end-to-end statements against leanVM 42422001's relation, `RecKnowledgeSoundness` (error `ε2 + ε1 + εh`) and
+`RecCompleteness`, under the Fiat–Shamir heuristic for Keccak-f[1600]: `Pi1FsKeccak`, `Pi1HazardKeccak`, justified by
+π1-rec3's random-permutation theorems. All couplings are proved. Still open:
+- π2's Fiat–Shamir layer;
+- the tables' layer;
+- the bridge from RecCircuit's end statement to `Pi1GraphAccepts`;
+- `Pi1OpeningsAgree`;
+- the root-word fix (`fix-pi1-root`): π2's stream carries π1's roots with each half reversed, so the contract decodes
+  them to other digests than π1-rec3's.
 
 ## Tests and commands (on h1)
 
