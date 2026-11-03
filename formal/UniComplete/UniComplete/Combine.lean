@@ -941,6 +941,384 @@ theorem atT_combined_hold (shape : Shape) (a : AtT) (stackOf : Commitment → Ar
     exact combine_holds_of_relations a.relations c rho (layoutIn (layouts shape a.c2Columns)) stackOf a.ringMap
       claim hon (fun r hr _ ↦ hholds r hr) hreads h
 
+/-! ### Walking the verifier's code -/
+
+/-- **An `Id` loop keeps an invariant** that its body keeps. -/
+theorem forIn_id_inv {α β : Type} (I : β → Prop) (f : α → β → Id (ForInStep β))
+    (hf : ∀ a s, I s → I (f a s).value) : ∀ (l : List α) (b : β), I b → I (forIn l b f)
+  | [], _, hb => hb
+  | a :: l, b, hb => by
+    have h1 := hf a b hb
+    have e : forIn (a :: l) b f = match f a b with
+        | .done b' => b'
+        | .yield b' => forIn l b' f := by
+      rw [List.forIn_cons]
+      rfl
+    rw [e]
+    cases h : f a b with
+    | done b' =>
+      rw [h] at h1
+      exact h1
+    | yield b' =>
+      rw [h] at h1
+      exact forIn_id_inv I f hf l b' h1
+
+/-- **Every successful run** of a channel program returns a value satisfying `Q`. -/
+def ChanOk {α : Type} (x : ChanM Id α) (Q : α → Prop) : Prop :=
+  ∀ (c : Chan) (a : α), (Id.run (x.run.run c)).1 = .ok a → Q a
+
+theorem chanOk_pure {α : Type} {a : α} {Q : α → Prop} (h : Q a) : ChanOk (pure a : ChanM Id α) Q := by
+  intro c a' ha
+  change Except.ok a = Except.ok a' at ha
+  injection ha with ha
+  exact ha ▸ h
+
+theorem chanOk_true {α : Type} (x : ChanM Id α) : ChanOk x fun _ ↦ True := fun _ _ _ ↦ trivial
+
+theorem chanOk_bind {α β : Type} {x : ChanM Id α} {f : α → ChanM Id β} {P : α → Prop} {Q : β → Prop}
+    (hx : ChanOk x P) (hf : ∀ a, P a → ChanOk (f a) Q) : ChanOk (x >>= f) Q := by
+  intro c b hb
+  simp only [ExceptT.run_bind, StateT.run_bind] at hb
+  rcases hxc : (ExceptT.run x).run c with ⟨r, c'⟩
+  rw [hxc] at hb
+  cases r with
+  | error err => cases hb
+  | ok a => exact hf a (hx c a (by rw [Id.run, hxc])) c' b hb
+
+theorem chanOk_forIn {γ β : Type} (I : β → Prop) (f : γ → β → ChanM Id (ForInStep β))
+    (hf : ∀ a s, I s → ChanOk (f a s) fun r ↦ I r.value) :
+    ∀ (l : List γ) (b : β), I b → ChanOk (forIn l b f) I
+  | [], b, hb => by
+    rw [List.forIn_nil]
+    exact chanOk_pure hb
+  | a :: l, b, hb => by
+    rw [List.forIn_cons]
+    refine chanOk_bind (hf a b hb) fun r hr ↦ ?_
+    cases r with
+    | done b' => exact chanOk_pure hr
+    | yield b' => exact chanOk_forIn I f hf l b' hr
+
+theorem runReader_of {α : Type} [Inhabited α] {x : ChanM Id α} {Q : α → Prop} (hx : ChanOk x Q)
+    (hd : Q default) (bytes : List UInt8) : Q (runReader x bytes) := by
+  unfold runReader
+  split
+  · next a c' h => exact hx _ a (by rw [h]; rfl)
+  · exact hd
+
+theorem push_good {G : Relation → Prop} {R : Array Relation} {A : Relation} (hR : ∀ r ∈ R, G r) (hA : G A) :
+    ∀ r ∈ R.push A, G r := by
+  intro r hr
+  rcases Array.mem_push.mp hr with hr | rfl
+  · exact hR r hr
+  · exact hA
+
+theorem map_good {α : Type} {Q : Term → Prop} (g : α → Term) (hg : ∀ a, Q (g a)) (terms : List α) (v : E) :
+    ∀ x ∈ (⟨terms.map g, v⟩ : Relation).terms, Q x := by
+  intro x hx
+  obtain ⟨a, -, rfl⟩ := List.mem_map.mp hx
+  exact hg a
+
+theorem equal_good {Q : Term → Prop} {column : Column} {point : List E} (h : Q (term column point 1)) (v : E) :
+    ∀ x ∈ (Relation.equal column point v).terms, Q x := by
+  intro x hx
+  rw [Relation.equal, List.mem_singleton] at hx
+  exact hx ▸ h
+
+/-- **`tablePart`'s relations**: every term is one of its table's columns at `w.take logHeight`. -/
+theorem tablePart_terms (t : Table) (logHeight : ℕ) (weights : Array E) (beta : E) (w : List E)
+    (Q : Term → Prop) (hQ : ∀ c k, Q (term (.table t.opcode c) (w.take logHeight) k)) :
+    ChanOk (tablePart (m := Id) t logHeight weights beta w) fun res ↦ ∀ r ∈ res.2, ∀ x ∈ r.terms, Q x := by
+  unfold tablePart
+  dsimp only
+  refine chanOk_bind (chanOk_forIn (fun s ↦ ∀ r ∈ s.2, ∀ x ∈ r.terms, Q x) _ (fun column s hs ↦ ?_) _ _
+    (by simp)) fun s1 hs1 ↦ ?_
+  · refine chanOk_bind (chanOk_true _) fun value _ ↦ chanOk_pure ?_
+    exact push_good hs (equal_good (hQ _ _) _)
+  · refine chanOk_bind (chanOk_forIn (fun s ↦ ∀ r ∈ s.1, ∀ x ∈ r.terms, Q x) _ (fun p s hs ↦ ?_) _ _ hs1)
+      fun s2 hs2 ↦ chanOk_pure ?_
+    · obtain ⟨pulled, pushed⟩ := p
+      dsimp only
+      repeat' (first
+        | split
+        | refine chanOk_bind (chanOk_true _) fun _ _ ↦ ?_
+        | refine chanOk_pure ?_)
+      all_goals first
+        | exact hs
+        | exact push_good hs (map_good _ (fun _ ↦ hQ _ _) _ _)
+        | exact push_good (push_good hs (map_good _ (fun _ ↦ hQ _ _) _ _)) (map_good _ (fun _ ↦ hQ _ _) _ _)
+    · intro r hr x hx
+      exact hs2 r (by simpa using hr) x hx
+
+theorem pushT_good {Q : Term → Prop} {A : Array Term} {y : Term} (hA : ∀ x ∈ A.toList, Q x) (hy : Q y) :
+    ∀ x ∈ (A.push y).toList, Q x := by
+  intro x hx
+  rw [Array.toList_push, List.mem_append, List.mem_singleton] at hx
+  rcases hx with hx | rfl
+  · exact hA x hx
+  · exact hy
+
+/-- **`quotientTerms`' terms**: chunk `c` of the column at `w.take e`, `e` the chunk's size. -/
+theorem quotientTerms_terms (column : ℕ → Column) (sizes : List ℕ) (w : List E) (scale : E) (Q : Term → Prop)
+    (hQ : ∀ e chunk, (e, chunk) ∈ sizes.zip (List.range sizes.length) → ∀ k, Q (term (column chunk) (w.take e) k)) :
+    ∀ x ∈ quotientTerms column sizes w scale, Q x := by
+  unfold quotientTerms
+  suffices h : ∀ (L : List (ℕ × ℕ)) (acc : Array Term × E), (∀ p ∈ L, (p.1, p.2) ∈ sizes.zip (List.range sizes.length)) →
+      (∀ x ∈ acc.1.toList, Q x) →
+      ∀ x ∈ (L.foldl (fun (acc : Array Term × E) (p : ℕ × ℕ) ↦
+        (acc.1.push (term (column p.2) (w.take p.1) acc.2), acc.2 * w.getD p.1 0)) acc).1.toList, Q x from
+    h _ _ (fun p hp ↦ hp) (by simp)
+  intro L
+  induction L with
+  | nil => intro acc _ h; exact h
+  | cons p L ih =>
+    intro acc hL hacc
+    exact ih _ (fun p' hp' ↦ hL p' (List.mem_cons_of_mem _ hp'))
+      (pushT_good hacc (hQ p.1 p.2 (hL p (by simp)) _))
+
+/-- **`constraintRelation`'s terms**: the tables' columns and counter inverses at `w.take r`, `q_flock`'s slots
+at `y(t)` of BLAKE2S's height, the memory's limbs at `w.take lm`. -/
+theorem constraintRelation_terms (shape : Shape) (parts : List TablePart) (publicWords : List E)
+    (gamma t constraintValue : E) (w : List E) (Q : Term → Prop)
+    (htable : ∀ op c k, Q (term (.table op c) (w.take (shape.heights.getD op 0)) k))
+    (hinv : ∀ op k, Q (term (.inverse op) (w.take (shape.heights.getD op 0)) k))
+    (hslot : ∀ op j k, op = opBlake2s →
+      Q (term (.qflockSlot j) (coordinatesAt t (coordinateFunctionals (shape.heights.getD op 0))) k))
+    (hmem : ∀ k g, Q (term (.memory k) (w.take shape.logMemory) g)) :
+    ∀ x ∈ (constraintRelation shape parts publicWords gamma t constraintValue w).1.terms, Q x := by
+  unfold constraintRelation
+  simp only [Id.run, bind, pure]
+  refine forIn_id_inv (fun s : E × Array Term × E ↦ ∀ x ∈ s.2.1.toList, Q x) _ (fun a s hs ↦ ?_) _ _ ?_
+  · exact pushT_good hs (hmem _ _)
+  · refine forIn_id_inv (fun s : E × Array Term × E × ℕ ↦ ∀ x ∈ s.2.1.toList, Q x) _ (fun a s hs ↦ ?_) _ _
+      (by simp)
+    split_ifs with hj hb hb'
+    all_goals dsimp only [ForInStep.value]
+    · refine forIn_id_inv (fun s : Array Term × E ↦ ∀ x ∈ s.1.toList, Q x) _ (fun c s' hs' ↦ ?_) _ _
+        (pushT_good (pushT_good hs (htable _ _ _)) (hinv _ _))
+      split
+      · exact pushT_good (pushT_good hs' (htable _ _ _)) (hslot _ _ _ hb)
+      · exact hs'
+    · exact pushT_good (pushT_good hs (htable _ _ _)) (hinv _ _)
+    · refine forIn_id_inv (fun s : Array Term × E ↦ ∀ x ∈ s.1.toList, Q x) _ (fun c s' hs' ↦ ?_) _ _
+        (pushT_good hs (hinv _ _))
+      split
+      · exact pushT_good (pushT_good hs' (htable _ _ _)) (hslot _ _ _ hb')
+      · exact hs'
+    · exact pushT_good hs (hinv _ _)
+
+/-- **`heapRelations`' terms**: the heap, the tree quotient, the leaf and constraint quotients' chunks. -/
+theorem heapRelations_terms (shape : Shape) (active : List E) (parts : List TablePart) (weights : Array E)
+    (beta heapValue constraintValue memoryPull memoryPush bytecodePull bytecodePush : E) (w : List E)
+    (constraintChunks : List ℕ) (Q : Term → Prop)
+    (hheap : ∀ P k, Q (term .heap P k)) (htree : ∀ c P k, Q (term (.treeQuotient c) P k))
+    (hleaf : ∀ b c P k, Q (term (.leafQuotient b c) P k))
+    (hcq : ∀ c P k, Q (term (.constraintQuotient c) P k)) :
+    ∀ r ∈ (heapRelations shape active parts weights beta heapValue constraintValue memoryPull memoryPush
+      bytecodePull bytecodePush w constraintChunks).1, ∀ x ∈ r.terms, Q x := by
+  unfold heapRelations
+  simp only [Id.run, bind, pure]
+  intro r hr
+  rw [Array.toList_push, List.mem_append, List.mem_singleton] at hr
+  rcases hr with hr | rfl
+  · rw [← Array.mem_def] at hr
+    revert r hr
+    refine forIn_id_inv (fun s : Array Relation × Array (Column × ℕ × Bool) ↦ ∀ r ∈ s.1, ∀ x ∈ r.terms, Q x)
+      _ (fun a s hs ↦ ?_) _ _ ?_
+    · split
+      · exact push_good hs (by simp [hheap])
+      · refine push_good hs ?_
+        intro x hx
+        rw [List.mem_append] at hx
+        rcases hx with hx | hx
+        · simp only [List.mem_singleton] at hx
+          exact hx ▸ hheap _ _
+        · exact quotientTerms_terms _ _ _ _ Q (fun _ _ _ _ ↦ hleaf _ _ _ _) x hx
+    · refine push_good (push_good ?_ ?_) ?_
+      · intro r hr
+        rw [List.mem_toArray, List.mem_singleton] at hr
+        exact hr ▸ equal_good (hheap _ _) _
+      · simp [hheap, htree]
+      · simp [hheap]
+  · exact quotientTerms_terms _ _ _ _ Q (fun _ _ _ _ ↦ hcq _ _ _)
+
+/-- **The forms of the terms the prover states at `t`** (`atTOf`), by commitment: on `C1` a table's column or
+counter inverse at `w.take r` (`r` its height), a slot of `q_flock` at `y`, the memory's limbs at `w.take lm`,
+the bytecode's final counts at `w.take lb`, `q_flock` at Flock's point; on the setup the bytecode's tuple at
+`alphas ++ w.take lb`, the addresses at `w.take lm`; on `C2` (forms not recorded here) the heap and the
+quotients. -/
+def AtTForm (heights : List ℕ) (lm lb : ℕ) (w y alphas : List E) (flockOut : Option FlockOut) (c : Commitment)
+    (x : Term) : Prop :=
+  x.column.commitment = c ∧ (c = .c2 ∨
+    (∃ op col, x.column = .table op col ∧ x.point = w.take (heights.getD op 0)) ∨
+    (∃ op, x.column = .inverse op ∧ x.point = w.take (heights.getD op 0)) ∨
+    (∃ j, x.column = .qflockSlot j ∧ x.point = y) ∨
+    (∃ k, x.column = .memory k ∧ x.point = w.take lm) ∨
+    (x.column = .bytecodeFinal ∧ x.point = w.take lb) ∨
+    (x.column = .qflock ∧ ∃ out, flockOut = some out ∧ x.point = out.point) ∨
+    (x.column = .bytecodeTuple ∧ x.point = alphas ++ w.take lb) ∨
+    (x.column = .address ∧ x.point = w.take lm))
+
+/-- **Every relation the prover states at `t` is on one commitment**, its terms of the forms `AtTForm`. -/
+theorem atTOf_terms (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t : E)
+    (flockOut : Option FlockOut) :
+    ∀ r ∈ (atTOf tr c2 alphas beta gamma t flockOut).relations, ∃ c, ∀ x ∈ r.terms,
+      AtTForm tr.shape.heights tr.shape.logMemory tr.shape.logBytecode
+        (digits t (max tr.shape.heap.h (tr.shape.constraintVars + 4) + 2))
+        (coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD opBlake2s 0))) alphas flockOut c x := by
+  unfold atTOf
+  simp only [Id.run, bind, pure]
+  split
+  · split
+    · intro r hr
+      simp only [Array.toList_push, Array.toList_append, List.mem_append, List.mem_singleton] at hr
+      rcases hr with (((((((hr | rfl) | rfl) | rfl) | rfl) | rfl) | rfl) | hr) | rfl
+      · revert r hr
+        refine forIn_id_inv (fun s : Array E × Array Relation × Array TablePart ↦ ∀ r ∈ s.2.1.toList, ∃ c,
+          ∀ x ∈ r.terms, AtTForm tr.shape.heights tr.shape.logMemory tr.shape.logBytecode
+            (digits t (max tr.shape.heap.h (tr.shape.constraintVars + 4) + 2))
+            (coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD opBlake2s 0))) alphas (some _) c x)
+          _ (fun table s hs ↦ ?_) _ _ (by simp)
+        intro r hr
+        simp only [ForInStep.value, Array.toList_append, List.mem_append] at hr
+        rcases hr with hr | hr
+        · exact hs r hr
+        · exact ⟨.c1, runReader_of (tablePart_terms table _ _ _ _ _
+            (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])) (fun r hr ↦ absurd hr List.not_mem_nil) _ r hr⟩
+      · exact ⟨.c1, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+      · exact ⟨.setup, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+      · exact ⟨.c1, map_good _ (fun k ↦ by simp [AtTForm, term, Column.commitment]) _ _⟩
+      · exact ⟨.c1, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+      · exact ⟨.setup, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+      · exact ⟨.c1, constraintRelation_terms _ _ _ _ _ _ _ _ (fun _ _ _ ↦ by simp [AtTForm, term, Column.commitment])
+          (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])
+          (fun _ _ _ hop ↦ by subst hop; simp [AtTForm, term, Column.commitment])
+          (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])⟩
+      · exact ⟨.c2, heapRelations_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ (fun _ _ ↦ ⟨rfl, Or.inl rfl⟩)
+          (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) r hr⟩
+      · refine ⟨.c1, fun x hx ↦ ?_⟩
+        simp only [List.mem_singleton] at hx
+        subst hx
+        simp [AtTForm, Column.commitment]
+    · intro r hr
+      simp only [Array.toList_push, Array.toList_append, List.mem_append, List.mem_singleton] at hr
+      rcases hr with ((((((hr | rfl) | rfl) | rfl) | rfl) | rfl) | rfl) | hr
+      · revert r hr
+        refine forIn_id_inv (fun s : Array E × Array Relation × Array TablePart ↦ ∀ r ∈ s.2.1.toList, ∃ c,
+          ∀ x ∈ r.terms, AtTForm tr.shape.heights tr.shape.logMemory tr.shape.logBytecode
+            (digits t (max tr.shape.heap.h (tr.shape.constraintVars + 4) + 2))
+            (coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD opBlake2s 0))) alphas (some _) c x)
+          _ (fun table s hs ↦ ?_) _ _ (by simp)
+        intro r hr
+        simp only [ForInStep.value, Array.toList_append, List.mem_append] at hr
+        rcases hr with hr | hr
+        · exact hs r hr
+        · exact ⟨.c1, runReader_of (tablePart_terms table _ _ _ _ _
+            (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])) (fun r hr ↦ absurd hr List.not_mem_nil) _ r hr⟩
+      · exact ⟨.c1, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+      · exact ⟨.setup, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+      · exact ⟨.c1, map_good _ (fun k ↦ by simp [AtTForm, term, Column.commitment]) _ _⟩
+      · exact ⟨.c1, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+      · exact ⟨.setup, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+      · exact ⟨.c1, constraintRelation_terms _ _ _ _ _ _ _ _ (fun _ _ _ ↦ by simp [AtTForm, term, Column.commitment])
+          (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])
+          (fun _ _ _ hop ↦ by subst hop; simp [AtTForm, term, Column.commitment])
+          (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])⟩
+      · exact ⟨.c2, heapRelations_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ (fun _ _ ↦ ⟨rfl, Or.inl rfl⟩)
+          (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) r hr⟩
+  · intro r hr
+    simp only [Array.toList_push, Array.toList_append, List.mem_append, List.mem_singleton] at hr
+    rcases hr with ((((((hr | rfl) | rfl) | rfl) | rfl) | rfl) | rfl) | hr
+    · revert r hr
+      refine forIn_id_inv (fun s : Array E × Array Relation × Array TablePart ↦ ∀ r ∈ s.2.1.toList, ∃ c,
+        ∀ x ∈ r.terms, AtTForm tr.shape.heights tr.shape.logMemory tr.shape.logBytecode
+          (digits t (max tr.shape.heap.h (tr.shape.constraintVars + 4) + 2))
+          (coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD opBlake2s 0))) alphas _ c x)
+        _ (fun table s hs ↦ ?_) _ _ (by simp)
+      intro r hr
+      simp only [ForInStep.value, Array.toList_append, List.mem_append] at hr
+      rcases hr with hr | hr
+      · exact hs r hr
+      · exact ⟨.c1, runReader_of (tablePart_terms table _ _ _ _ _
+          (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])) (fun r hr ↦ absurd hr List.not_mem_nil) _ r hr⟩
+    · exact ⟨.c1, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+    · exact ⟨.setup, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+    · exact ⟨.c1, map_good _ (fun k ↦ by simp [AtTForm, term, Column.commitment]) _ _⟩
+    · exact ⟨.c1, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+    · exact ⟨.setup, equal_good (by simp [AtTForm, term, Column.commitment]) _⟩
+    · exact ⟨.c1, constraintRelation_terms _ _ _ _ _ _ _ _ (fun _ _ _ ↦ by simp [AtTForm, term, Column.commitment])
+        (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])
+        (fun _ _ _ hop ↦ by subst hop; simp [AtTForm, term, Column.commitment])
+        (fun _ _ ↦ by simp [AtTForm, term, Column.commitment])⟩
+    · exact ⟨.c2, heapRelations_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ (fun _ _ ↦ ⟨rfl, Or.inl rfl⟩)
+        (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) (fun _ _ _ ↦ ⟨rfl, Or.inl rfl⟩) r hr⟩
+
+/-! ### What the walk gives -/
+
+theorem commitment_of_all {r : Relation} {c : Commitment} (h : ∀ x ∈ r.terms, x.column.commitment = c)
+    {x : Term} (hx : x ∈ r.terms) : r.commitment = c := by
+  unfold Relation.commitment
+  cases hr : r.terms with
+  | nil => rw [hr] at hx; cases hx
+  | cons t0 rest => exact h t0 (by rw [hr]; exact List.mem_cons_self)
+
+/-- **Every relation at `t` is on one commitment** (`AtTOnOne`). -/
+theorem atTOf_onOne (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t : E)
+    (flockOut : Option FlockOut) : AtTOnOne (atTOf tr c2 alphas beta gamma t flockOut) := by
+  intro r hr x hx
+  obtain ⟨c, hc⟩ := atTOf_terms tr c2 alphas beta gamma t flockOut r hr
+  rw [(hc x hx).1, commitment_of_all (fun y hy ↦ (hc y hy).1) hx]
+
+/-- The terms of the relations on `c`, each with the form of `c`. -/
+theorem atTOf_form_of (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t : E)
+    (flockOut : Option FlockOut) {r : Relation} (hr : r ∈ (atTOf tr c2 alphas beta gamma t flockOut).relations)
+    {x : Term} (hx : x ∈ r.terms) :
+    AtTForm tr.shape.heights tr.shape.logMemory tr.shape.logBytecode
+      (digits t (max tr.shape.heap.h (tr.shape.constraintVars + 4) + 2))
+      (coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD opBlake2s 0))) alphas flockOut
+      r.commitment x := by
+  obtain ⟨c, hc⟩ := atTOf_terms tr c2 alphas beta gamma t flockOut r hr
+  rw [commitment_of_all (fun y hy ↦ (hc y hy).1) hx]
+  exact hc x hx
+
+/-- **The slot points are maximal on `C1`** when `y(t)` is a prefix neither of `w(t)` nor of Flock's point:
+then no point on `C1` strictly extends it (the points there are `w(t).take r`, `y(t)` and Flock's). -/
+def AtTSlotCondition (w y : List E) (flockOut : Option FlockOut) : Prop :=
+  ¬ y <+: w ∧ ∀ out, flockOut = some out → ¬ y <+: out.point
+
+theorem atTOf_slotsMaximal (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t : E)
+    (flockOut : Option FlockOut)
+    (hcond : AtTSlotCondition (digits t (max tr.shape.heap.h (tr.shape.constraintVars + 4) + 2))
+      (coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD opBlake2s 0))) flockOut) :
+    AtTSlotsMaximal (atTOf tr c2 alphas beta gamma t flockOut) := by
+  intro r hr x hx j hj q hq hpq
+  have hfx := atTOf_form_of tr c2 alphas beta gamma t flockOut hr hx
+  -- the slot's point is `y`
+  have hy : x.point = coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD opBlake2s 0)) := by
+    obtain ⟨hcom, h⟩ := hfx
+    rcases h with h | ⟨_, _, h, -⟩ | ⟨_, h, -⟩ | ⟨_, h, hp⟩ | ⟨_, h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩
+    · rw [h, hj] at hcom
+      cases hcom
+    all_goals first | exact hp | (rw [hj] at h; cases h)
+  -- `q` is a point on `C1`
+  obtain ⟨r', hr', hq'⟩ := List.mem_flatMap.mp hq
+  obtain ⟨x', hx', rfl⟩ := List.mem_map.mp hq'
+  rw [List.mem_filter, beq_iff_eq] at hr'
+  have hfx' := atTOf_form_of tr c2 alphas beta gamma t flockOut hr'.1 hx'
+  rw [hr'.2] at hfx'
+  rw [hy] at hpq ⊢
+  obtain ⟨hcom, h⟩ := hfx'
+  rcases h with h | ⟨_, _, -, h⟩ | ⟨_, -, h⟩ | ⟨_, -, h⟩ | ⟨_, -, h⟩ | ⟨-, h⟩ | ⟨-, out, hout, h⟩ | ⟨h, -⟩ | ⟨h, -⟩
+  · cases h
+  · rw [h] at hpq; exact absurd (hpq.trans (List.take_prefix _ _)) hcond.1
+  · rw [h] at hpq; exact absurd (hpq.trans (List.take_prefix _ _)) hcond.1
+  · exact h
+  · rw [h] at hpq; exact absurd (hpq.trans (List.take_prefix _ _)) hcond.1
+  · rw [h] at hpq; exact absurd (hpq.trans (List.take_prefix _ _)) hcond.1
+  · rw [h] at hpq; exact absurd hpq (hcond.2 out hout)
+  · rw [h] at hcom; cases hcom
+  · rw [h] at hcom; cases hcom
+
+
 end UniComplete
 
 /-- info: 'UniComplete.dotK_denseWeight' depends on axioms: [propext, Classical.choice, Quot.sound] -/
