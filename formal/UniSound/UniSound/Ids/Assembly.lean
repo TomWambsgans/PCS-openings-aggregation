@@ -4,6 +4,7 @@ import UniSound.Ids.FlockEnd
 import UniSound.Ids.Deployed
 import UniSound.Ids.LvLink
 import UniSound.Ids.LvRealize
+import UniSound.Ids.Facts
 
 /-!
 # `B` and `J` for the reference deployment
@@ -12,9 +13,12 @@ For a deployment `D` at the reference shape (`UniStatement.reference`: 1,000 sig
 `18 18 18 18 17 18`, memory `2^21`, bytecode `2^19`), **`busModelRef`** and **`idsRestRef`** are
 `BusModel D 18`-style and `UniIdsRest` models with every bridge of `Bridges.lean` proved but those in
 **`IdsRemaining`**: the relations at `t` give the identities at `t` (`DiffsEvalP`), the identities'
-degrees and the relations' number (`DegBoundP`, `RelCountP`), and a few facts of the verifier's
-definitions (`TowerWeight`, `ZActZero`, `EqKernelLagrange`, `GpowInK`, `TablesFacts`, the absent columns,
-the setup's bytecode tuple at the points `BcTupleEval`). **`uniKnowledgeSoundness_ref`** is the end
+degrees and the relations' number (`DegBoundP`, `RelCountP`), the table columns absent from `C1`'s
+layout, and the setup's bytecode tuple at the points (`BcTupleEval`).
+
+**`NoMerge`**: `Z_bad(t) ≠ 0` (`zBad`, nonzero: `zBad_ne_zero`, of degree at most `2^(h_B)`): off its
+roots `q_flock`'s slot point `y(t)` is no strict prefix of a longer `C1` point, so `combine` merges no
+slot term (the condition `UniFinal`'s `WeightMle` needs). **`uniKnowledgeSoundness_ref`** is the end
 theorem with them.
 -/
 
@@ -27,21 +31,20 @@ open scoped ENNReal
 theorem layoutVars_le (S : Shape) (c : Commitment) : (layoutOf S c).vars ≤ batchVars S := by
   unfold layoutOf batchVars
   cases h : (layoutsOf S).find? (·.1 == c) with
-  | none => simp
+  | none => exact Nat.zero_le _
   | some p =>
     simp only [Option.map_some, Option.getD_some]
     exact le_foldl_max _ 0 _ (Or.inl (List.mem_map.mpr ⟨p, List.mem_of_find?_eq_some h, rfl⟩))
+
+/-- **No merge at `t`**: `Z_bad(t) ≠ 0`, `Z_bad = (y_0 + X)(y_0 + p_0)` (`Model.lean`). -/
+def NoMerge (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (fd : Done) (t : E) : Prop :=
+  (zBad D.shape ((Fl.prog.out fd []).1.getD 0 0)).eval t ≠ 0
 
 /-- **What remains** (named hypotheses not proved in this library). -/
 structure IdsRemaining (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (d n : ℕ) : Prop where
   diffsEval : DiffsEvalP D Fl
   degBound : DegBoundP D Fl d
   relCount : RelCountP D Fl n
-  towerWeight : TowerWeight
-  zAct : ZActZero
-  eqk : EqKernelLagrange
-  gpowK : GpowInK
-  tablesF : TablesFacts
   absent : ∀ o < 6, ∀ i, (tables.getD o default).width ≤ i →
     (layoutOf D.shape .c1).limbs (.table o i) = []
   bcTuple : BcTupleEval D
@@ -65,10 +68,10 @@ theorem heapReading_ref {κ : ℕ} (Fl : FlockSound κ) (d n : ℕ) (g : IdsRema
   c1 := c1Reading_ref D hS
   absent := g.absent
   heap := by rw [hS]; exact heapGood_reference
-  zAct := g.zAct
-  eqk := g.eqk
-  gpowK := g.gpowK
-  tablesF := g.tablesF
+  zAct := zActZero
+  eqk := eqKernelLagrange
+  gpowK := gpowInK
+  tablesF := tablesFacts
   setupLimbs := setupLimbs _
   setupAligned := layoutAligned_new _
   setupVars := layoutVars_le _ _
@@ -94,7 +97,7 @@ theorem idsGaps_ref (Fl : FlockSound (D.shape.heights.getD opBlake2s 0)) (d n : 
   diffsEval := g.diffsEval
   mainOfPolys := mainOfPolys D Fl (heapReading_ref D hS Fl d n g)
   cvecOk := cvecOk D (c1Reading_ref D hS)
-  diffsFlock := diffsFlock D Fl (c1Reading_ref D hS) g.towerWeight
+  diffsFlock := diffsFlock D Fl (c1Reading_ref D hS) towerWeight
   degBound := g.degBound
   relCount := g.relCount
 

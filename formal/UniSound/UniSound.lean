@@ -9,6 +9,7 @@ import UniSound.Fs
 import UniSound.Bus
 import UniSound.Final
 import UniSound.Mle
+import UniSound.Ids.Assembly
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001
