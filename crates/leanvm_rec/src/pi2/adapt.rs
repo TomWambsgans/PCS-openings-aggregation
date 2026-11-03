@@ -10,8 +10,8 @@
 //!   limbs (the statement, a root) as `(L_0 + Y L_1) + γ (L_2 + Y L_3)`, a root's two 16-byte halves. Both bind the
 //!   limbs (the first is injective on `K³`, the second for all but one `γ`), as the interface's `Σ γ^l L_l` does: its
 //!   `Circuit::check` compares the limbs.
-//! - The public data: π1's roots (32 bytes each, as they are), then its claims' elements (24 bytes each); the
-//!   statement is the public input the seed hashes.
+//! - The public data: π1's roots (32 bytes each, as `PCS_OPEN`'s root words: each 16-byte half of the hash reversed,
+//!   REVIEW-REC.md M1), then its claims' elements (24 bytes each); the statement is the public input the seed hashes.
 
 use leanvm_flock_gas::field::K;
 use primitives::field::{F64, F192};
@@ -67,7 +67,7 @@ pub fn public_counts(c: &spec::Circuit) -> (usize, usize) {
     for w in c.calls.iter().flatten() {
         match *w {
             spec::CallWord::Root(i) => see(Some(i), None),
-            spec::CallWord::Element(i) => see(None, Some(i)),
+            spec::CallWord::Element(i) | spec::CallWord::Pair { element: i, .. } => see(None, Some(i)),
             spec::CallWord::Const(_) => {}
         }
     }
@@ -135,7 +135,7 @@ pub fn adapt(c: &spec::Circuit) -> Circuit {
                 // A root's halves are bytes 0..16 (L_3, L_2) and 16..32 (L_1, L_0): half 1 + γ half 0.
                 spec::Source::Root(i) => vec![(Coeff::ONE, 4 + 2 * i as u16 + 1), (Coeff::gamma(1), 4 + 2 * i as u16)],
                 spec::Source::Element(i) => vec![(Coeff::ONE, element_at(i))],
-                spec::Source::Zero => vec![],
+                spec::Source::Zero | spec::Source::Pad => vec![],
             };
             PublicTerm {
                 tag: (n + j) as u32,
@@ -164,7 +164,7 @@ pub fn witness(w: &[K]) -> Vec<F64> {
     w.iter().map(|k| F64(k.0)).collect()
 }
 
-/// The public input and the stream's public values (the roots as they are, then the elements).
+/// The public input and the stream's public values (the roots as root words, then the elements).
 pub fn public_values(public: &spec::PublicInputs) -> ([u8; 32], Vec<PublicValue>) {
     let values = public
         .roots

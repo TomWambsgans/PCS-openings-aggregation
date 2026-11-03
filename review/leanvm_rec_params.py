@@ -130,6 +130,20 @@ def bits(err):
 # ---------------------------------------------------------------------------------------------------------------------
 # Soundness (SPEC-REC.md §5).
 
+def pi1_rec2_rounds(xmss=1000):
+    """pi1-rec2's rounds (SPEC-REC.md §12): pi1-rec's, Flock's lincheck terminal checked by the circuit's walk (no
+    matrices' rounds in the batch, 3 claims), and the batching sumcheck's challenges narrow: 160 bits, so each round of
+    degree 2 errs with probability 2/2^160 (over C1's and C2's lists, as every challenge after C2)."""
+    out = []
+    for label, err, union in pi1_rec_rounds(xmss):
+        if label.startswith("λ"):
+            vars_ = int(label.split("the ")[1].split("-round")[0])
+            out.append(("λ (3 claims)", 2 / 2.0 ** LOGQ, union))
+            label, err = f"the {vars_}-round batching sumcheck, narrow challenges (160 bits)", 2 * vars_ / 2.0 ** 160
+        out.append((label, err, union))
+    return out
+
+
 def pi1_rec_rounds(xmss=1000, derived=True):
     """pi1's rounds as review/leanvm_univariate_params.py states them, with pi1-rec's two derivations: the bus's alpha
     as (c, c^2, c^4, c^8) (each fingerprint multilinear in alpha, so degree 16 in c a tuple, with beta independent),
@@ -164,9 +178,14 @@ def pi2_rounds(s, split=False, design="D16v"):
         t = (f"t: the copy identity h · d · d' (3N) and the gate's (2N/{w})", 3 * n + 2 * n // w)
     return lw, lq, [
         ("copy argument (α, β): 2N fractions, unique tags both sides, and no vanishing denominator", 4 * n / q, lw),
-        ("γ: the public elements' limb fingerprints c0 + γ c1 + γ² c2 (≤ 128)", 2 * 128 / q, lw),
+        # As built (pi2/adapt.rs; REVIEW-REC.md N4): a three-limb port's fingerprint is the element itself (no γ);
+        # the four-limb ones (the statement, pi1's two roots) are (L0 + Y L1) + γ (L2 + Y L3), degree 1 in γ.
+        ("γ: the four-limb ports' fingerprints (L0 + Y L1) + γ (L2 + Y L3), degree 1 (3 ports)", 3 / q, lw),
         (t[0], t[1] / q, lw * lq),
-        ("ρ: the row's fold and the claims' combination", 64 / q, lw * lq),
+        # Since PI2.md §9 (lever 2), ρ is W's fold only (degree 15 over W's list): Q's claim is the identity's own
+        # combination of h(t) and q(t) (t's row), the setup's is at β and binds ξ = κ(t) + β σ(t) exactly (L = 1).
+        # Before: ρ's claims on three commitments, the errors adding, (15 L_W + L_Q + 1)/2^192 (REVIEW-REC.md N4).
+        ("ρ: W's fold (degree 15)", 15 / q, lw),
     ]
 
 
@@ -268,6 +287,11 @@ def main():
         for label, err, union in rs:
             print(f"     {label:90s} {bits(err):6.1f} alone, {bits(err * union):6.1f} after")
         print(f"     {'PIOP':90s}        {bits(sum(e * u for _, e, u in rs)):6.1f}")
+    rs = pi1_rec2_rounds()
+    print("  pi1 pi1-rec2 (C1 4,473, C2 4,473; SPEC-REC.md §12):")
+    for label, err, union in rs:
+        print(f"     {label:90s} {bits(err):6.1f} alone, {bits(err * union):6.1f} after")
+    print(f"     {'PIOP':90s}        {bits(sum(e * u for _, e, u in rs)):6.1f}")
     for design in ["D16v", "D32v", "C16"]:
         p = "pi1-rec (skip 3; alpha, zerocheck point derived)" if design == "D16v" else "main line (skip 3)"
         s = size(p, design)
@@ -285,6 +309,9 @@ def main():
     openings = 5 + 3
     print(f"  WHIR openings: pi1's 5 + pi2's 3 = {openings}, {WHIR_BITS} bits each: a plain union"
           f" {WHIR_BITS - math.log2(openings):.1f}; in the query-bounded model about {WHIR_BITS:.1f}")
+    # pi1-rec2 (SPEC-REC.md §12 item 4): no claims on A0, B0 (the lincheck's terminal by the circuit's walk).
+    openings = 3 + 3
+    print(f"  pi1-rec2: pi1's 3 + pi2's 3 = {openings} openings: a plain union {WHIR_BITS - math.log2(openings):.1f}")
 
     print("\n== gas (MODELLED): transaction gas without the 21,000 base; claims c = 0 / 2K / 5K / 20K")
     configs = [
@@ -318,6 +345,119 @@ def main():
           " 330,808 / 405,808; EIP-7976 454,912")
     print(f"\n  (per-operation gas {GAS_PER_OP:.2f}: pi1's measured execution less its transcript, reads and calls, over"
           " its E operations)")
+    points_report()
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# The claims' points (crates/leanvm_rec/SPEC-POINTS.md): the batching sumcheck's rounds k variables at a time on V_k's
+# coordinate functionals, one challenge a round, so that the batch's point r is a function of ceil(27 / k) elements.
+#
+# MEASURED, the two baselines: R3 (leanvm-rec @ 4a57c61, PI2.md §0: pi1-rec, 46 coordinates and 5 values) and
+# leanvm-rec-opt @ 5e0ea89 (PI2.md §9 there: pi1-rec2, no claims on A0, B0, so 27 coordinates and 3 values; pi2's 17
+# values; the calls' inputs written once). Calldata bytes and zero bytes, execution at c = 0, transaction, pi2's ports
+# and positions used.
+BASELINES = {
+    "R3, pi1-rec (leanvm-rec @ 4a57c61)": dict(b=1844, zero=7, exec=39674, tx=73550, ports=67,
+                                               positions=14_370_656, coords=46, values=5),
+    "pi1-rec2 (leanvm-rec-opt @ 5e0ea89)": dict(b=1292, zero=4, exec=31103, tx=51727, ports=47,
+                                                positions=15_880_064, coords=27, values=3),
+}
+# MEASURED: a public element's port in pi2's verifier (PI2.md §9, lever 1a': the public side 6,794 -> 4,723 gas for
+# 67 -> 47 ports); pi2's positions a stream bit (a free bit: a self-loop and its copy), a packing (SPEC-REC §10.3:
+# 77,200 positions for 376), a Keccak-256 call's later block (54,928 for 27), an E operation (114,704 for 11,655).
+PORT_GAS = (6794 - 4723) / (67 - 47)
+POS_BIT, POS_PACKING, POS_LATER_BLOCK, POS_OP = 2, 77_200 / 376, 54_928 / 27, 114_704 / (6437 + 5218)
+# MEASURED (leanvm_flock_gas transcript::tests::pairs_cost_what_the_plain_rounds_do_in_permutations): the batch's 27
+# variables in plain rounds 135 E operations, in pairs 278.
+OPS_PLAIN, OPS_PAIRS = 135, 278
+# MODELLED: the contract's work a public element besides its port (its calldata read, its 24 bytes in pi2's
+# first hash and CALLDATACOPY), and the derivation of a pair's two coordinates from its challenge (two FIELD_MULs, two
+# XORs and their stack work), or of the 27 digits from one element (26 squarings and XORs).
+READ_GAS, HASH_GAS_A_BYTE = 18, 9 / 32
+DERIVE_PAIR_GAS, DERIVE_DIGIT_GAS = 50, 23
+BATCH_VARS = 27
+
+
+def permutations_of(data_bytes):
+    """Keccak-f permutations of one Keccak-256 of the 32-byte state and `data_bytes` (rate 136, pad10*1)."""
+    return (32 + data_bytes) // 136 + 1
+
+
+def grouped_rounds(k, vars_=BATCH_VARS, degree=2):
+    """The batch in rounds of k variables (the last round the rest): its challenges, its scalars, its permutations.
+    A round of j variables: the summand's restriction to V_j's coordinate-functional curve, of degree degree * j *
+    2^(j-1), its coefficients but one sent."""
+    rounds = [k] * (vars_ // k) + ([vars_ % k] if vars_ % k else [])
+    scalars = [degree * j * 2 ** (j - 1) for j in rounds]
+    return dict(seeds=len(rounds), scalars=sum(scalars), perms=sum(permutations_of(24 * s) for s in scalars))
+
+
+def with_points(base, seeds_saved, extra_exec, floor=40):
+    """A baseline with `seeds_saved` fewer public elements (24 bytes, a port, a read and its hashing each) and
+    `extra_exec` gas of derivation."""
+    b = base["b"] - 24 * seeds_saved
+    exec_gas = base["exec"] - seeds_saved * (PORT_GAS + READ_GAS + 24 * HASH_GAS_A_BYTE) + extra_exec
+    return b, exec_gas, tx(b, base["zero"], exec_gas, 0, 0, floor)
+
+
+def points_report():
+    print("\n== the claims' points (SPEC-POINTS.md; MODELLED from the measured counts above)")
+    print(f"  the batch over {BATCH_VARS} variables, degree 2 a variable, in rounds of k variables on V_k's coordinate"
+          " functionals:")
+    plain = grouped_rounds(1)
+    for k in (1, 2, 3, 4):
+        g = grouped_rounds(k)
+        extra = g["perms"] - plain["perms"]
+        print(f"    k = {k}: {g['seeds']:>2} challenges, {g['scalars']:>3} scalars, {g['perms']:>2} Keccak-f"
+              f" ({extra:+d}: {extra * keccak_positions('D16v') / 1e6:+.2f}M of pi2's positions)")
+    mixed = dict(seeds=3 + 9, perms=3 * permutations_of(24 * 24) + 9 * permutations_of(24 * 8))
+    print(f"    3 triples and 9 pairs: {mixed['seeds']} challenges, {mixed['perms']} Keccak-f"
+          f" ({mixed['perms'] - plain['perms']:+d})")
+
+    pairs = grouped_rounds(2)
+    # pi2: the pairs' extra scalars are stream bits and packings, 13 fewer challenges 13 fewer packings, each pair's
+    # hash one later block, and the pairs' extra operations.
+    more_scalars = pairs["scalars"] - plain["scalars"]
+    fewer = plain["seeds"] - pairs["seeds"]
+    later = (BATCH_VARS // 2) * (permutations_of(24 * 8) - 1)
+    delta = (more_scalars * (24 * 8 * POS_BIT + POS_PACKING) - fewer * POS_PACKING + later * POS_LATER_BLOCK
+             + (OPS_PAIRS - OPS_PLAIN) * POS_OP)
+    print(f"  pi2 with pairs: Keccak-f {plain['perms']} -> {pairs['perms']}; {more_scalars:+d} stream scalars"
+          f" ({24 * more_scalars:+,} B of pi1's stream), {-fewer:+d} challenges, {later:+d} later blocks,"
+          f" {OPS_PAIRS - OPS_PLAIN:+d} E operations: {delta / 1e3:+.1f}K positions")
+    for name, base in BASELINES.items():
+        used = base["positions"] + delta
+        print(f"    on {name}: {base['positions']:,} -> {used:,.0f} of 2^24 ({100 * used / 2**24:.1f}%)")
+
+    q = 2.0 ** LOGQ
+    l12 = CERTIFIED_L0[27] ** 2
+    plain_err = (3 + 2 * BATCH_VARS) / q
+    pairs_err = (3 + 8 * (BATCH_VARS // 2) + 2 * (BATCH_VARS % 2)) / q
+    print(f"  soundness: λ and the batch, over C1's and C2's lists ({CERTIFIED_L0[27]}^2): plain {bits(plain_err):.1f}"
+          f" alone, {bits(plain_err * l12):.1f} after; pairs (degree 8 a pair) {bits(pairs_err):.1f} alone,"
+          f" {bits(pairs_err * l12):.1f} after; the PIOP stays at t's 142.3")
+    # pi1-rec3 (SPEC-REC.md §12, as built on leanvm-rec-opt): the pairs' challenges and the last plain round's narrow,
+    # 160 bits (lever 1c): a pair of degree 8 errs with probability 8/2^160, the plain round 2/2^160; λ stays 192-bit.
+    narrow_err = (8 * (BATCH_VARS // 2) + 2 * (BATCH_VARS % 2)) / 2.0 ** 160 + 3 / q
+    print(f"  pi1-rec3, the pairs' challenges narrow (160 bits): λ and the batch {bits(narrow_err):.1f} alone,"
+          f" {bits(narrow_err * l12):.1f} after the union (pi1-rec3's weakest round; t 142.3)")
+
+    print("  gas, EIP-7623 c = 0 without the base (B calldata bytes, X execution):")
+    derive_pairs = (BATCH_VARS // 2) * DERIVE_PAIR_GAS
+    for name, base in BASELINES.items():
+        print(f"    {name}: B {base['b']:,}, X {base['exec']:,}, tx {base['tx']:,} (measured)")
+        for label, saved, derive in [
+            (f"pairs: r from {pairs['seeds']} elements", fewer, derive_pairs),
+            ("bound: r from 1 element (not reachable, §2)", BATCH_VARS - 1, (BATCH_VARS - 1) * DERIVE_DIGIT_GAS),
+        ]:
+            b, ex, t = with_points(base, saved, derive)
+            t76 = with_points(base, saved, derive, floor=64)[2]
+            base76 = tx(base["b"], base["zero"], base["exec"], 0, 0, 64)
+            print(f"      + {label:46s} B {b:,}, X {ex:,.0f}, tx {t:,.0f} ({t - base['tx']:+,.0f});"
+                  f" EIP-7976 {base76:,} -> {t76:,.0f} ({t76 - base76:+,.0f})")
+    print(f"    pairs at any execution: at most {40 * 24 * fewer:,} (the floor's 40 a byte of {24 * fewer} bytes), at"
+          f" least {16 * 24 * fewer + fewer * (PORT_GAS + READ_GAS + 24 * HASH_GAS_A_BYTE) - derive_pairs:,.0f}"
+          " (16 a byte, the ports, the reads, the derivation)")
 
 
 if __name__ == "__main__":

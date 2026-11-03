@@ -23,11 +23,11 @@ mod vectors;
 use leanvm_flock_gas::shapes::PROGRAM_IV;
 use leanvm_rec::circuit::compile::{Compiled, Inputs, Layout, pi2};
 use leanvm_rec::pi2::adapt;
+use leanvm_flock_gas::evm::machine::Opening;
 use leanvm_rec::pi2::contract::{self, Instance, calldata, record_verifier, sample_stream};
 use leanvm_rec::pi2::prover::{self, Setup, claims_hold, open, prove, public_scalars, verify_openings};
 use leanvm_rec::pi2::verifier::Spec;
 use leanvm_univariate::Claims;
-use leanvm_univariate::contract::{SetupRoots, contract_iv};
 use primitives::field::F192;
 
 const STREAM_AT: usize = 4 + 32;
@@ -54,17 +54,17 @@ fn real(name: &str, layout: Layout) -> (vectors::Vector, Compiled, [u8; 32]) {
     let v = vector(name);
     let recorded =
         leanvm_univariate::contract::record_verifier(&v.shape, vectors::blake2s_of(&v.config), Claims::Point);
-    let iv = contract_iv(&v.shape, &PROGRAM_IV, &SetupRoots::REFERENCE);
     let stream = v.calldata[STREAM_AT..].to_vec();
     let c = pi2(
         &recorded,
         layout,
         &Inputs {
-            iv,
+            program_iv: PROGRAM_IV,
             public: v.public,
             stream: &stream,
         },
     );
+    let iv = c.pi1_iv;
     (v, c, iv)
 }
 
@@ -99,12 +99,7 @@ fn gas(name: &str, layout: Layout) {
         c.finished.circuit.calls.len()
     );
     // The setup root does not change the gas: a placeholder, as the univariate contract's reports.
-    let inst = Instance {
-        spec: &spec,
-        iv: prover::iv(&pi1_iv, &circuit.digest(), &[0x44; 32], circuit.log_n),
-        setup_root: [0x44; 32],
-        pi1: &c.finished.circuit.calls,
-    };
+    let inst = Instance::new(&circuit, &spec, [0x44; 32], &pi1_iv, &c.finished.circuit.calls);
     let recorded = record_verifier(&spec);
     let report = contract::measure(&inst, &recorded, true);
     print!("{}", report.table(&format!("{name} × {layout:?} (real circuit)")));
@@ -118,6 +113,8 @@ fn gas(name: &str, layout: Layout) {
 #[ignore]
 fn real_gas() {
     deep(|| {
+        gas("main_line_rec3", Layout::D16v);
+        gas("main_line_rec2", Layout::D16v);
         gas("main_line_rec", Layout::D16v);
         gas("main_line_rec", Layout::D32v);
         gas("main_line", Layout::D32v);
@@ -136,11 +133,7 @@ fn real_end_to_end() {
         let start = std::time::Instant::now();
         let (v, c, pi1_iv) = real(&name, layout);
         assert_eq!(c.finished.circuit.check(&c.finished.witness, &c.public), Ok(()));
-        assert_eq!(
-            c.finished.circuit.call_inputs(&c.public),
-            v.calls,
-            "π1's calls are the vector's"
-        );
+        let pi1_openings: Vec<Opening> = v.calls.iter().map(|input| contract::pi1_opening(input)).collect();
         let circuit = adapt::adapt(&c.finished.circuit);
         let witness = adapt::witness(&c.finished.witness);
         let (public_input, values) = adapt::public_values(&c.public);
@@ -157,7 +150,9 @@ fn real_end_to_end() {
         );
         let start = std::time::Instant::now();
         let setup = Setup::new(&circuit);
-        let iv = prover::iv(&pi1_iv, &circuit.digest(), &setup.root(), circuit.log_n);
+        let inst = Instance::new(&circuit, &spec, setup.root(), &pi1_iv, &calls);
+        let iv = inst.iv;
+        assert_eq!(iv, prover::iv(&pi1_iv, &circuit.digest(), &setup.root(), circuit.log_n));
         println!("setup committed in {:.1} s", start.elapsed().as_secs_f64());
 
         let start = std::time::Instant::now();
@@ -177,25 +172,29 @@ fn real_end_to_end() {
             Ok(())
         );
 
-        // The contract: π1's five calls (the vector's inputs) and π2's three, attested exactly.
-        let inst = Instance {
-            spec: &spec,
-            iv,
-            setup_root: setup.root(),
-            pi1: &calls,
-        };
+        // The contract: π1's five calls (the openings the vector's inputs name, which π1's openings prove) and π2's
+        // three (the proof's roots, its reduction's claims), attested exactly by the decoding mock (REVIEW-REC.md M1:
+        // one ABI, a registry keyed by the layout word).
         let recorded = record_verifier(&spec);
         let expected: Vec<Vec<u8>> = contract::expected_calls(&inst, &recorded, &reduced, &stream)
             .into_iter()
             .map(|words| words.concat())
             .collect();
-        assert_eq!(
-            &expected[..5],
-            &v.calls[..],
-            "π1's calls, from π2's public data, are the vector's"
-        );
+        let registry = contract::block(&inst, &[]);
+        for (k, (made, opening)) in expected[..pi1_openings.len()].iter().zip(&pi1_openings).enumerate() {
+            assert_eq!(
+                registry.decode(made).as_ref(),
+                Some(opening),
+                "π1's call {k}, from π2's public data, is the vector's opening in PCS_OPEN's ABI"
+            );
+        }
+        let block: Vec<Opening> = pi1_openings
+            .iter()
+            .cloned()
+            .chain(contract::openings(&inst, &reduced, &roots))
+            .collect();
         let data = calldata(&public_input, &stream);
-        let (accepted, made) = contract::run(&inst, &recorded, &data, &expected);
+        let (accepted, made) = contract::run(&inst, &recorded, &data, &block);
         assert!(accepted, "the contract accepts π2's proof of π1-rec's real proof");
         assert_eq!(made, expected, "the nine claims in eight calls");
         // A flipped byte anywhere: the public input, π1's roots, its elements, W's and Q's roots, every value sent.
@@ -210,14 +209,28 @@ fn real_end_to_end() {
             let mut bad = data.clone();
             bad[at] ^= 1;
             assert!(
-                !contract::run(&inst, &recorded, &bad, &expected).0,
+                !contract::run(&inst, &recorded, &bad, &block).0,
                 "calldata byte {at} flipped"
             );
         }
         contract::parity(&inst, &recorded, &public_input, &stream);
+        // The transaction on the real calldata (its zero bytes are the proof's: π1-rec2's narrow coordinates).
+        let (ok, execution) = contract::verifying_execution(&inst, &recorded, &data, &block);
+        assert!(ok);
+        let zero = data.iter().filter(|&&b| b == 0).count();
         println!(
-            "end to end: π1's real proof → π2's proof ({} B of calldata) → the contract accepts, PCS_OPEN attesting its 9 claims; {} flipped bytes rejected",
+            "the real calldata: {} B ({zero} zero); execution {execution} (the verifying build); EIP-7623 c = 0 {} (floor {}, standard {}); EIP-7976 {}",
             data.len(),
+            contract::transaction_of(&data, execution, 40),
+            40 * (data.len() - zero) + 10 * zero,
+            16 * (data.len() - zero) + 4 * zero + execution as usize,
+            contract::transaction_of(&data, execution, 64)
+        );
+        println!(
+            "end to end: π1's real proof → π2's proof ({} B of calldata) → the contract accepts, PCS_OPEN attesting its {} claims in {} calls; {} flipped bytes rejected",
+            data.len(),
+            block.iter().map(|o| o.claims.len()).sum::<usize>(),
+            block.len(),
             flips.len()
         );
     });

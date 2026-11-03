@@ -98,6 +98,7 @@ impl Table {
     }
 }
 
+#[derive(Clone)]
 enum Shape {
     /// `low[i mod 2^a] · h[i >> a]`, `h = eq(high, ·)`.
     Factored { low: Vec<F192>, h: Vec<F192> },
@@ -132,6 +133,7 @@ impl Shape {
     }
 }
 
+#[derive(Clone)]
 struct Piece {
     offset: usize,
     vars: usize,
@@ -239,6 +241,7 @@ pub fn fold(v: &[F192], r: F192) -> Vec<F192> {
 }
 
 /// A combined claim's weight on its stack, by pieces, through the rounds that read the stack's words.
+#[derive(Clone)]
 pub struct Weight {
     pieces: Vec<Piece>,
     shapes: Vec<Shape>,

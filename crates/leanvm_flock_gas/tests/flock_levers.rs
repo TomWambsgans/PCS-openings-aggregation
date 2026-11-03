@@ -149,6 +149,7 @@ fn flock_levers() {
                     Slices::InContract => "ring switch reduced in the contract, A0, B0",
                     Slices::Weighted | Slices::Tower => "1 weighted (Φ(eq)), A0, B0",
                     Slices::Claim => "1 bit-slice combination, A0, B0",
+                    Slices::TowerWalk => "1 weighted (Φ(eq)); the lincheck walked, no A0, B0",
                 };
                 let bytes = fragment.stream_bytes as u64;
                 println!(

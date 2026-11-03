@@ -66,6 +66,9 @@ pub enum Ending {
     /// Call `PCS_OPEN` on each of these runs of words of it, in order and back to back; revert unless every call
     /// succeeds returning the word 1, and return the word 1.
     PcsOpen(Vec<usize>),
+    /// As [`Ending::PcsOpen`], each call's input written at the region's start just before the call, and only where
+    /// the call before left another word (`evm_link::front::Source::reuse`): calls sharing a point write it once.
+    PcsOpenReusing(Vec<usize>),
 }
 
 /// The graph, with how the contract is seeded: the code of each node.
@@ -82,7 +85,7 @@ impl Dag for Nodes<'_> {
     fn operands(&self, id: u32) -> Vec<u32> {
         match self.graph.nodes[id as usize] {
             Node::Add(a, b) | Node::Mul(a, b) => vec![a, b],
-            Node::Hash(state, _, _) | Node::Low(state) | Node::Bits(state, _, _) => vec![state],
+            Node::Hash(state, _, _) | Node::Low(state) | Node::Narrow(state) | Node::Bits(state, _, _) => vec![state],
             Node::RingWeight(kernel, _) => self.graph.kernels[kernel as usize].clone(),
             _ => vec![],
         }
@@ -142,6 +145,7 @@ impl Dag for Nodes<'_> {
                 code
             }
             Node::Low(_) => front::code([&push(&[0xff; 24])[..], &[AND]].concat()),
+            Node::Narrow(_) => front::code([&push(&[0xff; 20])[..], &[AND]].concat()),
             Node::RingWeight(_, n) => front::code(crate::evm::kernel::ring_weight_code(n as usize)),
             Node::Bits(_, shift, width) => {
                 let mut code = Vec::new();
@@ -248,8 +252,9 @@ fn program(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, link
         outputs: words,
         calls: match ending {
             Ending::Return => None,
-            Ending::PcsOpen(runs) => Some(runs.clone()),
+            Ending::PcsOpen(runs) | Ending::PcsOpenReusing(runs) => Some(runs.clone()),
         },
+        reuse: matches!(ending, Ending::PcsOpenReusing(_)),
         calls_tag: CALLS,
         scratch,
         calldata_len,

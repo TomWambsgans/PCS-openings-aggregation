@@ -25,7 +25,7 @@ use super::stack::{Stack, c1_columns, c2_columns};
 use super::trace::Trace;
 use super::weight::Weight;
 use crate::claims::{Column, Combined, Commitment};
-use crate::contract::{NAME, SetupRoots, contract_iv, layout_words};
+use crate::contract::{NAME, SetupRoots, contract_iv_for, layout_words};
 use crate::heap::Leaves;
 use crate::stacks::StackLayout;
 use crate::verifier::{Blake2s, Claims, Opening, Shape, chunks, degree, reduce, sent_columns};
@@ -175,7 +175,7 @@ pub struct Config {
 }
 
 /// Prove `trace`'s execution (its rows placed: [`Trace::place`]) for the contract of the program's IV `iv` (the
-/// contract's own binds the setup roots and the shape: `contract::contract_iv`); with Flock, from leanVM's Flock
+/// contract's own binds the setup roots and the shape: `contract::contract_iv_for`, which also binds π1-rec's variant); with Flock, from leanVM's Flock
 /// inputs `flock`, placed likewise.
 pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: Config) -> Result<(Proof, Report), String> {
     let mut report = Report::default();
@@ -236,7 +236,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
 
     // 0. The seed (the contract's IV binds the setup roots), then the six row counts (SPEC.md §13, F1), absorbed with
     // C1's root.
-    let seed = keccak_seed(&NAME, &contract_iv(&shape, iv, &roots), &public);
+    let seed = keccak_seed(&NAME, &contract_iv_for(&shape, config.blake2s, iv, &roots), &public);
     let mut writer = KeccakWriter::new(seed);
     for &rows in &trace.rows {
         writer.send_integer(rows, 4);
@@ -247,7 +247,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     // c⁸) of one challenge c, squared in E as the verifier squares it.
     let alphas: Vec<F192> = match config.blake2s.fs() {
         FsShape::Main => (0..4).map(|_| from_v(writer.sample())).collect(),
-        FsShape::Rec => squares(writer.sample(), 4).into_iter().map(from_v).collect(),
+        FsShape::Rec | FsShape::Rec2 | FsShape::Rec3 => squares(writer.sample(), 4).into_iter().map(from_v).collect(),
     };
     let beta = from_v(writer.sample());
     let gamma = from_v(writer.sample());
@@ -278,6 +278,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
         match out.matrices {
             Matrices::Done { point, a, b } => report.flock = Some((point, a, b)),
             Matrices::Pending(p) => pending = Some(p),
+            Matrices::Walked => {}
         }
         clock.lap(&mut report, "Flock: zerocheck, lincheck, slices");
     }
@@ -535,7 +536,22 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
                     (&s.words[..], s.layout.vars)
                 })
                 .collect();
-            let (point, values, matrices) = super::batch::prove(&mut writer, &stacks, weights, lambda, pending.as_ref())?;
+            let fs = config.blake2s.fs();
+            let narrow = matches!(fs, FsShape::Rec2 | FsShape::Rec3);
+            let (point, values, matrices) = if fs == FsShape::Rec3 {
+                // π1-rec3: the batch two variables a round (SPEC-POINTS.md), its claim the combined claims' values.
+                let target: F192 = combined
+                    .iter()
+                    .rev()
+                    .fold(F192::ZERO, |acc, (_, claim)| acc * lambda + from_v(claim.value));
+                if pending.is_some() {
+                    return Err("π1-rec3's paired batch has no matrices' reduction".into());
+                }
+                let (point, values) = super::batch::prove_pairs(&mut writer, &stacks, weights, lambda, target)?;
+                (point, values, None)
+            } else {
+                super::batch::prove(&mut writer, &stacks, weights, lambda, pending.as_ref(), narrow)?
+            };
             if let Some(claim) = matrices {
                 report.flock = Some(claim);
             }
@@ -655,6 +671,7 @@ pub fn verify(
             }
         }
         (None, Blake2s::Omitted) => {}
+        (None, Blake2s::Flock(v)) if v.slices == leanvm_flock_gas::flock_min::Slices::TowerWalk => {}
         _ => return Err("Flock's matrices' claims".into()),
     }
     Ok(unproven)

@@ -5,7 +5,10 @@
 **Status: milestone R1 done (measure, size, specify); R2 step 1 done (π1-rec in code, §1.4, §7); R2 steps 2–6 done
 (π2's circuit compiled and its witness on the real proofs, §10: D16v × π1-rec is `2^24` positions, 85.7% used); R3
 steps 1–3 done (π2's prover, verifier and contract, measured end to end on the real proof, §11 and `PI2.md`: 73,550 at
-`c = 0`, 94,550 with the base).**
+`c = 0`, 94,550 with the base); the review (R3 step 4, `REVIEW-REC.md`) found no attack, its fixes are in; the
+optimisation (§12, branch `leanvm-rec-opt`): D16v × π1-rec3, measured end to end on the real proof, **44,792 at
+`c = 0`** (980 B, execution 29,832), 65,792 with the base.** §0–§11 are the design before §12; where they differ,
+§12 and `PI2.md` §8–§9 hold.
 Branch `leanvm-rec`, from `leanvm-univariate` @ 29d3095; π1-rec on `leanvm-rec-pi1`; π2's circuit on
 `leanvm-rec-circuit`; π2's PIOP on `leanvm-rec-piop`.
 No Lean for now (the user's instruction: no proofs until the gas is close to 100K). Every number is marked:
@@ -14,7 +17,7 @@ No Lean for now (the user's instruction: no proofs until the gas is close to 100
 - **modelled**: computed by `review/leanvm_rec_params.py` from measured counts.
 
 ```sh
-cargo test --release -p leanvm_rec -- --include-ignored --nocapture --test-threads 1   # §1, §2.1 (measured)
+RUSTFLAGS="-C target-cpu=native" cargo test --release -p leanvm_rec -- --include-ignored --nocapture --test-threads 1   # §1, §2.1 (measured)
 python3 -I review/leanvm_rec_params.py                                                # §2-§6 (modelled)
 ```
 
@@ -221,6 +224,15 @@ They cannot be made shorter:
 
 So 1,224 B is this design's calldata floor: 49K gas at 40 a byte, 78K at 64.
 
+*Lever 1(b), [`SPEC-POINTS.md`](SPEC-POINTS.md) (modelled, not built):*
+
+- *The point `r` must stay fresh: `q_flock`'s ring switch needs a sumcheck over its variables. DEEP, Gemini, Zeromorph
+  and a univariate batch save no coordinate.*
+- *Its 27 coordinates can come from 14 challenges if the batch runs two variables a round on `V_2`'s coordinate
+  functionals. That costs no Keccak-f, 56K of π2's positions and −312 B: −6.0K gas on `leanvm-rec-opt` (where the
+  `A0`, `B0` claims are gone), −10.5K on R3.*
+- *Three variables a round would cost 18 Keccak-f.*
+
 ## 2. π2's arithmetization
 
 ### 2.1 The reference: `crates/quotient` (measured, `tests/quotient_reference.rs`)
@@ -414,9 +426,10 @@ The public inputs are:
 
 That is 57 elements and 13 zero checks.
 
-**Each element `J` binds through one outside tag `τ_J ∉ V_m`.** Its producing row pushes the fingerprint
-`F_J = c₀ + γc₁ + γ²c₂` there (`+ γ³c₃` for a root's or the public input's fourth limb), and the verifier adds `1/(α + F_J + βτ_J)` to the sum's target. That is 70 fractions
-in one batched inversion.
+**Each element `J` binds through one outside tag `τ_J ∉ V_m`.** Its producing row pushes a fingerprint `F_J` there,
+and the verifier adds `1/(α + F_J + βτ_J)` to the sum's target: 70 fractions in one batched inversion. *As built
+(PI2.md §4.2; REVIEW-REC.md N4) the fingerprint is not `c₀ + γc₁ + γ²c₂ (+ γ³c₃)`: a three-limb port's is the element
+itself, `L₀ + YL₁ + Y²L₂`, and a four-limb port's (the statement, a root) `(L₀ + YL₁) + γ(L₂ + YL₃)`.*
 
 **Measured (§10.4, 2–3):** the row counts need not be public (67 fractions), and the ports' positions are holes of `σ`
 (nothing pushes to them), whose pulls (0) are in the target too: 3 coset sums.
@@ -477,7 +490,8 @@ What each option shows:
 - **Setup** (code constants in the contract):
   - the root of `(σ, κ)`;
   - π2's IV: `keccak("leanvm-rec-iv" ‖ π1's contract IV (SPEC.md §13, F2) ‖ the setup root ‖ the shape ‖ π2's layout
-    words)`;
+    words)`; *as built (`prover::iv`; REVIEW-REC.md N4, M1): `keccak("leanvm-rec-iv-v2" ‖ π1's contract IV ‖ the setup
+    root ‖ the circuit's digest ‖ the three layout words)`, the layout words `prover::layout_word`'s;*
   - π1's setup roots (`F`, `A0`, `B0`) and layout words, which π1's calls need.
 - **Public inputs:**
   - the public input (32 B);
@@ -485,7 +499,9 @@ What each option shows:
   - π1's roots `C1`, `C2`;
   - π1's claims: `r` (27), `p`'s other 19 coordinates, and the values `C1(r)`, `C2(r)`, `F(r)`, `a`, `b`.
 - **The transcript** (Keccak-256, on chain, `KeccakChannel`'s shape):
-  1. The seed `keccak("leanvm-rec-v1" ‖ IV ‖ D)`, where `D = keccak(public data)`, about 1.35 KB.
+  1. The seed `keccak("leanvm-rec-v1" ‖ IV ‖ D)`, where `D = keccak(public data)`, about 1.35 KB. *As built (PI2.md
+     §4.7; N4): the seed is `keccak("leanvm-rec-pi2v1" ‖ IV ‖ the public input)`, and the public data is in the stream,
+     absorbed by the first challenge.*
   2. `W`'s root, then `α`, `β`, `γ`.
   3. `Q`'s root, then `t`.
   4. The 18 values: the row's 16 fold values `a_k = ĉ_W(k, w_4(t), …, w_23(t))`, then `σ(t)`, `κ(t)`. Then `ρ`.
@@ -521,9 +537,9 @@ takes no OOD sample at level 0). The setup is honest, so `L = 1`.
 | π1-rec: `t` (unchanged; the PIOP's minimum) | 166.6 | **142.3** |
 | π1-rec: `γ`, `ρ`, `λ` and the batch | ≥ 185.7 | ≥ 161.4 |
 | π2: the copy argument `(α, β)` (`4N/2^192`, over `W`'s list 9,952) | 166.0 | 152.7 |
-| π2: `γ`, the public fingerprints | 184.0 | 170.7 |
+| π2: `γ`, the four-limb ports' fingerprints, degree 1 (3 ports; the three-limb ones are the element) | 190.4 | 177.1 |
 | π2: `t`, the identity of degree `5N` (over `W` and `Q`: `2^25.1`) | 165.7 | **140.6** |
-| π2: `ρ`, the fold and the combination | 186.0 | 160.9 |
+| π2: `ρ`, W's fold (degree 15), Q's and the setup's combinations (degree 1): three commitments, the errors add, `(15 L_W + L_Q + 1)/2^192` (ρ is reused for the setup claim, PI2.md §4.5) | 192.0 | 174.8 |
 
 **The openings.** WHIR's openings are 8: π1's 5 and π2's 3, at 128.97 bits each. That is 126.0 bits by a plain union,
 about 129 in the query-bounded random-permutation model, as SPEC.md §9 counts π1's 5.
@@ -678,8 +694,8 @@ Branch `leanvm-rec-circuit`, `crates/leanvm_rec/src/circuit/`. Measured on h1 by
 1,000-signature proofs: π1-rec's `main_line_rec`, and the main line's `main_line`.
 
 ```sh
-cargo test --release -p leanvm_rec --test circuit -- --nocapture --test-threads 1   # 4 configurations, about 190 s
-cargo test --release -p leanvm_rec --lib                                           # templates, packings, spec
+RUSTFLAGS="-C target-cpu=native" cargo test --release -p leanvm_rec --test circuit -- --nocapture --test-threads 1   # 4 configurations, about 190 s
+RUSTFLAGS="-C target-cpu=native" cargo test --release -p leanvm_rec --lib                                           # templates, packings, spec
 ```
 
 ### 10.1 What exists
@@ -768,6 +784,10 @@ side is roughly 2,850 operations, against D16v's 1,040. At 13.85 gas an operatio
 2. **The public side has holes (a correction to §2.4.6).**
    - A push to an outside tag leaves its position's tag unpushed: `σ` has as many holes as ports, and their pulls
      must be in the target too.
+   - *Superseded by PI2.md §4.1 (REVIEW-REC.md N1, N4): the PIOP leaves the holes out of the pulls (the identity's
+     pull term times `1 + 1_S`) instead of summing them into the target, so a hole's value is unconstrained, which is
+     harmless because no formula reads a hole (`pi2::circuit::Circuit::validate`, asserted by `Spec::of` and
+     `Setup::new`). The text below is the R2 design.*
    - The holes are the ports' own positions, with pull 0. A port is the last role of a port row, and the port rows
      are blocks, so the holes are cosets.
    - The target is `Σ_J 1/D(F_J, τ_J) + Σ_holes 1/D(0, ω_h)`. Each coset's sum is `Z_U'/(β·Z_U(α/β + c))`, a short
@@ -838,3 +858,65 @@ Branch `leanvm-rec-piop`, `crates/leanvm_rec/src/pi2/`; the protocol, the decisi
   basis, `Q` in the novel one; the extension coset is `4N`; the public data is absorbed by the first challenge; the
   target shapes' stacks are at least `2^24` words (leanerVM's certified range: D32v's `W` sits on a `2^24` stack).
 - **What remains:** R3 step 4, a review, then Lean.
+
+## 12. Optimisation toward 50K (branch `leanvm-rec-opt`): the change list
+
+Each change says whether it touches π1's Fiat–Shamir shape or claims, π2's, or only the contract. Measured numbers are
+in `PI2.md` §9.
+
+1. **The review's fixes** (REVIEW-REC.md M1, L1, L2, N2, N4, N5; `PI2.md` §8). π1's FS: its contract IV now binds the
+   variant (`contract_iv_for`: π1-rec's seed changes, not its shape); the vector is regenerated. The claims: one
+   `PCS_OPEN` ABI (π1's roots as `machine.rs`'s root words, π2's layout words structured). No gas change.
+2. **π2's values 19 → 17** (π2's claims change; π1 unchanged). `ξ = κ(t) + βσ(t)` replaces `σ(t)`, `κ(t)` (the setup
+   committed as `κ`, `κ + σ`, its claim at `β`); `h(t)` is no longer sent, `Q`'s claim being the identity's combination
+   of `h(t)` and `q(t)`, with one inversion at the end. 1,844 → 1,796 B; execution 39,674 → 35,787; 73,550 → 71,630.
+3. **The fold's siblings** (π2's verifier only). The row's cells fold with half the products (`ω_{2k+1} = ω_{2k} + 1`).
+   Execution 35,787 → 35,212; the floor binds (71,630).
+4. **π1-rec2: no claims on `A0`, `B0`** (**π1's Fiat–Shamir shape and claims change**; `FLOCK_REC2`,
+   `Slices::TowerWalk`). Flock's lincheck terminal is checked by π1's verifier walking the BLAKE2s circuit (leanVM's
+   check), so the matrices' reduction leaves the batching sumcheck, `a`, `b` leave the stream (7,072 → 7,024 B), and the
+   claims are three, `C1`, `C2`, `F`, all at the batch's point `r` (27 coordinates; was 46). π2 grows to 94.7% of
+   `2^24`. π2's public elements 51 → 30, calls 8 → 6. 1,796 → 1,292 B; execution 35,212 → 32,646; EIP-7623 `c = 0`
+   71,630 → 53,270. This is lever 1(a) taken further: `A0`, `B0` need no point at all. For lever 1(b)'s design
+   (branch `leanvm-rec-points`) it removes the matrices' claims from the problem.
+5. **`PCS_OPEN`'s inputs written once** (the contract only: `evm_link`'s `reuse`; π2's call order `W`, setup, `Q`).
+   Execution 32,646 → 31,103; EIP-7623 `c = 0` 53,270 → 51,727.
+6. **The zero checks' coset in closed form** (π2's circuit: the zero ports first, padded to a power of two; π2's
+   verifier). Execution 31,103 → 30,182; EIP-7623 `c = 0` 51,727 → 51,560 (the floor binds). The same commit adds the
+   narrow-challenge plumbing (`Channel::sample_narrow`, `record::Node::Narrow`, `FsShape::Rec2`, the prover's batch),
+   inert until item 7.
+7. **π1-rec2's batch challenges narrow** (**π1's Fiat–Shamir shape changes**: `FLOCK_REC2` takes `FsShape::Rec2`).
+   The batching sumcheck's challenges are the hash's low 160 bits, so the claims' 27 coordinates have four zero bytes
+   each in calldata. 130.0 bits after the lists (`review/leanvm_rec_params.py`). The vector regenerated. On the real
+   calldata (110 zero bytes): EIP-7623 `c = 0` 51,560 → **49,534** (the standard price binds; the floor is 48,380).
+8. **π1-rec3: the batch two variables a round** (**π1's Fiat–Shamir shape changes**: `FLOCK_REC3`, `FsShape::Rec3`;
+   the design is `SPEC-POINTS.md`'s, branch `leanvm-rec-points` merged). 14 narrow challenges for the 27 coordinates;
+   π2's ports bind the 14 challenges and the contract derives the coordinates (`CallWord::Pair`). 129.0 bits after the
+   lists. On the real calldata (980 B, 60 zero): EIP-7623 `c = 0` 49,534 → **44,792**; EIP-7976 82,688 → 62,720.
+
+### Where it stands (measured on h1, the real 1,000-signature proof, `c = 0`, no base)
+
+| | calldata | execution | EIP-7623 | EIP-7976 | claims / calls | π2's positions |
+|---|---:|---:|---:|---:|---:|---|
+| D16v × π1-rec, before (9d1bf46) | 1,844 B | 39,674 | 73,550 | 118,016 | 9 / 8 | 14.37M of `2^24` |
+| D16v × π1-rec2 (f7a0b28) | 1,292 B (110 zero) | 30,182 | 49,534 | 82,688 | 7 / 6 | 15.88M of `2^24` (94.6%) |
+| **D16v × π1-rec3, now** (§12 item 8) | 980 B (60 zero) | 29,832 | **44,792** | 62,720 | 7 / 6 | 15.93M of `2^24` (94.9%) |
+
+The calldata (π1-rec3): the selector 4, the public input 32, π1's roots 64, π1's claims 408 (14 narrow challenges and 3
+values), π2's roots 64, π2's 17 values 408. EIP-7623's standard price binds (`16 · 920 + 4 · 60 + 29,832`); its floor is
+37,400, so execution counts in full from here down to it: the push side (156 selector pairs in 66 groups, 14.8K) is the
+largest part. Soundness after the union bounds: π1-rec3's PIOP 129.0 bits (the narrow pairs; `t` 142.3), π2's 140.6
+(`t`), the six WHIR openings 126.4 by a plain union (about 129 in the query-bounded model). π2's circuit is at 94.9% of
+`2^24`.
+
+**Dropped or left:**
+
+- **The claims' point from 1–3 scalars** (lever 1(b)): not possible, by the points agent's analysis (`SPEC-POINTS.md`
+  §2: `q_flock`'s ring switch needs a fresh sumcheck over its 26 variables; DEEP, Gemini, Zeromorph give the
+  coordinates back as values). Its pairs (14 challenges for 27 coordinates) are item 8.
+- **D8v**: Keccak-f does not fit `2^24` in rows of 8 (`PI2.md` §9).
+- **20-byte reads of the narrow coordinates**: 432 gas at the standard price, a read width of its own in π2's stream.
+- **Hand-scheduled kernels for the push side** (14.8K of the execution: 156 pairs, 66 groups): its generic code is at
+  about 11 gas an operation already; fewer pairs would need slack in `2^24` that π1-rec2 and π1-rec3 used up (98–99.7%
+  of the rows are in blocks).
+- **The selector** (4 B, 64 gas): every contract of the repository's codegen takes it.

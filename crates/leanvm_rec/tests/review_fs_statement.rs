@@ -28,7 +28,7 @@ use leanvm_flock_gas::transcript::keccak_seed;
 use leanvm_rec::circuit::compile::{Inputs, Layout, pi2};
 use leanvm_rec::circuit::spec::{CallWord, Failure, Source};
 use leanvm_rec::eval::{Value, checks, evaluate};
-use leanvm_univariate::contract::{NAME, SetupRoots, calls, contract_iv, record_verifier, rust_verifier_with};
+use leanvm_univariate::contract::{NAME, SetupRoots, calls, record_verifier, rust_verifier_with};
 use leanvm_univariate::{Claims, Opening};
 
 const STREAM_AT: usize = 4 + 32;
@@ -72,7 +72,7 @@ fn review_fs_graph_is_the_rust_verifier_on_random_streams() {
         let v = vector("main_line_rec");
         let blake2s = vectors::blake2s_of(&v.config);
         let recorded = record_verifier(&v.shape, blake2s, Claims::Point);
-        let iv = contract_iv(&v.shape, &PROGRAM_IV, &SetupRoots::REFERENCE);
+        let iv = recorded.iv(&PROGRAM_IV);
         let real = v.calldata[STREAM_AT..].to_vec();
         assert_eq!(real.len(), recorded.stream_len);
         let mut seed = 0x5eed_f00d_1234_9876u64;
@@ -265,16 +265,19 @@ fn review_fs_circuit_is_the_graph_on_a_random_stream() {
             stream[4 * k..4 * k + 4].copy_from_slice(&c.to_be_bytes());
         }
         let public = random32(&mut seed);
-        let iv = random32(&mut seed);
+        // A random program IV, so a random contract IV (REVIEW-REC L2: the compiler derives it from `recorded`).
+        let program_iv = random32(&mut seed);
         let c = pi2(
             &recorded,
             layout,
             &Inputs {
-                iv,
+                program_iv,
                 public,
                 stream: &stream,
             },
         );
+        let iv = c.pi1_iv;
+        assert_eq!(iv, recorded.iv(&program_iv));
         let values = evaluate(&c.expanded, keccak_seed(&NAME, &iv, &public), &public, &stream);
         for (&id, digest) in &c.digests {
             let mut bytes = [0u8; 32];
@@ -317,7 +320,7 @@ fn review_fs_circuit_is_the_graph_on_a_random_stream() {
         }
         // Every root and element a call of π1 takes is a port's (the statement once, 2 roots, 51 elements, 13 zeros).
         let circuit = &c.finished.circuit;
-        let mut by_source = [0usize; 4];
+        let mut by_source = [0usize; 5];
         let (mut roots, mut elements) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
         for p in &circuit.ports {
             match p.source {
@@ -331,15 +334,19 @@ fn review_fs_circuit_is_the_graph_on_a_random_stream() {
                     elements.insert(i);
                 }
                 Source::Zero => by_source[3] += 1,
+                // PI2.md §9, lever 3c: the zero checks padded to a power of two, constants checking nothing.
+                Source::Pad => by_source[4] += 1,
             }
         }
-        println!("ports (statement, roots, elements, zeros): {by_source:?}");
-        assert_eq!(by_source, [1, 2, 51, 13]);
+        println!("ports (statement, roots, elements, zeros, padding): {by_source:?}");
+        assert_eq!(by_source, [1, 2, 51, 13, 3]);
         assert_eq!((roots.len(), elements.len()), (2, 51), "each once");
         for w in circuit.calls.iter().flatten() {
             match *w {
                 CallWord::Root(i) => assert!(roots.contains(&i), "root {i} of a call is a port's"),
                 CallWord::Element(i) => assert!(elements.contains(&i), "element {i} of a call is a port's"),
+                // π1-rec3's paired coordinates (SPEC-POINTS.md): their challenge is the port.
+                CallWord::Pair { element: i, .. } => assert!(elements.contains(&i), "element {i} of a call is a port's"),
                 CallWord::Const(_) => {}
             }
         }
@@ -367,7 +374,7 @@ fn review_fs_circuit_is_the_graph_on_a_random_stream() {
             &recorded,
             layout,
             &Inputs {
-                iv: [0x77; 32],
+                program_iv: [0x77; 32],
                 public,
                 stream: &stream,
             },

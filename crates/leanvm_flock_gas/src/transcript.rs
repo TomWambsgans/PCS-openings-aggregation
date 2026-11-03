@@ -34,6 +34,12 @@ pub trait Channel<S: Scalar> {
 
     fn sample(&mut self) -> S;
 
+    /// A challenge of [`NARROW_BITS`] bits (π1-rec2's batching sumcheck, `crates/leanvm_rec/SPEC-REC.md` §12): the
+    /// hash's low 160 bits instead of 192, so that its 24 calldata bytes start with four zeros.
+    fn sample_narrow(&mut self) -> S {
+        unimplemented!("this channel draws no narrow challenges")
+    }
+
     fn samples(&mut self, count: usize) -> Vec<S> {
         (0..count).map(|_| self.sample()).collect()
     }
@@ -64,6 +70,23 @@ pub enum FsShape {
     /// `π1-rec`: in each of the two runs, the first challenge `c` is drawn and the others are `c², c⁴, …`, each the
     /// square of the one before (no hash). 24 fewer Keccak-256 calls on the main line (131 → 107 Keccak-f).
     Rec,
+    /// `π1-rec2`'s (`crates/leanvm_rec/SPEC-REC.md` §12): [`FsShape::Rec`], and the batching sumcheck's challenges of
+    /// [`NARROW_BITS`] bits ([`Channel::sample_narrow`]): the claims' point, which the recursion's contract carries in
+    /// calldata, has four zero bytes a coordinate.
+    Rec2,
+    /// `π1-rec3`'s (SPEC-REC.md §12, `SPEC-POINTS.md`): [`FsShape::Rec2`] with the batching sumcheck two variables a
+    /// round ([`sumcheck_pairs_drawn`]): one narrow challenge `z_j` a pair, the point's two coordinates
+    /// [`pair_point`]`(z_j)`, so 14 challenges for 27 coordinates.
+    Rec3,
+}
+
+/// The bits of a narrow challenge: its top limb's low 32 (`c2 < 2^32`). Soundness: a sumcheck round of degree 2 errs
+/// with probability `2/2^160`; π1-rec2's batch, 27 rounds over `C1`'s and `C2`'s lists (`2^24.3`), at `2^-130`.
+pub const NARROW_BITS: usize = 160;
+
+/// The narrow challenge of a hash's challenge: its limb 2 cut to 32 bits.
+pub fn narrow(x: E) -> E {
+    E::new(x.c0, x.c1, x.c2 & 0xFFFF_FFFF)
 }
 
 impl FsShape {
@@ -72,8 +95,8 @@ impl FsShape {
     pub fn draw<S: Scalar, C: Channel<S> + ?Sized>(self, channel: &mut C, count: usize) -> Vec<S> {
         match self {
             FsShape::Main => channel.samples(count),
-            FsShape::Rec if count == 0 => Vec::new(),
-            FsShape::Rec => squares(channel.sample(), count),
+            FsShape::Rec | FsShape::Rec2 | FsShape::Rec3 if count == 0 => Vec::new(),
+            FsShape::Rec | FsShape::Rec2 | FsShape::Rec3 => squares(channel.sample(), count),
         }
     }
 }
@@ -299,18 +322,110 @@ pub fn sumcheck_round_poly<S: Scalar>(
 
 pub fn sumcheck<S: Scalar>(
     transcript: &mut impl Channel<S>,
+    claim: S,
+    count: usize,
+    equalities: &[Option<S>],
+) -> Result<(Vec<S>, S), VerifierError> {
+    sumcheck_drawn(transcript, claim, count, equalities, false)
+}
+
+/// [`sumcheck`], its challenges narrow ([`Channel::sample_narrow`]) when `narrow`.
+pub fn sumcheck_drawn<S: Scalar>(
+    transcript: &mut impl Channel<S>,
     mut claim: S,
     count: usize,
     equalities: &[Option<S>],
+    narrow: bool,
 ) -> Result<(Vec<S>, S), VerifierError> {
     let mut point = Vec::with_capacity(equalities.len());
     for &equality in equalities {
         let message = sumcheck_round_poly(transcript, count, claim, equality)?;
-        let challenge = transcript.sample();
+        let challenge = if narrow {
+            transcript.sample_narrow()
+        } else {
+            transcript.sample()
+        };
         point.push(challenge);
         claim = poly_eval(&message, challenge);
     }
     Ok((point, claim))
+}
+
+/// `β_1` of the Cantor basis (`β_1² + β_1 = β_0 = 1`, the root with its low bit clear: `crates/leanvm_univariate`'s
+/// `domain::beta()[1]`), so `V_2 = {0, 1, β_1, 1 + β_1}` is `GF(4)`: of `x^((2^64 - 1)/3)`, an element of order 3,
+/// and it plus one, the one whose low bit is clear.
+pub fn cantor_beta1() -> E {
+    let g = crate::field::GEN.pow(u64::MAX / 3);
+    if g.c0 & 1 == 0 { g } else { g + crate::field::ONE }
+}
+
+/// A pair's coordinates at its challenge `z`: `(y_0(z), y_1(z))`, the coordinate functionals of `V_2`
+/// (`y_l(ω_i) = i_l` for `i < 4`): `y_1 = z² + z`, `y_0 = z + β_1 y_1`. One squaring and one product by a constant.
+pub fn pair_point<S: Scalar>(z: S) -> [S; 2] {
+    let y1 = z.square() + z;
+    [z + S::constant(cantor_beta1()) * y1, y1]
+}
+
+/// A pair's round polynomial `G` of degree `4 · degree` (`degree` the summand's in each variable): the transcript holds
+/// its monomial coefficients but `c_3`, which the claim gives. Over `V_2 = GF(4)` the power sum `Σ_x x^e` is 1 when
+/// `e > 0` and `3 | e`, else 0, so `Σ_(x ∈ V_2) G(x) = Σ_(e > 0, 3 | e) c_e`.
+fn pair_round_poly<S: Scalar>(transcript: &mut impl Channel<S>, degree: usize, claim: S) -> Result<Vec<S>, VerifierError> {
+    let top = 4 * degree;
+    assert!(top >= 3, "a pair's polynomial reaches x^3");
+    let low = transcript.next_scalars(3)?;
+    let high = transcript.next_scalars(top - 3)?;
+    let mut c3 = claim;
+    for (k, &c) in high.iter().enumerate() {
+        if (k + 4).is_multiple_of(3) {
+            c3 += c;
+        }
+    }
+    Ok([low, vec![c3], high].concat())
+}
+
+/// π1-pairs' batching sumcheck (`crates/leanvm_rec/SPEC-POINTS.md`): `vars` variables of a summand of degree `degree`
+/// in each, two at a time, low variables first. Pair `j`'s round polynomial is
+/// `G_j(X) = Σ_rest f(r_(<2j), y_0(X), y_1(X), rest)`, so that `Σ_(x ∈ V_2) G_j(x)` is the sum over the pair's four
+/// corners; one challenge `z_j` a pair, the point's coordinates `(y_0(z_j), y_1(z_j))` ([`pair_point`]). With `vars`
+/// odd, the last variable is an ordinary round ([`sumcheck`]'s). Returns the point and the last claim.
+pub fn sumcheck_pairs<S: Scalar>(
+    transcript: &mut impl Channel<S>,
+    claim: S,
+    degree: usize,
+    vars: usize,
+) -> Result<(Vec<S>, S), VerifierError> {
+    sumcheck_pairs_drawn(transcript, claim, degree, vars, false).map(|(point, _, end)| (point, end))
+}
+
+/// [`sumcheck_pairs`], its challenges narrow ([`Channel::sample_narrow`]) when `narrow` (π1-rec3, `FsShape::Rec3`):
+/// returns the point, the challenges (a pair's `z_j`, then the last plain round's), and the last claim.
+pub fn sumcheck_pairs_drawn<S: Scalar>(
+    transcript: &mut impl Channel<S>,
+    mut claim: S,
+    degree: usize,
+    vars: usize,
+    narrow: bool,
+) -> Result<(Vec<S>, Vec<S>, S), VerifierError> {
+    let mut point = Vec::with_capacity(vars);
+    let mut challenges = Vec::with_capacity(vars.div_ceil(2));
+    for _ in 0..vars / 2 {
+        let message = pair_round_poly(transcript, degree, claim)?;
+        let z = if narrow {
+            transcript.sample_narrow()
+        } else {
+            transcript.sample()
+        };
+        point.extend(pair_point(z));
+        challenges.push(z);
+        claim = poly_eval(&message, z);
+    }
+    if vars % 2 == 1 {
+        let (last, end) = sumcheck_drawn(transcript, claim, degree + 1, &[None], narrow)?;
+        challenges.extend(&last);
+        point.extend(last);
+        claim = end;
+    }
+    Ok((point, challenges, claim))
 }
 
 /// The bytes of a scalar in calldata: 24 bytes, big-endian.
@@ -413,6 +528,10 @@ impl Channel<E> for KeccakChannel<'_> {
         challenge_of(&self.state)
     }
 
+    fn sample_narrow(&mut self) -> E {
+        narrow(self.sample())
+    }
+
     fn require_zero(&mut self, value: E, error: VerifierError) -> Result<(), VerifierError> {
         match &mut self.checks {
             Checks::Enforce => require(value == ZERO, error),
@@ -480,6 +599,11 @@ impl KeccakWriter {
         self.state = keccak256(&input);
         challenge_of(&self.state)
     }
+
+    /// [`Channel::sample_narrow`]'s challenge.
+    pub fn sample_narrow(&mut self) -> E {
+        narrow(self.sample())
+    }
 }
 
 #[cfg(test)]
@@ -504,5 +628,191 @@ mod tests {
         assert_eq!(channel.sample(), c);
         assert_eq!(channel.finish(), Ok(()));
         assert_eq!(writer.stream.len(), 24 + 32 + 24);
+    }
+
+    use crate::field::ONE;
+    use crate::multilinear::multilinear_eval;
+
+    fn element(seed: &mut u64) -> E {
+        let mut next = || {
+            *seed ^= *seed << 13;
+            *seed ^= *seed >> 7;
+            *seed ^= *seed << 17;
+            *seed
+        };
+        E::new(next(), next(), next())
+    }
+
+    /// A table's low variable bound to `r`.
+    fn fold(table: &[E], r: E) -> Vec<E> {
+        table.as_chunks::<2>().0.iter().map(|&[a, b]| a + r * (a + b)).collect()
+    }
+
+    /// The monomial coefficients of the polynomial of degree `< xs.len()` through `(xs[j], ys[j])`.
+    fn interpolate(xs: &[E], ys: &[E]) -> Vec<E> {
+        let n = xs.len();
+        let mut out = vec![ZERO; n];
+        for j in 0..n {
+            // Π_(m ≠ j) (X + x_m), and its value at x_j.
+            let mut basis = vec![ONE];
+            let mut at = ONE;
+            for (m, &x) in xs.iter().enumerate() {
+                if m == j {
+                    continue;
+                }
+                let mut next = vec![ZERO; basis.len() + 1];
+                for (d, &c) in basis.iter().enumerate() {
+                    next[d] += c * x;
+                    next[d + 1] += c;
+                }
+                basis = next;
+                at *= xs[j] + x;
+            }
+            let scale = ys[j] * at.inv();
+            for (o, &c) in out.iter_mut().zip(&basis) {
+                *o += scale * c;
+            }
+        }
+        out
+    }
+
+    /// `Σ_i Π_t tables[t][i]` with each table's low variables bound by `bind`.
+    fn sum_bound(tables: &[Vec<E>], bind: impl Fn(&[E]) -> Vec<E>) -> E {
+        let bound: Vec<Vec<E>> = tables.iter().map(|t| bind(t)).collect();
+        (0..bound[0].len()).map(|i| bound.iter().fold(ONE, |acc, t| acc * t[i])).fold(ZERO, |a, b| a + b)
+    }
+
+    /// The honest prover of `Σ_i Π_t tables[t][i]` in [`sumcheck_pairs`]' rounds (`degree` = the tables' count): each
+    /// pair's `G` from its values at `4 · degree + 1` points, interpolated, sent but `c_3`; a last single variable as
+    /// [`sumcheck`] reads it (`c_0`, then `c_2 …`). Returns the point.
+    fn prove_pairs(writer: &mut KeccakWriter, mut tables: Vec<Vec<E>>) -> Vec<E> {
+        let degree = tables.len();
+        let mut vars = tables[0].len().trailing_zeros() as usize;
+        let mut point = Vec::new();
+        while vars >= 2 {
+            let xs: Vec<E> = (0..=4 * degree as u64).map(|e| E::new(e, 0, 0)).collect();
+            let ys: Vec<E> = xs
+                .iter()
+                .map(|&x| {
+                    let [u0, u1] = pair_point(x);
+                    sum_bound(&tables, |t| fold(&fold(t, u0), u1))
+                })
+                .collect();
+            let c = interpolate(&xs, &ys);
+            assert_eq!(c.len(), 4 * degree + 1);
+            for (e, &ce) in c.iter().enumerate() {
+                if e != 3 {
+                    writer.send(ce);
+                }
+            }
+            let [u0, u1] = pair_point(writer.sample());
+            tables = tables.iter().map(|t| fold(&fold(t, u0), u1)).collect();
+            point.extend([u0, u1]);
+            vars -= 2;
+        }
+        if vars == 1 {
+            let xs: Vec<E> = (0..=degree as u64).map(|e| E::new(e, 0, 0)).collect();
+            let ys: Vec<E> = xs.iter().map(|&x| sum_bound(&tables, |t| fold(t, x))).collect();
+            let c = interpolate(&xs, &ys);
+            for (e, &ce) in c.iter().enumerate() {
+                if e != 1 {
+                    writer.send(ce);
+                }
+            }
+            point.push(writer.sample());
+        }
+        point
+    }
+
+    /// `β_1` is the Cantor basis's (`β_1² + β_1 = 1`, low bit clear), and a pair's coordinates on `V_2` are its
+    /// corners: `(y_0, y_1)(ω_i) = (i_0, i_1)`.
+    #[test]
+    fn pair_coordinates_are_the_corners_on_v2() {
+        let b = cantor_beta1();
+        assert_eq!(b * b + b, ONE);
+        assert_eq!((b.c0 & 1, b.c1, b.c2), (0, 0, 0));
+        for (i, x) in [ZERO, ONE, b, b + ONE].into_iter().enumerate() {
+            let bit = |k: usize| E::new((i >> k & 1) as u64, 0, 0);
+            assert_eq!(pair_point(x), [bit(0), bit(1)]);
+        }
+    }
+
+    /// The paired sumcheck on honest product sums of 1 to 3 tables, odd and even variable counts: the verifier reads
+    /// exactly the prover's stream (`4 · degree` scalars a pair), ends at the prover's point on the tables' product
+    /// there; a wrong initial claim, and each flipped scalar, end on a claim the tables do not give.
+    #[test]
+    fn pairs_are_complete_and_sound() {
+        for (degree, vars) in [(2, 10), (2, 11), (3, 7), (1, 6), (2, 1)] {
+            let mut seed = 0x9a12_5eed ^ (degree * 100 + vars) as u64;
+            let tables: Vec<Vec<E>> =
+                (0..degree).map(|_| (0..1 << vars).map(|_| element(&mut seed)).collect()).collect();
+            let claim = sum_bound(&tables, |t| t.to_vec());
+            let bytes = keccak_seed(b"sumcheck pairs 1", &[degree as u8; 32], &[vars as u8; 32]);
+            let mut writer = KeccakWriter::new(bytes);
+            let point = prove_pairs(&mut writer, tables.clone());
+            assert_eq!(writer.stream.len(), 24 * ((vars / 2) * 4 * degree + (vars % 2) * degree));
+            let product_at = |r: &[E]| tables.iter().fold(ONE, |acc, t| acc * multilinear_eval(t, r).unwrap());
+            let run = |stream: &[u8], claim: E| {
+                let mut channel = KeccakChannel::new(bytes, stream, Checks::Enforce);
+                let out = sumcheck_pairs(&mut channel, claim, degree, vars).unwrap();
+                channel.finish().unwrap();
+                out
+            };
+            let (r, last) = run(&writer.stream, claim);
+            assert_eq!(r, point, "degree {degree}, {vars} variables");
+            assert_eq!(last, product_at(&r), "degree {degree}, {vars} variables: complete");
+            let (r, last) = run(&writer.stream, claim + ONE);
+            assert_ne!(last, product_at(&r), "a wrong claim");
+            for k in 0..writer.stream.len() / 24 {
+                let mut stream = writer.stream.clone();
+                stream[24 * k + 23] ^= 1;
+                let (r, last) = run(&stream, claim);
+                assert_ne!(last, product_at(&r), "degree {degree}, {vars} variables: scalar {k} flipped");
+            }
+        }
+    }
+
+    /// What the batching sumcheck costs π2 (`crates/leanvm_rec/SPEC-POINTS.md` §6), recorded: over the batch's 27
+    /// variables at degree 2, the paired rounds take as many Keccak-f permutations as the plain ones (a pair's 8 scalars
+    /// and the state are 224 bytes, two blocks; a plain round's 2 and the state 80, one), 14 challenges instead of 27,
+    /// and these operations.
+    #[test]
+    fn pairs_cost_what_the_plain_rounds_do_in_permutations() {
+        use crate::evm::record::{Node, Recorder, record};
+        let measure = |paired: bool| {
+            let ((point, last, challenges), graph) = record(|| {
+                let mut recorder = Recorder::new();
+                let claim = recorder.next_scalar().unwrap();
+                let (point, last) = if paired {
+                    sumcheck_pairs(&mut recorder, claim, 2, 27).unwrap()
+                } else {
+                    sumcheck(&mut recorder, claim, 3, &[None; 27]).unwrap()
+                };
+                (point.len(), last, recorder.cursor)
+            });
+            let _ = (last, challenges);
+            let is_const = |id: u32| matches!(graph.nodes[id as usize], Node::Const(_));
+            let (mut perms, mut lows, mut adds, mut muls, mut squares, mut by_const) = (0, 0, 0, 0, 0, 0);
+            for node in &graph.nodes {
+                match *node {
+                    Node::Hash(_, from, to) => perms += (32 + (to - from) as usize) / 136 + 1,
+                    Node::Low(_) => lows += 1,
+                    Node::Add(..) => adds += 1,
+                    Node::Mul(a, b) if is_const(a) || is_const(b) => by_const += 1,
+                    Node::Mul(a, b) if a == b => squares += 1,
+                    Node::Mul(..) => muls += 1,
+                    _ => {}
+                }
+            }
+            (point, perms, lows, adds, muls, squares, by_const)
+        };
+        let plain = measure(false);
+        let pairs = measure(true);
+        eprintln!("batch over 27 variables (point, Keccak-f, challenges, adds, products, squares, by constants):");
+        eprintln!("  plain rounds  {plain:?}");
+        eprintln!("  paired rounds {pairs:?}");
+        assert_eq!((plain.0, pairs.0), (27, 27));
+        assert_eq!((plain.1, pairs.1), (27, 27), "the same permutations");
+        assert_eq!((plain.2, pairs.2), (27, 14), "14 challenges");
     }
 }

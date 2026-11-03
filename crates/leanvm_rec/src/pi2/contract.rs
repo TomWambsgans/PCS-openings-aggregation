@@ -6,9 +6,20 @@
 //! mock `PCS_OPEN` (`leanvm_flock_gas::evm::machine`, point claims: `root, layout, k, k × (point, value)`).
 //!
 //! **Calldata**: the selector, π1's public input (32 bytes, which the seed hashes), then the stream: π1's roots and
-//! its claims' elements, `W`'s root, `Q`'s root, the `2^r + 3` values. **Calls**, in order: π1's five (their words
-//! from calldata and constants: `circuit::spec::Circuit::calls`), then π2's three: `W` (one claim), `Q` (two), the
-//! setup (one; its root a constant of the code).
+//! its claims' elements, `W`'s root, `Q`'s root, the `2^r + 1` values. **Calls**, in order: π1's (their words from
+//! calldata and constants: `circuit::spec::Circuit::calls`), then π2's three: `W` (one claim), the setup (one; its root
+//! a constant of the code), `Q` (two). Each call's input is written at the region's start just before it, only where
+//! the call before left another word (`Ending::PcsOpenReusing`, `PI2.md` §9): π1's calls at the batch's point write
+//! it once, the setup's reuses `W`'s digits.
+//!
+//! **One ABI for the eight calls** (REVIEW-REC.md M1): `machine.rs`'s, `root word, layout word, k, k × (point,
+//! value)`. Every root word is `PCS_OPEN`'s (`s_0 · 2^128 + s_1`, each half of the hash reversed: π1's roots are in
+//! calldata so, and the setup roots are constants so); every layout word names its stack (π1's
+//! `leanvm_univariate::contract::layout_word`, π2's `prover::layout_word`: the code, the variables, the words placed).
+//! A precompile is a registry keyed by the layout word ([`registry`]): π1's five layouts are checked by
+//! `leanvm_univariate`'s opening, π2's three by `quotient::opening`, and `Q`'s two claims travel in one call, as one
+//! opening (AGENTS.md: two openings of one root could be of two tables). The tests run the decoding mock
+//! (`machine::PcsOpen::decoding`): a call in another format attests nothing.
 
 use fiat_shamir::merkle::Hash;
 use leanvm_flock_gas::evm::codegen::{
@@ -16,24 +27,53 @@ use leanvm_flock_gas::evm::codegen::{
     compile_deployable_like, word,
 };
 use leanvm_flock_gas::evm::contract::{deploy, install};
-use leanvm_flock_gas::evm::machine::{Outcome, PcsOpen, call, element_word};
+use leanvm_flock_gas::evm::machine::{self, Opening, Outcome, PcsOpen, call, decode, element_word};
 use leanvm_flock_gas::evm::record::{Graph, Recorder, Sym, record};
 use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::transcript::{Checks, KeccakChannel, keccak_seed};
-use quotient::opening::layout_id;
-use quotient::transcript::root_scalars;
 
-use super::circuit::Read;
-use super::prover::layouts;
+use super::circuit::{Circuit, Read};
+use super::prover::{layout_words, layouts};
 use super::verifier::{NAME, Reduced, Spec, reduce, statement_words};
 use crate::circuit::spec::CallWord;
 
-/// What the contract is built for: the circuit's verifier, its IV, the setup's root, and π1's calls.
+/// What the contract is built for: the circuit's verifier, its IV, the setup's root, and π1's calls. Built by
+/// [`Instance::new`] from the validated circuit (REVIEW-REC.md L2), which derives the IV.
 pub struct Instance<'a> {
     pub spec: &'a Spec,
     pub iv: [u8; 32],
     pub setup_root: Hash,
     pub pi1: &'a [Vec<CallWord>],
+}
+
+impl<'a> Instance<'a> {
+    /// The instance of `circuit` (validated here), its verifier `spec` (`Spec::of(circuit)`), the setup's root (the
+    /// commitment of `circuit`'s `σ`, `κ`: `prover::Setup::new(circuit).root()`), π1's contract IV (the circuit
+    /// compiler's, `Compiled::pi1_iv`, derived from π1's recorded verifier) and π1's calls (the circuit's,
+    /// `spec::Circuit::calls`). The IV is `prover::iv` of them.
+    pub fn new(
+        circuit: &Circuit,
+        spec: &'a Spec,
+        setup_root: Hash,
+        pi1_iv: &[u8; 32],
+        pi1: &'a [Vec<CallWord>],
+    ) -> Self {
+        circuit.validate().unwrap_or_else(|e| panic!("the circuit is not valid: {e}"));
+        assert!(
+            spec.log_n == circuit.log_n
+                && spec.log_row == circuit.log_row
+                && spec.pairs.len() == circuit.pairs.len()
+                && spec.public.len() + spec.zero_coset.as_ref().map_or(0, |(_, k, _)| 1 << k) == circuit.public.len()
+                && spec.reads == circuit.reads,
+            "the spec is the circuit's"
+        );
+        Self {
+            spec,
+            iv: super::prover::iv(pi1_iv, &circuit.digest(), &setup_root, circuit.log_n),
+            setup_root,
+            pi1,
+        }
+    }
 }
 
 /// The verifier, recorded.
@@ -88,15 +128,92 @@ pub fn number(n: u64) -> [u8; 32] {
     bytes
 }
 
-/// A commitment of π2's as `PCS_OPEN` takes it: `s_0 · 2^128 + s_1`, the two scalars of `root_scalars` (the words
-/// its stream encoding is).
+/// A commitment as `PCS_OPEN` takes it (`machine::root_word`): `s_0 · 2^128 + s_1`, the two scalars of
+/// `quotient::transcript::root_scalars` (the words π2's stream encodes its roots as), each half of the hash reversed.
 pub fn root_word(root: &Hash) -> [u8; 32] {
-    let mut out = [0u8; 32];
-    for (h, s) in root_scalars(root).iter().enumerate() {
-        out[16 * h..16 * h + 8].copy_from_slice(&s.c1.to_be_bytes());
-        out[16 * h + 8..16 * h + 16].copy_from_slice(&s.c0.to_be_bytes());
+    machine::root_word(root)
+}
+
+/// The layouts the precompile must know for this contract, with each table's variables: π1's (the layout words of
+/// its calls, each call's variables read off its length) and π2's three ([`layout_words`]).
+pub fn registry(inst: &Instance) -> Vec<([u8; 32], usize)> {
+    let l = layouts(inst.spec.log_n);
+    let mut out: Vec<([u8; 32], usize)> = layout_words(inst.spec.log_n)
+        .into_iter()
+        .zip([l.witness.vars, l.quotient.vars, l.setup.vars])
+        .collect();
+    for call in inst.pi1 {
+        let (CallWord::Const(layout), CallWord::Const(k)) = (call[1], call[2]) else {
+            panic!("π1's layout words and claim counts are constants")
+        };
+        let k = u64::from_be_bytes(k[24..].try_into().expect("8 bytes")) as usize;
+        assert!(k >= 1 && (call.len() - 3) % k == 0, "a call of k claims");
+        let vars = (call.len() - 3) / k - 1;
+        if !out.iter().any(|(w, _)| *w == layout) {
+            out.push((layout, vars));
+        }
     }
     out
+}
+
+/// π2's three openings as the block holds them: the roots the proof commits, the layout words, the claims of the
+/// reduction (not the contract's call words, which must decode to these).
+pub fn openings(inst: &Instance, reduced: &Reduced<E>, roots: &[Hash; 2]) -> Vec<Opening> {
+    let [w, q, s] = layout_words(inst.spec.log_n);
+    vec![
+        Opening {
+            root: roots[0],
+            layout: w,
+            claims: vec![reduced.witness.clone()],
+        },
+        Opening {
+            root: roots[1],
+            layout: q,
+            claims: vec![reduced.quotient.clone(), reduced.sum.clone()],
+        },
+        Opening {
+            root: inst.setup_root,
+            layout: s,
+            claims: vec![reduced.setup.clone()],
+        },
+    ]
+}
+
+/// A `PCS_OPEN` input of π1's own contract (`leanvm_univariate`'s vectors: the root word the hash as it is, the
+/// layout word π1's, its variables at byte 24) as the opening it names.
+pub fn pi1_opening(input: &[u8]) -> Opening {
+    let mut x = input.to_vec();
+    let raw: [u8; 32] = x[..32].try_into().expect("a root word");
+    x[..32].copy_from_slice(&machine::root_word(&raw));
+    decode(&x, |layout| Some(layout[24] as usize)).expect("π1's call is well formed")
+}
+
+/// The openings a block must hold for the contract to accept `stream`: π1's (its calls the Rust verifier's reduction
+/// gives, decoded under the registry) and π2's ([`openings`], from the reduction and the proof's roots).
+pub fn expected_openings(
+    inst: &Instance,
+    recorded: &Recorded,
+    reduced: &Reduced<E>,
+    roots: &[Hash; 2],
+    stream: &[u8],
+) -> Vec<Opening> {
+    let registry = block(inst, &[]);
+    let calls = expected_calls(inst, recorded, reduced, stream);
+    let mut out: Vec<Opening> = calls[..inst.pi1.len()]
+        .iter()
+        .map(|words| registry.decode(&words.concat()).expect("π1's call decodes"))
+        .collect();
+    out.extend(openings(inst, reduced, roots));
+    out
+}
+
+/// The decoding mock for this contract: its registry, and the block's openings.
+pub fn block(inst: &Instance, openings: &[Opening]) -> PcsOpen {
+    let mut block = PcsOpen::decoding(registry(inst));
+    for o in openings {
+        block.register_opening(o.clone());
+    }
+    block
 }
 
 /// The words of the eight calls, in order, for any word type.
@@ -119,32 +236,25 @@ fn call_words<T: Copy, W: Clone>(
                     CallWord::Const(bytes) => constant(bytes),
                     CallWord::Root(i) => stream(roots_at[i as usize]),
                     CallWord::Element(i) => scalar(reduced.public[elements[i as usize]]),
+                    CallWord::Pair { element, coordinate } => {
+                        scalar(reduced.pair_points[elements[element as usize]][coordinate as usize])
+                    }
                 })
                 .collect()
         })
         .collect();
-    let l = layouts(inst.spec.log_n);
+    let [lw, lq, ls] = layout_words(inst.spec.log_n);
     let claim = |(point, value): &(Vec<T>, T)| -> Vec<W> { point.iter().chain([value]).map(|&x| scalar(x)).collect() };
     let head = |root: W, id: [u8; 32], k: u64| vec![root, constant(id), constant(number(k))];
+    // W, then the setup (its point's `w_4 … w_{m-1}` where W's are: the contract writes them once, PI2.md §9, lever
+    // 3b), then Q.
+    out.push([head(stream(roots_at[roots]), lw, 1), claim(&reduced.witness)].concat());
+    out.push([head(constant(root_word(&inst.setup_root)), ls, 1), claim(&reduced.setup)].concat());
     out.push(
         [
-            head(stream(roots_at[roots]), layout_id(&l.witness), 1),
-            claim(&reduced.witness),
-        ]
-        .concat(),
-    );
-    out.push(
-        [
-            head(stream(roots_at[roots + 1]), layout_id(&l.quotient), 2),
+            head(stream(roots_at[roots + 1]), lq, 2),
             claim(&reduced.quotient),
             claim(&reduced.sum),
-        ]
-        .concat(),
-    );
-    out.push(
-        [
-            head(constant(root_word(&inst.setup_root)), layout_id(&l.setup), 1),
-            claim(&reduced.setup),
         ]
         .concat(),
     );
@@ -187,7 +297,7 @@ fn entry(inst: &Instance, recorded: &Recorded, measure: bool) -> Entry {
 /// The contract: it reverts unless every call of `PCS_OPEN` attests, and returns the word 1.
 pub fn compile_verifier(inst: &Instance, recorded: &Recorded, measure: bool) -> Contract {
     let calls = calls(inst, recorded);
-    let ending = Ending::PcsOpen(calls.iter().map(Vec::len).collect());
+    let ending = Ending::PcsOpenReusing(calls.iter().map(Vec::len).collect());
     compile(
         &recorded.graph,
         &calls.concat(),
@@ -200,7 +310,7 @@ pub fn compile_verifier(inst: &Instance, recorded: &Recorded, measure: bool) -> 
 fn ends(inst: &Instance, recorded: &Recorded, verify: bool) -> (Vec<Word>, Ending) {
     let calls = calls(inst, recorded);
     if verify {
-        let ending = Ending::PcsOpen(calls.iter().map(Vec::len).collect());
+        let ending = Ending::PcsOpenReusing(calls.iter().map(Vec::len).collect());
         (calls.concat(), ending)
     } else {
         let checks = recorded.graph.zero.iter().chain(&recorded.graph.nonzero);
@@ -301,17 +411,33 @@ pub fn parity_deployable(inst: &Instance, recorded: &Recorded, public_input: &[u
     returning.linked.parts.len() + 1
 }
 
-/// The verifying contract on `calldata`, with a block whose openings are exactly `attested` (each call's input):
-/// whether it returned the word 1, and the inputs it called `PCS_OPEN` with.
-pub fn run(inst: &Instance, recorded: &Recorded, calldata: &[u8], attested: &[Vec<u8>]) -> (bool, Vec<Vec<u8>>) {
+/// The verifying contract on `calldata`, with a block whose openings are exactly `openings` (the decoding mock,
+/// [`block`]): whether it returned the word 1, and the inputs it called `PCS_OPEN` with.
+pub fn run(inst: &Instance, recorded: &Recorded, calldata: &[u8], openings: &[Opening]) -> (bool, Vec<Vec<u8>>) {
     let contract = compile_verifier(inst, recorded, false);
-    let mut block = PcsOpen::default();
-    attested.iter().for_each(|input| block.register(input.clone()));
+    let block = block(inst, openings);
     let outcome = call(&contract.code, &[], calldata, &block);
     (
         outcome.output.as_deref() == Some(&word([1, 0, 0])[..]),
         outcome.pcs_calls,
     )
+}
+
+/// The verifying contract's execution gas on `calldata` (at a claim price of 0), and whether it accepted.
+pub fn verifying_execution(inst: &Instance, recorded: &Recorded, calldata: &[u8], openings: &[Opening]) -> (bool, u64) {
+    let contract = compile_verifier(inst, recorded, false);
+    let outcome = call(&contract.code, &[], calldata, &block(inst, openings));
+    (outcome.output.as_deref() == Some(&word([1, 0, 0])[..]), outcome.execution)
+}
+
+/// Transaction gas without the 21,000 base for `calldata` and `execution` (claims at 0): EIP-7623 (`floor` 40, 10 a
+/// zero byte) or EIP-7976 (`floor` 64, 64 a zero byte), against the standard `16` a byte (`4` a zero byte).
+pub fn transaction_of(calldata: &[u8], execution: u64, floor: u64) -> u64 {
+    let zero = calldata.iter().filter(|&&b| b == 0).count() as u64;
+    let nonzero = calldata.len() as u64 - zero;
+    let standard = 16 * nonzero + 4 * zero + execution;
+    let floor_gas = floor * nonzero + if floor == 64 { 64 } else { floor / 4 } * zero;
+    standard.max(floor_gas)
 }
 
 /// One phase's share of a call.
@@ -483,8 +609,16 @@ pub fn measure(inst: &Instance, recorded: &Recorded, deployable: bool) -> GasRep
     assert_eq!(data.len(), contract.calldata_len);
     let calls = calls(inst, recorded);
     let claims: usize = inst.pi1.len() + 4;
+    // The decoding mock, attesting every call that is well formed under the registry (the format is checked even
+    // in a measuring run).
+    let attesting = |claim_gas: u64| -> PcsOpen {
+        let mut block = PcsOpen::decoding(registry(inst));
+        block.attest_all = true;
+        block.claim_gas = claim_gas;
+        block
+    };
     let run = |claim_gas: u64| -> Outcome {
-        let outcome = call(&contract.code, &[], &data, &PcsOpen::attesting_all(claim_gas));
+        let outcome = call(&contract.code, &[], &data, &attesting(claim_gas));
         assert_eq!(
             outcome.output.as_deref(),
             Some(&word([1, 0, 0])[..]),
@@ -541,9 +675,7 @@ pub fn measure(inst: &Instance, recorded: &Recorded, deployable: bool) -> GasRep
             compile_deployable_like(&recorded.graph, &outputs, &ending, &entry(inst, recorded, true), &real);
         let installed = install(&measuring, &[]);
         let run = |claim_gas: u64| -> Outcome {
-            let outcome = installed
-                .chain
-                .call(installed.address, &data, &PcsOpen::attesting_all(claim_gas));
+            let outcome = installed.chain.call(installed.address, &data, &attesting(claim_gas));
             assert_eq!(
                 outcome.output.as_deref(),
                 Some(&word([1, 0, 0])[..]),

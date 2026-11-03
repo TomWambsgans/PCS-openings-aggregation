@@ -22,7 +22,7 @@ use leanvm_rec::circuit::compile::{Compiled, Inputs, Layout, pi2};
 use leanvm_rec::circuit::spec::Failure;
 use leanvm_rec::eval::{Value, evaluate};
 use leanvm_univariate::Claims;
-use leanvm_univariate::contract::{NAME, Recorded, SetupRoots, contract_iv, record_verifier};
+use leanvm_univariate::contract::{NAME, Recorded, record_verifier};
 
 const STREAM_AT: usize = 4 + 32;
 
@@ -44,7 +44,17 @@ fn vector(name: &str) -> vectors::Vector {
 }
 
 fn compiled(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 32], stream: &[u8]) -> Compiled {
-    pi2(recorded, layout, &Inputs { iv, public, stream })
+    let c = pi2(
+        recorded,
+        layout,
+        &Inputs {
+            program_iv: PROGRAM_IV,
+            public,
+            stream,
+        },
+    );
+    assert_eq!(c.pi1_iv, iv, "the circuit's seed hashes the recorded verifier's contract IV");
+    c
 }
 
 /// Keccak-f's positions a permutation, by layout (SPEC-REC.md §2.4.1, §2.6; D16v's `kd` rows as measured by
@@ -104,7 +114,7 @@ fn run(name: &str, layout: Layout, log_n: u8, fill: (f64, f64)) {
     let blake2s = vectors::blake2s_of(&v.config);
     let recorded = record_verifier(&v.shape, blake2s, Claims::Point);
     let stream = v.calldata[STREAM_AT..].to_vec();
-    let iv = contract_iv(&v.shape, &PROGRAM_IV, &SetupRoots::REFERENCE);
+    let iv = recorded.iv(&PROGRAM_IV);
     let c = compiled(&recorded, layout, iv, v.public, &stream);
     let s = &c.finished.stats;
     report(name, &format!("{layout:?}"), &c);
@@ -139,14 +149,21 @@ fn run(name: &str, layout: Layout, log_n: u8, fill: (f64, f64)) {
         Ok(()),
         "{name} {layout:?}: the circuit holds"
     );
-    // The calls on the public inputs are the vector's PCS_OPEN inputs.
+    // The calls on the public inputs are the vector's PCS_OPEN inputs in PCS_OPEN's ABI (REVIEW-REC.md M1: each
+    // root word `machine::root_word` of the hash π1's own contract passes as it is).
+    let abi: Vec<Vec<u8>> = v
+        .calls
+        .iter()
+        .map(|input| {
+            let mut x = input.clone();
+            let raw: [u8; 32] = x[..32].try_into().expect("a root");
+            x[..32].copy_from_slice(&leanvm_flock_gas::evm::machine::root_word(&raw));
+            x
+        })
+        .collect();
+    assert_eq!(circuit.call_inputs(&c.public), abi, "{name}: the calls are the vector's");
     assert_eq!(
-        circuit.call_inputs(&c.public),
-        v.calls,
-        "{name}: the calls are the vector's"
-    );
-    assert_eq!(
-        circuit.public_from_calls(v.public, &v.calls).as_ref(),
+        circuit.public_from_calls(v.public, &abi).as_ref(),
         Some(&c.public),
         "{name}: the public inputs are read back from the calls"
     );
@@ -234,6 +251,18 @@ fn run(name: &str, layout: Layout, log_n: u8, fill: (f64, f64)) {
 #[test]
 fn pi1_rec_d16v() {
     deep(|| run("main_line_rec", Layout::D16v, 24, (0.80, 0.90)));
+}
+
+/// π1-rec2 (SPEC-REC.md §12): the walk of the BLAKE2s circuit in π1's verifier, no claims on `A0`, `B0`: still `2^24`.
+#[test]
+fn pi1_rec2_d16v() {
+    deep(|| run("main_line_rec2", Layout::D16v, 24, (0.80, 0.99)));
+}
+
+/// π1-rec3 (SPEC-REC.md §12, SPEC-POINTS.md): π1-rec2 with the batch two variables a round: still `2^24`.
+#[test]
+fn pi1_rec3_d16v() {
+    deep(|| run("main_line_rec3", Layout::D16v, 24, (0.80, 0.99)));
 }
 
 #[test]

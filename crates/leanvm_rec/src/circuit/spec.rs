@@ -21,13 +21,18 @@
 //! 1. `σ` is injective. Its image is every position but the **holes**, plus the ports' tags. The holes are exactly
 //!    the ports' positions, and port `J` (`ports[J]`) pushes to `N + J`.
 //! 2. Every push to a position equals that position's pull: `w_(σ_i) = P_i` whenever `σ_i < N`.
-//! 3. Every hole's pull is `0`.
+//! 3. Every hole's pull is `0`. *Stronger than π2's PIOP (REVIEW-REC.md N1): the PIOP leaves the holes out of the
+//!    pulls (`PI2.md` §1, §4.1), so a hole's value is unconstrained there; that is harmless because no formula reads
+//!    a hole, which `pi2::circuit::Circuit::validate` checks and `Spec::of` and `Setup::new` assert (L1).*
 //! 4. Port `J`'s push is the public fingerprint `F_J = Σ_l γ^l · L_(J,l)`, the limbs `L_J` given by the public
 //!    inputs ([`Circuit::public_limbs`]). The check compares the limbs, which is the fingerprint for every `γ`.
 //!
 //! **The copy argument** this is (SPEC-REC §2.3): with `D(v, τ) = α + v + β·ω(τ)`, (1)–(4) give, in characteristic 2,
 //!
 //! `Σ_(i<N) [1/D(w_i, i) + 1/D(P_i, σ_i)] = Σ_J 1/D(F_J, N + J) + Σ_(holes h) 1/D(0, h)`.
+//!
+//! *π2's PIOP proves the pull-less form (`PI2.md` §1; REVIEW-REC.md N1), which (1), (2) and (4) give without (3):*
+//! `Σ_(i<N, i not a hole) 1/D(w_i, i) + Σ_(i<N) 1/D(P_i, σ_i) = Σ_J 1/D(F_J, N + J)`.
 //!
 //! The holes are cosets ([`Circuit::hole_cosets`]): the role-`k` positions of a block of `2^s` aligned rows starting
 //! at row `y0`, that is `ω(W·y0 + k) + span(β_log_width, …, β_(log_width + s − 1))`. Their sum has a closed form
@@ -148,13 +153,17 @@ pub enum Source {
     Element(u32),
     /// A check of `π1`'s verifier: three zero limbs.
     Zero,
+    /// Padding of the zero checks to a power of two (`PI2.md` §9, lever 3c): three zero limbs of constants, checking
+    /// nothing. The zero ports and these are the first ports, so their outside tags `N … N + 2^k` are an aligned coset,
+    /// whose public sum π2's verifier takes in closed form.
+    Pad,
 }
 
 impl Source {
     pub fn limbs(self) -> usize {
         match self {
             Source::Statement | Source::Root(_) => 4,
-            Source::Element(_) | Source::Zero => 3,
+            Source::Element(_) | Source::Zero | Source::Pad => 3,
         }
     }
 }
@@ -173,6 +182,15 @@ pub enum CallWord {
     Root(u32),
     /// An element, as `machine::element_word`: `c2, c1, c0` big-endian in bytes `8..32`.
     Element(u32),
+    /// Coordinate `coordinate` of `transcript::pair_point` of element `element` (π1-rec3's paired batch,
+    /// `SPEC-POINTS.md`: a pair's challenge `z` is the port, its two coordinates `y_0(z) = z + β_1 y_1(z)`,
+    /// `y_1(z) = z² + z` words of the calls), as an element's word.
+    Pair { element: u32, coordinate: u8 },
+}
+
+/// `CallWord::Pair`'s word: coordinate `k` of `pair_point(z)`.
+pub fn pair_word(z: E, k: u8) -> [u8; 32] {
+    element_word(leanvm_flock_gas::transcript::pair_point(z)[k as usize])
 }
 
 /// `π2`'s public inputs.
@@ -329,7 +347,7 @@ impl Circuit {
                     let x = public.elements[i as usize];
                     vec![x.c0, x.c1, x.c2]
                 }
-                Source::Zero => vec![0; 3],
+                Source::Zero | Source::Pad => vec![0; 3],
             })
             .collect()
     }
@@ -353,6 +371,7 @@ impl Circuit {
                         CallWord::Const(bytes) => bytes,
                         CallWord::Root(i) => public.roots[i as usize],
                         CallWord::Element(i) => element_word(public.elements[i as usize]),
+                        CallWord::Pair { element, coordinate } => pair_word(public.elements[element as usize], coordinate),
                     })
                     .collect()
             })
@@ -367,9 +386,11 @@ impl Circuit {
             _ => None,
         });
         let elements_len = self.calls.iter().flatten().filter_map(|w| match w {
-            CallWord::Element(i) => Some(*i as usize + 1),
+            CallWord::Element(i) | CallWord::Pair { element: i, .. } => Some(*i as usize + 1),
             _ => None,
         });
+        // A pair's coordinates as the calls give them, then its element `z = y_0 + β_1 y_1`.
+        let mut pair_coordinates: std::collections::BTreeMap<u32, [Option<E>; 2]> = Default::default();
         let mut roots: Vec<Option<[u8; 32]>> = vec![None; roots_len.max().unwrap_or(0)];
         let mut elements: Vec<Option<E>> = vec![None; elements_len.max().unwrap_or(0)];
         if inputs.len() != self.calls.len() {
@@ -398,7 +419,30 @@ impl Circuit {
                             _ => elements[i as usize] = Some(x),
                         }
                     }
+                    CallWord::Pair { element, coordinate } => {
+                        let l = word_limbs(bytes);
+                        if l[3] != 0 {
+                            return None;
+                        }
+                        let y = E::new(l[0], l[1], l[2]);
+                        let slot = &mut pair_coordinates.entry(element).or_default()[coordinate as usize];
+                        match slot {
+                            Some(v) if *v != y => return None,
+                            _ => *slot = Some(y),
+                        }
+                    }
                 }
+            }
+        }
+        for (element, [y0, y1]) in pair_coordinates {
+            let (y0, y1) = (y0?, y1?);
+            let z = y0 + leanvm_flock_gas::transcript::cantor_beta1() * y1;
+            if leanvm_flock_gas::transcript::pair_point(z) != [y0, y1] {
+                return None;
+            }
+            match elements[element as usize] {
+                Some(e) if e != z => return None,
+                _ => elements[element as usize] = Some(z),
             }
         }
         Some(PublicInputs {

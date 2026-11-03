@@ -33,6 +33,8 @@ pub enum Node {
     Hash(u32, u32, u32),
     /// The low 192 bits of a state: a challenge.
     Low(u32),
+    /// A hash's low 160 bits: a narrow challenge (`transcript::Channel::sample_narrow`).
+    Narrow(u32),
     /// `(v >> shift) mod 2^width` of an integer `v` (an [`Node::Input`] of at most 8 bytes, or bits of one).
     Bits(u32, u8, u8),
     /// The ring switch's weight at a point (`crate::evm::kernel`): kernel `.0` of [`Graph::kernels`], `.1`
@@ -228,6 +230,13 @@ impl Channel<Sym> for Recorder {
         self.state = Sym::new(Node::Hash(self.state.0, self.absorbed, self.cursor));
         self.absorbed = self.cursor;
         Sym::new(Node::Low(self.state.0))
+    }
+
+    fn sample_narrow(&mut self) -> Sym {
+        let _phase = crate::scalar::enter(TRANSCRIPT);
+        self.state = Sym::new(Node::Hash(self.state.0, self.absorbed, self.cursor));
+        self.absorbed = self.cursor;
+        Sym::new(Node::Narrow(self.state.0))
     }
 
     fn require_zero(&mut self, value: Sym, error: VerifierError) -> Result<(), VerifierError> {
