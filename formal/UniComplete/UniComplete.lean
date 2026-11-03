@@ -18,3 +18,4 @@ import UniComplete.VerifierHDuplex
 import UniComplete.VerifierHCost
 import UniComplete.Reference
 import UniComplete.VerifierAccept
+import UniComplete.Mapping
