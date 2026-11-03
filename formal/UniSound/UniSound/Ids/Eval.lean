@@ -2572,6 +2572,28 @@ theorem hB_pos (D : Deployment) : 1 ≤ D.shape.heights.getD opBlake2s 0 := by
   rw [List.getD_eq_getElem?_getD]
   omega
 
+/-! ## The tables' flushes and the heap's depth, proved -/
+
+set_option maxRecDepth 100000 in
+/-- **The tables' flushes are as `linearise` reads them** (the kernel checks the six tables' monomials,
+not their coefficients). -/
+theorem tablesLin : TablesLin := by
+  unfold TablesLin
+  decide +kernel
+
+/-- **The bytecode's block fits the heap**, at every shape: `HeapLayout.new`'s depth `⌈log₂ Σ 2^r⌉ + 1`
+is above `lb` (the sum, a permutation of the used blocks', has `2^lb`). -/
+theorem lbFits (S : Shape) : LbFits S := by
+  unfold LbFits Shape.heap HeapLayout.new
+  dsimp only
+  rw [List.Perm.sum_eq (List.Perm.map _ (List.mergeSort_perm _ _))]
+  have h1 : 2 ^ S.logBytecode ≤ ((([(Leaves.memory, S.logMemory), (Leaves.bytecode, S.logBytecode)] ++
+      List.map (fun t => (Leaves.table t, S.heights.getD t 0)) (List.range S.heights.length))).map
+        fun x ↦ 2 ^ x.2).sum :=
+    List.le_sum_of_mem (List.mem_map.mpr ⟨(.bytecode, S.logBytecode), by simp, rfl⟩)
+  have h3 := (Nat.pow_le_pow_iff_right (by norm_num)).mp (h1.trans (le_pow_log2Ceil _))
+  omega
+
 end UniSound.Ids.Eval
 
 namespace UniSound.Ids
@@ -2605,5 +2627,15 @@ theorem diffsEval (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hL : TablesL
 /-- info: 'UniSound.Ids.diffsEval' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms diffsEval
+
+/-- **`DiffsEvalP`** from the heap's layout (`HeapGood`) and the quotients' chunks within the digits
+(`ChunksFit`). -/
+theorem diffsEval_of (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hC : ChunksFit D.shape)
+    (hH : HeapGood D.shape) : DiffsEvalP D Fl :=
+  diffsEval D Fl tablesLin hC (lbFits D.shape) hH
+
+/-- info: 'UniSound.Ids.diffsEval_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms diffsEval_of
 
 end UniSound.Ids
