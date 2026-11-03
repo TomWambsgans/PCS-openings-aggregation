@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod circuit;
 pub mod count;
 pub mod eval;
 pub mod fs;
