@@ -199,7 +199,10 @@ whose five layout words name `24 … 28` variables (`UniShapes`; the reference s
 `27, 27, 24, 28, 28`), from the chain's `< 2^10` queries, every round's `≤ 2^30` scalars, and one
 hypothesis, the coupling `UniGameLe`: the univariate experiment is dominated by the composed game
 (`Compose.rpmGameS` of the setup's three trees, `Compose.ListChainU`'s chain over the univariate
-encoding, the five openings), the event read through `uniExtractor`'s candidates. -/
+encoding, the five openings), the event read through `uniExtractor`'s candidates. That form, the IV
+in the adversary, is superseded by `FsGame.lean`'s `fsLayer_of_gameV` (the IV in the verifier,
+`UniGameLeV`), and `UniGameLeV` is proved from bridge facts in `FsCouple.lean`, `FsSetup.lean`,
+`FsExtract.lean`, `FsVerifier.lean`. -/
 def FsLayer (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ) (C : UniCode D Fl nV V) :
     Prop :=
   ∀ (R : RbrPiop (uniRounds Fl.prog.rounds nV V) USt Stk) (e : ℝ≥0∞), (∀ j, R.err j ≤ e) →

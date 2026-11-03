@@ -57,6 +57,11 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `FsCost.lean` | `uniNumbers_of`: the composed verifier's calls of `π` below `2^80` (every query short), from the chain's `< 2^10` queries and every round's `≤ 2^30` scalars; `fsLayer_of_game'`. |
 | `FinalFs.lean` | **`uniKnowledgeSoundness_game`**: the end theorem with `FsLayer` replaced by `UniShapes`, `UniNumbers`, `UniGameLe`. |
 | `FsProof.lean` | **`fsLayer_of_game`**: `FsLayer` from the game bridge (`UniGameLe`) and the numbers (`UniNumbers`), through `Compose.knowledgeSoundness_listChainU_closed_rpm`: the setup's three trees, the openings' matches, the last link, the bound. |
+| `FsGame.lean` | **`fsLayer_of_gameV`**: `FsLayer` from the coupling **`UniGameLeV`** (the contract's IV computed by the verifier, `uVerIv`, as the univariate experiment computes it; `FsProof.lean`'s `UniGameLe`, the IV in the adversary, is not provable outcome by outcome), `UniNumbers` and `UniIv`: `rpm_le_kcS` with that verifier, the IV moved into the two-oracle adversary (`expU_ivAdv`; its log entry of `programIv.length + 280` bytes leaves `C1`'s word, `extractorK_append`), the two-oracle theorem, the bound (`le_uniBoundV`). |
+| `FsCouple.lean` | **`uniGameLeV_of`**: `UniGameLeV` from three bridge facts, `UniSetupBridge`, `UniVerifierBridge`, `UniExtractBridge` (the common prefix, the IV, `step_le`), as `formal/EndToEnd/Soundness/Final.lean`; **`fsLayer_of_bridges`**. |
+| `FsWalk.lean` | The verifier bridge's interface: `uLen`, `uAccB`, **`UniWalk`** (on a stream of the main line's length the walk is the chain), **`UniWalkReject`**, `UniOutRoots` (proved for `uniCodeAt`). |
+| `FsSetup.lean` | **`uniSetupBridge_of_small`**: `UniSetupBridge` under `LayoutVarsSmall` (false without: a layout word's byte reads the setup's variables mod `256`). |
+| `FsExtract.lean` | **`uniExtractBridge`**: `UniExtractBridge` under `LayoutVarsSmall` (the Statement's word is mumbai's committed leaves, the two Merkle words agree, the list decoder's list holds the candidate), as `Soundness/Extract.lean`. |
 | `FsVerifier.lean` | **`uniVerifierBridge_of_walk`**: the verifier bridge `UniVerifierBridge` (`FsCouple.lean`) from the walk's two halves (`UniWalk`, `UniWalkReject`, `FsWalk.lean`) and `UniOutRoots`: the same chain on both sides, then the Statement's five `PCS_OPEN` calls as F2's early-stop openings (`Bridge.openingWith_eq_ourVerifier'`) below the composed ones, acceptance giving `uniCheck`. |
 
 ## What is proved, what is assumed
@@ -97,14 +102,19 @@ the bound in bits (`uniBound_le_bits`).
    `flockSoundInstance`: `FlockSoundUni/PendingShape.lean`'s `flockPendingShaped`). The `λ³` term
    is `pendingTerminalLink` (`PendingLink.lean`). `uniKnowledgeSoundness_code` (and, with Flock's
    instance, `FlockSound.Uni.uniKnowledgeSoundness_flock`) is the end theorem with both in place.
-6. `hFs : FsLayer …` — the Fiat–Shamir layer, **proved** from `UniGameLe` and `UniNumbers`
-   (`fsLayer_of_game`, `FsProof.lean`): `Compose.ListChainU`'s chain over the univariate encoding,
-   the random-permutation transfer for a setup of three trees (`Compose.rpm_le_kcS`), the five
-   openings' doom terms by F2, the decoders, the last link. What remains assumed is the coupling
-   `UniGameLe` (the univariate experiment is dominated by the composed game: the setup's trees are
-   `setupTreesWith`'s, the contract's IV recomputed by the wrapped adversary, the verifier with its
-   early stops below the composed one, `uniExtractor` listing the decoders' candidates) and the
-   numbers (the chain's `< 2^10` queries, the verifier's `< 2^80` calls of `π`).
+6. `hFs : FsLayer …` — the Fiat–Shamir layer, **proved** (`fsLayer_of_gameV`, `FsGame.lean`):
+   `Compose.ListChainU`'s chain over the univariate encoding, the random-permutation transfer for a
+   setup of three trees (`Compose.rpm_le_kcS`) with the contract's IV in the verifier, the five
+   openings' doom terms by F2, the decoders, the last link; from the numbers (`UniNumbers`, from the
+   chain's `< 2^10` queries and rounds of `≤ 2^30` scalars), the program IV's length (`UniIv`) and
+   the coupling `UniGameLeV`, itself **proved** from three bridge facts (`uniGameLeV_of`,
+   `FsCouple.lean`): the setup's (`uniSetupBridge_of_small`) and the extractor's
+   (`uniExtractBridge`), both under `LayoutVarsSmall`, and the verifier's (`uniVerifierBridge_of_walk`
+   from the walk's `UniWalk`, `UniWalkReject`, `FsWalk.lean`). The reference deployment's numbers
+   (`UniShapes`, `LayoutVarsSmall`, `UniIv`, `κ = 18`, the chain's `86` queries) are
+   `formal/FlockSound/FlockSoundUni/GameNumbers.lean`'s; `FlockSoundUni/Game.lean` assembles the end
+   theorems (`uniKnowledgeSoundness_bridges`, `uniKnowledgeSoundness_reference_game`,
+   `uniKnowledgeSoundness_reference_walk`).
 7. Numbers: `4 N + ncv ≤ 2^32`, Flock's rounds' errors at most `2^32 / |E|`, `degSum ≤ 2^32`,
    `nRel + 2 ≤ 2^32`.
 
