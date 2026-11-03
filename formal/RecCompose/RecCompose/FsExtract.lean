@@ -158,6 +158,10 @@ theorem pi2ExtractBridge_of (D : RecDeployment) (hD : RecDeployment.Real D) (t :
   subst hμ
   exact ⟨st, List.mem_append_right _ hst2, rfl⟩
 
+/-- **EXTRACTOR READING** (`Pi2ExtractBridge`) at the real deployment. -/
+theorem pi2ExtractBridge (D : RecDeployment) (hD : RecDeployment.Real D) : Pi2ExtractBridge D :=
+  fun t T z q hsz hq => pi2ExtractBridge_of D hD t T z q hsz hq
+
 end RecCompose
 
 /-- info: 'RecCompose.pi2ExtractBridge_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/

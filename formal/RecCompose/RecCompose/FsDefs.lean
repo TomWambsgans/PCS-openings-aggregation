@@ -379,30 +379,43 @@ def sigmaBytes (c : Pi2Circuit) : List UInt8 := (List.range c.n).flatMap fun i �
 /-- κ's hash input: eight bytes each. -/
 def kappaBytes (c : Pi2Circuit) : List UInt8 := (List.range c.n).flatMap fun i ↦ le64 (c.kappa i).lane.toNat
 
-/-- **π2's IV** as the composed verifier computes it: σ's and κ's hashes, the circuit's digest, then the IV's input
-(`prover::iv`), four Keccak-256 calls. -/
-def p2IvKC (D : RecDeployment) (π : P2Pf) : OracleComp KeccakCalls Bytes32 :=
-  let c := D.circuitAt (p2Roots π).pi1
-  hash256 (sigmaBytes c) >>= fun sg =>
-    hash256 (kappaBytes c) >>= fun kp =>
-      hash256 (c.circuit.encoding ++ sg.toList ++ kp.toList) >>= fun d =>
-        hash256 (ivTag ++ D.pi1IvAt (p2Roots π).pi1 ++ digestBytes (p2Roots π).pi2 ++ d.toList ++
-          (RecStatement.layoutWords cc.logN).1 ++ (RecStatement.layoutWords cc.logN).2.1 ++
-          (RecStatement.layoutWords cc.logN).2.2)
+/-- The circuit's digest's input (`digestWith`): the encoding, σ's and κ's hashes. -/
+def digIn (c : Pi2Circuit) (sg kp : Bytes32) : List UInt8 := c.circuit.encoding ++ sg.toList ++ kp.toList
+
+/-- π2's IV's input (`prover::iv`): the tag, π1's contract IV, π2's setup root, the circuit's digest, the layout words. -/
+def ivIn (D : RecDeployment) (roots : RecSetupRoots) (d : Bytes32) : List UInt8 :=
+  ivTag ++ D.pi1IvAt roots.pi1 ++ digestBytes roots.pi2 ++ d.toList ++
+    (RecStatement.layoutWords cc.logN).1 ++ (RecStatement.layoutWords cc.logN).2.1 ++
+    (RecStatement.layoutWords cc.logN).2.2
+
+/-- **π2's IV** as the composed verifier computes it, with its intermediate answers: σ's and κ's hashes, the circuit's
+digest, then the IV (`prover::iv`), four Keccak-256 calls. -/
+def p2IvKC4 (D : RecDeployment) (π : P2Pf) : OracleComp KeccakCalls (Bytes32 × Bytes32 × Bytes32 × Bytes32) :=
+  hash256 (sigmaBytes (D.circuitAt (p2Roots π).pi1)) >>= fun sg =>
+    hash256 (kappaBytes (D.circuitAt (p2Roots π).pi1)) >>= fun kp =>
+      hash256 (digIn (D.circuitAt (p2Roots π).pi1) sg kp) >>= fun d =>
+        hash256 (ivIn D (p2Roots π) d) >>= fun iv => pure (sg, kp, d, iv)
+
+/-- The four IV calls' log (input, answer), from their answers. -/
+def ivLog (D : RecDeployment) (π : P2Pf) (x : Bytes32 × Bytes32 × Bytes32 × Bytes32) : Transcript :=
+  [(sigmaBytes (D.circuitAt (p2Roots π).pi1), x.1), (kappaBytes (D.circuitAt (p2Roots π).pi1), x.2.1),
+    (digIn (D.circuitAt (p2Roots π).pi1) x.1 x.2.1, x.2.2.1), (ivIn D (p2Roots π) x.2.2.1, x.2.2.2)]
 
 /-- **The composed verifier with the IV**: π2's IV, then the chain and the six openings on the proof carrying it. -/
 noncomputable def p2Ver (D : RecDeployment) (π : P2Pf) :
-    OracleComp KeccakCalls (Bytes32 × (List (List E) × List Bool)) :=
-  p2IvKC D π >>= fun iv => (fun v => (iv, v)) <$> verU pi2Spec p2View (opsRun p2View (p2Ops D)) (setIv2 iv π)
+    OracleComp KeccakCalls ((Bytes32 × Bytes32 × Bytes32 × Bytes32) × (List (List E) × List Bool)) :=
+  p2IvKC4 D π >>= fun x => (fun v => (x, v)) <$>
+    verU pi2Spec p2View (opsRun p2View (p2Ops D)) (setIv2 x.2.2.2 π)
 
 /-- The outcome with the IV written in the proof. -/
-def ivOut2 (z : P2Pf × (Bytes32 × (List (List E) × List Bool))) : P2Pf × (List (List E) × List Bool) :=
-  (setIv2 z.2.1 z.1, z.2.2)
+def ivOut2 (z : P2Pf × ((Bytes32 × Bytes32 × Bytes32 × Bytes32) × (List (List E) × List Bool))) :
+    P2Pf × (List (List E) × List Bool) :=
+  (setIv2 z.2.1.2.2.2 z.1, z.2.2)
 
 /-- **The two-oracle adversary with the IV**: `A₀`, then the IV of the proof the setup fixes. -/
 def p2IvAdv (D : RecDeployment) (A₀ : SOut → OracleComp KeccakCalls P2Pf) (s : SOut) :
     OracleComp KeccakCalls P2Pf :=
-  A₀ s >>= fun π => (fun iv => setIv2 iv π) <$> p2IvKC D (p2Fix s π)
+  A₀ s >>= fun π => (fun x => setIv2 x.2.2.2 π) <$> p2IvKC4 D (p2Fix s π)
 
 /-- **The adversary of the composed game**: π2's adversary given the setup's roots, its input and proof. -/
 def p2Adv (A : RecAdversary) (s : SOut) : OracleComp Common.RandomPermutationOracles P2Pf :=
@@ -471,12 +484,13 @@ def Pi2WalkReject : Prop :=
     ∀ o ∈ support (runWith Common.queryPermutation (Spec.of cc) π.iv.toList π.input.toList π.proof.stream),
       o.accepts = false
 
-/-- **EXTRACTOR READING**: a candidate of `W`'s root that the composed extractor reads off the setup's log and a
-permutation transcript is a stack of π2's extractor's list (`wCandidates`) on the setup's evaluations and that
-transcript. -/
+/-- **EXTRACTOR READING**: on a stream holding `W`'s root, a candidate of `W`'s root that the composed extractor reads
+off the setup's log and a permutation transcript is a stack of π2's extractor's list (`wCandidates`) on the setup's
+evaluations and that transcript. (On a shorter stream the composed view pads the root with zeros in place, π2's
+extractor's `streamRoot` reads the shorter slice: the two roots may differ.) -/
 def Pi2ExtractBridge (D : RecDeployment) : Prop :=
   ∀ (t : RecSetupTrees) (T : Common.OracleQueryLog) (z : P2Pf × (List (List E) × List Bool)) (q : Stk),
-    z.1.roots = rootsB2 t →
+    pLen + 32 ≤ z.1.proof.stream.size →
     some q ∈ extractorK (fun i => (p2Tc i).commit) p2View (z, setupTr2 t ++ evalTr (permutationQueries T)) →
       ∃ w ∈ wCandidates D t.roots (preimagesOf t.evaluations T) z.1.proof, stkOf w = q
 
