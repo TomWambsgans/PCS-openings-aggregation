@@ -3,6 +3,7 @@
 -- `uniKnowledgeSoundness_flock`.
 import FlockSoundUni.PendingShape
 import UniSound.FsWalk
+import UniSound.FsSetup
 
 /-!
 # The end theorem with the Fiat–Shamir layer reduced to its bridge facts
@@ -10,8 +11,8 @@ import UniSound.FsWalk
 **`uniKnowledgeSoundness_bridges`**: `uniKnowledgeSoundness_flock` with its hypothesis
 `hFs : FsLayer …` replaced by what `UniSound.fsLayer_of_bridges` proves it from: the deployment's
 stacks (`UniShapes`), its program IV (`UniIv`), the chain's numbers (`< 2^10` queries, rounds of
-`≤ 2^30` scalars), and the three bridge facts of the coupling (`UniSetupBridge`,
-`UniVerifierBridge`, `UniExtractBridge`).
+`≤ 2^30` scalars), and the coupling's bridge facts: the setup's (`UniSetupBridge`) proved
+(`uniSetupBridge_of_small`, from `LayoutVarsSmall`), `UniVerifierBridge`, `UniExtractBridge`.
 -/
 
 namespace FlockSound.Uni
@@ -34,7 +35,6 @@ theorem uniKnowledgeSoundness_bridges {D : Deployment} (κ : ℕ)
     (hI : UniIv D)
     (hnQ : (uSpec (flockSoundInstance κ) valsCount (varsOf (layoutsOf D.shape))).K.nQ ≤ 2 ^ 10)
     (hnv : ∀ r ∈ uRounds (flockSoundInstance κ) valsCount (varsOf (layoutsOf D.shape)), r.nv ≤ 2 ^ 30)
-    (hS : UniSetupBridge D hs)
     (hVer : UniVerifierBridge D (flockSoundInstance κ) J.nV J.V
       (uniCodeAt D (flockSoundInstance κ) hκ J.nV J.V hnV hV) hs)
     (hX : UniExtractBridge D (flockSoundInstance κ) J.nV J.V hs)
@@ -51,7 +51,7 @@ theorem uniKnowledgeSoundness_bridges {D : Deployment} (κ : ℕ)
     rw [hnV, hV]
     exact hnv
   exact uniKnowledgeSoundness_flock κ hκ B J hnV hV hprod htarget hW hsmall
-    (fsLayer_of_bridges D (flockSoundInstance κ) J.nV J.V _ hs hnQ' hnv' hI hS hVer hX) hB hFl hdeg
+    (fsLayer_of_bridges D (flockSoundInstance κ) J.nV J.V _ hs hnQ' hnv' hI (uniSetupBridge_of_small D hs hsmall) hVer hX) hB hFl hdeg
     hrel
 
 end FlockSound.Uni
