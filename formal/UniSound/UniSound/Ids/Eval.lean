@@ -1545,6 +1545,37 @@ def ChunksFit (S : Shape) : Prop :=
   (∀ e ∈ chunks (S.constraintDegree + 1), e < nDigits S) ∧
     ∀ b ∈ S.heap.blocks, ∀ d, Shape.leafDegree b = some d → ∀ e ∈ chunks (d + 1), e < nDigits S
 
+/-- **The bytecode's variables fit the heap's** (`HeapLayout.new` lays a block of `2^lb` leaves among
+`2^(h−1)`), so the bytecode's claims read only digits. -/
+def LbFits (S : Shape) : Prop := S.logBytecode ≤ S.heap.h
+
+/-- A heap block's mixed point at `t`, as `heapRelations` states it. -/
+def mixedOf (S : Shape) (w : List E) (b : Block) : List E :=
+  (List.range S.heap.h).map fun l ↦
+    if l < b.r then w.getD l 0 + pointE (b.position >>> l) else pointE (b.position >>> l)
+
+theorem blockRel_commitment (S : Shape) (active : List E) (parts : List TablePart)
+    (mp mq bp bq : E) (w : List E) (x : Block × ℕ) :
+    (blockRel S active parts mp mq bp bq w x).commitment = .c2 := by
+  unfold blockRel
+  dsimp only
+  split <;> rfl
+
+theorem blockRel_heap (S : Shape) (active : List E) (parts : List TablePart)
+    (mp mq bp bq : E) (w : List E) (x : Block × ℕ) :
+    ∃ c, term .heap (mixedOf S w x.1) c ∈ (blockRel S active parts mp mq bp bq w x).terms := by
+  unfold blockRel mixedOf
+  dsimp only
+  split <;> exact ⟨_, List.mem_cons_self ..⟩
+
+theorem block_r_lt (S : Shape) (hH : HeapGood S) (b : Block) (hb : b ∈ S.heap.blocks) : b.r < S.heap.h := by
+  obtain ⟨h1, -, hsum, -⟩ := hH
+  have hle : 2 ^ b.r ≤ 2 ^ (S.heap.h - 1) := by
+    rw [← hsum]
+    exact List.le_sum_of_mem (List.mem_map.mpr ⟨b, hb, rfl⟩)
+  have := (Nat.pow_le_pow_iff_right (by norm_num)).mp hle
+  omega
+
 section Ctx
 
 variable (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (s : USt) (c1 : Stk) (ch : List E) (fd : Done)
@@ -2189,6 +2220,81 @@ theorem wP_eval (hL : TablesLin) (hC : ChunksFit D.shape) (h2 : 1 ≤ D.shape.he
   rw [e1, e2] at hc
   linear_combination hc + (inpOf D Fl s ch fd t vals).w.getD D.shape.constraintVars 0 * hQ -
     (inpOf D Fl s ch fd t vals).constraintValue * (inpOf D Fl s ch fd t vals).w.getD D.shape.constraintVars 0 * two
+
+/-! ### The heap's blocks -/
+
+theorem block_mem (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) :
+    blockRel D.shape (inpOf D Fl s ch fd t vals).active (inpOf D Fl s ch fd t vals).tp.1
+      (inpOf D Fl s ch fd t vals).memoryPull (inpOf D Fl s ch fd t vals).memoryPush
+      (inpOf D Fl s ch fd t vals).bytecodePull (inpOf D Fl s ch fd t vals).bytecodePush
+      (inpOf D Fl s ch fd t vals).w (b, i) ∈ relsAt D Fl s ch fd t vals :=
+  mem_rels_heap D Fl s ch fd t vals (by
+    rw [heap_fst]
+    exact List.mem_append_left _ (List.mem_append_right _ (List.mem_map.mpr ⟨(b, i), hbi, rfl⟩)))
+
+theorem block_holds (hold : HoldAll D Fl s c1 ch fd c2 t vals) (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) :
+    RelHolds (evOf D Fl s c1 ch fd c2 t vals) (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) := by
+  refine hold _ (block_mem D Fl s ch fd t vals b i hbi) .c2 fun tm htm ↦ ?_
+  have hmem : blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i) ∈
+      (inpOf D Fl s ch fd t vals).heap.1 := by
+    rw [heap_fst]
+    exact List.mem_append_left _ (List.mem_append_right _ (List.mem_map.mpr ⟨(b, i), hbi, rfl⟩))
+  obtain ⟨h1, h2⟩ := heap_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ hmem tm htm
+  exact ⟨h2, h1⟩
+
+/-- **A block's mixed point**: the heap's polynomial at the restriction's point. -/
+theorem ev_mixed (hH : HeapGood D.shape) (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) :
+    evOf D Fl s c1 ch fd c2 t vals .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b) =
+      (c2P D.shape c2 .heap (mixP b)).eval t := by
+  have hb := block_r_lt D.shape hH b (List.of_mem_zip hbi).1
+  have hN := h_lt_nDigits D
+  obtain ⟨c, hc⟩ := blockRel_heap D.shape (inpOf D Fl s ch fd t vals).active
+    (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+    (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+    (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)
+  refine ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl _ (mixP b)
+    ⟨_, block_mem D Fl s ch fd t vals b i hbi, blockRel_commitment _ _ _ _ _ _ _ _ _, _, hc, rfl⟩
+    (by simp [mixedOf, c2Vars]) (fun l hl ↦ ?_)
+  change l < D.shape.heap.h at hl
+  unfold mixedOf
+  rw [getD_map_range _ hl]
+  unfold mixP
+  split_ifs with h
+  · rw [Polynomial.eval_add, Polynomial.eval_C, w_getD D Fl s ch fd t vals l (by omega)]
+  · rw [Polynomial.eval_C]
+
+/-- **A leaf quotient's chunks** at the digits: their polynomials at `t`. -/
+theorem ev_leafQ (hC : ChunksFit D.shape) (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) (d : ℕ)
+    (hd : Shape.leafDegree b = some d) (sc : E)
+    (hsub : ∀ tm ∈ qTerms (Column.leafQuotient i) (inpOf D Fl s ch fd t vals).w (chunks (d + 1)) 0 sc,
+      tm ∈ (blockRel D.shape (inpOf D Fl s ch fd t vals).active (inpOf D Fl s ch fd t vals).tp.1
+        (inpOf D Fl s ch fd t vals).memoryPull (inpOf D Fl s ch fd t vals).memoryPush
+        (inpOf D Fl s ch fd t vals).bytecodePull (inpOf D Fl s ch fd t vals).bytecodePush
+        (inpOf D Fl s ch fd t vals).w (b, i)).terms) :
+    ∀ c < (chunks (d + 1)).length, evOf D Fl s c1 ch fd c2 t vals (.leafQuotient i c)
+        ((inpOf D Fl s ch fd t vals).w.take ((chunks (d + 1)).getD c 0)) =
+      (c2P D.shape c2 (.leafQuotient i c) digitP).eval t := by
+  intro c hc
+  have hget : D.shape.heap.blocks.getD i default = b := (mem_zip_range_iff _ default _ hbi).2
+  have he := hC.2 b (List.of_mem_zip hbi).1 d hd _ (getD_mem' (d := 0) hc)
+  obtain ⟨tm, htm, hpt⟩ := qTerms_pt (Column.leafQuotient i) (inpOf D Fl s ch fd t vals).w _ 0 sc c hc
+  have hv : c2Vars D.shape (.leafQuotient i c) = (chunks (d + 1)).getD c 0 := by
+    simp only [c2Vars, hget, hd]
+  refine ev_c2 D Fl s c1 ch fd c2 t vals _ rfl _ digitP
+    ⟨_, block_mem D Fl s ch fd t vals b i hbi, blockRel_commitment _ _ _ _ _ _ _ _ _, tm, hsub tm htm, hpt⟩
+    (by rw [hv, wtake_length D Fl s ch fd t vals _ he.le]) (fun l hl ↦ ?_)
+  rw [hv] at hl
+  exact (wtake_getD D Fl s ch fd t vals _ he.le l hl).symm
 
 end Ctx
 
