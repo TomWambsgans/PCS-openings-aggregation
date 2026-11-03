@@ -232,6 +232,109 @@ theorem inv_narrow (hc : c.Checked r) (G : c.ctx.Good w) {id : ℕ} (hid : id < 
   simp only [Graph.step, Value.toE, narrowOf, elemOfNats]
   rw [beNat_slice_mod _ hlen]
 
+/-! ## `E` units -/
+
+theorem cells_lookup_A (base : ℕ) (A B : List ℕ) (i : ℕ) (hi : i < 3) :
+    ((List.range 3).map (fun i => (base + i, A.getD i NONE)) ++
+      (List.range 3).map (fun i => (base + 3 + i, B.getD i NONE))).lookup (base + i) = some (A.getD i NONE) := by
+  rw [List.lookup_append, Ctx.lookup_range_map (fun i => A.getD i NONE) base 3 i hi]; rfl
+
+theorem cells_lookup_B (base : ℕ) (A B : List ℕ) (i : ℕ) (hi : i < 3) :
+    ((List.range 3).map (fun i => (base + i, A.getD i NONE)) ++
+      (List.range 3).map (fun i => (base + 3 + i, B.getD i NONE))).lookup (base + 3 + i) = some (B.getD i NONE) := by
+  rw [List.lookup_append, Ctx.lookup_range_map_none _ base 3 _ (Or.inr (by omega)),
+    Ctx.lookup_range_map (fun i => B.getD i NONE) (base + 3) 3 i hi]; rfl
+
+/-- The three limbs' words as an element. -/
+def limbsE (c : Compiled) (w : ℕ → K) (l : List ℕ) : F192 :=
+  F192.ofLimbs (c.ctx.val w (l.getD 0 NONE)) (c.ctx.val w (l.getD 1 NONE)) (c.ctx.val w (l.getD 2 NONE))
+
+theorem toList_getD (a : Array ℕ) (i : ℕ) : a.toList.getD i NONE = a.getD i NONE := by
+  simp [Array.getD_eq_getD_getElem?, List.getD_eq_getElem?_getD]
+
+/-- **An `E` unit's limbs are the sum or the product of its cells' elements.** -/
+theorem unit_val (G : c.ctx.Good w) {base : ℕ} {A B : List ℕ} {out : Array ℕ} (op : Op)
+    (h : ∀ l < 3, c.ctx.gate (out.getD l NONE) (Ctx.unitPolyL op base l) 0
+      ((List.range 3).map (fun i => (base + i, A.getD i NONE)) ++
+        (List.range 3).map (fun i => (base + 3 + i, B.getD i NONE))) = true) :
+    c.limbsE w out.toList = if op = .add then c.limbsE w A + c.limbsE w B else c.limbsE w A * c.limbsE w B := by
+  set cells := (List.range 3).map (fun i => (base + i, A.getD i NONE)) ++
+    (List.range 3).map (fun i => (base + 3 + i, B.getD i NONE)) with hcells
+  set f := c.ctx.cellVal w cells
+  have fa : ∀ i < 3, f (base + i) = c.ctx.val w (A.getD i NONE) := fun i hi => by
+    simp only [f, Ctx.cellVal, hcells, cells_lookup_A base A B i hi, Option.getD_some]
+  have fb : ∀ i < 3, f (base + 3 + i) = c.ctx.val w (B.getD i NONE) := fun i hi => by
+    simp only [f, Ctx.cellVal, hcells, cells_lookup_B base A B i hi, Option.getD_some]
+  have hv : ∀ l < 3, c.ctx.val w (out.getD l NONE) = (Ctx.unitPolyL op base l).eval f := fun l hl => by
+    rw [G.gate (h l hl), add_zero]
+  unfold limbsE
+  rw [toList_getD, toList_getD, toList_getD, hv 0 (by norm_num), hv 1 (by norm_num), hv 2 (by norm_num)]
+  have a0 : f base = c.ctx.val w (A.getD 0 NONE) := fa 0 (by norm_num)
+  have a1 := fa 1 (by norm_num)
+  have a2 := fa 2 (by norm_num)
+  have b0 : f (base + 3) = c.ctx.val w (B.getD 0 NONE) := fb 0 (by norm_num)
+  have b1 : f (base + 4) = c.ctx.val w (B.getD 1 NONE) := by
+    have := fb 1 (by norm_num); rwa [show base + 3 + 1 = base + 4 by omega] at this
+  have b2 : f (base + 5) = c.ctx.val w (B.getD 2 NONE) := by
+    have := fb 2 (by norm_num); rwa [show base + 3 + 2 = base + 5 by omega] at this
+  cases op with
+  | add =>
+    rw [Ctx.eval_unit_add, Ctx.eval_unit_add, Ctx.eval_unit_add, fa 0 (by norm_num), fb 0 (by norm_num), a1,
+      fb 1 (by norm_num), a2, fb 2 (by norm_num), if_pos rfl, F192.ofLimbs_add_ofLimbs]
+  | mul =>
+    obtain ⟨m0, m1, m2⟩ := Ctx.eval_unit_mul base f
+    rw [m0, m1, m2, a0, a1, a2, b0, b1, b2, if_neg (by decide), F192.ofLimbs_mul_ofLimbs]
+  | square =>
+    obtain ⟨m0, m1, m2⟩ := Ctx.eval_unit_mul base f
+    simp only [Ctx.unitPolyL] at m0 m1 m2 ⊢
+    rw [m0, m1, m2, a0, a1, a2, b0, b1, b2, if_neg (by decide), F192.ofLimbs_mul_ofLimbs]
+
+/-- An `E` operation (a square ignores its second operand). -/
+def opE : Op → F192 → F192 → F192
+  | .add, a, b => a + b
+  | .mul, a, b => a * b
+  | .square, a, _ => a * a
+
+/-- A unit's operands, either order, carry the operands' elements. -/
+theorem arith_try (G : c.ctx.Good w) (op : Op) {out lx ly : Array ℕ} {base : ℕ} {A B : List ℕ}
+    (hg : ∀ l < 3, c.ctx.gate (out.getD l NONE) (Ctx.unitPolyL (if (op == .add) = true then .add else .mul) base l) 0
+      ((List.range 3).map (fun i => (base + i, A.getD i NONE)) ++
+        (List.range 3).map (fun i => (base + 3 + i, B.getD i NONE))) = true)
+    (hab : (if op == .square then A == lx.toList && B == lx.toList
+      else (A == lx.toList && B == ly.toList) || (A == ly.toList && B == lx.toList)) = true) :
+    c.limbsE w out.toList = opE op (c.limbsE w lx.toList) (c.limbsE w ly.toList) := by
+  rw [unit_val G _ hg]
+  cases op with
+  | add =>
+    have h2 : (Op.add == Op.square) = false := rfl
+    simp only [h2, Bool.false_eq_true, ite_false, Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq] at hab
+    simp only [ite_true, opE]
+    rcases hab with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+    · rfl
+    · exact add_comm _ _
+  | mul =>
+    have h2 : (Op.mul == Op.square) = false := rfl
+    simp only [h2, Bool.false_eq_true, ite_false, Bool.or_eq_true, Bool.and_eq_true, beq_iff_eq] at hab
+    simp only [reduceCtorEq, ite_false, opE]
+    rcases hab with ⟨rfl, rfl⟩ | ⟨rfl, rfl⟩
+    · rfl
+    · exact mul_comm _ _
+  | square =>
+    simp only [beq_self_eq_true, ite_true, Bool.and_eq_true, beq_iff_eq] at hab
+    simp only [reduceCtorEq, ite_false, opE]
+    obtain ⟨rfl, rfl⟩ := hab
+    rfl
+
+theorem arith_ok (G : c.ctx.Good w) {op : Op} {out lx ly : Array ℕ} (h : arithOk c.ctx op out lx ly = true) :
+    out.size = 3 ∧ lx.size = 3 ∧ ly.size = 3 ∧ c.limbsE w out.toList = opE op (c.limbsE w lx.toList) (c.limbsE w ly.toList) := by
+  unfold arithOk at h
+  simp only [Bool.and_eq_true, Bool.or_eq_true, List.all_eq_true, List.mem_range] at h
+  obtain ⟨⟨⟨hs, hx⟩, hy⟩, htry⟩ := h
+  refine ⟨beq_iff_eq.mp hs, beq_iff_eq.mp hx, beq_iff_eq.mp hy, ?_⟩
+  rcases htry with ⟨_, ⟨hg, hab⟩⟩ | ⟨_, ⟨hg, hab⟩⟩
+  · exact arith_try G op (fun l hl => (hg l hl).1) hab
+  · exact arith_try G op (fun l hl => (hg l hl).1) hab
+
 end Compiled
 
 end RecCircuit
