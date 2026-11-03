@@ -8,7 +8,8 @@ import RecCompose.Real
 
 The end statements at the real deployment with every proved layer in place, their hypotheses the inputs left:
 
-* π2's Fiat–Shamir layer `Pi2FsLayer D` (open, `lean-rec-compose`);
+* π2's Fiat–Shamir layer `Pi2FsLayer D` (proved at the real deployment, `pi2FsLayer_real`: `FsClosed.lean` restates
+  these theorems without it);
 * the setup's columns are proved: `RecDeployment.Real` says how the deployment builds them (`SetupFromCompiler`: σ, κ
   the compiled circuit's at every π1 IV), so `Pi2SetupColumns D C` is `pi2SetupColumns_of_real` and the tables' layer is
   `pi2Tables`;
