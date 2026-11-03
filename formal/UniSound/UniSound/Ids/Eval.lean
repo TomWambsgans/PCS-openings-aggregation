@@ -1505,4 +1505,110 @@ theorem c2_limbs (S : Shape) (col : Column) (b : ℕ × ℕ × ℕ) (hb : b ∈ 
   obtain ⟨e, he⟩ := limbs_new_mem _ col b hb
   exact c2Columns_vars S col _ e he
 
+/-- **`C1`'s limbs**: each at its column's variables (`c1Vars`), within the batch's. -/
+theorem c1_limbs (S : Shape) (col : Column) (b : ℕ × ℕ × ℕ) (hb : b ∈ (layoutOf S .c1).limbs col) :
+    b.2.1 = c1Vars S col ∧ b.2.1 ≤ batchVars S := by
+  refine ⟨?_, limb_le_batch S .c1 (by rw [layoutOf_c1]; exact layoutAligned_new _) hb⟩
+  rw [layoutOf_c1] at hb
+  obtain ⟨e, he⟩ := limbs_new_mem _ col b hb
+  rw [c1Cols_eq] at he
+  obtain ⟨c, _, hc⟩ := List.mem_map.mp he
+  simp only [Prod.mk.injEq] at hc
+  obtain ⟨rfl, h2, -⟩ := hc
+  exact h2.symm
+
+/-- The setup's limbs: the bytecode's tuples at `lb + 4`, the addresses at `lm`. -/
+theorem setup_limbs (S : Shape) (col : Column) (b : ℕ × ℕ × ℕ) (hb : b ∈ (layoutOf S .setup).limbs col) :
+    (col = .bytecodeTuple → b.2.1 = S.logBytecode + 4) ∧ (col = .address → b.2.1 = S.logMemory) ∧
+      b.2.1 ≤ batchVars S := by
+  refine ⟨fun h ↦ ?_, fun h ↦ ?_, limb_le_batch S .setup (by rw [layoutOf_setup]; exact layoutAligned_new _) hb⟩
+  all_goals
+    rw [layoutOf_setup] at hb
+    obtain ⟨e, he⟩ := limbs_new_mem _ col b hb
+    subst h
+    simp [setupCols] at he
+    exact he.1
+
+theorem coordinateFunctionals_size (r : ℕ) : (coordinateFunctionals r).size = r := by
+  rw [cf_eq]
+  simp [cfFinal]
+
+/-! ## The differences' evaluation -/
+
+/-- The digits the verifier reads `t` through. -/
+def nDigits (S : Shape) : ℕ := max S.heap.h (S.constraintVars + 4) + 2
+
+section Ctx
+
+variable (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (s : USt) (c1 : Stk) (ch : List E) (fd : Done)
+  (c2 : Stk) (t : E) (vals : List E)
+
+/-- **What the differences read a column at a point as**: the term's weight at its merged point on its
+commitment's stack, against the zero-extended stack. -/
+noncomputable def evOf (col : Column) (p : List E) : E :=
+  ∑ u ∈ range (2 ^ batchVars D.shape), termW (layoutOf D.shape col.commitment) (ringMapAt Fl fd)
+    (batchVars D.shape) col (mergedPoint (mine (relsAt D Fl s ch fd t vals) col.commitment) p) 0 u *
+      stE (stackFor D c1 c2 col.commitment) (layoutOf D.shape col.commitment).vars u
+
+/-- **The differences, all zero, make every untwisted relation on one commitment hold** under `evOf`. -/
+theorem holds_of_diffs (hg : CountsFit D.shape s.2 ∧ FlockGood κ (batchVars D.shape) (Fl.prog.out fd []))
+    (hd : ∀ d ∈ diffsOf D Fl s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) (r : Relation)
+    (hr : r ∈ relsAt D Fl s ch fd t vals) (c : Commitment)
+    (hterms : ∀ tm ∈ r.terms, tm.twist = 0 ∧ tm.column.commitment = c) :
+    RelHolds (evOf D Fl s c1 ch fd c2 t vals) r := by
+  have hc : ∀ tm ∈ r.terms, tm.column.commitment = r.commitment := by
+    intro tm htm
+    unfold Relation.commitment
+    rcases hr' : r.terms with _ | ⟨tm0, rest⟩
+    · rw [hr'] at htm; simp at htm
+    · rw [(hterms tm htm).2]
+      exact (hterms tm0 (by rw [hr']; exact List.mem_cons_self ..)).2.symm
+  unfold diffsOf at hd
+  rw [ite_eq_left hg] at hd
+  have hcm : r.commitment ∈ commitments := by cases r.commitment <;> simp [commitments]
+  have h0 := hd _ (List.mem_append_left _ (List.mem_map.mpr ⟨r.commitment, hcm, rfl⟩)) _
+    (List.mem_map.mpr ⟨r, List.mem_filter.mpr ⟨hr, by simp⟩, rfl⟩)
+  unfold relDiff at h0
+  unfold RelHolds
+  rw [← h0]
+  refine congrArg (· + r.value) (congrArg List.sum (List.map_congr_left fun tm htm ↦ ?_))
+  rw [(hterms tm htm).1]
+  unfold evOf
+  rw [hc tm htm]
+
+/-- **A column's value at a point of its commitment's relations** is its polynomial at `t`. -/
+theorem ev_colPoly (col : Column) (p : List E) (P : ℕ → Polynomial E) (hcol : ∀ j, col ≠ .qflockSlot j)
+    (hp : ∃ r ∈ relsAt D Fl s ch fd t vals, r.commitment = col.commitment ∧ ∃ tm ∈ r.terms, tm.point = p)
+    (hb : ∀ b ∈ (layoutOf D.shape col.commitment).limbs col, b.2.1 ≤ p.length ∧ b.2.1 ≤ batchVars D.shape)
+    (hP : ∀ b ∈ (layoutOf D.shape col.commitment).limbs col, ∀ l < b.2.1, (P l).eval t = p.getD l 0) :
+    evOf D Fl s c1 ch fd c2 t vals col p =
+      (colPoly (layoutOf D.shape col.commitment) (batchVars D.shape) (stackFor D c1 c2 col.commitment) col
+        P).eval t := by
+  obtain ⟨r, hr, hrc, tm, htm, hpt⟩ := hp
+  have hpre := (mergedPrefix (mine (relsAt D Fl s ch fd t vals) col.commitment) p
+    ⟨r, List.mem_filter.mpr ⟨hr, by simp [hrc]⟩, tm, htm, hpt⟩).1
+  exact inner_colPoly _ _ _ _ col p _ t P hcol hpre hb hP
+
+/-- **`q_flock`'s slot at `y`**, where no longer `C1` point extends `y`: the slot's polynomial at `t`. -/
+theorem ev_slot (j : ℕ) (y : List E) (Y : ℕ → Polynomial E)
+    (hp : ∃ r ∈ relsAt D Fl s ch fd t vals, r.commitment = .c1 ∧ ∃ tm ∈ r.terms, tm.point = y)
+    (hself : ∀ r ∈ relsAt D Fl s ch fd t vals, r.commitment = .c1 → ∀ tm ∈ r.terms,
+      y.length < tm.point.length → tm.point.take y.length ≠ y)
+    (hb : ∀ b ∈ (layoutOf D.shape .c1).limbs .qflock, b.2.1 = 8 + y.length ∧ b.2.1 ≤ batchVars D.shape)
+    (hY : ∀ m < y.length, (Y m).eval t = y.getD m 0) :
+    evOf D Fl s c1 ch fd c2 t vals (.qflockSlot j) y =
+      (colPoly (layoutOf D.shape .c1) (batchVars D.shape) c1 .qflock fun l ↦
+        if l < 8 then Polynomial.C (bitE j l) else Y (l - 8)).eval t := by
+  obtain ⟨r, hr, hrc, tm, htm, hpt⟩ := hp
+  have hm := mergedSelf (mine (relsAt D Fl s ch fd t vals) .c1) y
+    ⟨r, List.mem_filter.mpr ⟨hr, by simp [hrc]⟩, tm, htm, hpt⟩
+    (fun r' hr' tm' htm' hlt ↦ hself r' (List.mem_filter.mp hr').1 (by simpa using (List.mem_filter.mp hr').2)
+      tm' htm' hlt)
+  unfold evOf
+  show ∑ u ∈ range _, termW (layoutOf D.shape .c1) _ _ _ (mergedPoint (mine _ .c1) y) 0 u * stE c1 _ u = _
+  rw [hm]
+  exact inner_slot _ _ _ c1 j y t Y hb hY
+
+end Ctx
+
 end UniSound.Ids.Eval
