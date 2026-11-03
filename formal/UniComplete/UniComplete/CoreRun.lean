@@ -36,6 +36,7 @@ point; with Flock, the matrices' claim carries `Â0`, `B̂0` at its point, which
 point of the batch's rounds. -/
 structure StreamValues (flock : FlockProver Id) (blake2s : Blake2s) (tr : Trace) (out : CoreOut) : Prop where
   values : ∀ x ∈ out.claims, x.2.2 = stackEval (stacksOf out.c1.1 out.c2.1 out.setup x.1) x.2.1
+  c2stack : ∃ alphas beta gamma, out.c2.1 = (c2DataOf tr (eqKernel alphas) beta gamma).stack
   matrices : C2ColumnsHonest tr → ∀ v, blake2s = .flock v → ∀ mc, out.matrices = some mc →
     mc.a = stackEval (flockMatrixStack true) mc.point ∧ mc.b = stackEval (flockMatrixStack false) mc.point ∧
     ∃ (w : Wr) (r : List E), r.length = ((layouts tr.shape tr.shape.c2Columns).map (·.2.vars)).foldl max 0 ∧
@@ -74,7 +75,7 @@ theorem streamValues (H : List UInt8 → Digest) (commit : Commitment → ℕ �
       refine peel_pure ?_
       have hl := congrArg (fun p ↦ p.1.length) hr
       simp only [batchRounds_point, List.length_nil, Nat.zero_add] at hl
-      refine ⟨?_, ?_⟩
+      refine ⟨?_, ⟨alphas, beta, gamma, rfl⟩, ?_⟩
       · intro x hx
         simp only [List.mem_map] at hx
         obtain ⟨⟨c, snd⟩, -, rfl⟩ := hx
@@ -114,7 +115,7 @@ theorem streamValues (H : List UInt8 → Digest) (commit : Commitment → ℕ �
       refine peel_pure_bind ?_
       refine peel_get ?_
       refine peel_pure ?_
-      refine ⟨?_, fun _ _ hv ↦ nomatch hv⟩
+      refine ⟨?_, ⟨alphas, beta, gamma, rfl⟩, fun _ _ hv ↦ nomatch hv⟩
       intro x hx
       simp only [List.mem_map] at hx
       obtain ⟨⟨c, snd⟩, -, rfl⟩ := hx
