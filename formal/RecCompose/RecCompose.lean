@@ -5,6 +5,7 @@ import RecCompose.Part2
 import RecCompose.Complete
 import RecCompose.Numbers
 import RecCompose.End
+import RecCompose.Circuit
 
 /-!
 # RecCompose: the recursive verifier's end theorems
