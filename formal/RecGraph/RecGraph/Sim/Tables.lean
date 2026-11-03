@@ -265,6 +265,39 @@ theorem RpPairs.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {a 
     {b : List (Nat × E)} (h : RpPairs π iv publicInput stream st a b) : RpPairs π iv publicInput stream st' a b :=
   List.Forall₂.imp (fun _ _ h ↦ ⟨h.1, Rp.pgrow hg hs h.2⟩) h
 
+/-- **A term, represented**: the same column and twist, its point's coordinates and its coefficient represented. -/
+def RpTerm (st : RecState) (t : TermS) (u : Term) : Prop :=
+  t.column = u.column ∧ t.twist = u.twist ∧ RpL π iv publicInput stream st t.point u.point ∧
+    Rp π iv publicInput stream st t.coefficient u.coefficient
+
+/-- Terms, one by one. -/
+def RpTermsC (st : RecState) (ts : List TermS) (us : List Term) : Prop :=
+  List.Forall₂ (RpTerm π iv publicInput stream st) ts us
+
+/-- **A relation, represented**: its terms one by one, its value represented. -/
+def RpRel (st : RecState) (r : RelationS) (u : Relation) : Prop :=
+  RpTermsC π iv publicInput stream st r.terms u.terms ∧ Rp π iv publicInput stream st r.value u.value
+
+/-- **Relations, represented**, one by one. -/
+def RpRels (st : RecState) (rs : List RelationS) (us : List Relation) : Prop :=
+  List.Forall₂ (RpRel π iv publicInput stream st) rs us
+
+theorem RpTerm.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {t : TermS} {u : Term}
+    (h : RpTerm π iv publicInput stream st t u) : RpTerm π iv publicInput stream st' t u :=
+  ⟨h.1, h.2.1, RpL.pgrow hg hs h.2.2.1, Rp.pgrow hg hs h.2.2.2⟩
+
+theorem RpTermsC.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {ts : List TermS} {us : List Term}
+    (h : RpTermsC π iv publicInput stream st ts us) : RpTermsC π iv publicInput stream st' ts us :=
+  List.Forall₂.imp (fun _ _ h ↦ RpTerm.pgrow π iv publicInput stream hg hs h) h
+
+theorem RpRel.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {r : RelationS} {u : Relation}
+    (h : RpRel π iv publicInput stream st r u) : RpRel π iv publicInput stream st' r u :=
+  ⟨RpTermsC.pgrow π iv publicInput stream hg hs h.1, Rp.pgrow hg hs h.2⟩
+
+theorem RpRels.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {rs : List RelationS}
+    {us : List Relation} (h : RpRels π iv publicInput stream st rs us) : RpRels π iv publicInput stream st' rs us :=
+  List.Forall₂.imp (fun _ _ h ↦ RpRel.pgrow π iv publicInput stream hg hs h) h
+
 end Reps
 
 /-! ## Lists -/

@@ -1561,3 +1561,190 @@ theorem termP_eq {L : StackLayout} (hL : LayoutOK L) (r map : List E) (z0 : E)
     exact (rowW_ring r map z0 pt q _ (hbv ▸ hr col b hb) (hbv ▸ hlen b hb) hq).symm
 
 end RecGraph.Sim
+
+/-! ## `combineG`'s points and count -/
+
+namespace RecGraph.Sim.Gen
+
+open LeanVM.Parameters UniStatement
+
+variable {Pt : Type} [DecidableEq Pt]
+
+/-- **A combined claim's points are its relations' terms' points.** -/
+theorem combineG_points_mem {rels : List (RelG Pt)} {c : Commitment} {ρ : E} {cG : CombG Pt}
+    (h : combineG rels c ρ = some cG) : ∀ q ∈ cG.points, ∃ r ∈ mineG rels c, ∃ tm ∈ r.terms, tm.point = q := by
+  rw [combineG_eq] at h
+  split at h
+  · exact absurd h (by simp)
+  · obtain rfl := Option.some.inj h
+    intro q hq
+    simp only [List.mem_map] at hq
+    obtain ⟨k, hk, rfl⟩ := hq
+    have hP : ((mineG rels c).foldl (cOuter ρ) (#[], #[], 0, 1)).1 = combinePointsG (mineG rels c) := by
+      rw [cOuter_fold_fst, combinePointsG_eq]
+    rw [hP]
+    have hk' : k < (combinePointsG (mineG rels c)).size := by
+      rw [← hP]
+      unfold keptOf at hk
+      exact List.mem_range.mp (List.mem_filter.mp hk).1
+    exact (mem_combinePoints _ _).mp (getD_mem hk')
+
+/-- A combined claim combines its commitment's relations. -/
+theorem combineG_relations {rels : List (RelG Pt)} {c : Commitment} {ρ : E} {cG : CombG Pt}
+    (h : combineG rels c ρ = some cG) : cG.relations = (mineG rels c).length := by
+  rw [combineG_eq] at h
+  split at h
+  · exact absurd h (by simp)
+  · obtain rfl := Option.some.inj h
+    rfl
+
+end RecGraph.Sim.Gen
+
+/-! ## Off the hazard, both claims enter the batch alike -/
+
+namespace RecGraph.Sim
+
+open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash UniStatement RecGraph.Pi1
+open Gen (TermG RelG CombG combineG mineG mergedPointG combineEqG mergedPrefixG combineG_points_mem
+  combineG_relations)
+open UniSound.Ids (mine)
+
+theorem forall₂_mem_leftC {α β : Type} {R : α → β → Prop} :
+    ∀ {l : List α} {m : List β}, List.Forall₂ R l m → ∀ a ∈ l, ∃ b ∈ m, R a b
+  | _, _, .nil, _, h => by simp at h
+  | _, _, .cons (b := b) hr hl, a, h => by
+    rcases List.mem_cons.mp h with rfl | h
+    · exact ⟨b, by simp, hr⟩
+    · obtain ⟨b', hb', h'⟩ := forall₂_mem_leftC hl a h
+      exact ⟨b', by simp [hb'], h'⟩
+
+theorem forall₂_memC {α β : Type} {R : α → β → Prop} {l : List α} {m : List β} (h : List.Forall₂ R l m) :
+    List.Forall₂ (fun a b ↦ R a b ∧ a ∈ l ∧ b ∈ m) l m := by
+  induction h with
+  | nil => exact List.Forall₂.nil
+  | cons hr _ ih =>
+    exact List.Forall₂.cons ⟨hr, by simp, by simp⟩
+      (ih.imp fun _ _ h ↦ ⟨h.1, by simp [h.2.1], by simp [h.2.2]⟩)
+
+theorem forall₂_filterC {α β : Type} {R : α → β → Prop} (f : α → Bool) (g : β → Bool)
+    (hfg : ∀ a b, R a b → f a = g b) :
+    ∀ {l : List α} {m : List β}, List.Forall₂ R l m → List.Forall₂ R (l.filter f) (m.filter g)
+  | _, _, .nil => List.Forall₂.nil
+  | _, _, .cons (a := a) (b := b) hr hl => by
+    rw [List.filter_cons, List.filter_cons, hfg a b hr]
+    by_cases hc : g b = true
+    · simp only [hc, ↓reduceIte]
+      exact List.Forall₂.cons hr (forall₂_filterC f g hfg hl)
+    · simp only [hc, Bool.false_eq_true, ↓reduceIte]
+      exact forall₂_filterC f g hfg hl
+
+theorem sum_map_forall₂C {α β : Type} {R : α → β → Prop} (fa : α → E) (fb : β → E)
+    (h : ∀ a b, R a b → fa a = fb b) : ∀ {l : List α} {m : List β}, List.Forall₂ R l m →
+      (l.map fa).sum = (m.map fb).sum
+  | _, _, .nil => rfl
+  | _, _, .cons hr hl => by rw [List.map_cons, List.map_cons, List.sum_cons, List.sum_cons, h _ _ hr,
+      sum_map_forall₂C fa fb h hl]
+
+theorem sum_zipIdx_forall₂C {α β : Type} {R : α → β → Prop} (ρ : E) (fa : α → E) (fb : β → E)
+    (h : ∀ a b, R a b → fa a = fb b) : ∀ {l : List α} {m : List β}, List.Forall₂ R l m → ∀ n,
+      ((l.zipIdx n).map fun ri ↦ ρ ^ ri.2 * fa ri.1).sum = ((m.zipIdx n).map fun ri ↦ ρ ^ ri.2 * fb ri.1).sum
+  | _, _, .nil, _ => rfl
+  | _, _, .cons hr hl, n => by
+    rw [List.zipIdx_cons, List.zipIdx_cons, List.map_cons, List.map_cons, List.sum_cons, List.sum_cons, h _ _ hr,
+      sum_zipIdx_forall₂C ρ fa fb h hl (n + 1)]
+
+section CombineWeight
+
+variable (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8)
+
+/-- A program relation over nodes, its coefficients' and value's values at `st`. -/
+def toG (st : RecState) (r : RelationS) : RelG Nat :=
+  ⟨r.terms.map fun t ↦ ⟨t.column, t.point, t.twist, val π iv publicInput stream st t.coefficient⟩,
+    val π iv publicInput stream st r.value⟩
+
+/-- **A relation over nodes against `UniStatement`'s**: the same columns and twists, the points' values the points
+(their nodes held), the same coefficients and value. -/
+def Corr (st : RecState) (g : RelG Nat) (u : Relation) : Prop :=
+  List.Forall₂ (fun (t : TermG Nat) (v : Term) ↦ t.column = v.column ∧ t.twist = v.twist ∧
+    t.point.map (val π iv publicInput stream st) = v.point ∧ (∀ i ∈ t.point, i < st.nodes.size) ∧
+    t.coefficient = v.coefficient) g.terms u.terms ∧ g.value = u.value
+
+theorem toG_terms {st : RecState} {ts : List TermS} {us : List Term} (h : RpTermsC π iv publicInput stream st ts us) :
+    List.Forall₂ (RpTermN π iv publicInput stream st) ts
+      (ts.map fun t ↦ (⟨t.column, t.point, t.twist, val π iv publicInput stream st t.coefficient⟩ : TermG Nat)) := by
+  unfold RpTermsC at h
+  induction h with
+  | nil => exact List.Forall₂.nil
+  | cons hr _ ih => exact List.Forall₂.cons ⟨rfl, rfl, rfl, rp_val π iv publicInput stream hr.2.2.2.1⟩ ih
+
+theorem toG_corr_terms {st : RecState} {ts : List TermS} {us : List Term}
+    (h : RpTermsC π iv publicInput stream st ts us) :
+    List.Forall₂ (fun (t : TermG Nat) (v : Term) ↦ t.column = v.column ∧ t.twist = v.twist ∧
+      t.point.map (val π iv publicInput stream st) = v.point ∧ (∀ i ∈ t.point, i < st.nodes.size) ∧
+      t.coefficient = v.coefficient)
+      (ts.map fun t ↦ (⟨t.column, t.point, t.twist, val π iv publicInput stream st t.coefficient⟩ : TermG Nat)) us := by
+  unfold RpTermsC at h
+  induction h with
+  | nil => exact List.Forall₂.nil
+  | cons hr _ ih =>
+    exact List.Forall₂.cons ⟨hr.1, hr.2.1, RpL.map_valC π iv publicInput stream hr.2.2.1,
+      RpL.ltC π iv publicInput stream hr.2.2.1, hr.2.2.2.2⟩ ih
+
+theorem toG_rpRelN {st : RecState} {r : RelationS} {u : Relation} (h : RpRel π iv publicInput stream st r u) :
+    RpRelN π iv publicInput stream st r (toG π iv publicInput stream st r) :=
+  ⟨toG_terms π iv publicInput stream h.1, rp_val π iv publicInput stream h.2.1⟩
+
+theorem toG_corr {st : RecState} {r : RelationS} {u : Relation} (h : RpRel π iv publicInput stream st r u) :
+    Corr π iv publicInput stream st (toG π iv publicInput stream st r) u :=
+  ⟨toG_corr_terms π iv publicInput stream h.1, h.2.2⟩
+
+theorem valTm_map {st : RecState} {a : List (Column × ℕ × ℕ × Nat)} {b : List (Column × ℕ × ℕ × E)}
+    (h : RpTms π iv publicInput stream st a b) : a.map (valTm π iv publicInput stream st) = b := by
+  unfold RpTms at h
+  induction h with
+  | nil => rfl
+  | cons hxy _ ih =>
+    rw [List.map_cons, ih]
+    obtain ⟨h1, h2, h3, h4⟩ := hxy
+    have e : valTm π iv publicInput stream st _ = _ := Prod.ext h1 (Prod.ext h2 (Prod.ext h3 h4.2))
+    rw [e]
+
+theorem Corr.commitment {st : RecState} {g : RelG Nat} {u : Relation} (h : Corr π iv publicInput stream st g u) :
+    g.commitment = u.commitment := by
+  obtain ⟨gt, gv⟩ := g
+  obtain ⟨ut, uv⟩ := u
+  obtain ⟨ht, -⟩ := h
+  unfold RelG.commitment Relation.commitment
+  cases ht with
+  | nil => rfl
+  | cons h1 _ => exact congrArg Column.commitment h1.1
+
+/-- A kind is kept by an extension of the point (the point itself for a slot term). -/
+theorem TermKind.extend {L : StackLayout} {col : Column} {pt q : List E} {tw : ℕ} (hk : TermKind L col pt tw)
+    (hq : q.take pt.length = pt) (hs : (∃ j, col = .qflockSlot j) → q = pt) : TermKind L col q tw := by
+  have hl : pt.length ≤ q.length := by
+    have := congrArg List.length hq
+    rw [List.length_take] at this
+    omega
+  rcases hk with ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩ | ⟨h1, h2, h3⟩
+  · exact Or.inl ⟨h1, h2, fun b hb ↦ (h3 b hb).trans hl⟩
+  · exact Or.inr (Or.inl ⟨h1, h2, by rw [hs h2]; exact h3⟩)
+  · exact Or.inr (Or.inr ⟨h1, h2, fun b hb ↦ (h3 b hb).trans hl⟩)
+
+/-- The batch's view of a combined claim. -/
+structure CombRep (st : RecState) (L : StackLayout) (cS : CombinedS) (cb : Combined) : Prop where
+  held : HeldC st cS
+  value : Rp π iv publicInput stream st cS.value cb.value
+  relations : cS.relations = cb.relations
+  weight : ∀ (r map : List E) (z0 : E), (∀ col, ∀ b ∈ L.limbs col, b.2.1 ≤ r.length) →
+    progW (valC π iv publicInput stream st cS) L r map z0 = weightAt cb L r (some map)
+
+theorem CombRep.grow {st st' : RecState} (hk : KInv st) (hgr : Grows st st') {L : StackLayout} {cS : CombinedS}
+    {cb : Combined} (h : CombRep π iv publicInput stream st L cS cb) : CombRep π iv publicInput stream st' L cS cb :=
+  ⟨h.held.grows hgr, Rp.grow π iv publicInput stream hk hgr h.value, h.relations, fun r map z0 hr ↦ by
+    rw [valC_grow π iv publicInput stream hk hgr h.held]
+    exact h.weight r map z0 hr⟩
+
+end CombineWeight
+
+end RecGraph.Sim
