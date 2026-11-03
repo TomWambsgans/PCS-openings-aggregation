@@ -12,10 +12,11 @@ The bridges of `Bridges.lean` about the verifier's `weightAt` and `combine` (`fo
   its claim on the column's blocks;
 * `mergedPrefix`, `mergedSelf`, `termWExtend`: merging a point into a longer one.
 
-Everything is by generic fold lemmas (by induction); nothing is evaluated.
+Everything is by generic fold lemmas (by induction); nothing is evaluated. The helpers live in
+`UniSound.Ids.Weights`; the eight theorems are `UniSound.Ids.*`, named as their `Prop`s.
 -/
 
-namespace UniSound.Ids
+namespace UniSound.Ids.Weights
 
 open LeanVM.Parameters UniStatement Finset
 
@@ -242,7 +243,7 @@ theorem termW_eq (L : StackLayout) (rm : Option (List E)) (V : ℕ) (column : Co
   weightAt_single _ _ _ _ _ _
 
 /-- **`weightAt` is linear in its claim's terms.** -/
-theorem weightAtLinear : WeightAtLinear := by
+theorem _root_.UniSound.Ids.weightAtLinear : WeightAtLinear := by
   intro claim L r rm
   rw [weightAt_foldl, foldl_eq_sum_of _ (fun tm ↦ tm.2.2.2 * weightAt ⟨[claim.points.getD tm.2.1 []],
     [(tm.1, 0, tm.2.2.1, 1)], 0, 1⟩ L r rm) _ _ ?_, zero_add]
@@ -667,7 +668,7 @@ theorem renumber_getD (P : Array (List E)) (i : ℕ) (hi : i < P.size) :
   rfl
 
 /-- **`combine` is the `ρ`-combination.** -/
-theorem combineEq : CombineEq := by
+theorem _root_.UniSound.Ids.combineEq : CombineEq := by
   intro rels c ρ hne
   have hE : ¬ (mine rels c).isEmpty = true := by simpa [List.isEmpty_iff] using hne
   rw [combine_eq, ite_eq_right hE]
@@ -715,14 +716,14 @@ theorem mergedPoint_spec (rels : List Relation) (p : List E)
     exact longestOf_ext _ _
 
 /-- **A merged point extends the point** and is a term's point. -/
-theorem mergedPrefix : MergedPrefix := by
+theorem _root_.UniSound.Ids.mergedPrefix : MergedPrefix := by
   intro rels p hp
   obtain ⟨b, hb, heq, hE⟩ := mergedPoint_spec rels p hp
   rw [heq]
   exact ⟨hE.2, (mem_combinePoints rels _).mp (getD_mem hb)⟩
 
 /-- **A point no longer point extends is not merged.** -/
-theorem mergedSelf : MergedSelf := by
+theorem _root_.UniSound.Ids.mergedSelf : MergedSelf := by
   intro rels p hp hno
   obtain ⟨b, hb, heq, hE⟩ := mergedPoint_spec rels p hp
   rw [heq]
@@ -765,7 +766,7 @@ theorem twistPt_take (p q : List E) (tw : ℕ) (h : q.take p.length = p) :
   rw [twistPt_eq_map, twistPt_eq_map, ← List.map_take, h]
 
 /-- **Merging changes no column's weight** but `q_flock`'s slot view's. -/
-theorem termWExtend : TermWExtend := by
+theorem _root_.UniSound.Ids.termWExtend : TermWExtend := by
   intro L rm V col p q twist u hcol hL hq
   rw [termW_eq, termW_eq]
   unfold wSum
@@ -940,7 +941,7 @@ theorem cube_sum (V vars : ℕ) (C : Stk) (l : List (ℕ × ℕ × ℕ)) (hl : �
   exact Finset.sum_congr rfl fun u _ ↦ by ring
 
 /-- **A column's term on the cube**: its claim on the column's blocks. -/
-theorem termInner : TermInner := by
+theorem _root_.UniSound.Ids.termInner : TermInner := by
   intro L rm V C col pt hcol hL
   have h : ∀ u, termW L rm V col pt 0 u = ((L.limbs col).map fun b ↦
       limbScale b.1 * (rowEq pt b.2.1 (bitsE u V) * selector (bitsE u V) b.2.1 b.2.2)).sum := by
@@ -956,7 +957,7 @@ theorem termInner : TermInner := by
     (fun b x ↦ cubeEq pt b.2.1 x) hw
 
 /-- **`q_flock`'s slot `j` on the cube**: its claim on `q_flock`'s blocks at `(bits(j), pt)`. -/
-theorem slotInner : SlotInner := by
+theorem _root_.UniSound.Ids.slotInner : SlotInner := by
   intro L rm V C j pt hL
   have h : ∀ u, termW L rm V (.qflockSlot j) pt 0 u = ((L.limbs .qflock).map fun b ↦
       limbScale b.1 * (rowEq ((List.range 8).map (bitE j) ++ pt) b.2.1 (bitsE u V) *
@@ -980,7 +981,7 @@ theorem slotInner : SlotInner := by
     (fun b x ↦ cubeEq ((List.range 8).map (bitE j) ++ pt) b.2.1 x) hw
 
 /-- **The ring-switch term on the cube**: the tower weight at the cube's points of each block. -/
-theorem ringInner : RingInner := by
+theorem _root_.UniSound.Ids.ringInner : RingInner := by
   intro L map V C pt hL
   have h : ∀ u, termW L (some map) V .qflock pt ringTwist u = ((L.limbs .qflock).map fun b ↦
       limbScale b.1 * (Flock.towerWeightAt (pt.take b.2.1) (((bitsE u V).map (1 + ·)).take b.2.1) map *
@@ -1000,7 +1001,7 @@ theorem ringInner : RingInner := by
     (fun b u ↦ Flock.towerWeightAt (pt.take b.2.1) (((bitsE u V).map (1 + ·)).take b.2.1) map)
     (fun b x ↦ Flock.towerWeightAt (pt.take b.2.1) ((bitsE x b.2.1).map (1 + ·)) map) hw
 
-end UniSound.Ids
+end UniSound.Ids.Weights
 
 /-! ## Axioms -/
 
