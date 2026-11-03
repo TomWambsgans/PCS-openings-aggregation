@@ -2,6 +2,54 @@
 -- f0393df4's `Blake2sCircuit`, MIT OR Apache-2.0); the walk is `formal/UniStatement`'s (`UniStatement/Rec.lean`).
 import FlockSoundUni.WalkCode
 
+/-!
+# The TowerWalk terminal's walk computes the BLAKE2s R1CS's products
+
+π1-rec3's verifier (`Slices::TowerWalk`) checks Flock's lincheck terminal against `walked_terminal`, which walks the
+BLAKE2s circuit once (`blake2s_row_values`, `crates/leanvm_flock_gas/src/flock.rs:318-388`) to get `A0 w` and `B0 w`.
+**`rowValues_spec`** proves that the official transcription `UniStatement.Flock.blake2sRowValues` computes exactly
+these: for every row `j < 2^14`,
+
+  `(blake2sRowValues cw).1[j] = Σ_i A[j][i] cw[i]`,  `(blake2sRowValues cw).2[j] = Σ_i B[j][i] cw[i]`,
+
+`A`, `B` the matrices of `Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs` (the R1CS of Lv42's `blake2sCircuit`,
+row then column, as `flockMatrixStack` reads them). Nothing is evaluated: the proof is a simulation of the circuit's
+builder (`Blake2sCircuit.compressW`) by the walk, gadget by gadget.
+
+* **Forms and their evaluation** (`lev`): a builder form `L` (a bitset over the block) evaluates at the column
+  weights to `Σ_{j ∈ L} cw[j]`; XOR is the sum (characteristic two), `var(pos)` is `cw[pos]` (`lev_xor`, `lev_var`).
+  A walk word follows a builder word when each bit is the evaluation of the form (`WRel`): XOR, rotation, input
+  slots and literals preserve it (`wrel_xor`, `wrel_rotr`, `wrel_slots`, `wrel_lit`).
+* **The simulation relation** (`Grow`): the builder records `k` gates at `next, …, next + k − 1` and the walk writes,
+  at those rows, the evaluations of the gates' two forms, every other row unchanged. It composes (`Grow.trans`).
+* **The gadgets**: the walk's ripple adder follows `addW` (`sim_addW`, bit by bit against `addCarries`), its
+  three-operand adder `add3W` (`sim_add3W`: the majority layer against `majorities`, the ripple against
+  `rippleCarries`), the mixing step `gW` (`sim_gate`, 184 rows), a round `roundW` (`sim_round`, 1472 rows), the
+  rounds (`sim_rounds`), the initial working vector (`srel_initState`).
+* **The rows** (`rowModel_spec`): the input rows (`inputs_spec`), the gates' rows (from the simulation), the output
+  rows (`outStep_fold`, `wrel_outWord`) and the constant row are the circuit's `rowOf` (`rowOf_gate`, `rowOf_out`,
+  `rowOf_none`, via the gate list `gates_toList` and `List.lookup`).
+
+**How the proofs avoid evaluating anything.** The walk's arrays have `2^14` entries and its loops thousands of steps,
+so every definitional check must stay structural: `lev` is irreducible (else a failed match evaluates
+`Finset.univ` over `Fin 16384`); results of the walk and of the builder are named through `∃ x, x = …` equations
+rather than unfolded; facts about named stages are stated about the names and proven by rewriting the goal (never a
+hypothesis holding a fold); arithmetic about builder positions is closed (`ring`, `fit_le`) when the context holds
+large terms; and index side-goals get explicit bounds. (Each of these was found the hard way: the alternative times
+out by unrolling a loop.)
+
+**Decision (recorded):** the coordinator split the TowerWalk lemma; the algebra from these rows to `PendingHolds`
+(`walkLemma_of_rows : RowsSpec → WalkLemma`) is on `lean-rec3-sound` (`FlockSoundUni/WalkAlg.lean`), so this module
+stops at `rowValues_spec`, stated so that `fun cw hcw j ↦ rowValues_spec cw hcw j : RowsSpec`.
+
+**Rust vs Lv42.** The proof is a line-by-line check that the walk matches Lv42's circuit: gate base 1280, stride
+184 (`add3` at `+0`, `add` at `+61`, `add3` at `+92`, `add` at `+153`), majority rows `(x_i + z_i, y_i + z_i)`,
+ripple rows for bits `1 … 30` at `base + 31 + i − 1`, adder rows `(x_i + c, y_i + c)` for bits `0 … 30`, the
+rotations 16, 12, 8, 7, the lanes and the message schedule (`glanes_eq`, `sigma_zip`), the IV (`iv_getD`), the input
+rows `0 … 255`, `640 … 1279`, the output rows `(out bit, w_512)` at `256 + 32 w + i`, the constant row at 512 and zero
+rows elsewhere. No mismatch: had there been one, `rowValues_spec` would be false.
+-/
+
 namespace FlockSound.Uni.Walk
 
 open UniStatement UniStatement.Flock UniSound LeanVM.Parameters Finset
@@ -712,6 +760,12 @@ theorem GInv.start (cw : Array E) (w : Array E × Array E × Array WalkWord) (σ
     GInv cw w σ 0 w (v, σ) :=
   ⟨Grow.refl _ _ _ _, hv, hl, hr⟩
 
+/-- `GInv.start` with the walk state given by its components (so that no projection meets a closed term). -/
+theorem GInv.start' (cw l r : Array E) (st : Array WalkWord) (σ : BuildState bm) (v : Vector (Word bm) 16)
+    (hv : SRel cw st v) (hl : l.size = 2 ^ bm) (hr : r.size = 2 ^ bm) :
+    GInv cw (l, r, st) σ 0 (l, r, st) (v, σ) :=
+  ⟨Grow.refl _ _ _ _, hv, hl, hr⟩
+
 /-- One more mixing step (gate `g` of round `ri`), the invariant carried; the arithmetic on `σ0.next + n`. -/
 theorem GInv.step {cw : Array E} {w0 : Array E × Array E × Array WalkWord} {σ0 : BuildState bm} {n : ℕ}
     {w : Array E × Array E × Array WalkWord} {b : Vector (Word bm) 16 × BuildState bm}
@@ -1017,4 +1071,387 @@ theorem outStep_fold (cw : Array E) (state : Array WalkWord) : ∀ (W : ℕ) (b 
     constructor <;> split_ifs <;> first | (exfalso; omega) |
       (rw [show (j - 256) / 32 = W by omega, show (j - 256) % 32 = j - (256 + 32 * W) by omega]) | rfl
 
+/-! ## The circuit's rows -/
+
+section Lookup
+
+variable {β : Type}
+
+theorem lookup_eq_none_of {l : List (ProductCircuit.Pos bm × β)} {k : ProductCircuit.Pos bm}
+    (h : ∀ p ∈ l, p.1 ≠ k) : l.lookup k = none := by
+  induction l with
+  | nil => rfl
+  | cons p l ih =>
+    obtain ⟨k', b'⟩ := p
+    have hk : (k == k') = false := beq_eq_false_iff_ne.mpr (Ne.symm (h _ (List.mem_cons.mpr (Or.inl rfl))))
+    simp only [List.lookup, hk]
+    exact ih fun q hq ↦ h q (List.mem_cons_of_mem _ hq)
+
+theorem mem_of_lookup_eq_some {l : List (ProductCircuit.Pos bm × β)} {k : ProductCircuit.Pos bm} {b : β}
+    (h : l.lookup k = some b) : (k, b) ∈ l := by
+  induction l with
+  | nil => simp [List.lookup] at h
+  | cons p l ih =>
+    obtain ⟨k', b'⟩ := p
+    by_cases hk : k = k'
+    · subst hk
+      simp only [List.lookup, beq_self_eq_true, Option.some.injEq] at h
+      subst h
+      exact List.mem_cons.mpr (Or.inl rfl)
+    · have hk' : (k == k') = false := beq_eq_false_iff_ne.mpr hk
+      simp only [List.lookup, hk'] at h
+      exact List.mem_cons_of_mem _ (ih h)
+
+theorem lookup_isSome_of_mem {l : List (ProductCircuit.Pos bm × β)} {k : ProductCircuit.Pos bm} {b : β}
+    (h : (k, b) ∈ l) : ∃ b', l.lookup k = some b' := by
+  induction l with
+  | nil => simp at h
+  | cons p l ih =>
+    obtain ⟨k', b''⟩ := p
+    by_cases hk : k = k'
+    · subst hk
+      exact ⟨b'', by simp only [List.lookup, beq_self_eq_true]⟩
+    · have hk' : (k == k') = false := beq_eq_false_iff_ne.mpr hk
+      simp only [List.lookup, hk']
+      rcases List.mem_cons.mp h with h' | h'
+      · exact absurd (congrArg Prod.fst h') hk
+      · exact ih h'
+
+theorem lookup_append_of_none {l1 l2 : List (ProductCircuit.Pos bm × β)} {k : ProductCircuit.Pos bm}
+    (h : l1.lookup k = none) : (l1 ++ l2).lookup k = l2.lookup k := by
+  induction l1 with
+  | nil => rfl
+  | cons p l ih =>
+    obtain ⟨k', b'⟩ := p
+    by_cases hk : k = k'
+    · subst hk
+      simp [List.lookup] at h
+    · have hk' : (k == k') = false := beq_eq_false_iff_ne.mpr hk
+      simp only [List.lookup, hk'] at h
+      simp only [List.cons_append, List.lookup, hk']
+      exact ih h
+
+end Lookup
+
+theorem rowOf_of_lookup_some (c : ProductCircuit bm) (k : ProductCircuit.Pos bm) (g : Gate bm)
+    (h : c.gates.toList.lookup k = some g) : c.rowOf k = g := by
+  unfold ProductCircuit.rowOf
+  rw [h]
+
+theorem rowOf_of_lookup_none (c : ProductCircuit bm) (k : ProductCircuit.Pos bm)
+    (h : c.gates.toList.lookup k = none) :
+    c.rowOf k = if k = c.cpos then ⟨Form.var c.cpos, Form.var c.cpos⟩
+      else if c.inputs.getLsbD k then ⟨Form.var k, Form.var c.cpos⟩ else ⟨0, 0⟩ := by
+  unfold ProductCircuit.rowOf
+  rw [h]
+
+theorem mem_outRows' {outs : Vector (Word bm) 8} {kg : ProductCircuit.Pos bm × Gate bm}
+    (h : kg ∈ Blake2sCircuit.outRows outs) :
+    ∃ (w : Fin 8) (i : Fin 32),
+      kg = (pos (256 + 32 * w.val + i.val), ⟨outs[w][i], Form.var Lv42.Parameters.Flock.constPos⟩) := by
+  unfold Blake2sCircuit.outRows at h
+  simp only [List.mem_flatMap, List.mem_finRange, List.mem_map, true_and] at h
+  obtain ⟨w, i, rfl⟩ := h
+  exact ⟨w, i, rfl⟩
+
+theorem outRows_pos {outs : Vector (Word bm) 8} {kg : ProductCircuit.Pos bm × Gate bm}
+    (h : kg ∈ Blake2sCircuit.outRows outs) : 256 ≤ (kg.1 : ℕ) ∧ (kg.1 : ℕ) < 512 := by
+  obtain ⟨w, i, rfl⟩ := mem_outRows' h
+  have := w.isLt
+  have := i.isLt
+  dsimp only
+  rw [pos_val (by rw [two_pow_bm]; omega)]
+  omega
+
+theorem mem_outRows_of (outs : Vector (Word bm) 8) (w : Fin 8) (i : Fin 32) :
+    (pos (256 + 32 * w.val + i.val),
+      (⟨outs[w][i], Form.var Lv42.Parameters.Flock.constPos⟩ : Gate bm)) ∈ Blake2sCircuit.outRows outs :=
+  List.mem_flatMap.mpr ⟨w, List.mem_finRange w, List.mem_map.mpr ⟨i, List.mem_finRange i, rfl⟩⟩
+
+/-- The compression's output words, from the rounds' final working vector. -/
+def outsOf (V : Vector (Word bm) 16) : Vector (Word bm) 8 :=
+  Vector.ofFn fun w : Fin 8 ↦ xorW (xorW V[w] V[w.val + 8]) (Blake2sCircuit.cvW w)
+
+/-- The builder's run of the ten rounds from `1280`, as `compressW` writes it. -/
+def roundsRun : Vector (Word bm) 16 × BuildState bm :=
+  (Lv42.Parameters.sigma.foldlM (fun v s ↦ Blake2sCircuit.roundW v (Vector.ofFn fun w ↦ Blake2sCircuit.msgW w) s)
+    Blake2sCircuit.initW).run ⟨Blake2sCircuit.gateBase, #[]⟩
+
+/-- `roundsRun` as the list fold `sim_rounds` follows. -/
+theorem roundsRun_toList : roundsRun =
+    (Lv42.Parameters.sigma.toList.foldlM (fun v s ↦ Blake2sCircuit.roundW v msgV s) Blake2sCircuit.initW).run
+      ⟨Blake2sCircuit.gateBase, #[]⟩ := by
+  rw [roundsRun, ← Vector.foldlM_toList, msgV]
+
+theorem compressW_run :
+    Blake2sCircuit.compressW.run ⟨Blake2sCircuit.gateBase, #[]⟩ = (outsOf roundsRun.1, roundsRun.2) := by
+  simp only [Blake2sCircuit.compressW, StateT.run_bind, StateT.run_pure]
+  rfl
+
+theorem gates_toList : Blake2sCircuit.blake2sCircuit.gates.toList =
+    roundsRun.2.gates.toList ++ Blake2sCircuit.outRows (outsOf roundsRun.1) := by
+  rw [Blake2sCircuit.blake2sCircuit_gates, compressW_run]
+  simp
+
+theorem sigma_zip : blake2sSigma.zip (List.range blake2sSigma.length) =
+    (Lv42.Parameters.sigma.toList.map rowList).zip (List.range' 0 Lv42.Parameters.sigma.toList.length) := rfl
+
+theorem wrel_outWord (cw : Array E) {st : Array WalkWord} {V : Vector (Word bm) 16} (h : SRel cw st V)
+    (w : Fin 8) : WRel cw (outWord cw st w) (outsOf V)[w] := by
+  rw [outsOf, Fin.getElem_fin, Vector.getElem_ofFn]
+  have hw := w.isLt
+  exact wrel_xor (wrel_xor (h.2 ⟨w, by omega⟩) (h.2 ⟨w + 8, by omega⟩)) (wrel_slots cw (by rw [two_pow_bm]; omega))
+
+/-- `A`, `B` of the BLAKE2s R1CS (`blake2sFlockSpec.r1cs`, as `flockMatrixStack` reads them) are the rows' forms. -/
+theorem r1csA_eq (j i : Fin (2 ^ 14)) :
+    Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A j i = (Blake2sCircuit.blake2sCircuit.rowOf j).a.getLsbD i :=
+  rfl
+
+theorem r1csB_eq (j i : Fin (2 ^ 14)) :
+    Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B j i = (Blake2sCircuit.blake2sCircuit.rowOf j).b.getLsbD i :=
+  rfl
+
+/-- `lev` as the sum over `Fin (2^14)`. -/
+theorem lev_eq_sum (cw : Array E) (L : Form bm) :
+    lev cw L = ∑ i : Fin (2 ^ 14), (if L.getLsbD i then cw.getD i 0 else 0) := by
+  unfold lev
+  rfl
+
+theorem lev_rowA (cw : Array E) (j : Fin (2 ^ 14)) :
+    lev cw (Blake2sCircuit.blake2sCircuit.rowOf j).a =
+      ∑ i : Fin (2 ^ 14), (if Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A j i then cw.getD i 0 else 0) := by
+  rw [lev_eq_sum]
+  exact Finset.sum_congr rfl fun i _ ↦ by rw [r1csA_eq]
+
+theorem lev_rowB (cw : Array E) (j : Fin (2 ^ 14)) :
+    lev cw (Blake2sCircuit.blake2sCircuit.rowOf j).b =
+      ∑ i : Fin (2 ^ 14), (if Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B j i then cw.getD i 0 else 0) := by
+  rw [lev_eq_sum]
+  exact Finset.sum_congr rfl fun i _ ↦ by rw [r1csB_eq]
+
+/-- **A gate's row**: at a gate position, `rowOf` is a gate the rounds recorded at that position. -/
+theorem rowOf_gate (k : ProductCircuit.Pos bm) (hC : 1280 ≤ (k : ℕ) ∧ (k : ℕ) < 16000)
+    (hpos : roundsRun.2.gates.toList.map (fun g ↦ (g.1 : ℕ)) = List.range' 1280 14720) :
+    ∃ g', (k, g') ∈ roundsRun.2.gates.toList ∧ Blake2sCircuit.blake2sCircuit.rowOf k = g' := by
+  obtain ⟨g, hg, hgk⟩ : ∃ g ∈ roundsRun.2.gates.toList, (g.1 : ℕ) = k := by
+    have hm : (k : ℕ) ∈ (roundsRun.2.gates.toList).map (fun g ↦ (g.1 : ℕ)) := by
+      rw [hpos, List.mem_range'_1]
+      omega
+    simpa using hm
+  have hgk' : g.1 = k := Fin.ext hgk
+  obtain ⟨g', hg'⟩ := lookup_isSome_of_mem (l := Blake2sCircuit.blake2sCircuit.gates.toList) (k := k) (b := g.2)
+    (by rw [gates_toList, ← hgk']; exact List.mem_append_left _ hg)
+  have hmem := mem_of_lookup_eq_some hg'
+  rw [gates_toList] at hmem
+  rcases List.mem_append.mp hmem with hm | hm
+  · exact ⟨g', hm, rowOf_of_lookup_some _ _ _ hg'⟩
+  · have := outRows_pos hm
+    dsimp only at this
+    omega
+
+/-- **An output row**: at `256 + 32 w + i`, `rowOf` is `(out_w bit i, 1)`. -/
+theorem rowOf_out (k : ProductCircuit.Pos bm) (hB : 256 ≤ (k : ℕ) ∧ (k : ℕ) < 512)
+    (hnewpos : ∀ g ∈ roundsRun.2.gates.toList, 1280 ≤ (g.1 : ℕ)) :
+    ∃ (w : Fin 8) (i : Fin 32), (w : ℕ) = ((k : ℕ) - 256) / 32 ∧ (i : ℕ) = ((k : ℕ) - 256) % 32 ∧
+      Blake2sCircuit.blake2sCircuit.rowOf k =
+        ⟨(outsOf roundsRun.1)[w][i], Form.var Lv42.Parameters.Flock.constPos⟩ := by
+  have hk := k.isLt
+  have h2 := two_pow_bm
+  have hwlt : ((k : ℕ) - 256) / 32 < 8 := by omega
+  have hilt : ((k : ℕ) - 256) % 32 < 32 := by omega
+  obtain ⟨w, hw⟩ : ∃ w : Fin 8, (w : ℕ) = ((k : ℕ) - 256) / 32 := ⟨⟨_, hwlt⟩, rfl⟩
+  obtain ⟨i, hi⟩ : ∃ i : Fin 32, (i : ℕ) = ((k : ℕ) - 256) % 32 := ⟨⟨_, hilt⟩, rfl⟩
+  refine ⟨w, i, hw, hi, ?_⟩
+  have e : (pos (256 + 32 * w.val + i.val) : ProductCircuit.Pos bm) = k := by
+    apply Fin.ext
+    rw [pos_val (by omega)]
+    omega
+  have hmem : (k, (⟨((outsOf roundsRun.1)[w]'w.isLt)[i]'i.isLt, Form.var Lv42.Parameters.Flock.constPos⟩ :
+      Gate bm)) ∈ Blake2sCircuit.blake2sCircuit.gates.toList := by
+    rw [gates_toList]
+    refine List.mem_append_right _ ?_
+    have := mem_outRows_of (outsOf roundsRun.1) w i
+    rw [e] at this
+    exact this
+  obtain ⟨g', hg'⟩ := lookup_isSome_of_mem hmem
+  have hmem' := mem_of_lookup_eq_some hg'
+  rw [gates_toList] at hmem'
+  rw [rowOf_of_lookup_some _ _ _ hg']
+  rcases List.mem_append.mp hmem' with hm | hm
+  · have := hnewpos _ hm
+    dsimp only at this
+    omega
+  · obtain ⟨w', i', he⟩ := mem_outRows' hm
+    simp only [Prod.mk.injEq] at he
+    obtain ⟨he1, he2⟩ := he
+    have hw' := w'.isLt
+    have hi' := i'.isLt
+    have hv : (k : ℕ) = 256 + 32 * w'.val + i'.val := by
+      rw [he1, pos_val (by omega)]
+    have hww : w' = w := Fin.ext (by omega)
+    have hii : i' = i := Fin.ext (by omega)
+    rw [he2, hww, hii]
+
+/-- **Neither a gate's nor an output row**: `rowOf` is the constant's row, an input's, or zero. -/
+theorem rowOf_none (k : ProductCircuit.Pos bm) (hC : ¬(1280 ≤ (k : ℕ) ∧ (k : ℕ) < 16000))
+    (hB : ¬(256 ≤ (k : ℕ) ∧ (k : ℕ) < 512))
+    (hnewpos : ∀ g ∈ roundsRun.2.gates.toList, 1280 ≤ (g.1 : ℕ) ∧ (g.1 : ℕ) < 16000) :
+    Blake2sCircuit.blake2sCircuit.rowOf k =
+      if k = Lv42.Parameters.Flock.constPos then
+        ⟨Form.var Lv42.Parameters.Flock.constPos, Form.var Lv42.Parameters.Flock.constPos⟩
+      else if (k : ℕ) < 256 ∨ (640 ≤ (k : ℕ) ∧ (k : ℕ) < 1280) then
+        ⟨Form.var k, Form.var Lv42.Parameters.Flock.constPos⟩
+      else ⟨0, 0⟩ := by
+  have hnone : Blake2sCircuit.blake2sCircuit.gates.toList.lookup k = none := by
+    rw [gates_toList, lookup_append_of_none (lookup_eq_none_of fun p hp hpk ↦ by
+      have := hnewpos p hp
+      rw [hpk] at this
+      omega)]
+    exact lookup_eq_none_of fun p hp hpk ↦ by
+      have := outRows_pos hp
+      rw [hpk] at this
+      omega
+  rw [rowOf_of_lookup_none _ _ hnone, Blake2sCircuit.blake2sCircuit_cpos, Blake2sCircuit.blake2sCircuit_inputs,
+    Blake2sCircuit.getLsbD_inputs]
+  simp only [decide_eq_true_eq]
+
+/-- **The walk's rows are the circuit's**: row `k` of `rowModel cw` (the walk) holds the linear evaluations of
+`rowOf blake2sCircuit k`'s two forms. -/
+theorem rowModel_spec (cw : Array E) (k : ProductCircuit.Pos bm) :
+    (rowModel cw).1.getD k 0 = lev cw (Blake2sCircuit.blake2sCircuit.rowOf k).a ∧
+      (rowModel cw).2.getD k 0 = lev cw (Blake2sCircuit.blake2sCircuit.rowOf k).b := by
+  have hk : (k : ℕ) < 16384 := k.isLt
+  have hgb : Blake2sCircuit.gateBase = 1280 := rfl
+  -- the walk's stages, named
+  obtain ⟨st1, hst1⟩ : ∃ q, q = [(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+      (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E)) :=
+    ⟨_, rfl⟩
+  obtain ⟨st2, hst2⟩ : ∃ q, q = (blake2sSigma.zip (List.range blake2sSigma.length)).foldl (roundStep cw)
+      (st1.1, st1.2, initState cw) := ⟨_, rfl⟩
+  obtain ⟨st3, hst3⟩ : ∃ q, q = (List.range' 0 8).foldl (outStep cw st2.2.2) (st2.1, st2.2.1) := ⟨_, rfl⟩
+  have hrm : rowModel cw = (st3.1.set! constantColumn (cw.getD constantColumn 0),
+      st3.2.set! constantColumn (cw.getD constantColumn 0)) := by
+    rw [hst3, hst2, hst1]
+    rfl
+  obtain ⟨I1s, I2s, Iv⟩ : st1.1.size = 2 ^ bm ∧ st1.2.size = 2 ^ bm ∧
+      ∀ j, st1.1.getD j 0 = (if j < 256 ∨ (640 ≤ j ∧ j < 1280) then cw.getD j 0 else 0) ∧
+        st1.2.getD j 0 = (if j < 256 ∨ (640 ≤ j ∧ j < 1280) then cw.getD constantColumn 0 else 0) := by
+    rw [hst1]
+    exact inputs_spec cw
+  -- the rounds
+  have H0 := GInv.start' cw st1.1 st1.2 (initState cw) ⟨Blake2sCircuit.gateBase, #[]⟩ Blake2sCircuit.initW
+    (srel_initState cw) I1s I2s
+  have R0 := sim_rounds cw _ _ Lv42.Parameters.sigma.toList 0 0 _ _ H0 rfl (by simp [two_pow_bm, hgb])
+  dsimp only at R0
+  rw [Vector.length_toList] at R0
+  have R : GInv cw (st1.1, st1.2, initState cw) ⟨Blake2sCircuit.gateBase, #[]⟩ 14720 st2 roundsRun := by
+    rw [hst2, sigma_zip, roundsRun_toList]
+    exact R0.cast (by norm_num)
+  obtain ⟨new, hnew, hpos, hval⟩ := R.grow.gates
+  have hnew' : roundsRun.2.gates.toList = new := by rw [hnew]; rfl
+  rw [← hnew'] at hpos hval
+  dsimp only at hpos
+  have hnewpos : ∀ g ∈ roundsRun.2.gates.toList, 1280 ≤ (g.1 : ℕ) ∧ (g.1 : ℕ) < 16000 := fun g hg ↦ by
+    have hm := List.mem_map_of_mem (f := fun g : ProductCircuit.Pos bm × Gate bm ↦ (g.1 : ℕ)) hg
+    rw [hpos, List.mem_range'_1] at hm
+    omega
+  -- the output rows
+  obtain ⟨O1s, O2s, Ov⟩ : st3.1.size = st2.1.size ∧ st3.2.size = st2.2.1.size ∧
+      ∀ j, st3.1.getD j 0 = (if 256 ≤ j ∧ j < 256 + 32 * 8 then
+          (outWord cw st2.2.2 ((j - 256) / 32)).getD ((j - 256) % 32) 0 else st2.1.getD j 0) ∧
+        st3.2.getD j 0 = (if 256 ≤ j ∧ j < 256 + 32 * 8 then cw.getD constantColumn 0 else st2.2.1.getD j 0) := by
+    rw [hst3]
+    exact outStep_fold cw st2.2.2 8 (st2.1, st2.2.1) (by rw [R.lsize, two_pow_bm]; omega)
+      (by rw [R.rsize, two_pow_bm]; omega)
+  rw [hrm]
+  dsimp only
+  rw [getD_set!, getD_set!, O1s, O2s, R.lsize, R.rsize, (Ov k).1, (Ov k).2,
+    show (constantColumn : ℕ) = 512 from rfl]
+  have h2 := two_pow_bm
+  by_cases hC : 1280 ≤ (k : ℕ) ∧ (k : ℕ) < 16000
+  · -- a gate's row
+    obtain ⟨g', hm, hrow⟩ := rowOf_gate k hC (by rw [hpos])
+    obtain ⟨hva, hvb⟩ := hval _ hm
+    have n1 : ¬(512 = (k : ℕ) ∧ 512 < 2 ^ bm) := by omega
+    have n2 : ¬(256 ≤ (k : ℕ) ∧ (k : ℕ) < 256 + 32 * 8) := by omega
+    refine ⟨?_, ?_⟩
+    · rw [hrow, if_neg n1, if_neg n2]
+      exact hva
+    · rw [hrow, if_neg n1, if_neg n2]
+      exact hvb
+  by_cases hB : 256 ≤ (k : ℕ) ∧ (k : ℕ) < 512
+  · -- an output row
+    obtain ⟨w, i, hw, hi, hrow⟩ := rowOf_out k hB (fun g hg ↦ (hnewpos g hg).1)
+    have n1 : ¬(512 = (k : ℕ) ∧ 512 < 2 ^ bm) := by omega
+    have p2 : 256 ≤ (k : ℕ) ∧ (k : ℕ) < 256 + 32 * 8 := by omega
+    refine ⟨?_, ?_⟩
+    · rw [hrow, if_neg n1, if_pos p2, ← hw, ← hi]
+      exact wrel_outWord cw R.srel w i i.isLt
+    · rw [hrow, if_neg n1, if_pos p2]
+      dsimp only
+      rw [lev_var, constPos_val]
+  -- the constant, an input, or zero
+  have hrow := rowOf_none k hC hB hnewpos
+  by_cases h512 : (k : ℕ) = 512
+  · have hcp : k = Lv42.Parameters.Flock.constPos := Fin.ext (by rw [h512, constPos_val])
+    have p1 : 512 = (k : ℕ) ∧ 512 < 2 ^ bm := by omega
+    refine ⟨?_, ?_⟩
+    · rw [hrow, if_pos hcp, if_pos p1]
+      dsimp only
+      rw [lev_var, constPos_val]
+    · rw [hrow, if_pos hcp, if_pos p1]
+      dsimp only
+      rw [lev_var, constPos_val]
+  have hcp : k ≠ Lv42.Parameters.Flock.constPos := fun h ↦ h512 (by rw [h, constPos_val])
+  have hfr := R.grow.frame k (by dsimp only; omega)
+  dsimp only at hfr
+  have n1 : ¬(512 = (k : ℕ) ∧ 512 < 2 ^ bm) := by omega
+  have n2 : ¬(256 ≤ (k : ℕ) ∧ (k : ℕ) < 256 + 32 * 8) := by omega
+  by_cases hin : (k : ℕ) < 256 ∨ (640 ≤ (k : ℕ) ∧ (k : ℕ) < 1280)
+  · refine ⟨?_, ?_⟩
+    · rw [hrow, if_neg hcp, if_pos hin, if_neg n1, if_neg n2, hfr.1, (Iv k).1, if_pos hin]
+      dsimp only
+      rw [lev_var]
+    · rw [hrow, if_neg hcp, if_pos hin, if_neg n1, if_neg n2, hfr.2, (Iv k).2, if_pos hin]
+      dsimp only
+      rw [lev_var, constPos_val, show (constantColumn : ℕ) = 512 from rfl]
+  · refine ⟨?_, ?_⟩
+    · rw [hrow, if_neg hcp, if_neg hin, if_neg n1, if_neg n2, hfr.1, (Iv k).1, if_neg hin]
+      dsimp only
+      rw [lev_zero]
+    · rw [hrow, if_neg hcp, if_neg hin, if_neg n1, if_neg n2, hfr.2, (Iv k).2, if_neg hin]
+      dsimp only
+      rw [lev_zero]
+
 end FlockSound.Uni.Walk
+
+namespace FlockSound.Uni
+
+open UniStatement UniStatement.Flock LeanVM.Parameters
+
+/-- **The walk computes the matrices' products** (`blake2s_row_values` is `A0 w`, `B0 w`): for every row `j`, the
+walk's left value is `Σ_i A[j][i] w_i` and its right value `Σ_i B[j][i] w_i`, `A`, `B` the BLAKE2s R1CS's matrices
+(row, column) as `flockMatrixStack` reads them. The size hypothesis is not needed (the walk reads `getD`). -/
+theorem rowValues_spec (cw : Array E) (hcw : cw.size = 2 ^ 14) (j : Fin (2 ^ 14)) :
+    (Flock.blake2sRowValues cw).1.getD j 0 =
+        ∑ i : Fin (2 ^ 14), (if Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A j i then cw.getD i 0 else 0) ∧
+      (Flock.blake2sRowValues cw).2.getD j 0 =
+        ∑ i : Fin (2 ^ 14), (if Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B j i then cw.getD i 0 else 0) := by
+  have _ := hcw
+  have H := Walk.rowModel_spec cw j
+  rw [Walk.blake2sRowValues_eq]
+  exact ⟨H.1.trans (Walk.lev_rowA cw j), H.2.trans (Walk.lev_rowB cw j)⟩
+
+end FlockSound.Uni
+
+/-- info: 'FlockSound.Uni.rowValues_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.rowValues_spec
+
+/-- info: 'FlockSound.Uni.Walk.rowModel_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.Walk.rowModel_spec
+
+/-- info: 'FlockSound.Uni.Walk.blake2sRowValues_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.Walk.blake2sRowValues_eq
