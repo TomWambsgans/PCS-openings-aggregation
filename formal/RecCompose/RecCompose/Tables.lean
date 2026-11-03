@@ -663,3 +663,61 @@ theorem sum_novP_omega {m : ℕ} (hm : m ≤ 32) (d : ℕ → E) :
     (fun h ↦ absurd (Finset.mem_range.mpr hlt) h), if_pos hbits]
 
 end RecCompose
+
+namespace RecCompose
+
+open RecStatement LeanVM.Parameters LeanVM.Protocol Finset Polynomial
+open scoped ENNReal
+
+/-! ## The setup: the basis `B` -/
+
+/-- **A public layout of two full chunks reads its stack in order**: `readEntry stack i = stack i`, `i < 2^(lc + 1)`. -/
+theorem readEntry_ofChunks_two {vars lc logN : ℕ} (hlane : logN - PcsQuotient.laneFold ≤ lc) (stack : ℕ → K)
+    {i : ℕ} (hi : i < 2 ^ (lc + 1)) :
+    (PcsQuotient.Layout.ofChunks vars lc logN [(0, 2 ^ lc), (1, 2 ^ lc)]).readEntry stack i = stack i := by
+  obtain ⟨d, hd⟩ : ∃ d, lc = (logN - PcsQuotient.laneFold) + d := ⟨lc - (logN - PcsQuotient.laneFold), by omega⟩
+  set a := logN - PcsQuotient.laneFold with ha
+  have hpos : 0 < 2 ^ a := Nat.two_pow_pos a
+  have hcount : (2 ^ lc + 2 ^ a - 1) / 2 ^ a = 2 ^ d := by
+    rw [hd, pow_add]
+    have : 2 ^ a * 2 ^ d + 2 ^ a - 1 = 2 ^ d * 2 ^ a + (2 ^ a - 1) := by
+      have : 1 ≤ 2 ^ a := hpos; rw [mul_comm]; omega
+    rw [this, Nat.add_comm, Nat.add_mul_div_right _ _ hpos, Nat.div_eq_of_lt (by omega), zero_add]
+  have hd' : lc - a = d := by omega
+  have hlanes : (PcsQuotient.Layout.ofChunks vars lc logN [(0, 2 ^ lc), (1, 2 ^ lc)]).lanes =
+      (List.range (2 ^ d + 2 ^ d)).map PcsQuotient.Lane.block := by
+    simp only [PcsQuotient.Layout.ofChunks, List.flatMap_cons, List.flatMap_nil, List.append_nil, ← ha, hcount, hd',
+      zero_mul, zero_add, one_mul]
+    rw [List.range_add, List.map_append, List.map_map]
+    rfl
+  have hb : i / 2 ^ a < 2 ^ d + 2 ^ d := by
+    rw [Nat.div_lt_iff_lt_mul hpos]
+    rw [hd, pow_succ, pow_add] at hi
+    nlinarith
+  have hfind : (PcsQuotient.Layout.ofChunks vars lc logN [(0, 2 ^ lc), (1, 2 ^ lc)]).lanes.findIdx?
+      (· = PcsQuotient.Lane.block (i / 2 ^ a)) = some (i / 2 ^ a) := by
+    rw [hlanes, List.findIdx?_eq_some_iff_getElem]
+    refine ⟨by simpa using hb, by simp, fun j hj ↦ ?_⟩
+    simp only [List.getElem_map, List.getElem_range, decide_eq_true_eq, PcsQuotient.Lane.block.injEq]
+    omega
+  have hlp : (PcsQuotient.Layout.ofChunks vars lc logN [(0, 2 ^ lc), (1, 2 ^ lc)]).logPiece = none := rfl
+  have hlg : (PcsQuotient.Layout.ofChunks vars lc logN [(0, 2 ^ lc), (1, 2 ^ lc)]).logN = logN := rfl
+  simp only [PcsQuotient.Layout.readEntry, hlp, PcsQuotient.Layout.logLane, hlg, ← ha, hfind]
+  rw [mul_comm, Nat.div_add_mod]
+
+/-- **The basis-`B` column's polynomial takes the column's values**: `wPoly m (bCoefficients m v)` at `ω_i` is `v_i`
+(`m ≤ 28`: UniComplete's `evalB_bCoefficients`, `pEval_colPolyK_pointE`). -/
+theorem wPoly_bCoefficients {m : ℕ} (hm : m ≤ 28) (v : Array K) (hv : v.size = 2 ^ m) {i : ℕ} (hi : i < 2 ^ m) :
+    (wPoly m fun j ↦ (UniStatement.bCoefficients m v).getD j 0).eval (pi2Omega i) = ofK (v.getD i 0) := by
+  rw [← UniComplete.AlgC.pEval_colPolyK_pointE hm v hv hi, pi2Omega_eq,
+    ← UniComplete.AlgC.evalB_bCoefficients m m v hv le_rfl, wPoly_eval]
+  unfold UniComplete.evalB
+  have hlen := UniComplete.AlgC.length_take_digits (UniStatement.pointE i) (le_refl m)
+  rw [UniComplete.AlgC.mle_eq_sum _ _ (by rw [hlen, Array.size_map, UniComplete.AlgC.bCoefficients_size, hv]), hlen]
+  refine Finset.sum_congr rfl fun j _ ↦ ?_
+  rw [UniComplete.AlgC.getD_map_ofK]
+  congr 1
+  refine Finset.prod_congr rfl fun l hl ↦ ?_
+  rw [UniComplete.AlgC.take_digits_getD _ (le_refl m) (Finset.mem_range.mp hl), wP_eval_sq]
+
+end RecCompose
