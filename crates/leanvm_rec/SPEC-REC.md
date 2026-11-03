@@ -5,7 +5,10 @@
 **Status: milestone R1 done (measure, size, specify); R2 step 1 done (π1-rec in code, §1.4, §7); R2 steps 2–6 done
 (π2's circuit compiled and its witness on the real proofs, §10: D16v × π1-rec is `2^24` positions, 85.7% used); R3
 steps 1–3 done (π2's prover, verifier and contract, measured end to end on the real proof, §11 and `PI2.md`: 73,550 at
-`c = 0`, 94,550 with the base).**
+`c = 0`, 94,550 with the base); the review (R3 step 4, `REVIEW-REC.md`) found no attack, its fixes are in; the
+optimisation (§12, branch `leanvm-rec-opt`): D16v × π1-rec2, measured end to end on the real proof, **49,534 at
+`c = 0`** (1,292 B, execution 30,182), 70,534 with the base.** §0–§11 are the design before §12; where they differ,
+§12 and `PI2.md` §8–§9 hold.
 Branch `leanvm-rec`, from `leanvm-univariate` @ 29d3095; π1-rec on `leanvm-rec-pi1`; π2's circuit on
 `leanvm-rec-circuit`; π2's PIOP on `leanvm-rec-piop`.
 No Lean for now (the user's instruction: no proofs until the gas is close to 100K). Every number is marked:
@@ -877,3 +880,28 @@ in `PI2.md` §9.
    The batching sumcheck's challenges are the hash's low 160 bits, so the claims' 27 coordinates have four zero bytes
    each in calldata. 130.0 bits after the lists (`review/leanvm_rec_params.py`). The vector regenerated. On the real
    calldata (110 zero bytes): EIP-7623 `c = 0` 51,560 → **49,534** (the standard price binds; the floor is 48,380).
+
+### Where it stands (measured on h1, the real 1,000-signature proof, `c = 0`, no base)
+
+| | calldata | execution | EIP-7623 | EIP-7976 | claims / calls | π2's positions |
+|---|---:|---:|---:|---:|---:|---|
+| D16v × π1-rec, before (9d1bf46) | 1,844 B | 39,674 | 73,550 | 118,016 | 9 / 8 | 14.37M of `2^24` |
+| **D16v × π1-rec2, now** (f7a0b28) | 1,292 B (110 zero) | 30,182 | **49,534** | 82,688 | 7 / 6 | 15.88M of `2^24` (94.6%) |
+
+The calldata: the selector 4, the public input 32, π1's roots 64, π1's claims 720 (27 narrow coordinates and 3 values),
+π2's roots 64, π2's 17 values 408. EIP-7623's standard price binds (`16 · 1,182 + 4 · 110 + 30,182`); its floor is
+48,380, so about 1.15K more execution savings would reach it, and below that only calldata counts. Soundness after the
+union bounds: π1-rec2's PIOP 130.0 bits (the narrow batch), π2's 140.6 (`t`), the six WHIR openings 126.4 by a plain
+union (about 129 in the query-bounded model).
+
+**Dropped or left:**
+
+- **Lever 1(b), the claims' points from 1–3 scalars**: given to the agent on `leanvm-rec-points`. π1-rec2 removes `A0`,
+  `B0` from that problem: the three claims left are at the batch's point. If their point became 1–3 scalars, π1's
+  claims would drop from 720 B to about 120 B.
+- **D8v**: Keccak-f does not fit `2^24` in rows of 8 (`PI2.md` §9).
+- **20-byte reads of the narrow coordinates**: 432 gas at the standard price, a read width of its own in π2's stream.
+- **Hand-scheduled kernels for the push side** (14K of the execution: 145 pairs, 66 groups): its generic code is at
+  about 11 gas an operation already; fewer pairs would need slack in `2^24` that π1-rec2 used up (99.7% of the rows
+  are in blocks).
+- **The selector** (4 B, 64 gas): every contract of the repository's codegen takes it.

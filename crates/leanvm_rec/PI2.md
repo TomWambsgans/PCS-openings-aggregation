@@ -2,7 +2,8 @@
 
 # π2's PIOP: prover, verifier, contract, gas (SPEC-REC.md §7 R3)
 
-**Status: R3 steps 1–3 done.** Branch `leanvm-rec-piop`, from `leanvm-rec` @ 0862503, with `leanvm-rec-circuit` (π2's
+**Status: R3 steps 1–3 done; the review's fixes (§8) and the optimisation levers (§9: 49,534 at `c = 0`, measured
+end to end on π1-rec2's real proof) on branch `leanvm-rec-opt`; §0–§7 describe the design before them.** Branch `leanvm-rec-piop`, from `leanvm-rec` @ 0862503, with `leanvm-rec-circuit` (π2's
 circuit, SPEC-REC.md §10) merged. Code in `crates/leanvm_rec/src/pi2/`. No formal proofs (the user's instruction).
 Every number below is **measured** on h1 (AMD Ryzen 7 PRO 8700GE, 8 cores, 16 threads), unless marked modelled.
 
