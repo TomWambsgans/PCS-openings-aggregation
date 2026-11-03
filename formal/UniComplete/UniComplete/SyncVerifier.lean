@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import UniComplete.SyncTable
 import UniComplete.DomainCount
+import UniComplete.Honest
 
 /-!
 # The verifier reads back the honest prover's stream
@@ -321,6 +322,49 @@ theorem verifyDeferredH_end (H : List UInt8 → Digest) (logN : ℕ) (variant : 
       | ok e' =>
         cases h
         exact ringEndH_ring H variant s c1 _ _ hr
+
+/-- **`Flock.verifyDeferredH`'s pending matrices, when it ends, carry the slices** (`Pending.new` on the sent
+slices). -/
+theorem verifyDeferredH_hasSlices (H : List UInt8 → Digest) (logN : ℕ) (variant : Flock.Variant) (c : Chan)
+    {pt : List E} {e : Flock.End} {pd : Flock.Pending} {c' : Chan}
+    (h : (Flock.verifyDeferredH (m := Id) (Pure.pure ∘ H) logN variant).run.run c = (.ok (pt, some e, pd), c')) :
+    pd.hasSlices = true := by
+  unfold Flock.verifyDeferredH at h
+  rw [chan_run_bind] at h
+  generalize (Flock.frontH (m := Id) (Pure.pure ∘ H) logN variant).run.run c = r at h
+  rcases r with ⟨r, c1⟩
+  cases r with
+  | error err => exact absurd h err_ne_ok
+  | ok fr =>
+    dsimp only at h
+    cases hs : fr.slices with
+    | none =>
+      rw [hs] at h
+      cases h
+    | some s =>
+      rw [hs] at h
+      dsimp only at h
+      rw [chan_run_bind, chan_run_map] at h
+      generalize (Flock.ringEndH (m := Id) (Pure.pure ∘ H) variant s).run.run c1 = r2 at h
+      rcases r2 with ⟨r2, c2⟩
+      cases r2 with
+      | error err => exact absurd h err_ne_ok
+      | ok e' =>
+        cases h
+        rfl
+
+/-- **Flock's prover, synchronising, ends with a ring switch** (its map and target). -/
+theorem flock_ring {H : List UInt8 → Digest} {flock : FlockProver Id} {logN : ℕ} {variant : Flock.Variant}
+    {q : Array K} (hflock : FlockSyncs H flock logN variant q) (w : Wr) :
+    ∃ map target, ((flock logN variant q).run w).1.end_ = .ring map target :=
+  verifyDeferredH_end H _ _ _ (((hflock w).steps).2.2 _ #[] (List.prefix_refl _))
+
+/-- **Flock's prover, synchronising, leaves its matrices pending with the slices** (`hasSlices`: the batch's
+terminal is collected, no bit-slice claim). -/
+theorem flock_hasSlices {H : List UInt8 → Digest} {flock : FlockProver Id} {logN : ℕ} {variant : Flock.Variant}
+    {q : Array K} (hflock : FlockSyncs H flock logN variant q) (w : Wr) :
+    ((flock logN variant q).run w).1.pending.hasSlices = true :=
+  verifyDeferredH_hasSlices H _ _ _ (((hflock w).steps).2.2 _ #[] (List.prefix_refl _))
 
 /-! ## The values at `t`, as `atTOf` sends them -/
 
@@ -918,6 +962,27 @@ theorem runWithH_accepts (H : List UInt8 → Digest) (commit : Commitment → �
   · exact countChecks_zero _ _ (rowsFit_zip hvalid.1 hvalid.2 hfit) z hz
   · exact hterm
 
+/-- `runWithH_syncs` for an honest trace (`TraceHonest`: a valid shape, row counts that fit). -/
+theorem runWithH_syncs_honest (H : List UInt8 → Digest) (commit : Commitment → ℕ → Array K → Id Committed)
+    (flock : FlockProver Id) (tr : Trace) (iv : List UInt8) (htr : TraceHonest tr)
+    (hflock : FlockSyncs H flock (blake2sR1csLogSize + tr.shape.heights.getD opBlake2s 0) flockMain tr.qflock)
+    (terminal : Wr → E)
+    (hbatch : BatchSyncsAt H commit flock (.flock flockMain) tr (seedAt H iv tr.publicInput) terminal) :
+    ∃ R : Reduced,
+      runWithH (m := Id) (Pure.pure ∘ H) tr.shape iv tr.publicInput
+          (proverRun H commit flock (.flock flockMain) tr iv).1.stream (.flock flockMain) .point =
+        ⟨.ok R, chanAt (proverRun H commit flock (.flock flockMain) tr iv).1.stream
+          (proverRun H commit flock (.flock flockMain) tr iv).1.stream.size
+          (proverRun H commit flock (.flock flockMain) tr iv).2
+          (countChecks tr.rows tr.shape.heights ++
+            [terminal (frontOf H commit flock (.flock flockMain) tr
+              (Wr.start (seedAt H iv tr.publicInput))).2]).toArray⟩ ∧
+      R.openings = (proverRun H commit flock (.flock flockMain) tr iv).1.claims.map pointOpening ∧
+      R.matrices = (proverRun H commit flock (.flock flockMain) tr iv).1.matrices ∧
+      R.roots = (rootRead (proverRun H commit flock (.flock flockMain) tr iv).1.c1.2.halves,
+        rootRead (proverRun H commit flock (.flock flockMain) tr iv).1.c2.2.halves) :=
+  runWithH_syncs H commit flock tr iv htr.valid htr.rowsFit hflock terminal hbatch
+
 /-- **The verifier on the honest prover's stream, without Flock** (`Blake2s.omitted`, point claims: the
 differential test's configuration): as `runWithH_syncs`, no Flock prover, no pending matrices (`R.matrices` the
 prover's, `none`). -/
@@ -995,3 +1060,7 @@ end UniComplete
 /-- info: 'UniComplete.verifyDeferredH_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniComplete.verifyDeferredH_end
+
+/-- info: 'UniComplete.flock_hasSlices' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.flock_hasSlices
