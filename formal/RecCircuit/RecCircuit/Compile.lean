@@ -381,8 +381,9 @@ end Builder
 /-- **The compiler**: π1's recorded verifier to π2's circuit (D16v), or why the Rust would panic (or the Lean
 compiler refuses the graph). -/
 def compileRaw (r : Recorded) : Except String Compiled := do
+  if !r.graph.typed then throw "the graph is not well typed"
   let (g, map) ← expand r.graph
   let (c, _) ← (Builder.compileM r g map).run { logWidth := 4 }
-  return c
+  return { c with nodes := g, map := map }
 
 end RecCircuit

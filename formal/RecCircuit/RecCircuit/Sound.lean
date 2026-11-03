@@ -38,20 +38,6 @@ theorem compile_sound_flow {r : Recorded} {c : Compiled} (hc : compile r = .ok c
 
 /-! ## `RecGraph`'s graphs and semantics -/
 
-/-- `RecGraph`'s node as this library's (the same constructors). -/
-def ofRGNode : RecGraph.Node → Node
-  | .const a b d => .const a b d
-  | .statement k => .statement k
-  | .input o l => .input o l
-  | .add a b => .add a b
-  | .mul a b => .mul a b
-  | .seed => .seed
-  | .hash s f t => .hash s f t
-  | .low h => .low h
-  | .narrow h => .narrow h
-  | .bits v s w => .bits v s w
-  | .ringWeight k n => .ringWeight k n
-
 def ofRGWord : RecGraph.Word → Word
   | .node id => .node id
   | .const w => .const w
