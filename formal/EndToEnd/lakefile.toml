@@ -191,3 +191,18 @@ name = "RecGraph"
 srcDir = "../RecGraph"
 globs = ["RecGraph", "RecGraph.+"]
 leanOptions = { warningAsError = true }
+
+# π2's circuit (`crates/leanvm_rec/src/circuit`, branch `lean-rec-circuit`), `formal/RecCircuit`: the compiler from
+# π1's recorded verifier graph to π2's circuit, transcribed, and the proof that a satisfied compiled circuit's ports
+# carry the graph's outputs on the stream its free bits encode (the D16v Keccak-f template, Keccak-256's sponge, the
+# `E` units, the packings).
+[[lean_lib]]
+name = "RecCircuit"
+srcDir = "../RecCircuit"
+globs = ["RecCircuit", "RecCircuit.+"]
+
+# The differential runner of `formal/RecCircuit` against the Rust compiler (`RecCircuitTest/Main.lean`).
+[[lean_exe]]
+name = "rec-circuit-diff"
+srcDir = "../RecCircuit"
+root = "RecCircuitTest.Main"
