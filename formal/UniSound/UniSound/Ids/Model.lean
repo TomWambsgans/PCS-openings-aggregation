@@ -149,10 +149,13 @@ noncomputable def diffsOf (s : USt) (c1 : Stk) (ch : List E) (fd : Done) (c2 : S
 /-- The commitment of the batch's `k`-th product. -/
 def cm (k : ℕ) : Commitment := commitments.getD k .c1
 
+/-- The empty claim (a commitment with no relation). -/
+def zeroClaim : Combined := ⟨[], [], 0, 0⟩
+
 /-- A commitment's combined claim. -/
 def combAt (s : USt) (ch : List E) (fd : Done) (t : E) (vals : List E) (ρ : E) (c : Commitment) :
     Combined :=
-  (combine (relsAt D Fl s ch fd t vals) c ρ).getD default
+  (combine (relsAt D Fl s ch fd t vals) c ρ).getD zeroClaim
 
 open Classical in
 /-- **The batch** (`UniIdsRest.prod`): `Σ_{k<3} λ^k W_k C_k + λ³ G L` over the batch's variables. -/
