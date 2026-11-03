@@ -2,6 +2,54 @@
 -- f0393df4's `Blake2sCircuit`, MIT OR Apache-2.0); the walk is `formal/UniStatement`'s (`UniStatement/Rec.lean`).
 import FlockSoundUni.WalkCode
 
+/-!
+# The TowerWalk terminal's walk computes the BLAKE2s R1CS's products
+
+π1-rec3's verifier (`Slices::TowerWalk`) checks Flock's lincheck terminal against `walked_terminal`, which walks the
+BLAKE2s circuit once (`blake2s_row_values`, `crates/leanvm_flock_gas/src/flock.rs:318-388`) to get `A0 w` and `B0 w`.
+**`rowValues_spec`** proves that the official transcription `UniStatement.Flock.blake2sRowValues` computes exactly
+these: for every row `j < 2^14`,
+
+  `(blake2sRowValues cw).1[j] = Σ_i A[j][i] cw[i]`,  `(blake2sRowValues cw).2[j] = Σ_i B[j][i] cw[i]`,
+
+`A`, `B` the matrices of `Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs` (the R1CS of Lv42's `blake2sCircuit`,
+row then column, as `flockMatrixStack` reads them). Nothing is evaluated: the proof is a simulation of the circuit's
+builder (`Blake2sCircuit.compressW`) by the walk, gadget by gadget.
+
+* **Forms and their evaluation** (`lev`): a builder form `L` (a bitset over the block) evaluates at the column
+  weights to `Σ_{j ∈ L} cw[j]`; XOR is the sum (characteristic two), `var(pos)` is `cw[pos]` (`lev_xor`, `lev_var`).
+  A walk word follows a builder word when each bit is the evaluation of the form (`WRel`): XOR, rotation, input
+  slots and literals preserve it (`wrel_xor`, `wrel_rotr`, `wrel_slots`, `wrel_lit`).
+* **The simulation relation** (`Grow`): the builder records `k` gates at `next, …, next + k − 1` and the walk writes,
+  at those rows, the evaluations of the gates' two forms, every other row unchanged. It composes (`Grow.trans`).
+* **The gadgets**: the walk's ripple adder follows `addW` (`sim_addW`, bit by bit against `addCarries`), its
+  three-operand adder `add3W` (`sim_add3W`: the majority layer against `majorities`, the ripple against
+  `rippleCarries`), the mixing step `gW` (`sim_gate`, 184 rows), a round `roundW` (`sim_round`, 1472 rows), the
+  rounds (`sim_rounds`), the initial working vector (`srel_initState`).
+* **The rows** (`rowModel_spec`): the input rows (`inputs_spec`), the gates' rows (from the simulation), the output
+  rows (`outStep_fold`, `wrel_outWord`) and the constant row are the circuit's `rowOf` (`rowOf_gate`, `rowOf_out`,
+  `rowOf_none`, via the gate list `gates_toList` and `List.lookup`).
+
+**How the proofs avoid evaluating anything.** The walk's arrays have `2^14` entries and its loops thousands of steps,
+so every definitional check must stay structural: `lev` is irreducible (else a failed match evaluates
+`Finset.univ` over `Fin 16384`); results of the walk and of the builder are named through `∃ x, x = …` equations
+rather than unfolded; facts about named stages are stated about the names and proven by rewriting the goal (never a
+hypothesis holding a fold); arithmetic about builder positions is closed (`ring`, `fit_le`) when the context holds
+large terms; and index side-goals get explicit bounds. (Each of these was found the hard way: the alternative times
+out by unrolling a loop.)
+
+**Decision (recorded):** the coordinator split the TowerWalk lemma; the algebra from these rows to `PendingHolds`
+(`walkLemma_of_rows : RowsSpec → WalkLemma`) is on `lean-rec3-sound` (`FlockSoundUni/WalkAlg.lean`), so this module
+stops at `rowValues_spec`, stated so that `fun cw hcw j ↦ rowValues_spec cw hcw j : RowsSpec`.
+
+**Rust vs Lv42.** The proof is a line-by-line check that the walk matches Lv42's circuit: gate base 1280, stride
+184 (`add3` at `+0`, `add` at `+61`, `add3` at `+92`, `add` at `+153`), majority rows `(x_i + z_i, y_i + z_i)`,
+ripple rows for bits `1 … 30` at `base + 31 + i − 1`, adder rows `(x_i + c, y_i + c)` for bits `0 … 30`, the
+rotations 16, 12, 8, 7, the lanes and the message schedule (`glanes_eq`, `sigma_zip`), the IV (`iv_getD`), the input
+rows `0 … 255`, `640 … 1279`, the output rows `(out bit, w_512)` at `256 + 32 w + i`, the constant row at 512 and zero
+rows elsewhere. No mismatch: had there been one, `rowValues_spec` would be false.
+-/
+
 namespace FlockSound.Uni.Walk
 
 open UniStatement UniStatement.Flock UniSound LeanVM.Parameters Finset
@@ -691,4 +739,719 @@ theorem sim_gate (cw : Array E) (sigma : List ℕ) (ri g : ℕ) (lanes : List �
   rw [hw', hb', e]
   exact sim_gate_core cw w σ hl hr hfit v hv a b c d (wrel_msg cw ix) (wrel_msg cw iy)
 
+theorem glanes_eq : blake2sGLanes.zip (List.range blake2sGLanes.length) =
+    [([0, 4, 8, 12], 0), ([1, 5, 9, 13], 1), ([2, 6, 10, 14], 2), ([3, 7, 11, 15], 3),
+      ([0, 5, 10, 15], 4), ([1, 6, 11, 12], 5), ([2, 7, 8, 13], 6), ([3, 4, 9, 14], 7)] := rfl
+
+/-- **The simulation so far**, from the walk state `w0` and the builder state `σ0`, `n` gates recorded. -/
+structure GInv (cw : Array E) (w0 : Array E × Array E × Array WalkWord) (σ0 : BuildState bm) (n : ℕ)
+    (w : Array E × Array E × Array WalkWord) (b : Vector (Word bm) 16 × BuildState bm) : Prop where
+  grow : Grow cw w0.1 w0.2.1 σ0 w.1 w.2.1 b.2 n
+  srel : SRel cw w.2.2 b.1
+  lsize : w.1.size = 2 ^ bm
+  rsize : w.2.1.size = 2 ^ bm
+
+theorem GInv.cast {cw : Array E} {w0 w : Array E × Array E × Array WalkWord} {σ0 : BuildState bm} {n n' : ℕ}
+    {b : Vector (Word bm) 16 × BuildState bm} (H : GInv cw w0 σ0 n w b) (h : n = n') : GInv cw w0 σ0 n' w b :=
+  h ▸ H
+
+theorem GInv.start (cw : Array E) (w : Array E × Array E × Array WalkWord) (σ : BuildState bm)
+    (v : Vector (Word bm) 16) (hv : SRel cw w.2.2 v) (hl : w.1.size = 2 ^ bm) (hr : w.2.1.size = 2 ^ bm) :
+    GInv cw w σ 0 w (v, σ) :=
+  ⟨Grow.refl _ _ _ _, hv, hl, hr⟩
+
+/-- `GInv.start` with the walk state given by its components (so that no projection meets a closed term). -/
+theorem GInv.start' (cw l r : Array E) (st : Array WalkWord) (σ : BuildState bm) (v : Vector (Word bm) 16)
+    (hv : SRel cw st v) (hl : l.size = 2 ^ bm) (hr : r.size = 2 ^ bm) :
+    GInv cw (l, r, st) σ 0 (l, r, st) (v, σ) :=
+  ⟨Grow.refl _ _ _ _, hv, hl, hr⟩
+
+/-- One more mixing step (gate `g` of round `ri`), the invariant carried; the arithmetic on `σ0.next + n`. -/
+theorem GInv.step {cw : Array E} {w0 : Array E × Array E × Array WalkWord} {σ0 : BuildState bm} {n : ℕ}
+    {w : Array E × Array E × Array WalkWord} {b : Vector (Word bm) 16 × BuildState bm}
+    (H : GInv cw w0 σ0 n w b) (sigma : List ℕ) (ri g : ℕ) (lanes : List ℕ) (la lb lc ld ix iy : Fin 16)
+    (hla : lanes.getD 0 0 = la) (hlb : lanes.getD 1 0 = lb) (hlc : lanes.getD 2 0 = lc) (hld : lanes.getD 3 0 = ld)
+    (hix : sigma.getD (2 * g) 0 = ix) (hiy : sigma.getD (2 * g + 1) 0 = iy)
+    (hσ : σ0.next + n = 1280 + 184 * (ri * 8 + g)) (hfit : σ0.next + n + 184 ≤ 2 ^ bm)
+    (w' : Array E × Array E × Array WalkWord) (hw' : w' = gateStep cw sigma ri w (lanes, g))
+    (b' : Vector (Word bm) 16 × BuildState bm)
+    (hb' : b' = (Blake2sCircuit.gW b.1 la lb lc ld msgV[ix] msgV[iy]).run b.2) :
+    GInv cw w0 σ0 (n + 184) w' b' := by
+  have hn := H.grow.next
+  have G := sim_gate cw sigma ri g lanes la lb lc ld ix iy hla hlb hlc hld hix hiy w b.2 (by omega) H.lsize H.rsize
+    (by omega) b.1 H.srel w' hw' b' hb'
+  exact ⟨H.grow.trans G.1, G.2, G.1.lsize.trans H.lsize, G.1.rsize.trans H.rsize⟩
+
+theorem fit_le {a b c d : ℕ} (h : a + d ≤ b) (hc : c ≤ d) : a + c ≤ b := le_trans (Nat.add_le_add_left hc a) h
+
+/-- A round's message indices, as the walk reads them. -/
+def rowList (s : Vector (Fin 16) 16) : List ℕ := s.toList.map Fin.val
+
+theorem rowList_getD (s : Vector (Fin 16) 16) (j : ℕ) (h : j < 16) : (rowList s).getD j 0 = (s[j]'h : ℕ) := by
+  simp [rowList, List.getD_eq_getElem?_getD, h]
+
+/-- **A round**: the walk's round follows `roundW`, 1472 more rows. -/
+theorem sim_round (cw : Array E) (s : Vector (Fin 16) 16) (ri : ℕ) {w0 w : Array E × Array E × Array WalkWord}
+    {σ0 : BuildState bm} {n : ℕ} {b : Vector (Word bm) 16 × BuildState bm} (H : GInv cw w0 σ0 n w b)
+    (hσ : σ0.next + n = 1280 + 1472 * ri) (hfit : σ0.next + n + 1472 ≤ 2 ^ bm) :
+    GInv cw w0 σ0 (n + 1472) (roundStep cw w (rowList s, ri)) ((Blake2sCircuit.roundW b.1 msgV s).run b.2) := by
+  have hs : ∀ j (h : j < 16), (rowList s).getD j 0 = (s[j]'h : ℕ) := rowList_getD s
+  have A0 : σ0.next + (n) = 1280 + 184 * (ri * 8 + 0) := by
+    rw [show σ0.next + (n) = σ0.next + n + 184 * 0 by ring, hσ]; ring
+  have F0 : σ0.next + (n) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n) + 184 = σ0.next + n + 184 * 1 by ring]; exact fit_le hfit (by norm_num)
+  have A1 : σ0.next + (n + 184) = 1280 + 184 * (ri * 8 + 1) := by
+    rw [show σ0.next + (n + 184) = σ0.next + n + 184 * 1 by ring, hσ]; ring
+  have F1 : σ0.next + (n + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184) + 184 = σ0.next + n + 184 * 2 by ring]; exact fit_le hfit (by norm_num)
+  have A2 : σ0.next + (n + 184 + 184) = 1280 + 184 * (ri * 8 + 2) := by
+    rw [show σ0.next + (n + 184 + 184) = σ0.next + n + 184 * 2 by ring, hσ]; ring
+  have F2 : σ0.next + (n + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184) + 184 = σ0.next + n + 184 * 3 by ring]; exact fit_le hfit (by norm_num)
+  have A3 : σ0.next + (n + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 3) := by
+    rw [show σ0.next + (n + 184 + 184 + 184) = σ0.next + n + 184 * 3 by ring, hσ]; ring
+  have F3 : σ0.next + (n + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 4 by ring]; exact fit_le hfit (by norm_num)
+  have A4 : σ0.next + (n + 184 + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 4) := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184) = σ0.next + n + 184 * 4 by ring, hσ]; ring
+  have F4 : σ0.next + (n + 184 + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 5 by ring]; exact fit_le hfit (by norm_num)
+  have A5 : σ0.next + (n + 184 + 184 + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 5) := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184) = σ0.next + n + 184 * 5 by ring, hσ]; ring
+  have F5 : σ0.next + (n + 184 + 184 + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 6 by ring]; exact fit_le hfit (by norm_num)
+  have A6 : σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 6) := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184) = σ0.next + n + 184 * 6 by ring, hσ]; ring
+  have F6 : σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 7 by ring]; exact fit_le hfit (by norm_num)
+  have A7 : σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184 + 184) = 1280 + 184 * (ri * 8 + 7) := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184 + 184) = σ0.next + n + 184 * 7 by ring, hσ]; ring
+  have F7 : σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184 + 184) + 184 ≤ 2 ^ bm := by
+    rw [show σ0.next + (n + 184 + 184 + 184 + 184 + 184 + 184 + 184) + 184 = σ0.next + n + 184 * 8 by ring]; exact fit_le hfit (by norm_num)
+  obtain ⟨w1, hw1⟩ : ∃ q, q = gateStep cw (rowList s) ri w ([0, 4, 8, 12], 0) := ⟨_, rfl⟩
+  obtain ⟨b1, hb1⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b.1 0 4 8 12 (msgV[s[0]'(by decide)]'(Fin.isLt _)) (msgV[s[1]'(by decide)]'(Fin.isLt _))).run b.2 := ⟨(Blake2sCircuit.gW b.1 0 4 8 12 (msgV[s[0]'(by decide)]'(Fin.isLt _)) (msgV[s[1]'(by decide)]'(Fin.isLt _))).run b.2, rfl⟩
+  have R1 := H.step (rowList s) ri 0 [0, 4, 8, 12] 0 4 8 12 (s[0]'(by decide)) (s[1]'(by decide)) rfl rfl rfl rfl
+    (hs (0) (by decide)) (hs (1) (by decide)) A0 F0 w1 hw1 b1 hb1
+  obtain ⟨w2, hw2⟩ : ∃ q, q = gateStep cw (rowList s) ri w1 ([1, 5, 9, 13], 1) := ⟨_, rfl⟩
+  obtain ⟨b2, hb2⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b1.1 1 5 9 13 (msgV[s[2]'(by decide)]'(Fin.isLt _)) (msgV[s[3]'(by decide)]'(Fin.isLt _))).run b1.2 := ⟨(Blake2sCircuit.gW b1.1 1 5 9 13 (msgV[s[2]'(by decide)]'(Fin.isLt _)) (msgV[s[3]'(by decide)]'(Fin.isLt _))).run b1.2, rfl⟩
+  have R2 := R1.step (rowList s) ri 1 [1, 5, 9, 13] 1 5 9 13 (s[2]'(by decide)) (s[3]'(by decide)) rfl rfl rfl rfl
+    (hs (2) (by decide)) (hs (3) (by decide)) A1 F1 w2 hw2 b2 hb2
+  obtain ⟨w3, hw3⟩ : ∃ q, q = gateStep cw (rowList s) ri w2 ([2, 6, 10, 14], 2) := ⟨_, rfl⟩
+  obtain ⟨b3, hb3⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b2.1 2 6 10 14 (msgV[s[4]'(by decide)]'(Fin.isLt _)) (msgV[s[5]'(by decide)]'(Fin.isLt _))).run b2.2 := ⟨(Blake2sCircuit.gW b2.1 2 6 10 14 (msgV[s[4]'(by decide)]'(Fin.isLt _)) (msgV[s[5]'(by decide)]'(Fin.isLt _))).run b2.2, rfl⟩
+  have R3 := R2.step (rowList s) ri 2 [2, 6, 10, 14] 2 6 10 14 (s[4]'(by decide)) (s[5]'(by decide)) rfl rfl rfl rfl
+    (hs (4) (by decide)) (hs (5) (by decide)) A2 F2 w3 hw3 b3 hb3
+  obtain ⟨w4, hw4⟩ : ∃ q, q = gateStep cw (rowList s) ri w3 ([3, 7, 11, 15], 3) := ⟨_, rfl⟩
+  obtain ⟨b4, hb4⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b3.1 3 7 11 15 (msgV[s[6]'(by decide)]'(Fin.isLt _)) (msgV[s[7]'(by decide)]'(Fin.isLt _))).run b3.2 := ⟨(Blake2sCircuit.gW b3.1 3 7 11 15 (msgV[s[6]'(by decide)]'(Fin.isLt _)) (msgV[s[7]'(by decide)]'(Fin.isLt _))).run b3.2, rfl⟩
+  have R4 := R3.step (rowList s) ri 3 [3, 7, 11, 15] 3 7 11 15 (s[6]'(by decide)) (s[7]'(by decide)) rfl rfl rfl rfl
+    (hs (6) (by decide)) (hs (7) (by decide)) A3 F3 w4 hw4 b4 hb4
+  obtain ⟨w5, hw5⟩ : ∃ q, q = gateStep cw (rowList s) ri w4 ([0, 5, 10, 15], 4) := ⟨_, rfl⟩
+  obtain ⟨b5, hb5⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b4.1 0 5 10 15 (msgV[s[8]'(by decide)]'(Fin.isLt _)) (msgV[s[9]'(by decide)]'(Fin.isLt _))).run b4.2 := ⟨(Blake2sCircuit.gW b4.1 0 5 10 15 (msgV[s[8]'(by decide)]'(Fin.isLt _)) (msgV[s[9]'(by decide)]'(Fin.isLt _))).run b4.2, rfl⟩
+  have R5 := R4.step (rowList s) ri 4 [0, 5, 10, 15] 0 5 10 15 (s[8]'(by decide)) (s[9]'(by decide)) rfl rfl rfl rfl
+    (hs (8) (by decide)) (hs (9) (by decide)) A4 F4 w5 hw5 b5 hb5
+  obtain ⟨w6, hw6⟩ : ∃ q, q = gateStep cw (rowList s) ri w5 ([1, 6, 11, 12], 5) := ⟨_, rfl⟩
+  obtain ⟨b6, hb6⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b5.1 1 6 11 12 (msgV[s[10]'(by decide)]'(Fin.isLt _)) (msgV[s[11]'(by decide)]'(Fin.isLt _))).run b5.2 := ⟨(Blake2sCircuit.gW b5.1 1 6 11 12 (msgV[s[10]'(by decide)]'(Fin.isLt _)) (msgV[s[11]'(by decide)]'(Fin.isLt _))).run b5.2, rfl⟩
+  have R6 := R5.step (rowList s) ri 5 [1, 6, 11, 12] 1 6 11 12 (s[10]'(by decide)) (s[11]'(by decide)) rfl rfl rfl rfl
+    (hs (10) (by decide)) (hs (11) (by decide)) A5 F5 w6 hw6 b6 hb6
+  obtain ⟨w7, hw7⟩ : ∃ q, q = gateStep cw (rowList s) ri w6 ([2, 7, 8, 13], 6) := ⟨_, rfl⟩
+  obtain ⟨b7, hb7⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b6.1 2 7 8 13 (msgV[s[12]'(by decide)]'(Fin.isLt _)) (msgV[s[13]'(by decide)]'(Fin.isLt _))).run b6.2 := ⟨(Blake2sCircuit.gW b6.1 2 7 8 13 (msgV[s[12]'(by decide)]'(Fin.isLt _)) (msgV[s[13]'(by decide)]'(Fin.isLt _))).run b6.2, rfl⟩
+  have R7 := R6.step (rowList s) ri 6 [2, 7, 8, 13] 2 7 8 13 (s[12]'(by decide)) (s[13]'(by decide)) rfl rfl rfl rfl
+    (hs (12) (by decide)) (hs (13) (by decide)) A6 F6 w7 hw7 b7 hb7
+  obtain ⟨w8, hw8⟩ : ∃ q, q = gateStep cw (rowList s) ri w7 ([3, 4, 9, 14], 7) := ⟨_, rfl⟩
+  obtain ⟨b8, hb8⟩ : ∃ p : Vector (Word bm) 16 × BuildState bm, p = (Blake2sCircuit.gW b7.1 3 4 9 14 (msgV[s[14]'(by decide)]'(Fin.isLt _)) (msgV[s[15]'(by decide)]'(Fin.isLt _))).run b7.2 := ⟨(Blake2sCircuit.gW b7.1 3 4 9 14 (msgV[s[14]'(by decide)]'(Fin.isLt _)) (msgV[s[15]'(by decide)]'(Fin.isLt _))).run b7.2, rfl⟩
+  have R8 := R7.step (rowList s) ri 7 [3, 4, 9, 14] 3 4 9 14 (s[14]'(by decide)) (s[15]'(by decide)) rfl rfl rfl rfl
+    (hs (14) (by decide)) (hs (15) (by decide)) A7 F7 w8 hw8 b8 hb8
+  have hwalk : roundStep cw w (rowList s, ri) = w8 := by
+    rw [hw8, hw7, hw6, hw5, hw4, hw3, hw2, hw1, roundStep, glanes_eq]
+    simp only [List.foldl_cons, List.foldl_nil, Prod.mk.eta]
+  have hrun : (Blake2sCircuit.roundW b.1 msgV s).run b.2 = b8 := by
+    rw [hb8, hb7, hb6, hb5, hb4, hb3, hb2, hb1]
+    simp only [Blake2sCircuit.roundW, StateT.run_bind]
+    rfl
+  rw [hwalk, hrun]
+  exact R8.cast (by ring)
+
+theorem run_foldlM_cons {α : Type} (f : α → Vector (Fin 16) 16 → Builder bm α) (s : Vector (Fin 16) 16)
+    (L : List (Vector (Fin 16) 16)) (v : α) (σ : BuildState bm) :
+    ((s :: L).foldlM f v).run σ = (L.foldlM f ((f v s).run σ).1).run ((f v s).run σ).2 := by
+  rw [List.foldlM_cons, StateT.run_bind]
+  rfl
+
+/-- **The rounds**: the walk's rounds follow `roundW`'s fold, 1472 rows each. -/
+theorem sim_rounds (cw : Array E) (w0 : Array E × Array E × Array WalkWord) (σ0 : BuildState bm) :
+    ∀ (L : List (Vector (Fin 16) 16)) (ri n : ℕ) (w : Array E × Array E × Array WalkWord)
+      (b : Vector (Word bm) 16 × BuildState bm), GInv cw w0 σ0 n w b →
+      σ0.next + n = 1280 + 1472 * ri → σ0.next + n + 1472 * L.length ≤ 2 ^ bm →
+      GInv cw w0 σ0 (n + 1472 * L.length) (((L.map rowList).zip (List.range' ri L.length)).foldl (roundStep cw) w)
+        ((L.foldlM (fun v s ↦ Blake2sCircuit.roundW v msgV s) b.1).run b.2)
+  | [], _, n, w, b, H, _, _ => H.cast (by simp)
+  | s :: L, ri, n, w, b, H, hσ, hfit => by
+    rw [List.map_cons, List.length_cons, List.range'_succ, List.zip_cons_cons, List.foldl_cons,
+      run_foldlM_cons]
+    rw [List.length_cons] at hfit
+    have R := sim_round cw s ri H hσ (fit_le hfit (Nat.le_mul_of_pos_right _ (Nat.succ_pos _)))
+    exact (sim_rounds cw w0 σ0 L (ri + 1) (n + 1472) _ _ R
+      (by rw [show σ0.next + (n + 1472) = σ0.next + n + 1472 by ring, hσ]; ring)
+      (by rw [show σ0.next + (n + 1472) + 1472 * L.length = σ0.next + n + 1472 * (L.length + 1) by ring]
+          exact hfit)).cast (by ring)
+
+/-! ## Folds of writes -/
+
+theorem getD_foldl_set {α : Type} (g : ℕ → ℕ) (f : ℕ → α) (off : ℕ) (hg : ∀ w, g w = off + w) (d : α) :
+    ∀ (n : ℕ) (s0 : Array α), off + n ≤ s0.size →
+      ((List.range' 0 n).foldl (fun s w ↦ s.set! (g w) (f w)) s0).size = s0.size ∧
+      ∀ j, ((List.range' 0 n).foldl (fun s w ↦ s.set! (g w) (f w)) s0).getD j d =
+        if off ≤ j ∧ j < off + n then f (j - off) else s0.getD j d
+  | 0, s0, _ => ⟨rfl, fun j ↦ by rw [if_neg (show ¬(off ≤ j ∧ j < off + 0) by omega)]; rfl⟩
+  | n + 1, s0, h => by
+    obtain ⟨hs, hv⟩ := getD_foldl_set g f off hg d n s0 (by omega)
+    rw [List.range'_concat, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    simp only [Nat.one_mul, Nat.zero_add]
+    refine ⟨by rw [size_set!, hs], fun j ↦ ?_⟩
+    rw [getD_set!, hv, hs, hg]
+    split_ifs <;> first | (exfalso; omega) | rfl | (congr 1; omega)
+
+/-! ## The initial working vector -/
+
+theorem iv_getD (k : ℕ) (h : k < 8) : blake2sIv.getD k 0 = (Lv42.Parameters.iv[k]'h).toNat := by
+  interval_cases k <;> rfl
+
+theorem initState_getD (cw : Array E) :
+    (initState cw).size = 16 ∧ ∀ j, j < 16 → (initState cw).getD j #[] =
+      if j < 8 then walkSlots cw (32 * (j - 0)) else if j < 12 then walkLiteral cw (blake2sIv.getD (j - 8) 0)
+      else walkXor (walkLiteral cw (blake2sIv.getD (4 + (j - 12)) 0)) (walkSlots cw (1152 + 32 * (j - 12))) := by
+  have h3 : [1152, 1184, 1216, 1248].zip (List.range 4) = (List.range' 0 4).map (fun w ↦ (1152 + 32 * w, w)) :=
+    rfl
+  obtain ⟨s1, hs1⟩ : ∃ q, q = (List.range' 0 8).foldl (fun s w ↦ s.set! w (walkSlots cw (32 * w)))
+      (Array.replicate 16 (Array.replicate 32 (0 : E))) := ⟨_, rfl⟩
+  obtain ⟨s2, hs2⟩ : ∃ q, q = (List.range' 0 4).foldl
+      (fun s w ↦ s.set! (8 + w) (walkLiteral cw (blake2sIv.getD w 0))) s1 := ⟨_, rfl⟩
+  obtain ⟨s3, hs3⟩ : ∃ q, q = (List.range' 0 4).foldl (fun s w ↦ s.set! (12 + w)
+      (walkXor (walkLiteral cw (blake2sIv.getD (4 + w) 0)) (walkSlots cw (1152 + 32 * w)))) s2 := ⟨_, rfl⟩
+  have e : initState cw = s3 := by
+    rw [hs3, hs2, hs1]
+    unfold initState
+    dsimp only
+    rw [h3, List.foldl_map]
+  have H1 := getD_foldl_set (fun w ↦ w) (fun w ↦ walkSlots cw (32 * w)) 0 (fun w ↦ (Nat.zero_add w).symm)
+    (#[] : Array E) 8 (Array.replicate 16 (Array.replicate 32 (0 : E))) (by simp)
+  rw [← hs1] at H1
+  have H2 := getD_foldl_set (fun w ↦ 8 + w) (fun w ↦ walkLiteral cw (blake2sIv.getD w 0)) 8 (fun w ↦ rfl)
+    (#[] : Array E) 4 s1 (by rw [H1.1]; simp)
+  rw [← hs2] at H2
+  have H3 := getD_foldl_set (fun w ↦ 12 + w)
+    (fun w ↦ walkXor (walkLiteral cw (blake2sIv.getD (4 + w) 0)) (walkSlots cw (1152 + 32 * w))) 12 (fun w ↦ rfl)
+    (#[] : Array E) 4 s2 (by rw [H2.1, H1.1]; simp)
+  rw [← hs3] at H3
+  rw [e]
+  refine ⟨by rw [H3.1, H2.1, H1.1]; simp, fun j hj ↦ ?_⟩
+  rw [H3.2, H2.2, H1.2, getD_replicate]
+  split_ifs <;> first | (exfalso; omega) | rfl
+
+/-- **The initial working vector**: the walk's is the evaluation of the builder's `initW`. -/
+theorem srel_initState (cw : Array E) : SRel cw (initState cw) Blake2sCircuit.initW := by
+  obtain ⟨hsize, hget⟩ := initState_getD cw
+  refine ⟨hsize, fun j ↦ ?_⟩
+  have hj := j.isLt
+  rw [hget j hj]
+  simp only [Blake2sCircuit.initW, Fin.getElem_fin, Vector.getElem_ofFn]
+  by_cases h8 : (j : ℕ) < 8
+  · simp only [h8, ↓reduceIte]
+    rw [Nat.sub_zero]
+    exact wrel_slots cw (by rw [two_pow_bm]; omega)
+  · by_cases h12 : (j : ℕ) < 12
+    · simp only [h8, h12, ↓reduceIte]
+      exact wrel_lit cw _ (iv_getD _ (by omega))
+    · simp only [h8, h12, ↓reduceIte]
+      rw [show 4 + ((j : ℕ) - 12) = (j : ℕ) - 8 by omega]
+      exact wrel_xor (wrel_lit cw _ (iv_getD _ (by omega))) (wrel_slots cw (by rw [two_pow_bm]; omega))
+
+/-! ## The input rows -/
+
+theorem inputRow_fold (cw : Array E) (s : ℕ) : ∀ (n : ℕ) (b : Array E × Array E), s + n ≤ b.1.size →
+    s + n ≤ b.2.size →
+    ((List.range' s n).foldl (inputRow cw) b).1.size = b.1.size ∧
+    ((List.range' s n).foldl (inputRow cw) b).2.size = b.2.size ∧
+    ∀ j, ((List.range' s n).foldl (inputRow cw) b).1.getD j 0 =
+        (if s ≤ j ∧ j < s + n then cw.getD j 0 else b.1.getD j 0) ∧
+      ((List.range' s n).foldl (inputRow cw) b).2.getD j 0 =
+        (if s ≤ j ∧ j < s + n then cw.getD constantColumn 0 else b.2.getD j 0)
+  | 0, b, _, _ => ⟨rfl, rfl, fun j ↦ ⟨by rw [if_neg (show ¬(s ≤ j ∧ j < s + 0) by omega)]; rfl,
+      by rw [if_neg (show ¬(s ≤ j ∧ j < s + 0) by omega)]; rfl⟩⟩
+  | n + 1, b, h1, h2 => by
+    obtain ⟨hs1, hs2, hv⟩ := inputRow_fold cw s n b (by omega) (by omega)
+    rw [List.range'_concat, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    simp only [Nat.one_mul]
+    refine ⟨by rw [inputRow, size_set!, hs1], by rw [inputRow, size_set!, hs2], fun j ↦ ?_⟩
+    rw [inputRow]
+    dsimp only
+    rw [getD_set!, getD_set!, (hv j).1, (hv j).2, hs1, hs2]
+    constructor <;> split_ifs <;> first | (exfalso; omega) | rfl | (congr 1; omega)
+
+/-- **The input rows**: `(w_j, w_512)` at the inputs `0 … 255`, `640 … 1279`, zero elsewhere. -/
+theorem inputs_spec (cw : Array E) :
+    ([(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+        (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E))).1.size =
+        2 ^ bm ∧
+    ([(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+        (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E))).2.size =
+        2 ^ bm ∧
+    ∀ j, ([(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+        (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E))).1.getD j 0 =
+        (if j < 256 ∨ (640 ≤ j ∧ j < 1280) then cw.getD j 0 else 0) ∧
+      ([(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+        (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E))).2.getD j 0 =
+        (if j < 256 ∨ (640 ≤ j ∧ j < 1280) then cw.getD constantColumn 0 else 0) := by
+  have hsz : (2 : ℕ) ^ blake2sR1csLogSize = 2 ^ bm := rfl
+  simp only [List.foldl_cons, List.foldl_nil, inputRows, Prod.mk.eta]
+  obtain ⟨a1, ha1⟩ : ∃ q, q = (List.range' 0 256).foldl (inputRow cw)
+      (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E)) :=
+    ⟨_, rfl⟩
+  obtain ⟨a2, ha2⟩ : ∃ q, q = (List.range' 640 512).foldl (inputRow cw) a1 := ⟨_, rfl⟩
+  obtain ⟨a3, ha3⟩ : ∃ q, q = (List.range' 1152 128).foldl (inputRow cw) a2 := ⟨_, rfl⟩
+  rw [← ha1, ← ha2, ← ha3]
+  have I1 := inputRow_fold cw 0 256 (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E),
+    Array.replicate (2 ^ blake2sR1csLogSize) (0 : E)) (by simp [hsz, two_pow_bm]) (by simp [hsz, two_pow_bm])
+  rw [← ha1] at I1
+  have I2 := inputRow_fold cw 640 512 a1 (by rw [I1.1]; simp [hsz, two_pow_bm])
+    (by rw [I1.2.1]; simp [hsz, two_pow_bm])
+  rw [← ha2] at I2
+  have I3 := inputRow_fold cw 1152 128 a2 (by rw [I2.1, I1.1]; simp [hsz, two_pow_bm])
+    (by rw [I2.2.1, I1.2.1]; simp [hsz, two_pow_bm])
+  rw [← ha3] at I3
+  refine ⟨by rw [I3.1, I2.1, I1.1]; simp [hsz], by rw [I3.2.1, I2.2.1, I1.2.1]; simp [hsz], fun j ↦ ?_⟩
+  rw [(I3.2.2 j).1, (I3.2.2 j).2, (I2.2.2 j).1, (I2.2.2 j).2, (I1.2.2 j).1, (I1.2.2 j).2]
+  simp only [getD_replicate]
+  constructor <;> split_ifs <;> first | (exfalso; omega) | rfl
+
+/-! ## The output rows -/
+
+theorem outBit_fold (cw out : Array E) (word : ℕ) : ∀ (n : ℕ) (b : Array E × Array E),
+    256 + 32 * word + n ≤ b.1.size → 256 + 32 * word + n ≤ b.2.size →
+    ((List.range' 0 n).foldl (outBit cw out word) b).1.size = b.1.size ∧
+    ((List.range' 0 n).foldl (outBit cw out word) b).2.size = b.2.size ∧
+    ∀ j, ((List.range' 0 n).foldl (outBit cw out word) b).1.getD j 0 =
+        (if 256 + 32 * word ≤ j ∧ j < 256 + 32 * word + n then out.getD (j - (256 + 32 * word)) 0
+          else b.1.getD j 0) ∧
+      ((List.range' 0 n).foldl (outBit cw out word) b).2.getD j 0 =
+        (if 256 + 32 * word ≤ j ∧ j < 256 + 32 * word + n then cw.getD constantColumn 0 else b.2.getD j 0)
+  | 0, b, _, _ => ⟨rfl, rfl, fun j ↦
+      ⟨by rw [if_neg (show ¬(256 + 32 * word ≤ j ∧ j < 256 + 32 * word + 0) by omega)]; rfl,
+        by rw [if_neg (show ¬(256 + 32 * word ≤ j ∧ j < 256 + 32 * word + 0) by omega)]; rfl⟩⟩
+  | n + 1, b, h1, h2 => by
+    obtain ⟨hs1, hs2, hv⟩ := outBit_fold cw out word n b (by omega) (by omega)
+    rw [List.range'_concat, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    simp only [Nat.one_mul, Nat.zero_add]
+    refine ⟨by rw [outBit, size_set!, hs1], by rw [outBit, size_set!, hs2], fun j ↦ ?_⟩
+    rw [outBit]
+    dsimp only
+    rw [getD_set!, getD_set!, (hv j).1, (hv j).2, hs1, hs2]
+    constructor <;> split_ifs <;> first | (exfalso; omega) | rfl | (congr 1; omega)
+
+theorem outStep_fold (cw : Array E) (state : Array WalkWord) : ∀ (W : ℕ) (b : Array E × Array E),
+    256 + 32 * W ≤ b.1.size → 256 + 32 * W ≤ b.2.size →
+    ((List.range' 0 W).foldl (outStep cw state) b).1.size = b.1.size ∧
+    ((List.range' 0 W).foldl (outStep cw state) b).2.size = b.2.size ∧
+    ∀ j, ((List.range' 0 W).foldl (outStep cw state) b).1.getD j 0 =
+        (if 256 ≤ j ∧ j < 256 + 32 * W then (outWord cw state ((j - 256) / 32)).getD ((j - 256) % 32) 0
+          else b.1.getD j 0) ∧
+      ((List.range' 0 W).foldl (outStep cw state) b).2.getD j 0 =
+        (if 256 ≤ j ∧ j < 256 + 32 * W then cw.getD constantColumn 0 else b.2.getD j 0)
+  | 0, b, _, _ => ⟨rfl, rfl, fun j ↦
+      ⟨by rw [if_neg (show ¬(256 ≤ j ∧ j < 256 + 32 * 0) by omega)]; rfl,
+        by rw [if_neg (show ¬(256 ≤ j ∧ j < 256 + 32 * 0) by omega)]; rfl⟩⟩
+  | W + 1, b, h1, h2 => by
+    obtain ⟨hs1, hs2, hv⟩ := outStep_fold cw state W b (by omega) (by omega)
+    rw [List.range'_concat, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    simp only [Nat.one_mul, Nat.zero_add, outStep, Prod.mk.eta]
+    have O := outBit_fold cw (outWord cw state W) W 32 ((List.range' 0 W).foldl (outStep cw state) b)
+      (by rw [hs1]; omega) (by rw [hs2]; omega)
+    refine ⟨by rw [O.1, hs1], by rw [O.2.1, hs2], fun j ↦ ?_⟩
+    rw [(O.2.2 j).1, (O.2.2 j).2, (hv j).1, (hv j).2]
+    clear O hv hs1 hs2 h1 h2
+    constructor <;> split_ifs <;> first | (exfalso; omega) |
+      (rw [show (j - 256) / 32 = W by omega, show (j - 256) % 32 = j - (256 + 32 * W) by omega]) | rfl
+
+/-! ## The circuit's rows -/
+
+section Lookup
+
+variable {β : Type}
+
+theorem lookup_eq_none_of {l : List (ProductCircuit.Pos bm × β)} {k : ProductCircuit.Pos bm}
+    (h : ∀ p ∈ l, p.1 ≠ k) : l.lookup k = none := by
+  induction l with
+  | nil => rfl
+  | cons p l ih =>
+    obtain ⟨k', b'⟩ := p
+    have hk : (k == k') = false := beq_eq_false_iff_ne.mpr (Ne.symm (h _ (List.mem_cons.mpr (Or.inl rfl))))
+    simp only [List.lookup, hk]
+    exact ih fun q hq ↦ h q (List.mem_cons_of_mem _ hq)
+
+theorem mem_of_lookup_eq_some {l : List (ProductCircuit.Pos bm × β)} {k : ProductCircuit.Pos bm} {b : β}
+    (h : l.lookup k = some b) : (k, b) ∈ l := by
+  induction l with
+  | nil => simp [List.lookup] at h
+  | cons p l ih =>
+    obtain ⟨k', b'⟩ := p
+    by_cases hk : k = k'
+    · subst hk
+      simp only [List.lookup, beq_self_eq_true, Option.some.injEq] at h
+      subst h
+      exact List.mem_cons.mpr (Or.inl rfl)
+    · have hk' : (k == k') = false := beq_eq_false_iff_ne.mpr hk
+      simp only [List.lookup, hk'] at h
+      exact List.mem_cons_of_mem _ (ih h)
+
+theorem lookup_isSome_of_mem {l : List (ProductCircuit.Pos bm × β)} {k : ProductCircuit.Pos bm} {b : β}
+    (h : (k, b) ∈ l) : ∃ b', l.lookup k = some b' := by
+  induction l with
+  | nil => simp at h
+  | cons p l ih =>
+    obtain ⟨k', b''⟩ := p
+    by_cases hk : k = k'
+    · subst hk
+      exact ⟨b'', by simp only [List.lookup, beq_self_eq_true]⟩
+    · have hk' : (k == k') = false := beq_eq_false_iff_ne.mpr hk
+      simp only [List.lookup, hk']
+      rcases List.mem_cons.mp h with h' | h'
+      · exact absurd (congrArg Prod.fst h') hk
+      · exact ih h'
+
+theorem lookup_append_of_none {l1 l2 : List (ProductCircuit.Pos bm × β)} {k : ProductCircuit.Pos bm}
+    (h : l1.lookup k = none) : (l1 ++ l2).lookup k = l2.lookup k := by
+  induction l1 with
+  | nil => rfl
+  | cons p l ih =>
+    obtain ⟨k', b'⟩ := p
+    by_cases hk : k = k'
+    · subst hk
+      simp [List.lookup] at h
+    · have hk' : (k == k') = false := beq_eq_false_iff_ne.mpr hk
+      simp only [List.lookup, hk'] at h
+      simp only [List.cons_append, List.lookup, hk']
+      exact ih h
+
+end Lookup
+
+theorem rowOf_of_lookup_some (c : ProductCircuit bm) (k : ProductCircuit.Pos bm) (g : Gate bm)
+    (h : c.gates.toList.lookup k = some g) : c.rowOf k = g := by
+  unfold ProductCircuit.rowOf
+  rw [h]
+
+theorem rowOf_of_lookup_none (c : ProductCircuit bm) (k : ProductCircuit.Pos bm)
+    (h : c.gates.toList.lookup k = none) :
+    c.rowOf k = if k = c.cpos then ⟨Form.var c.cpos, Form.var c.cpos⟩
+      else if c.inputs.getLsbD k then ⟨Form.var k, Form.var c.cpos⟩ else ⟨0, 0⟩ := by
+  unfold ProductCircuit.rowOf
+  rw [h]
+
+theorem mem_outRows' {outs : Vector (Word bm) 8} {kg : ProductCircuit.Pos bm × Gate bm}
+    (h : kg ∈ Blake2sCircuit.outRows outs) :
+    ∃ (w : Fin 8) (i : Fin 32),
+      kg = (pos (256 + 32 * w.val + i.val), ⟨outs[w][i], Form.var Lv42.Parameters.Flock.constPos⟩) := by
+  unfold Blake2sCircuit.outRows at h
+  simp only [List.mem_flatMap, List.mem_finRange, List.mem_map, true_and] at h
+  obtain ⟨w, i, rfl⟩ := h
+  exact ⟨w, i, rfl⟩
+
+theorem outRows_pos {outs : Vector (Word bm) 8} {kg : ProductCircuit.Pos bm × Gate bm}
+    (h : kg ∈ Blake2sCircuit.outRows outs) : 256 ≤ (kg.1 : ℕ) ∧ (kg.1 : ℕ) < 512 := by
+  obtain ⟨w, i, rfl⟩ := mem_outRows' h
+  have := w.isLt
+  have := i.isLt
+  dsimp only
+  rw [pos_val (by rw [two_pow_bm]; omega)]
+  omega
+
+theorem mem_outRows_of (outs : Vector (Word bm) 8) (w : Fin 8) (i : Fin 32) :
+    (pos (256 + 32 * w.val + i.val),
+      (⟨outs[w][i], Form.var Lv42.Parameters.Flock.constPos⟩ : Gate bm)) ∈ Blake2sCircuit.outRows outs :=
+  List.mem_flatMap.mpr ⟨w, List.mem_finRange w, List.mem_map.mpr ⟨i, List.mem_finRange i, rfl⟩⟩
+
+/-- The compression's output words, from the rounds' final working vector. -/
+def outsOf (V : Vector (Word bm) 16) : Vector (Word bm) 8 :=
+  Vector.ofFn fun w : Fin 8 ↦ xorW (xorW V[w] V[w.val + 8]) (Blake2sCircuit.cvW w)
+
+/-- The builder's run of the ten rounds from `1280`, as `compressW` writes it. -/
+def roundsRun : Vector (Word bm) 16 × BuildState bm :=
+  (Lv42.Parameters.sigma.foldlM (fun v s ↦ Blake2sCircuit.roundW v (Vector.ofFn fun w ↦ Blake2sCircuit.msgW w) s)
+    Blake2sCircuit.initW).run ⟨Blake2sCircuit.gateBase, #[]⟩
+
+/-- `roundsRun` as the list fold `sim_rounds` follows. -/
+theorem roundsRun_toList : roundsRun =
+    (Lv42.Parameters.sigma.toList.foldlM (fun v s ↦ Blake2sCircuit.roundW v msgV s) Blake2sCircuit.initW).run
+      ⟨Blake2sCircuit.gateBase, #[]⟩ := by
+  rw [roundsRun, ← Vector.foldlM_toList, msgV]
+
+theorem compressW_run :
+    Blake2sCircuit.compressW.run ⟨Blake2sCircuit.gateBase, #[]⟩ = (outsOf roundsRun.1, roundsRun.2) := by
+  simp only [Blake2sCircuit.compressW, StateT.run_bind, StateT.run_pure]
+  rfl
+
+theorem gates_toList : Blake2sCircuit.blake2sCircuit.gates.toList =
+    roundsRun.2.gates.toList ++ Blake2sCircuit.outRows (outsOf roundsRun.1) := by
+  rw [Blake2sCircuit.blake2sCircuit_gates, compressW_run]
+  simp
+
+theorem sigma_zip : blake2sSigma.zip (List.range blake2sSigma.length) =
+    (Lv42.Parameters.sigma.toList.map rowList).zip (List.range' 0 Lv42.Parameters.sigma.toList.length) := rfl
+
+theorem wrel_outWord (cw : Array E) {st : Array WalkWord} {V : Vector (Word bm) 16} (h : SRel cw st V)
+    (w : Fin 8) : WRel cw (outWord cw st w) (outsOf V)[w] := by
+  rw [outsOf, Fin.getElem_fin, Vector.getElem_ofFn]
+  have hw := w.isLt
+  exact wrel_xor (wrel_xor (h.2 ⟨w, by omega⟩) (h.2 ⟨w + 8, by omega⟩)) (wrel_slots cw (by rw [two_pow_bm]; omega))
+
+/-- `A`, `B` of the BLAKE2s R1CS (`blake2sFlockSpec.r1cs`, as `flockMatrixStack` reads them) are the rows' forms. -/
+theorem r1csA_eq (j i : Fin (2 ^ 14)) :
+    Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A j i = (Blake2sCircuit.blake2sCircuit.rowOf j).a.getLsbD i :=
+  rfl
+
+theorem r1csB_eq (j i : Fin (2 ^ 14)) :
+    Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B j i = (Blake2sCircuit.blake2sCircuit.rowOf j).b.getLsbD i :=
+  rfl
+
+/-- `lev` as the sum over `Fin (2^14)`. -/
+theorem lev_eq_sum (cw : Array E) (L : Form bm) :
+    lev cw L = ∑ i : Fin (2 ^ 14), (if L.getLsbD i then cw.getD i 0 else 0) := by
+  unfold lev
+  rfl
+
+theorem lev_rowA (cw : Array E) (j : Fin (2 ^ 14)) :
+    lev cw (Blake2sCircuit.blake2sCircuit.rowOf j).a =
+      ∑ i : Fin (2 ^ 14), (if Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A j i then cw.getD i 0 else 0) := by
+  rw [lev_eq_sum]
+  exact Finset.sum_congr rfl fun i _ ↦ by rw [r1csA_eq]
+
+theorem lev_rowB (cw : Array E) (j : Fin (2 ^ 14)) :
+    lev cw (Blake2sCircuit.blake2sCircuit.rowOf j).b =
+      ∑ i : Fin (2 ^ 14), (if Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B j i then cw.getD i 0 else 0) := by
+  rw [lev_eq_sum]
+  exact Finset.sum_congr rfl fun i _ ↦ by rw [r1csB_eq]
+
+/-- **A gate's row**: at a gate position, `rowOf` is a gate the rounds recorded at that position. -/
+theorem rowOf_gate (k : ProductCircuit.Pos bm) (hC : 1280 ≤ (k : ℕ) ∧ (k : ℕ) < 16000)
+    (hpos : roundsRun.2.gates.toList.map (fun g ↦ (g.1 : ℕ)) = List.range' 1280 14720) :
+    ∃ g', (k, g') ∈ roundsRun.2.gates.toList ∧ Blake2sCircuit.blake2sCircuit.rowOf k = g' := by
+  obtain ⟨g, hg, hgk⟩ : ∃ g ∈ roundsRun.2.gates.toList, (g.1 : ℕ) = k := by
+    have hm : (k : ℕ) ∈ (roundsRun.2.gates.toList).map (fun g ↦ (g.1 : ℕ)) := by
+      rw [hpos, List.mem_range'_1]
+      omega
+    simpa using hm
+  have hgk' : g.1 = k := Fin.ext hgk
+  obtain ⟨g', hg'⟩ := lookup_isSome_of_mem (l := Blake2sCircuit.blake2sCircuit.gates.toList) (k := k) (b := g.2)
+    (by rw [gates_toList, ← hgk']; exact List.mem_append_left _ hg)
+  have hmem := mem_of_lookup_eq_some hg'
+  rw [gates_toList] at hmem
+  rcases List.mem_append.mp hmem with hm | hm
+  · exact ⟨g', hm, rowOf_of_lookup_some _ _ _ hg'⟩
+  · have := outRows_pos hm
+    dsimp only at this
+    omega
+
+/-- **An output row**: at `256 + 32 w + i`, `rowOf` is `(out_w bit i, 1)`. -/
+theorem rowOf_out (k : ProductCircuit.Pos bm) (hB : 256 ≤ (k : ℕ) ∧ (k : ℕ) < 512)
+    (hnewpos : ∀ g ∈ roundsRun.2.gates.toList, 1280 ≤ (g.1 : ℕ)) :
+    ∃ (w : Fin 8) (i : Fin 32), (w : ℕ) = ((k : ℕ) - 256) / 32 ∧ (i : ℕ) = ((k : ℕ) - 256) % 32 ∧
+      Blake2sCircuit.blake2sCircuit.rowOf k =
+        ⟨(outsOf roundsRun.1)[w][i], Form.var Lv42.Parameters.Flock.constPos⟩ := by
+  have hk := k.isLt
+  have h2 := two_pow_bm
+  have hwlt : ((k : ℕ) - 256) / 32 < 8 := by omega
+  have hilt : ((k : ℕ) - 256) % 32 < 32 := by omega
+  obtain ⟨w, hw⟩ : ∃ w : Fin 8, (w : ℕ) = ((k : ℕ) - 256) / 32 := ⟨⟨_, hwlt⟩, rfl⟩
+  obtain ⟨i, hi⟩ : ∃ i : Fin 32, (i : ℕ) = ((k : ℕ) - 256) % 32 := ⟨⟨_, hilt⟩, rfl⟩
+  refine ⟨w, i, hw, hi, ?_⟩
+  have e : (pos (256 + 32 * w.val + i.val) : ProductCircuit.Pos bm) = k := by
+    apply Fin.ext
+    rw [pos_val (by omega)]
+    omega
+  have hmem : (k, (⟨((outsOf roundsRun.1)[w]'w.isLt)[i]'i.isLt, Form.var Lv42.Parameters.Flock.constPos⟩ :
+      Gate bm)) ∈ Blake2sCircuit.blake2sCircuit.gates.toList := by
+    rw [gates_toList]
+    refine List.mem_append_right _ ?_
+    have := mem_outRows_of (outsOf roundsRun.1) w i
+    rw [e] at this
+    exact this
+  obtain ⟨g', hg'⟩ := lookup_isSome_of_mem hmem
+  have hmem' := mem_of_lookup_eq_some hg'
+  rw [gates_toList] at hmem'
+  rw [rowOf_of_lookup_some _ _ _ hg']
+  rcases List.mem_append.mp hmem' with hm | hm
+  · have := hnewpos _ hm
+    dsimp only at this
+    omega
+  · obtain ⟨w', i', he⟩ := mem_outRows' hm
+    simp only [Prod.mk.injEq] at he
+    obtain ⟨he1, he2⟩ := he
+    have hw' := w'.isLt
+    have hi' := i'.isLt
+    have hv : (k : ℕ) = 256 + 32 * w'.val + i'.val := by
+      rw [he1, pos_val (by omega)]
+    have hww : w' = w := Fin.ext (by omega)
+    have hii : i' = i := Fin.ext (by omega)
+    rw [he2, hww, hii]
+
+/-- **Neither a gate's nor an output row**: `rowOf` is the constant's row, an input's, or zero. -/
+theorem rowOf_none (k : ProductCircuit.Pos bm) (hC : ¬(1280 ≤ (k : ℕ) ∧ (k : ℕ) < 16000))
+    (hB : ¬(256 ≤ (k : ℕ) ∧ (k : ℕ) < 512))
+    (hnewpos : ∀ g ∈ roundsRun.2.gates.toList, 1280 ≤ (g.1 : ℕ) ∧ (g.1 : ℕ) < 16000) :
+    Blake2sCircuit.blake2sCircuit.rowOf k =
+      if k = Lv42.Parameters.Flock.constPos then
+        ⟨Form.var Lv42.Parameters.Flock.constPos, Form.var Lv42.Parameters.Flock.constPos⟩
+      else if (k : ℕ) < 256 ∨ (640 ≤ (k : ℕ) ∧ (k : ℕ) < 1280) then
+        ⟨Form.var k, Form.var Lv42.Parameters.Flock.constPos⟩
+      else ⟨0, 0⟩ := by
+  have hnone : Blake2sCircuit.blake2sCircuit.gates.toList.lookup k = none := by
+    rw [gates_toList, lookup_append_of_none (lookup_eq_none_of fun p hp hpk ↦ by
+      have := hnewpos p hp
+      rw [hpk] at this
+      omega)]
+    exact lookup_eq_none_of fun p hp hpk ↦ by
+      have := outRows_pos hp
+      rw [hpk] at this
+      omega
+  rw [rowOf_of_lookup_none _ _ hnone, Blake2sCircuit.blake2sCircuit_cpos, Blake2sCircuit.blake2sCircuit_inputs,
+    Blake2sCircuit.getLsbD_inputs]
+  simp only [decide_eq_true_eq]
+
+/-- **The walk's rows are the circuit's**: row `k` of `rowModel cw` (the walk) holds the linear evaluations of
+`rowOf blake2sCircuit k`'s two forms. -/
+theorem rowModel_spec (cw : Array E) (k : ProductCircuit.Pos bm) :
+    (rowModel cw).1.getD k 0 = lev cw (Blake2sCircuit.blake2sCircuit.rowOf k).a ∧
+      (rowModel cw).2.getD k 0 = lev cw (Blake2sCircuit.blake2sCircuit.rowOf k).b := by
+  have hk : (k : ℕ) < 16384 := k.isLt
+  have hgb : Blake2sCircuit.gateBase = 1280 := rfl
+  -- the walk's stages, named
+  obtain ⟨st1, hst1⟩ : ∃ q, q = [(0, 256), (640, 512), (1152, 128)].foldl (inputRows cw)
+      (Array.replicate (2 ^ blake2sR1csLogSize) (0 : E), Array.replicate (2 ^ blake2sR1csLogSize) (0 : E)) :=
+    ⟨_, rfl⟩
+  obtain ⟨st2, hst2⟩ : ∃ q, q = (blake2sSigma.zip (List.range blake2sSigma.length)).foldl (roundStep cw)
+      (st1.1, st1.2, initState cw) := ⟨_, rfl⟩
+  obtain ⟨st3, hst3⟩ : ∃ q, q = (List.range' 0 8).foldl (outStep cw st2.2.2) (st2.1, st2.2.1) := ⟨_, rfl⟩
+  have hrm : rowModel cw = (st3.1.set! constantColumn (cw.getD constantColumn 0),
+      st3.2.set! constantColumn (cw.getD constantColumn 0)) := by
+    rw [hst3, hst2, hst1]
+    rfl
+  obtain ⟨I1s, I2s, Iv⟩ : st1.1.size = 2 ^ bm ∧ st1.2.size = 2 ^ bm ∧
+      ∀ j, st1.1.getD j 0 = (if j < 256 ∨ (640 ≤ j ∧ j < 1280) then cw.getD j 0 else 0) ∧
+        st1.2.getD j 0 = (if j < 256 ∨ (640 ≤ j ∧ j < 1280) then cw.getD constantColumn 0 else 0) := by
+    rw [hst1]
+    exact inputs_spec cw
+  -- the rounds
+  have H0 := GInv.start' cw st1.1 st1.2 (initState cw) ⟨Blake2sCircuit.gateBase, #[]⟩ Blake2sCircuit.initW
+    (srel_initState cw) I1s I2s
+  have R0 := sim_rounds cw _ _ Lv42.Parameters.sigma.toList 0 0 _ _ H0 rfl (by simp [two_pow_bm, hgb])
+  dsimp only at R0
+  rw [Vector.length_toList] at R0
+  have R : GInv cw (st1.1, st1.2, initState cw) ⟨Blake2sCircuit.gateBase, #[]⟩ 14720 st2 roundsRun := by
+    rw [hst2, sigma_zip, roundsRun_toList]
+    exact R0.cast (by norm_num)
+  obtain ⟨new, hnew, hpos, hval⟩ := R.grow.gates
+  have hnew' : roundsRun.2.gates.toList = new := by rw [hnew]; rfl
+  rw [← hnew'] at hpos hval
+  dsimp only at hpos
+  have hnewpos : ∀ g ∈ roundsRun.2.gates.toList, 1280 ≤ (g.1 : ℕ) ∧ (g.1 : ℕ) < 16000 := fun g hg ↦ by
+    have hm := List.mem_map_of_mem (f := fun g : ProductCircuit.Pos bm × Gate bm ↦ (g.1 : ℕ)) hg
+    rw [hpos, List.mem_range'_1] at hm
+    omega
+  -- the output rows
+  obtain ⟨O1s, O2s, Ov⟩ : st3.1.size = st2.1.size ∧ st3.2.size = st2.2.1.size ∧
+      ∀ j, st3.1.getD j 0 = (if 256 ≤ j ∧ j < 256 + 32 * 8 then
+          (outWord cw st2.2.2 ((j - 256) / 32)).getD ((j - 256) % 32) 0 else st2.1.getD j 0) ∧
+        st3.2.getD j 0 = (if 256 ≤ j ∧ j < 256 + 32 * 8 then cw.getD constantColumn 0 else st2.2.1.getD j 0) := by
+    rw [hst3]
+    exact outStep_fold cw st2.2.2 8 (st2.1, st2.2.1) (by rw [R.lsize, two_pow_bm]; omega)
+      (by rw [R.rsize, two_pow_bm]; omega)
+  rw [hrm]
+  dsimp only
+  rw [getD_set!, getD_set!, O1s, O2s, R.lsize, R.rsize, (Ov k).1, (Ov k).2,
+    show (constantColumn : ℕ) = 512 from rfl]
+  have h2 := two_pow_bm
+  by_cases hC : 1280 ≤ (k : ℕ) ∧ (k : ℕ) < 16000
+  · -- a gate's row
+    obtain ⟨g', hm, hrow⟩ := rowOf_gate k hC (by rw [hpos])
+    obtain ⟨hva, hvb⟩ := hval _ hm
+    have n1 : ¬(512 = (k : ℕ) ∧ 512 < 2 ^ bm) := by omega
+    have n2 : ¬(256 ≤ (k : ℕ) ∧ (k : ℕ) < 256 + 32 * 8) := by omega
+    refine ⟨?_, ?_⟩
+    · rw [hrow, if_neg n1, if_neg n2]
+      exact hva
+    · rw [hrow, if_neg n1, if_neg n2]
+      exact hvb
+  by_cases hB : 256 ≤ (k : ℕ) ∧ (k : ℕ) < 512
+  · -- an output row
+    obtain ⟨w, i, hw, hi, hrow⟩ := rowOf_out k hB (fun g hg ↦ (hnewpos g hg).1)
+    have n1 : ¬(512 = (k : ℕ) ∧ 512 < 2 ^ bm) := by omega
+    have p2 : 256 ≤ (k : ℕ) ∧ (k : ℕ) < 256 + 32 * 8 := by omega
+    refine ⟨?_, ?_⟩
+    · rw [hrow, if_neg n1, if_pos p2, ← hw, ← hi]
+      exact wrel_outWord cw R.srel w i i.isLt
+    · rw [hrow, if_neg n1, if_pos p2]
+      dsimp only
+      rw [lev_var, constPos_val]
+  -- the constant, an input, or zero
+  have hrow := rowOf_none k hC hB hnewpos
+  by_cases h512 : (k : ℕ) = 512
+  · have hcp : k = Lv42.Parameters.Flock.constPos := Fin.ext (by rw [h512, constPos_val])
+    have p1 : 512 = (k : ℕ) ∧ 512 < 2 ^ bm := by omega
+    refine ⟨?_, ?_⟩
+    · rw [hrow, if_pos hcp, if_pos p1]
+      dsimp only
+      rw [lev_var, constPos_val]
+    · rw [hrow, if_pos hcp, if_pos p1]
+      dsimp only
+      rw [lev_var, constPos_val]
+  have hcp : k ≠ Lv42.Parameters.Flock.constPos := fun h ↦ h512 (by rw [h, constPos_val])
+  have hfr := R.grow.frame k (by dsimp only; omega)
+  dsimp only at hfr
+  have n1 : ¬(512 = (k : ℕ) ∧ 512 < 2 ^ bm) := by omega
+  have n2 : ¬(256 ≤ (k : ℕ) ∧ (k : ℕ) < 256 + 32 * 8) := by omega
+  by_cases hin : (k : ℕ) < 256 ∨ (640 ≤ (k : ℕ) ∧ (k : ℕ) < 1280)
+  · refine ⟨?_, ?_⟩
+    · rw [hrow, if_neg hcp, if_pos hin, if_neg n1, if_neg n2, hfr.1, (Iv k).1, if_pos hin]
+      dsimp only
+      rw [lev_var]
+    · rw [hrow, if_neg hcp, if_pos hin, if_neg n1, if_neg n2, hfr.2, (Iv k).2, if_pos hin]
+      dsimp only
+      rw [lev_var, constPos_val, show (constantColumn : ℕ) = 512 from rfl]
+  · refine ⟨?_, ?_⟩
+    · rw [hrow, if_neg hcp, if_neg hin, if_neg n1, if_neg n2, hfr.1, (Iv k).1, if_neg hin]
+      dsimp only
+      rw [lev_zero]
+    · rw [hrow, if_neg hcp, if_neg hin, if_neg n1, if_neg n2, hfr.2, (Iv k).2, if_neg hin]
+      dsimp only
+      rw [lev_zero]
+
 end FlockSound.Uni.Walk
+
+namespace FlockSound.Uni
+
+open UniStatement UniStatement.Flock LeanVM.Parameters
+
+/-- **The walk computes the matrices' products** (`blake2s_row_values` is `A0 w`, `B0 w`): for every row `j`, the
+walk's left value is `Σ_i A[j][i] w_i` and its right value `Σ_i B[j][i] w_i`, `A`, `B` the BLAKE2s R1CS's matrices
+(row, column) as `flockMatrixStack` reads them. The size hypothesis is not needed (the walk reads `getD`). -/
+theorem rowValues_spec (cw : Array E) (hcw : cw.size = 2 ^ 14) (j : Fin (2 ^ 14)) :
+    (Flock.blake2sRowValues cw).1.getD j 0 =
+        ∑ i : Fin (2 ^ 14), (if Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.A j i then cw.getD i 0 else 0) ∧
+      (Flock.blake2sRowValues cw).2.getD j 0 =
+        ∑ i : Fin (2 ^ 14), (if Lv42.Protocol.Blake2sFlock.blake2sFlockSpec.r1cs.B j i then cw.getD i 0 else 0) := by
+  have _ := hcw
+  have H := Walk.rowModel_spec cw j
+  rw [Walk.blake2sRowValues_eq]
+  exact ⟨H.1.trans (Walk.lev_rowA cw j), H.2.trans (Walk.lev_rowB cw j)⟩
+
+end FlockSound.Uni
+
+/-- info: 'FlockSound.Uni.rowValues_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.rowValues_spec
+
+/-- info: 'FlockSound.Uni.Walk.rowModel_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.Walk.rowModel_spec
+
+/-- info: 'FlockSound.Uni.Walk.blake2sRowValues_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms FlockSound.Uni.Walk.blake2sRowValues_eq
