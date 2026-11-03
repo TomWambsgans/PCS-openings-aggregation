@@ -42,7 +42,10 @@ named inputs; the files:
 | `Rpm.lean`, `Couplings.lean` | the logging lemmas, eager comparisons per permutation; **`experimentsAgree`**, **`hazardCoupling`**, **`pi1Coupling`** (under `Pi1OpeningsAgree`). |
 | `OpeningsAgree.lean`, `RunOpenings.lean` | **`pi1OpeningsAgree`** (from `pi1RunShape`, `pi1RunOpenings`, `pi1CallsShape_data`), **`pi1RunOpenings`**. |
 | `RpmC.lean`, `Pi1Decode.lean`, `CompleteCouplings.lean`, `RunShape.lean` | eager comparisons, π1's call bytes decoded back; **`completenessAgree`**, **`completenessPi1Coupling`**, **`pi1RunShape`**. |
-| `End.lean` | **`recKnowledgeSoundness2_real`**, **`recKnowledgeSoundness_end`**, `recKnowledgeSoundness_end_real`, **`recCompleteness_end`**. |
+| `Tables.lean` | **`pi2Tables`** (the tables' layer, from `Pi2SetupColumns`), `cells_wFold`, `claim_wFold`, `claim_quotient`, `claim_sum`, `claim_setup`, `sum_novP_omega`. |
+| `Bridge.lean` | **`circuitBridge`** (from `StatementPortMeaning`, `ZeroPortsMeaning`, `CallWordsAgree`, `Pi1CallsLayouts`). |
+| `End.lean` | `recKnowledgeSoundness2_real`, **`recKnowledgeSoundness_end`**, `recKnowledgeSoundness_end_real`, **`recCompleteness_end`**, **`recKnowledgeSoundness_end_fs`**, **`recCompleteness_end_fs`**. |
+| `Final.lean` | **`recKnowledgeSoundness2_final`**, **`recKnowledgeSoundness_final`**, **`recKnowledgeSoundness_final_fs`**: the end theorems from the named inputs left. |
 
 ## The statements' fixes (in `RecStatement/Security.lean`, found by this composition)
 
@@ -63,6 +66,7 @@ named inputs; the files:
 π2's stream carries π1's `C1`, `C2` roots as `rootWordOfBytes` of π1's stream bytes (each 16-byte half reversed): the
 real vectors' π2 stream starts `b25c056f…cef8`, π1's `C1` root is `f30c504d…b05f`. The contract decodes that word to
 `digestOfBytes32 raw`, while π1-rec3's verifier and WHIR open at `rootOf (halves raw) = rootOfWord raw` (evaluated).
-So `Pi1GraphAccepts`'s roots disagree on honest proofs, and the contract opens π1's commitments at other digests. The fix
-(option (a), branch `fix-pi1-root`) makes π1's calls' word 0 decode to π1-rec3's root; the theorems name it
-`Pi1RootWordOk`.
+So `Pi1GraphAccepts`'s roots disagreed on honest proofs, and the contract opened π1's commitments at other digests.
+The fix (`fix-pi1-root`, merged at `leanvm-rec` 613b2fa) is in π1's prover: it now writes each root as its root word
+(`hash_to_scalars`), as π2's prover and UniComplete's honest prover do. `RecCircuit.pcsWord` passes stream roots as
+they are, so `Pi1RootWordOk` is `pi1RootWordOk` (`rfl`).

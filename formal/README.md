@@ -282,32 +282,21 @@ python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|
 ## The recursive verifier: end theorems (`RecCompose/`)
 
 The recursive EVM verifier (`crates/leanvm_rec`) runs π2's verifier, then six `PCS_OPEN` calls. Its statements are
-[`RecStatement`](RecStatement/README.md)'s, in two parts, because π2's circuit computes π1-rec3's Fiat–Shamir with the
-real Keccak-f[1600] while π1-rec3's soundness is in the random-permutation model. The library
+[`RecStatement`](RecStatement/README.md)'s. They come in two parts, because π2's circuit computes π1-rec3's Fiat–Shamir
+with the real Keccak-f[1600] while π1-rec3's soundness is proved in the random-permutation model. The library
 [`RecCompose/`](RecCompose/README.md) proves part 1 from π2's layers, bounds it in bits, and proves part 1 ⇒ part 2.
+The end theorems are in `RecCompose/Final.lean` and `End.lean`:
 
 ```lean
-theorem RecCompose.recKnowledgeSoundness2_real (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
-    (Fa : Pi2Facts D C) (T : Pi2Tables D C) (hfs : Pi2FsLayer D) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt)
-    (hg : GraphsAgree) (_hroot : Pi1RootWordOk)
-    (hb : CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream)) :
+theorem RecCompose.recKnowledgeSoundness2_final (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
+    (Fa : Pi2Facts D C) (hcol : Pi2SetupColumns D C) (hfs : Pi2FsLayer D)
+    (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hstmt : StatementPortMeaning D C Fa)
+    (hzero : ZeroPortsMeaning D C Fa) (hcalls : CallWordsAgree D C Fa) (hlay : Pi1CallsLayouts D) :
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64
-theorem RecCompose.recKnowledgeSoundness_end (D : RecDeployment) (hD : D.Real) (L : Pi2Layers D pi2Bound)
-    (ε1 εh : ℕ → ℝ≥0∞) : RecKnowledgeSoundness D pi2Bound ε1 εh
-theorem RecCompose.recCompleteness_end (D : RecDeployment) (hD : D.Real) (P1 : Pi1Prover D) (P2 : Pi2Prover)
-    (δ2 : ℝ≥0∞) (h2 : RecCompleteness2 D P1 P2 δ2) (δ1 δh : ℝ≥0∞) : RecCompleteness D P1 P2 δ1 δh δ2
-```
-
-(`recKnowledgeSoundness_end_real` is `recKnowledgeSoundness_end` with `L` assembled from `C`, `Fa`, `T`, `hfs`, `hroots`,
-`hg`, `_hroot`, `hb`.) `RecKnowledgeSoundness D ε2 ε1 εh` and `RecCompleteness D P1 P2 δ1 δh δ2` are Props whose own
-hypotheses are `RecGraph.Pi1.Pi1GraphIsVerifier`, `Pi1FsKeccak ε1`, `Pi1HazardKeccak εh` (and `Pi1CompletenessKeccak
-δ1`, `Pi1HazardKeccakHonest δh`). `Pi1GraphIsVerifier` is proved (`RecGraph.Pi1.pi1GraphIsVerifier`, `lean-rec-graph`):
-`recKnowledgeSoundness_end_fs` and `recCompleteness_end_fs` state the end theorems under the Fiat–Shamir heuristic for
-Keccak-f[1600] alone (justified by `uniKnowledgeSoundness_closed_rec3`, `uniCompletenessRec3_end_closed` and
-`RecGraph.hazard_prob`):
-
-```lean
-theorem RecCompose.recKnowledgeSoundness_end_fs (D : RecDeployment) (hD : D.Real) (L : Pi2Layers D pi2Bound)
+theorem RecCompose.recKnowledgeSoundness_final_fs (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
+    (Fa : Pi2Facts D C) (hcol : Pi2SetupColumns D C) (hfs : Pi2FsLayer D)
+    (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hstmt : StatementPortMeaning D C Fa)
+    (hzero : ZeroPortsMeaning D C Fa) (hcalls : CallWordsAgree D C Fa) (hlay : Pi1CallsLayouts D)
     (ε1 εh : ℕ → ℝ≥0∞) (h1 : Pi1FsKeccak D ε1) (hh : Pi1HazardKeccak D εh) :
     RecKnowledgeSoundnessWith D (recExtractor D) fun Q ↦ pi2Bound Q + ε1 Q + εh Q
 theorem RecCompose.recCompleteness_end_fs (D : RecDeployment) (hD : D.Real) (P1 : Pi1Prover D) (P2 : Pi2Prover)
@@ -315,32 +304,46 @@ theorem RecCompose.recCompleteness_end_fs (D : RecDeployment) (hD : D.Real) (P1 
     (hh : Pi1HazardKeccakHonest D P1 δh) : RecCompletenessWith D (composeProver D P1 P2) (δ1 + δh + δ2)
 ```
 
-**ε2 = `pi2Bound`** is `2^-64.93` at `Q = 2^64`, 128.93 bits as `Q / ε2` (`pi2Bound_le_bits`;
-`EndToEnd/Review/RecSoundnessNumbers.py`, exact rationals). The terms: π2's three openings once, `2^-64.93` (at
-`269 · 2^-137` a fresh query); π2's rounds times their lists, `N · 2^-140.60` = `2^-76.60` (`pi2_rounds_le`: the copy
-argument over `L_W` 153.13 bits, the identity at `t` over `L_W L_Q` 140.60, `W`'s fold at `ρ` 163.01); the collisions
-`2^-125`; the seed's pair `2^-127`.
+`recKnowledgeSoundness_final` and `recCompleteness_end` state the `RecStatement` Props `RecKnowledgeSoundness D
+pi2Bound ε1 εh` and `RecCompleteness D P1 P2 δ1 δh δ2` themselves. Their own premise `Pi1GraphIsVerifier` is proved
+(`RecGraph.Pi1.pi1GraphIsVerifier`), so the `_fs` forms keep only the Fiat–Shamir heuristic for Keccak-f[1600]:
+`Pi1FsKeccak ε1` and `Pi1HazardKeccak εh`, or `Pi1CompletenessKeccak δ1` and `Pi1HazardKeccakHonest δh`. These are
+justified by `uniKnowledgeSoundness_closed_rec3`, `uniCompletenessRec3_end_closed` and `RecGraph.hazard_prob`. The end
+bound is `pi2Bound Q + ε1 Q + εh Q`.
 
-**Proved** (sorry-free, Lean's three axioms, `#guard_msgs`): part 1 from π2's layers (`recKnowledgeSoundness2_of_layers`,
-`recExtractFrom2_of_mem`); π2's extraction from the Fiat–Shamir layer, the tables' layer and the circuit's facts
-(`pi2Extraction_of_layers`: `RecPiop.piop` per setup, its errors by `pi2_rounds_le`, `hbind` by `bind_elem`/`bind_root`
-on the compiler's checked ports, the last state by `checks_claims_iff_post2`); the circuit's corollary from RecCircuit's
-`pi1rec3_end` and the bridge (`circuit_of_bridge`); the contract's π1 openings are the calldata's (`callsPure`); the
-couplings of the end-to-end experiments with the hypotheses' (`experimentsAgree`, `hazardCoupling`, `pi1Coupling`,
-`completenessAgree`, `completenessPi1Coupling`, by eager sampling and the logging lemmas); π1-rec3's verifier's three
-openings are the contract's (`pi1OpeningsAgree`, from `pi1RunShape`, `pi1RunOpenings`: a run's result has three point
-claims in order, no matrices' claim, roots of two limbs). Part 1 ⇒ part 2 has no hypothesis left.
+**ε2 = `pi2Bound`** is `2^-64.93` at `Q = 2^64`, i.e. 128.93 bits as `Q / ε2` (`pi2Bound_le_bits`;
+`EndToEnd/Review/RecSoundnessNumbers.py`, exact rationals). Its terms:
+- π2's three openings, charged once: `2^-64.93`, at `269 · 2^-137` per fresh query.
+- π2's rounds times their lists: `N · 2^-140.60 = 2^-76.60`. By `pi2_rounds_le`, the copy argument over `L_W` gives
+  153.13 bits, the identity at `t` over `L_W L_Q` 140.60, and `W`'s fold at `ρ` 163.01.
+- The collisions: `2^-125`.
+- The seed's pair: `2^-127`.
+
+**Proved** (sorry-free, on Lean's three axioms, checked with `#guard_msgs`):
+- Part 1 from π2's layers: `recKnowledgeSoundness2_of_layers`, `recExtractFrom2_of_mem`.
+- π2's extraction from the Fiat–Shamir layer and the tables' layer: `pi2Extraction_of_layers`. It uses `RecPiop.piop`
+  per setup, `pi2_rounds_le`, `hbind` from `bind_elem`/`bind_root` on the compiler's checked ports, and
+  `checks_claims_iff_post2`.
+- The tables' layer itself: `pi2Tables` builds `W`'s polynomial, its fold values and the sibling trick, `h` and `q` in
+  the novel basis, and the setup's `σ`, `κ`, with the four claims as their values.
+- The circuit's corollary: `circuitBridge` from RecCircuit's `pi1rec3_end`; the root word `pi1RootWordOk`, after the
+  root-word fix.
+- The calldata's π1 openings are the contract's: `callsPure`.
+- The couplings: `experimentsAgree`, `hazardCoupling`, `pi1Coupling`, `pi1OpeningsAgree`, `completenessAgree`,
+  `completenessPi1Coupling`, by eager sampling and the logging lemmas.
+- π1-rec3's run's shape: `pi1RunShape`, `pi1RunOpenings`.
+
+Part 1 ⇒ part 2 has no hypothesis left.
 
 **The named inputs left**:
 
 | Input | What | Who closes it |
 |---|---|---|
-| `Pi2FsLayer D` | π2's Fiat–Shamir layer and openings, for every round-by-round sound protocol on π2's rounds | open, `lean-rec-compose`: the port of `UniSound`'s `Fs128`/`FsGame128`/`FsFinal128` and bridges to π2's transcript |
-| `Pi2Tables D C` | the tables' layer: the candidates' polynomials and the four claims as their values | open, `lean-rec-compose` |
-| `Pi2Facts D C` | `SpecOf` of π2's constants and the compiled circuit, validity, `2^24` positions, rows of 16, three four-limb ports, the public limbs in `K` | `RecStatement.Lemmas.SpecLink` (`lean-rec-statement`), the compiler's checks and the runners (compiled evaluation) |
-| `Pi2Circuits D`, `hroots`, `hg` | the Lean compiler accepts π1-rec3's graph at every π1 IV (`compile_ok`); the Lean recording `recordedGraph pi1Rec3` is `Emitted.graph` (`GraphsAgree`) | **checked by evaluation**, not by the kernel (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
-| `CircuitBridge` | RecCircuit's `EndStatement` at π2's public limbs gives `Pi1GraphAccepts` with the contract's openings | open, `lean-rec-compose` |
-| `Pi1RootWordOk` | π2's word 0 of π1's roots decodes to π1-rec3's WHIR root | the root-word fix, `fix-pi1-root` (false at `leanvm-rec` d93c375) |
+| `Pi2FsLayer D` | π2's Fiat–Shamir layer and openings, for every round-by-round sound protocol on π2's rounds | open, `lean-rec-compose`: the port of `UniSound`'s `Fs128`/`FsGame128`/`FsFinal128` and their bridges to π2's transcript (`Compose.knowledgeSoundness_listChainU_closed128`, `prEvent_doomF_le_large`, `prEvent_pairTr_le`) |
+| `Pi2Circuits D`, `hroots`, `GraphsAgree` | the Lean compiler accepts π1-rec3's graph at every π1 IV; `recordedGraph pi1Rec3 = Emitted.graph` | **checked by evaluation**, not by the kernel (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
+| `Pi2Facts D C` | `SpecOf` of π2's constants and the compiled circuit; validity; `2^24` positions; rows of 16; three four-limb ports; the public limbs in `K` | `RecStatement.Lemmas.SpecLink` (`lean-rec-statement`), the compiler's checks and the runners (compiled evaluation) |
+| `Pi2SetupColumns D C` | the deployment's `σ`, `κ` are the compiled circuit's at every π1 IV (`RecDeployment.Real` pins them at `Data.pi1Iv` only) | the deployment's construction; at the reference IV, the digest, the setup root and `RecCircuitTest` |
+| `StatementPortMeaning`, `ZeroPortsMeaning`, `CallWordsAgree`, `Pi1CallsLayouts` | the compiled ports' and calls' meaning in the contract's terms | the runners: RecStatementTest's public terms and calls, RecCircuitTest's ports, `tests/pi2.rs` |
 | `RecCompleteness2 D P1 P2 δ2` | π2's completeness | π2's honest prover is not transcribed |
 
 ```sh
