@@ -85,7 +85,7 @@ def firstDiff {α : Type} [BEq α] (a b : Array α) : ℕ :=
 
 def checkVector (v : Vec) : IO Bool := do
   let sh := (v.tagged "SHAPE").map String.toNat!
-  let shape : Shape := ⟨sh.getD 0 0, sh.getD 1 0, sh.drop 2⟩
+  let shape : Shape := shapeWith (sh.getD 0 0) (sh.getD 1 0) (sh.drop 2)
   let rows := ((v.tagged "COUNTS").drop 1).map String.toNat!
   let iv := (hexBytes ((v.tagged "IV").headD "")).toList
   let pub := (hexBytes ((v.tagged "PUBLIC").headD "")).toList
