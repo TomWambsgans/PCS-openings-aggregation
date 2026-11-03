@@ -32,6 +32,7 @@ import UniSound.FinalLink
 import UniSound.FsSetup
 import UniSound.Ids.Assembly
 import UniSound.Ids.Remaining
+import UniSound.Ids.Align
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001
@@ -56,6 +57,7 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `CodeZeros.lean` | The zeros a run collects are seen only by their verdict (`Obl`, `obl_run`: no chain program reads them; `obsOf_requireZeros_of`: a zero that vanishes where the zeros before do is invisible); a zero in round `0` moved before the root (`ChainProg.withHead`, `obsEq_withHead`); the row counts' checks (`readCounts_spec`: a function of the channel, its zeros vanishing only for counts at most `2^r`). |
 | `CodeLink.lean` | **`uniCode`**: `UniCode D hFlock valsCount (varsOf (layoutsOf D.shape))`, `reduceWith` on the main line as the chain program `mainProg` (`link_obs`), Flock's segment by `hFlock.link`; `mainProg` repeats `readCounts`' range checks as round `0`'s zero (`countsZeroOf`), invisible to the verdict (`link_counts`). |
 | `FinalLink.lean` | **`uniFinal`**: `UniFinal` for the identity model whose batch is the verifier's (`BatchIsVerifiers`), under `WeightMle`, `LayoutVarsSmall`, `FlockPendingShaped`; the counts in range from round `0`'s zero (`countsZero`); the batch's algebra `terminal_sumState`; **`uniKnowledgeSoundness_code`**, the end theorem with both links in place. |
+| `Ids/Align.lean` | **`BatchIsVerifiers` for the identity model**: its relations at `t` are the code-level link's (`relsAt_eq`: `relsOf` = `flockClaim (mainRels …)`, a table's part reading exactly `tableReads` values, `tablePartOf_eq`), its combined claims the run's (`runClaims_eq`), its batch the verifier's (`prodOf_eq_batchProd`, `targetOf_eq_batchTargetOf`, `batchIsVerifiers_of`, `batchIsVerifiers_ids`, under `FlockGood`); `nVOf_eq_of`. |
 | `PendingLink.lean` | **`pendingTerminalLink`**: the batch's `λ³` product at its point is the pending reduction's terminal times the zero extension (`multilinear_eval` as the extension, substitution into `Â0`, `B̂0`). |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
 | `FsChain.lean` | The univariate transcript as `Compose.ChainSpecU` (`uniSpec`: 24-byte scalars, the root's reversed halves, the seed's 16-byte tag, the row counts before `C1`'s root), the PIOP lifted to the chain's statement (`liftPiop`), the proof the chain reads (`UPf`, `uView`). |
@@ -232,3 +234,35 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.uniWalkReject' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.uniWalkReject
+
+/-- info: 'UniSound.Ids.tablePartOf_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.tablePartOf_eq
+
+/-- info: 'UniSound.Ids.relsAt_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.relsAt_eq
+
+/-- info: 'UniSound.Ids.runClaims_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.runClaims_eq
+
+/-- info: 'UniSound.Ids.prodOf_eq_batchProd' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.prodOf_eq_batchProd
+
+/-- info: 'UniSound.Ids.targetOf_eq_batchTargetOf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.targetOf_eq_batchTargetOf
+
+/-- info: 'UniSound.Ids.batchIsVerifiers_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.batchIsVerifiers_of
+
+/-- info: 'UniSound.Ids.batchIsVerifiers_ids' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.batchIsVerifiers_ids
+
+/-- info: 'UniSound.Ids.nVOf_eq_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.nVOf_eq_of
