@@ -40,7 +40,8 @@ fn expr(poly: &spec::Poly) -> Formula {
         f.lin.terms.push((Coeff::k(k.0), c as u16));
     }
     for &(a, b, k) in &poly.quadratic {
-        f.products.push((Coeff::k(k.0), Lin::cell(a as usize), Lin::cell(b as usize)));
+        f.products
+            .push((Coeff::k(k.0), Lin::cell(a as usize), Lin::cell(b as usize)));
     }
     f
 }
@@ -125,7 +126,12 @@ pub fn adapt(c: &spec::Circuit) -> Circuit {
         .map(|(j, p)| {
             let terms = match p.source {
                 // (S_0 + Y S_1) + γ (S_2 + Y S_3), the statement's words the scalars 0..4.
-                spec::Source::Statement => vec![(Coeff::ONE, 0), (y, 1), (Coeff::gamma(1), 2), (Coeff { gamma: 1, ..y }, 3)],
+                spec::Source::Statement => vec![
+                    (Coeff::ONE, 0),
+                    (y, 1),
+                    (Coeff::gamma(1), 2),
+                    (Coeff { gamma: 1, ..y }, 3),
+                ],
                 // A root's halves are bytes 0..16 (L_3, L_2) and 16..32 (L_1, L_0): half 1 + γ half 0.
                 spec::Source::Root(i) => vec![(Coeff::ONE, 4 + 2 * i as u16 + 1), (Coeff::gamma(1), 4 + 2 * i as u16)],
                 spec::Source::Element(i) => vec![(Coeff::ONE, element_at(i))],
@@ -164,7 +170,12 @@ pub fn public_values(public: &spec::PublicInputs) -> ([u8; 32], Vec<PublicValue>
         .roots
         .iter()
         .map(|&r| PublicValue::Root(r))
-        .chain(public.elements.iter().map(|x| PublicValue::Scalar(F192::new(x.c0, x.c1, x.c2))))
+        .chain(
+            public
+                .elements
+                .iter()
+                .map(|x| PublicValue::Scalar(F192::new(x.c0, x.c1, x.c2))),
+        )
         .collect();
     (public.statement, values)
 }

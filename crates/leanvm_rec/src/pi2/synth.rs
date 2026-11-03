@@ -274,7 +274,9 @@ pub fn build(design: &Design, seed: u64) -> Built {
                                     scalars += 2;
                                 }
                                 Sink::Counts => {
-                                    for (q, coeff) in [Coeff::ONE, Coeff::e(y()), Coeff::e(y2())].into_iter().enumerate() {
+                                    for (q, coeff) in
+                                        [Coeff::ONE, Coeff::e(y()), Coeff::e(y2())].into_iter().enumerate()
+                                    {
                                         assert!(v[q] >> 32 == 0, "a count is 4 bytes");
                                         reads.push(Read::Integer(4));
                                         values.push(PublicValue::Integer(v[q]));
@@ -286,7 +288,15 @@ pub fn build(design: &Design, seed: u64) -> Built {
                                     for (q, &limb) in v.iter().enumerate() {
                                         public_input[8 * q..8 * q + 8].copy_from_slice(&limb.to_be_bytes());
                                     }
-                                    let coeffs = [Coeff::ONE, Coeff::e(y()), Coeff::gamma(1), Coeff { gamma: 1, ..Coeff::e(y()) }];
+                                    let coeffs = [
+                                        Coeff::ONE,
+                                        Coeff::e(y()),
+                                        Coeff::gamma(1),
+                                        Coeff {
+                                            gamma: 1,
+                                            ..Coeff::e(y())
+                                        },
+                                    ];
                                     lin.terms = coeffs.into_iter().zip(0..4u16).collect();
                                 }
                                 Sink::Zero => {
@@ -355,7 +365,10 @@ pub fn d16v_types() -> Vec<RowType> {
         Role::Expr(f)
     }));
     k1.push(Role::SelfBit);
-    types.push(RowType { name: "K1".into(), roles: k1 });
+    types.push(RowType {
+        name: "K1".into(),
+        roles: k1,
+    });
     // K0a, K0b: A_j[x', 0] (0–4) and P_0 (5–9), the round constant on lane 0 for K0b; three D units (10–15).
     for rc in [false, true] {
         let mut roles: Vec<Role> = (0..5).map(|x| Role::Expr(chi(a, d, x, rc && x == 0))).collect();
@@ -376,16 +389,24 @@ pub fn d16v_types() -> Vec<RowType> {
             roles.push(Role::Expr(Formula::linear(lin_sum(&[2 * u, 2 * u + 1]))));
             roles.push(Role::Forward);
         }
-        types.push(RowType { name: name.into(), roles });
+        types.push(RowType {
+            name: name.into(),
+            roles,
+        });
     }
     // Kprep: three units of five bits, their sum; a free bit.
     let mut prep = vec![];
     for u in 0..3 {
         prep.extend((0..4).map(|_| Role::Forward));
-        prep.push(Role::Expr(Formula::linear(lin_sum(&(5 * u..5 * u + 5).collect::<Vec<_>>()))));
+        prep.push(Role::Expr(Formula::linear(lin_sum(
+            &(5 * u..5 * u + 5).collect::<Vec<_>>(),
+        ))));
     }
     prep.push(Role::SelfBit);
-    types.push(RowType { name: "Kprep".into(), roles: prep });
+    types.push(RowType {
+        name: "Kprep".into(),
+        roles: prep,
+    });
     // Packing: fifteen bits and an accumulator, five offsets of the exponents.
     for offset in [0usize, 15, 30, 45, 60] {
         let mut roles: Vec<Role> = (0..15).map(|_| Role::Forward).collect();
@@ -401,12 +422,17 @@ pub fn d16v_types() -> Vec<RowType> {
     // Free bits: eight self-loops and the slots producing them.
     let mut free: Vec<Role> = (0..8).map(|_| Role::SelfBit).collect();
     free.extend((0..8).map(|k| Role::Expr(Formula::cell(k))));
-    types.push(RowType { name: "Free".into(), roles: free });
+    types.push(RowType {
+        name: "Free".into(),
+        roles: free,
+    });
     types.extend(e_units(16));
     // Constants.
     types.push(RowType {
         name: "Const".into(),
-        roles: (0..16).map(|k| Role::Const(0x1000_0000_0000_0001 * (k as u64 + 1))).collect(),
+        roles: (0..16)
+            .map(|k| Role::Const(0x1000_0000_0000_0001 * (k as u64 + 1)))
+            .collect(),
     });
     types.extend(sinks(16));
     types
@@ -421,7 +447,13 @@ fn e_units(width: usize) -> Vec<RowType> {
     for u in 0..units {
         let (a, b) = (6 * u, 6 * u + 3);
         let c0 = vec![p(a, b), p(a + 1, b + 2), p(a + 2, b + 1)];
-        let c1 = vec![p(a, b + 1), p(a + 1, b), p(a + 1, b + 2), p(a + 2, b + 1), p(a + 2, b + 2)];
+        let c1 = vec![
+            p(a, b + 1),
+            p(a + 1, b),
+            p(a + 1, b + 2),
+            p(a + 2, b + 1),
+            p(a + 2, b + 2),
+        ];
         let c2 = vec![p(a, b + 2), p(a + 1, b + 1), p(a + 2, b), p(a + 2, b + 2)];
         for products in [c0, c1, c2] {
             mul.push(Role::Expr(Formula {
@@ -439,8 +471,14 @@ fn e_units(width: usize) -> Vec<RowType> {
         }
     }
     vec![
-        RowType { name: "Emul".into(), roles: mul },
-        RowType { name: "Eadd".into(), roles: add },
+        RowType {
+            name: "Emul".into(),
+            roles: mul,
+        },
+        RowType {
+            name: "Eadd".into(),
+            roles: add,
+        },
     ]
 }
 
@@ -466,7 +504,10 @@ fn sinks(width: usize) -> Vec<RowType> {
         while roles.len() < width {
             roles.push(Role::SelfFree(Free::Zero));
         }
-        RowType { name: name.into(), roles }
+        RowType {
+            name: name.into(),
+            roles,
+        }
     })
     .collect()
 }
@@ -518,13 +559,19 @@ pub fn d32v_types() -> Vec<RowType> {
     let mut prep: Vec<Role> = (0..25).map(|_| Role::Forward).collect();
     prep.extend((0..5).map(|x| Role::Expr(Formula::linear(lin_sum(&[x, x + 5, x + 10, x + 15, x + 20])))));
     prep.extend([Role::SelfBit, Role::SelfBit]);
-    types.push(RowType { name: "KSprep".into(), roles: prep });
+    types.push(RowType {
+        name: "KSprep".into(),
+        roles: prep,
+    });
     let mut xor = vec![];
     for u in 0..16 {
         xor.push(Role::Expr(Formula::linear(lin_sum(&[2 * u, 2 * u + 1]))));
         xor.push(Role::Forward);
     }
-    types.push(RowType { name: "XOR".into(), roles: xor });
+    types.push(RowType {
+        name: "XOR".into(),
+        roles: xor,
+    });
     for offset in [0usize, 31] {
         let mut roles: Vec<Role> = (0..31).map(|_| Role::Forward).collect();
         let mut lin = Lin::cell(31);
@@ -538,18 +585,26 @@ pub fn d32v_types() -> Vec<RowType> {
     }
     let mut free: Vec<Role> = (0..16).map(|_| Role::SelfBit).collect();
     free.extend((0..16).map(|k| Role::Expr(Formula::cell(k))));
-    types.push(RowType { name: "Free".into(), roles: free });
+    types.push(RowType {
+        name: "Free".into(),
+        roles: free,
+    });
     types.extend(e_units(32));
     types.push(RowType {
         name: "Const".into(),
-        roles: (0..32).map(|k| Role::Const(0x1000_0000_0000_0001 * (k as u64 + 1))).collect(),
+        roles: (0..32)
+            .map(|k| Role::Const(0x1000_0000_0000_0001 * (k as u64 + 1)))
+            .collect(),
     });
     types.extend(sinks(32));
     types
 }
 
 fn index(types: &[RowType], name: &str) -> usize {
-    types.iter().position(|t| t.name == name).unwrap_or_else(|| panic!("row type {name}"))
+    types
+        .iter()
+        .position(|t| t.name == name)
+        .unwrap_or_else(|| panic!("row type {name}"))
 }
 
 /// The sinks of π1's public data, the ports of the circuit compiler (`circuit::spec::Source`): the public input,
@@ -588,7 +643,10 @@ pub fn small_d16v(log_n: usize) -> Design {
         row_type: index(&types, "Free"),
         blocks: vec![2],
     }];
-    for name in ["K1", "K0a", "K0b", "KD", "XOR", "Kprep", "Pack0", "Pack15", "Pack30", "Pack45", "Pack60", "Emul", "Eadd", "Const"] {
+    for name in [
+        "K1", "K0a", "K0b", "KD", "XOR", "Kprep", "Pack0", "Pack15", "Pack30", "Pack45", "Pack60", "Emul", "Eadd",
+        "Const",
+    ] {
         regions.push(Region {
             row_type: index(&types, name),
             blocks: vec![if name == "K1" { 1 } else { 0 }],
@@ -614,7 +672,9 @@ pub fn small_d32v(log_n: usize) -> Design {
         row_type: index(&types, "Free"),
         blocks: vec![1],
     }];
-    for name in ["KSprep", "KS0", "KS1", "XOR", "Pack0", "Pack31", "Emul", "Eadd", "Const"] {
+    for name in [
+        "KSprep", "KS0", "KS1", "XOR", "Pack0", "Pack31", "Emul", "Eadd", "Const",
+    ] {
         regions.push(Region {
             row_type: index(&types, name),
             blocks: vec![if name == "KS0" { 1 } else { 0 }],

@@ -124,11 +124,15 @@ fn call_words<T: Copy, W: Clone>(
         })
         .collect();
     let l = layouts(inst.spec.log_n);
-    let claim = |(point, value): &(Vec<T>, T)| -> Vec<W> {
-        point.iter().chain([value]).map(|&x| scalar(x)).collect()
-    };
+    let claim = |(point, value): &(Vec<T>, T)| -> Vec<W> { point.iter().chain([value]).map(|&x| scalar(x)).collect() };
     let head = |root: W, id: [u8; 32], k: u64| vec![root, constant(id), constant(number(k))];
-    out.push([head(stream(roots_at[roots]), layout_id(&l.witness), 1), claim(&reduced.witness)].concat());
+    out.push(
+        [
+            head(stream(roots_at[roots]), layout_id(&l.witness), 1),
+            claim(&reduced.witness),
+        ]
+        .concat(),
+    );
     out.push(
         [
             head(stream(roots_at[roots + 1]), layout_id(&l.quotient), 2),
@@ -184,7 +188,12 @@ fn entry(inst: &Instance, recorded: &Recorded, measure: bool) -> Entry {
 pub fn compile_verifier(inst: &Instance, recorded: &Recorded, measure: bool) -> Contract {
     let calls = calls(inst, recorded);
     let ending = Ending::PcsOpen(calls.iter().map(Vec::len).collect());
-    compile(&recorded.graph, &calls.concat(), &ending, &entry(inst, recorded, measure))
+    compile(
+        &recorded.graph,
+        &calls.concat(),
+        &ending,
+        &entry(inst, recorded, measure),
+    )
 }
 
 /// The outputs and ending: the calls (`verify`), or their words then every checked value returned (parity).
@@ -195,7 +204,11 @@ fn ends(inst: &Instance, recorded: &Recorded, verify: bool) -> (Vec<Word>, Endin
         (calls.concat(), ending)
     } else {
         let checks = recorded.graph.zero.iter().chain(&recorded.graph.nonzero);
-        let outputs = calls.concat().into_iter().chain(checks.map(|&(id, _)| Word::Node(id))).collect();
+        let outputs = calls
+            .concat()
+            .into_iter()
+            .chain(checks.map(|&(id, _)| Word::Node(id)))
+            .collect();
         (outputs, Ending::Return)
     }
 }
@@ -204,13 +217,15 @@ pub fn calldata(public_input: &[u8; 32], stream: &[u8]) -> Vec<u8> {
     [&VERIFY[..], public_input, stream].concat()
 }
 
-/// The Rust verifier on the same calldata, every check collected: the claims, and the values required zero, then
-/// nonzero.
+/// The Rust verifier's reduction, and the values it required to be zero, then nonzero.
+pub type Checked = (Reduced<E>, Vec<E>, Vec<E>);
+
+/// The Rust verifier on the same calldata, every check collected.
 pub fn rust_verifier(
     inst: &Instance,
     public_input: &[u8; 32],
     stream: &[u8],
-) -> Result<(Reduced<E>, Vec<E>, Vec<E>), leanvm_flock_gas::VerifierError> {
+) -> Result<Checked, leanvm_flock_gas::VerifierError> {
     let seed = keccak_seed(&NAME, &inst.iv, public_input);
     let mut channel = KeccakChannel::new(
         seed,
@@ -247,7 +262,12 @@ fn compare(output: &[u8], expected: &[[u8; 32]]) {
 pub fn parity(inst: &Instance, recorded: &Recorded, public_input: &[u8; 32], stream: &[u8]) -> usize {
     let (outputs, ending) = ends(inst, recorded, false);
     let contract = compile(&recorded.graph, &outputs, &ending, &entry(inst, recorded, true));
-    let outcome = call(&contract.code, &[], &calldata(public_input, stream), &PcsOpen::default());
+    let outcome = call(
+        &contract.code,
+        &[],
+        &calldata(public_input, stream),
+        &PcsOpen::default(),
+    );
     let expected = expected_return(inst, recorded, public_input, stream);
     compare(&outcome.output.expect("the measuring build does not revert"), &expected);
     expected.len()
@@ -257,9 +277,20 @@ pub fn parity(inst: &Instance, recorded: &Recorded, public_input: &[u8; 32], str
 /// is). Returns how many contracts.
 pub fn parity_deployable(inst: &Instance, recorded: &Recorded, public_input: &[u8; 32], stream: &[u8]) -> usize {
     let (outputs, ending) = ends(inst, recorded, false);
-    let returning = compile_deployable(&recorded.graph, &outputs, &ending, &entry(inst, recorded, false), MAX_CODE);
-    let measuring =
-        compile_deployable_like(&recorded.graph, &outputs, &ending, &entry(inst, recorded, true), &returning);
+    let returning = compile_deployable(
+        &recorded.graph,
+        &outputs,
+        &ending,
+        &entry(inst, recorded, false),
+        MAX_CODE,
+    );
+    let measuring = compile_deployable_like(
+        &recorded.graph,
+        &outputs,
+        &ending,
+        &entry(inst, recorded, true),
+        &returning,
+    );
     let installed = install(&measuring, &[]);
     let output = installed
         .chain
@@ -277,7 +308,10 @@ pub fn run(inst: &Instance, recorded: &Recorded, calldata: &[u8], attested: &[Ve
     let mut block = PcsOpen::default();
     attested.iter().for_each(|input| block.register(input.clone()));
     let outcome = call(&contract.code, &[], calldata, &block);
-    (outcome.output.as_deref() == Some(&word([1, 0, 0])[..]), outcome.pcs_calls)
+    (
+        outcome.output.as_deref() == Some(&word([1, 0, 0])[..]),
+        outcome.pcs_calls,
+    )
 }
 
 /// One phase's share of a call.
@@ -361,7 +395,8 @@ impl GasReport {
             format!(
                 "execution (c = 0): {} straight{}; {} claims in {} calls, {} PCS_OPEN words",
                 self.execution,
-                self.deployable_execution.map_or(String::new(), |d| format!(", {d} deployable")),
+                self.deployable_execution
+                    .map_or(String::new(), |d| format!(", {d} deployable")),
                 self.claims,
                 self.calls,
                 self.pcs_words
@@ -450,17 +485,27 @@ pub fn measure(inst: &Instance, recorded: &Recorded, deployable: bool) -> GasRep
     let claims: usize = inst.pi1.len() + 4;
     let run = |claim_gas: u64| -> Outcome {
         let outcome = call(&contract.code, &[], &data, &PcsOpen::attesting_all(claim_gas));
-        assert_eq!(outcome.output.as_deref(), Some(&word([1, 0, 0])[..]), "the measuring run returns 1");
+        assert_eq!(
+            outcome.output.as_deref(),
+            Some(&word([1, 0, 0])[..]),
+            "the measuring run returns 1"
+        );
         assert_eq!(outcome.pcs_calls.len(), calls.len(), "one call per commitment");
         outcome
     };
     let outcome = run(0);
     assert_eq!(run(1000).execution, outcome.execution + 1000 * claims as u64);
-    let mut phases = phases_of(&[&outcome.gas_by_pc], &|_, pc| contract.phase_of.get(pc).copied().unwrap_or(CALLS));
+    let mut phases = phases_of(&[&outcome.gas_by_pc], &|_, pc| {
+        contract.phase_of.get(pc).copied().unwrap_or(CALLS)
+    });
     let total: u64 = phases.iter().map(|p| p.gas).sum();
     assert_eq!(total, outcome.execution, "the instructions' gas is the execution's");
     let measured = phases.iter().find(|p| p.phase == MEASURE).map_or(0, |p| p.gas);
-    assert_eq!(measured, contract.checks as u64 + calls.len() as u64, "one JUMPDEST a check and a call");
+    assert_eq!(
+        measured,
+        contract.checks as u64 + calls.len() as u64,
+        "one JUMPDEST a check and a call"
+    );
     phases.retain(|p| p.phase != MEASURE);
     phases.sort_by_key(|p| std::cmp::Reverse(p.gas));
     let mut report = GasReport {
@@ -484,8 +529,13 @@ pub fn measure(inst: &Instance, recorded: &Recorded, deployable: bool) -> GasRep
     };
     if deployable {
         let (outputs, ending) = ends(inst, recorded, true);
-        let real: Deployable =
-            compile_deployable(&recorded.graph, &outputs, &ending, &entry(inst, recorded, false), MAX_CODE);
+        let real: Deployable = compile_deployable(
+            &recorded.graph,
+            &outputs,
+            &ending,
+            &entry(inst, recorded, false),
+            MAX_CODE,
+        );
         let deployed = deploy(&real, &[]);
         let measuring =
             compile_deployable_like(&recorded.graph, &outputs, &ending, &entry(inst, recorded, true), &real);
@@ -494,7 +544,11 @@ pub fn measure(inst: &Instance, recorded: &Recorded, deployable: bool) -> GasRep
             let outcome = installed
                 .chain
                 .call(installed.address, &data, &PcsOpen::attesting_all(claim_gas));
-            assert_eq!(outcome.output.as_deref(), Some(&word([1, 0, 0])[..]), "the measuring run returns 1");
+            assert_eq!(
+                outcome.output.as_deref(),
+                Some(&word([1, 0, 0])[..]),
+                "the measuring run returns 1"
+            );
             outcome
         };
         let outcome = run(0);

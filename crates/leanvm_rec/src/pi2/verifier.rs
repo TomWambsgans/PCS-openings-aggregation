@@ -160,7 +160,11 @@ fn ext<S: Scalar>(x: F192) -> S {
 
 fn coeff<S: Scalar>(c: &Coeff, gammas: &[S]) -> S {
     let value = ext::<S>(c.field());
-    if c.gamma == 0 { value } else { value * gammas[c.gamma as usize] }
+    if c.gamma == 0 {
+        value
+    } else {
+        value * gammas[c.gamma as usize]
+    }
 }
 
 fn lin<S: Scalar>(l: &Lin, cell: &dyn Fn(usize) -> S, gammas: &[S]) -> S {
@@ -323,7 +327,9 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
                 .map(|key| {
                     let parent = &layer[key >> 1];
                     let z = w[l] + base::<S>(point(key));
-                    (0..half).map(|j| parent[j] + z * (parent[j] + parent[j + half])).collect()
+                    (0..half)
+                        .map(|j| parent[j] + z * (parent[j] + parent[j + half]))
+                        .collect()
                 })
                 .collect();
         }
@@ -375,9 +381,11 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
                 None => beta * base::<S>(point(term.tag as usize)),
                 Some((tag, value)) => {
                     let diff = tag ^ term.tag;
-                    (0..super::circuit::TAG_BITS).filter(|b| diff >> b & 1 == 1).fold(value, |acc, b| {
-                        acc + *bits[b].get_or_insert_with(|| beta * base::<S>(quotient::domain::beta()[b]))
-                    })
+                    (0..super::circuit::TAG_BITS)
+                        .filter(|b| diff >> b & 1 == 1)
+                        .fold(value, |acc, b| {
+                            acc + *bits[b].get_or_insert_with(|| beta * base::<S>(quotient::domain::beta()[b]))
+                        })
                 }
             };
             last = Some((term.tag, beta_tag));
@@ -453,7 +461,13 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
 
 /// The public input's four words, as calldata carries them: big-endian each.
 pub fn statement_words(public_input: &[u8; 32]) -> [E; 4] {
-    std::array::from_fn(|k| E::new(u64::from_be_bytes(public_input[8 * k..8 * k + 8].try_into().unwrap()), 0, 0))
+    std::array::from_fn(|k| {
+        E::new(
+            u64::from_be_bytes(public_input[8 * k..8 * k + 8].try_into().unwrap()),
+            0,
+            0,
+        )
+    })
 }
 
 /// The verifier on `E` with the Keccak-256 chain, the contract's in Rust: the stream must be read whole.

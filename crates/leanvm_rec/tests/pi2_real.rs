@@ -52,7 +52,8 @@ fn vector(name: &str) -> vectors::Vector {
 /// The real circuit and witness, and π1's contract IV.
 fn real(name: &str, layout: Layout) -> (vectors::Vector, Compiled, [u8; 32]) {
     let v = vector(name);
-    let recorded = leanvm_univariate::contract::record_verifier(&v.shape, vectors::blake2s_of(&v.config), Claims::Point);
+    let recorded =
+        leanvm_univariate::contract::record_verifier(&v.shape, vectors::blake2s_of(&v.config), Claims::Point);
     let iv = contract_iv(&v.shape, &PROGRAM_IV, &SetupRoots::REFERENCE);
     let stream = v.calldata[STREAM_AT..].to_vec();
     let c = pi2(
@@ -78,7 +79,11 @@ fn gas(name: &str, layout: Layout) {
     let (_, c, pi1_iv) = real(name, layout);
     let circuit = adapt::adapt(&c.finished.circuit);
     let spec = Spec::of(&circuit);
-    let terms: usize = spec.groups.iter().map(|g| g.formula.lin.terms.len() + 2 * g.formula.products.len()).sum();
+    let terms: usize = spec
+        .groups
+        .iter()
+        .map(|g| g.formula.lin.terms.len() + 2 * g.formula.products.len())
+        .sum();
     let products: usize = spec.groups.iter().map(|g| g.formula.products.len()).sum();
     println!(
         "{name} × {layout:?}: 2^{} positions, {} pairs ({} pull-less, the holes), {} groups ({} formula terms, {} products), blocks up to 2^{} rows, {} public terms, {} reads; π1: {} calls",
@@ -131,7 +136,11 @@ fn real_end_to_end() {
         let start = std::time::Instant::now();
         let (v, c, pi1_iv) = real(&name, layout);
         assert_eq!(c.finished.circuit.check(&c.finished.witness, &c.public), Ok(()));
-        assert_eq!(c.finished.circuit.call_inputs(&c.public), v.calls, "π1's calls are the vector's");
+        assert_eq!(
+            c.finished.circuit.call_inputs(&c.public),
+            v.calls,
+            "π1's calls are the vector's"
+        );
         let circuit = adapt::adapt(&c.finished.circuit);
         let witness = adapt::witness(&c.finished.witness);
         let (public_input, values) = adapt::public_values(&c.public);
@@ -163,7 +172,10 @@ fn real_end_to_end() {
         let (reduced, roots, openings) = open(proved, &setup);
         let opening = start.elapsed().as_secs_f64();
         println!("prove {proving:.1} s, open {opening:.1} s; {}", peak_memory());
-        assert_eq!(verify_openings(circuit.log_n, &reduced, &roots, &setup.root(), &openings), Ok(()));
+        assert_eq!(
+            verify_openings(circuit.log_n, &reduced, &roots, &setup.root(), &openings),
+            Ok(())
+        );
 
         // The contract: π1's five calls (the vector's inputs) and π2's three, attested exactly.
         let inst = Instance {
@@ -177,7 +189,11 @@ fn real_end_to_end() {
             .into_iter()
             .map(|words| words.concat())
             .collect();
-        assert_eq!(&expected[..5], &v.calls[..], "π1's calls, from π2's public data, are the vector's");
+        assert_eq!(
+            &expected[..5],
+            &v.calls[..],
+            "π1's calls, from π2's public data, are the vector's"
+        );
         let data = calldata(&public_input, &stream);
         let (accepted, made) = contract::run(&inst, &recorded, &data, &expected);
         assert!(accepted, "the contract accepts π2's proof of π1-rec's real proof");
@@ -185,7 +201,10 @@ fn real_end_to_end() {
         for at in [4, 40, 40 + 64, data.len() - 30, data.len() - 1] {
             let mut bad = data.clone();
             bad[at] ^= 1;
-            assert!(!contract::run(&inst, &recorded, &bad, &expected).0, "calldata byte {at} flipped");
+            assert!(
+                !contract::run(&inst, &recorded, &bad, &expected).0,
+                "calldata byte {at} flipped"
+            );
         }
         contract::parity(&inst, &recorded, &public_input, &stream);
         println!(

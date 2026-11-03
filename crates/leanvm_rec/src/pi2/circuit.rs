@@ -204,13 +204,19 @@ impl Formula {
 
     /// Its coefficients are in `K`: it pushes a `K` value, as an internal push must.
     pub fn is_base(&self) -> bool {
-        self.lin.is_base() && self.products.iter().all(|(c, a, b)| c.is_base() && a.is_base() && b.is_base())
+        self.lin.is_base()
+            && self
+                .products
+                .iter()
+                .all(|(c, a, b)| c.is_base() && a.is_base() && b.is_base())
     }
 
     pub fn eval(&self, cell: &dyn Fn(usize) -> F192, gammas: &[F192]) -> F192 {
-        self.products.iter().fold(self.lin.eval(cell, gammas), |acc, (c, a, b)| {
-            acc + c.eval(gammas) * a.eval(cell, gammas) * b.eval(cell, gammas)
-        })
+        self.products
+            .iter()
+            .fold(self.lin.eval(cell, gammas), |acc, (c, a, b)| {
+                acc + c.eval(gammas) * a.eval(cell, gammas) * b.eval(cell, gammas)
+            })
     }
 
     pub fn eval_k(&self, cell: &dyn Fn(usize) -> F64) -> F64 {
@@ -379,7 +385,10 @@ impl Circuit {
     pub fn public_values(&self, public: &[F192], gamma: F192) -> Vec<F192> {
         assert_eq!(public.len(), self.public_scalars());
         let gammas = gamma_powers(gamma, self.max_gamma());
-        self.public.iter().map(|t| t.value.eval(&|c| public[c], &gammas)).collect()
+        self.public
+            .iter()
+            .map(|t| t.value.eval(&|c| public[c], &gammas))
+            .collect()
     }
 
     /// The structure the protocol assumes: sizes, aligned pairs on distinct positions, formulas of degree 2 reading
@@ -471,9 +480,16 @@ impl Circuit {
             .collect();
         for i in 0..n {
             let tag = self.sigma[i];
-            let expected = if (tag as usize) < n { F192::from(w[tag as usize]) } else { values[&tag] };
+            let expected = if (tag as usize) < n {
+                F192::from(w[tag as usize])
+            } else {
+                values[&tag]
+            };
             if pushes[i] != expected {
-                return Err(format!("position {i} pushes {:?} to tag {tag}, which holds {:?}", pushes[i], expected));
+                return Err(format!(
+                    "position {i} pushes {:?} to tag {tag}, which holds {:?}",
+                    pushes[i], expected
+                ));
             }
         }
         Ok(())
@@ -610,7 +626,10 @@ mod tests {
             let on_coset = (0..1usize << m)
                 .filter(|&i| !((i >> r) >= first_row && (i >> r) < first_row + (1 << log_rows) && i % (1 << r) == role))
                 .fold(F64::ONE, |acc, i| acc * (point((first_row << r) + role) + point(i)));
-            assert_eq!(direct * on_coset.inv(), zv * norm * (vanishing(off, &e, log_rows) + z).inv());
+            assert_eq!(
+                direct * on_coset.inv(),
+                zv * norm * (vanishing(off, &e, log_rows) + z).inv()
+            );
         }
     }
 }

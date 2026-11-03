@@ -71,7 +71,11 @@ pub const CERTIFIED_FROM: usize = 20;
 
 pub fn layouts(log_n: usize) -> Layouts {
     let (m, n) = (log_n, 1usize << log_n);
-    let least = if m >= CERTIFIED_FROM { MIN_CERTIFIED_STACK } else { MIN_LOG_STACK };
+    let least = if m >= CERTIFIED_FROM {
+        MIN_CERTIFIED_STACK
+    } else {
+        MIN_LOG_STACK
+    };
     let stack = |vars: usize| vars.max(least);
     Layouts {
         witness: Layout::new(m, m, stack(m), &[(0, n)]),
@@ -197,7 +201,6 @@ fn batch_inverse_e(values: &mut [F192]) {
     }
 }
 
-
 /// A linear form in `K` on eight points, its cells' indices permuted by a role.
 struct KLin {
     terms: Vec<(F64, usize)>,
@@ -207,7 +210,11 @@ struct KLin {
 impl KLin {
     fn new(l: &Lin, role: usize) -> Self {
         Self {
-            terms: l.terms.iter().map(|&(c, cell)| (F64(c.value[0]), cell as usize ^ role)).collect(),
+            terms: l
+                .terms
+                .iter()
+                .map(|&(c, cell)| (F64(c.value[0]), cell as usize ^ role))
+                .collect(),
             constant: l.constant.map_or(F64::ZERO, |c| F64(c.value[0])),
         }
     }
@@ -215,7 +222,11 @@ impl KLin {
     #[inline(always)]
     fn eval(&self, cells: &[Kx8]) -> Kx8 {
         self.terms.iter().fold(Kx8::splat(self.constant), |acc, &(c, i)| {
-            acc + if c == F64::ONE { cells[i] } else { Kx8::splat(c) * cells[i] }
+            acc + if c == F64::ONE {
+                cells[i]
+            } else {
+                Kx8::splat(c) * cells[i]
+            }
         })
     }
 }
@@ -381,7 +392,9 @@ fn quotient_on_extension(
                         let rows: Vec<[F64; 8]> = cells.iter().map(|&c| lanes(c)).collect();
                         let sums = lanes(sum);
                         let v: [F192; 8] = std::array::from_fn(|l| {
-                            formula.eval(&|c| F192::from(rows[c ^ role][l]), &gammas).mul_base(sums[l])
+                            formula
+                                .eval(&|c| F192::from(rows[c ^ role][l]), &gammas)
+                                .mul_base(sums[l])
                         });
                         let limb = |k: usize| Kx8::new(v.map(|x| F64([x.c0, x.c1, x.c2][k])));
                         pushed_e = pushed_e + Ex8::from_limbs([limb(0), limb(1), limb(2)]);
@@ -482,7 +495,10 @@ pub fn prove_with(
                 } else {
                     F192::ONE
                 };
-                [pull, alpha + pushes[i] + beta_.mul_base(point(circuit.sigma[i] as usize))]
+                [
+                    pull,
+                    alpha + pushes[i] + beta_.mul_base(point(circuit.sigma[i] as usize)),
+                ]
             })
             .collect();
         batch_inverse_e(&mut d);
@@ -540,7 +556,9 @@ pub fn prove_with(
     let t = to_f192(writer.sample());
     lap("Q: table, commit", &mut timings);
 
-    let digits: Vec<F192> = std::iter::successors(Some(t), |&x| Some(x * x + x)).take(m + 2).collect();
+    let digits: Vec<F192> = std::iter::successors(Some(t), |&x| Some(x * x + x))
+        .take(m + 2)
+        .collect();
     let eq = primitives::multilinear::eq_table(&digits[r..m]);
     let width = 1usize << r;
     let folds = parallel::map_reduce(
@@ -567,7 +585,10 @@ pub fn prove_with(
     let h_t = (0..3).rev().fold(F192::ZERO, |acc, limb| {
         acc * F192::Y + quotient::domain::evaluate(&h_novel[limb], 0, 1, &digits[..m])
     });
-    folds.iter().chain([&sigma_t, &kappa_t, &h_t]).for_each(|&x| writer.send(to_e(x)));
+    folds
+        .iter()
+        .chain([&sigma_t, &kappa_t, &h_t])
+        .for_each(|&x| writer.send(to_e(x)));
     let _rho = writer.sample();
     lap("t: the values", &mut timings);
 
@@ -616,14 +637,24 @@ pub fn verify_openings(
 ) -> Result<(), ::verifier::VerifierError> {
     let l = layouts(log_n);
     use opening::{verify, wire_proof};
-    verify(&l.witness, &roots[0], &[claim(&reduced.witness)], &wire_proof(&openings.witness))?;
+    verify(
+        &l.witness,
+        &roots[0],
+        &[claim(&reduced.witness)],
+        &wire_proof(&openings.witness),
+    )?;
     verify(
         &l.quotient,
         &roots[1],
         &[claim(&reduced.quotient), claim(&reduced.sum)],
         &wire_proof(&openings.quotient),
     )?;
-    verify(&l.setup, setup_root, &[claim(&reduced.setup)], &wire_proof(&openings.setup))
+    verify(
+        &l.setup,
+        setup_root,
+        &[claim(&reduced.setup)],
+        &wire_proof(&openings.setup),
+    )
 }
 
 /// Whether each claim holds on the tables (by evaluation): `W`, `Q`'s identity, `Q`'s sum, the setup.
@@ -654,7 +685,10 @@ mod tests {
             let l = layouts(m);
             for layout in [&l.witness, &l.quotient, &l.setup] {
                 let config = pcs::whir::config_for_rate(layout.log_n, opening::LOG_INV_RATE).expect("a WHIR shape");
-                let certified = CERTIFIED_QUERIES.iter().find(|(n, _)| *n == layout.log_n).map(|(_, q)| *q);
+                let certified = CERTIFIED_QUERIES
+                    .iter()
+                    .find(|(n, _)| *n == layout.log_n)
+                    .map(|(_, q)| *q);
                 assert_eq!(Some(&config.queries[..]), certified, "2^{} words", layout.log_n);
             }
         }

@@ -21,7 +21,9 @@ use leanvm_rec::circuit::spec::{self, CallWord};
 use leanvm_rec::pi2::adapt;
 use leanvm_rec::pi2::circuit::{Circuit, NONE};
 use leanvm_rec::pi2::contract::{self, Instance, calldata, number, record_verifier, sample_stream};
-use leanvm_rec::pi2::prover::{self, PublicValue, Setup, claims_hold, open, prove, prove_with, public_scalars, verify_openings};
+use leanvm_rec::pi2::prover::{
+    self, PublicValue, Setup, claims_hold, open, prove, prove_with, public_scalars, verify_openings,
+};
 use leanvm_rec::pi2::synth::{self, Built, Design};
 use leanvm_rec::pi2::verifier::{Spec, to_f192};
 use primitives::field::{F64, F192};
@@ -97,8 +99,20 @@ fn unconstrained(circuit: &Circuit) -> Vec<bool> {
 }
 
 fn honest_and_mutated(f: &Fixture, mutations: usize) {
-    let proved = prove(&f.circuit, &f.spec, &f.setup, &f.iv, &f.public_input, &f.values, &f.witness);
-    assert_eq!(claims_hold(&proved, &f.setup), [true; 4], "the honest proof's claims hold");
+    let proved = prove(
+        &f.circuit,
+        &f.spec,
+        &f.setup,
+        &f.iv,
+        &f.public_input,
+        &f.values,
+        &f.witness,
+    );
+    assert_eq!(
+        claims_hold(&proved, &f.setup),
+        [true; 4],
+        "the honest proof's claims hold"
+    );
     let stream = proved.stream.clone();
     println!(
         "2^{} positions, rows of {}: {} pairs, {} groups, {} public terms; stream {} B; prover {:?}",
@@ -111,7 +125,10 @@ fn honest_and_mutated(f: &Fixture, mutations: usize) {
         proved.timings
     );
     let (reduced, roots, openings) = open(proved, &f.setup);
-    assert_eq!(verify_openings(f.circuit.log_n, &reduced, &roots, &f.setup.root(), &openings), Ok(()));
+    assert_eq!(
+        verify_openings(f.circuit.log_n, &reduced, &roots, &f.setup.root(), &openings),
+        Ok(())
+    );
 
     // A flipped byte of the stream: the claims are not the ones the openings prove.
     for at in [0, stream.len() / 2, stream.len() - 1] {
@@ -139,22 +156,58 @@ fn honest_and_mutated(f: &Fixture, mutations: usize) {
         tried += 1;
         let mut bad = f.witness.clone();
         bad[i] += F64(1 + (state >> 40));
-        let proved = prove_with(&f.circuit, &f.spec, &f.setup, &f.iv, &f.public_input, &f.values, &bad, false);
+        let proved = prove_with(
+            &f.circuit,
+            &f.spec,
+            &f.setup,
+            &f.iv,
+            &f.public_input,
+            &f.values,
+            &bad,
+            false,
+        );
         let holds = claims_hold(&proved, &f.setup);
         assert!(holds.contains(&false), "position {i} changed: {holds:?}");
     }
     // A public element changed.
     let mut values = f.values.clone();
-    let k = values.iter().position(|v| matches!(v, PublicValue::Scalar(_))).expect("an element");
+    let k = values
+        .iter()
+        .position(|v| matches!(v, PublicValue::Scalar(_)))
+        .expect("an element");
     if let PublicValue::Scalar(x) = &mut values[k] {
         *x += F192::new(0, 1, 0);
     }
-    let proved = prove_with(&f.circuit, &f.spec, &f.setup, &f.iv, &f.public_input, &values, &f.witness, false);
-    assert!(claims_hold(&proved, &f.setup).contains(&false), "a public element changed");
+    let proved = prove_with(
+        &f.circuit,
+        &f.spec,
+        &f.setup,
+        &f.iv,
+        &f.public_input,
+        &values,
+        &f.witness,
+        false,
+    );
+    assert!(
+        claims_hold(&proved, &f.setup).contains(&false),
+        "a public element changed"
+    );
     let mut public_input = f.public_input;
     public_input[3] ^= 4;
-    let proved = prove_with(&f.circuit, &f.spec, &f.setup, &f.iv, &public_input, &f.values, &f.witness, false);
-    assert!(claims_hold(&proved, &f.setup).contains(&false), "the public input changed");
+    let proved = prove_with(
+        &f.circuit,
+        &f.spec,
+        &f.setup,
+        &f.iv,
+        &public_input,
+        &f.values,
+        &f.witness,
+        false,
+    );
+    assert!(
+        claims_hold(&proved, &f.setup).contains(&false),
+        "the public input changed"
+    );
 }
 
 #[test]
@@ -175,7 +228,13 @@ fn padded_example(log_n: u8) -> (spec::Circuit, spec::Witness, spec::PublicInput
     c.sigma = c
         .sigma
         .iter()
-        .map(|&s| if (s as usize) < old { s } else { s - old as u32 + n as u32 })
+        .map(|&s| {
+            if (s as usize) < old {
+                s
+            } else {
+                s - old as u32 + n as u32
+            }
+        })
         .chain(old as u32..n as u32)
         .collect();
     c.log_n = log_n;
@@ -190,15 +249,35 @@ fn the_interface_example() {
     let circuit = adapt::adapt(&c);
     let (public_input, values) = adapt::public_values(&public);
     let f = fixture(circuit, adapt::witness(&w), public_input, values);
-    let proved = prove(&f.circuit, &f.spec, &f.setup, &f.iv, &f.public_input, &f.values, &f.witness);
+    let proved = prove(
+        &f.circuit,
+        &f.spec,
+        &f.setup,
+        &f.iv,
+        &f.public_input,
+        &f.values,
+        &f.witness,
+    );
     assert_eq!(claims_hold(&proved, &f.setup), [true; 4]);
     let (reduced, roots, openings) = open(proved, &f.setup);
-    assert_eq!(verify_openings(f.circuit.log_n, &reduced, &roots, &f.setup.root(), &openings), Ok(()));
+    assert_eq!(
+        verify_openings(f.circuit.log_n, &reduced, &roots, &f.setup.root(), &openings),
+        Ok(())
+    );
     // The value the port binds, changed: a false claim.
     let mut other = public.clone();
     other.elements[0] = leanvm_flock_gas::field::E::new(1, 0, 0);
     let (_, values) = adapt::public_values(&other);
-    let proved = prove_with(&f.circuit, &f.spec, &f.setup, &f.iv, &f.public_input, &values, &f.witness, false);
+    let proved = prove_with(
+        &f.circuit,
+        &f.spec,
+        &f.setup,
+        &f.iv,
+        &f.public_input,
+        &values,
+        &f.witness,
+        false,
+    );
     assert!(claims_hold(&proved, &f.setup).contains(&false));
 }
 
@@ -207,8 +286,22 @@ fn small_pi1() -> Vec<Vec<CallWord>> {
     let c = |b: u8| CallWord::Const([b; 32]);
     let n = |k: u64| CallWord::Const(number(k));
     vec![
-        vec![CallWord::Root(0), c(1), n(1), CallWord::Element(0), CallWord::Element(1), CallWord::Element(2)],
-        vec![CallWord::Root(1), c(2), n(1), CallWord::Element(0), CallWord::Element(1), CallWord::Element(1)],
+        vec![
+            CallWord::Root(0),
+            c(1),
+            n(1),
+            CallWord::Element(0),
+            CallWord::Element(1),
+            CallWord::Element(2),
+        ],
+        vec![
+            CallWord::Root(1),
+            c(2),
+            n(1),
+            CallWord::Element(0),
+            CallWord::Element(1),
+            CallWord::Element(1),
+        ],
         vec![c(9), c(3), n(1), CallWord::Element(0), CallWord::Element(2)],
         vec![c(8), c(4), n(1), CallWord::Element(2), c(0), CallWord::Element(1)],
         vec![c(7), c(5), n(1), CallWord::Element(2), c(0), CallWord::Element(0)],
@@ -226,7 +319,15 @@ fn contract_checks(design: Design) {
             pi1: &pi1,
         };
         let recorded = record_verifier(&f.spec);
-        let proved = prove(&f.circuit, &f.spec, &f.setup, &f.iv, &f.public_input, &f.values, &f.witness);
+        let proved = prove(
+            &f.circuit,
+            &f.spec,
+            &f.setup,
+            &f.iv,
+            &f.public_input,
+            &f.values,
+            &f.witness,
+        );
         let stream = proved.stream.clone();
         assert_eq!(stream.len(), recorded.stream_len);
         // Word for word, on the honest stream and on a random one.
@@ -237,7 +338,10 @@ fn contract_checks(design: Design) {
 
         // The honest proof: the contract calls PCS_OPEN with π1's calls and the claims the openings prove.
         let (reduced, roots, openings) = open(proved, &f.setup);
-        assert_eq!(verify_openings(f.circuit.log_n, &reduced, &roots, &f.setup.root(), &openings), Ok(()));
+        assert_eq!(
+            verify_openings(f.circuit.log_n, &reduced, &roots, &f.setup.root(), &openings),
+            Ok(())
+        );
         let expected: Vec<Vec<u8>> = contract::expected_calls(&inst, &recorded, &reduced, &stream)
             .into_iter()
             .map(|words| words.concat())
@@ -255,7 +359,10 @@ fn contract_checks(design: Design) {
         for at in [36, data.len() / 2, data.len() - 1] {
             let mut bad = data.clone();
             bad[at] ^= 1;
-            assert!(!contract::run(&inst, &recorded, &bad, &expected).0, "calldata byte {at} flipped");
+            assert!(
+                !contract::run(&inst, &recorded, &bad, &expected).0,
+                "calldata byte {at} flipped"
+            );
         }
     });
 }
@@ -295,7 +402,10 @@ fn target_report(name: &str, design: Design) {
             pi1.roots,
             pi1.elements
         );
-        assert!(pi1.roots <= 2 && pi1.elements <= 51, "the synthetic circuit's public data hold π1's");
+        assert!(
+            pi1.roots <= 2 && pi1.elements <= 51,
+            "the synthetic circuit's public data hold π1's"
+        );
         let inst = Instance {
             spec: &spec,
             iv: [0x33; 32],
@@ -350,7 +460,15 @@ fn prove_target() {
         peak_memory()
     );
     let start = std::time::Instant::now();
-    let proved = prove(&f.circuit, &f.spec, &f.setup, &f.iv, &f.public_input, &f.values, &f.witness);
+    let proved = prove(
+        &f.circuit,
+        &f.spec,
+        &f.setup,
+        &f.iv,
+        &f.public_input,
+        &f.values,
+        &f.witness,
+    );
     let proving = start.elapsed().as_secs_f64();
     for (step, s) in &proved.timings {
         println!("   {s:>7.2} s  {step}");
@@ -359,5 +477,8 @@ fn prove_target() {
     let (reduced, roots, openings) = open(proved, &f.setup);
     let opening = start.elapsed().as_secs_f64();
     println!("prove {proving:.1} s, open {opening:.1} s; {}", peak_memory());
-    assert_eq!(verify_openings(f.circuit.log_n, &reduced, &roots, &f.setup.root(), &openings), Ok(()));
+    assert_eq!(
+        verify_openings(f.circuit.log_n, &reduced, &roots, &f.setup.root(), &openings),
+        Ok(())
+    );
 }
