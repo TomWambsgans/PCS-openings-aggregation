@@ -58,6 +58,84 @@ def FsLayer128 (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ) (C 
         ∃ p m ch, openedOf Fl.prog.rounds.length c1 c2 done = p ++ [(m, ch)] ∧ R.post s p m ch) →
     UniKnowledgeSoundness D (uniBound128 e)
 
+/-! ## The bound in bits -/
+
+section Bits
+
+theorem d256 (a b : ℕ) :
+    (a : ℝ≥0∞) * ((b : ℝ≥0∞) / 2 ^ 256) = ((a * b : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
+  rw [← mul_div_assoc, Nat.cast_mul]
+
+theorem a256 (a b : ℕ) :
+    (a : ℝ≥0∞) / 2 ^ 256 + (b : ℝ≥0∞) / 2 ^ 256 = ((a + b : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
+  rw [ENNReal.div_add_div_same, Nat.cast_add]
+
+theorem le256 {a b : ℕ} (h : a ≤ b) : (a : ℝ≥0∞) / 2 ^ 256 ≤ (b : ℝ≥0∞) / 2 ^ 256 :=
+  ENNReal.div_le_div_right (Nat.cast_le.mpr h) _
+
+/-- `269 · 2^-137` over `2^256`. -/
+theorem eps128_eq : (269 : ℝ≥0∞) * (2 : ℝ≥0∞)⁻¹ ^ 137 = ((269 * 2 ^ 119 : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
+  simp only [Nat.cast_mul, Nat.cast_pow, Nat.cast_ofNat]
+  rw [mul_div_assoc, show (256 : ℕ) = 119 + 137 from rfl, two_pow_div_two_pow]
+
+/-- `2^32 / |E|` over `2^256`. -/
+theorem e32_eq : ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞) =
+    ((2 ^ 32 * 2 ^ 64 : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
+  rw [LeanVM.Protocol.card_E]
+  simp only [Nat.cast_mul, Nat.cast_pow, Nat.cast_ofNat]
+  rw [show (256 : ℕ) = 192 + 64 from rfl, pow_add,
+    ENNReal.mul_div_mul_right _ _ (pow_ne_zero _ two_ne_zero)
+      (ENNReal.pow_ne_top ENNReal.ofNat_ne_top)]
+
+/-- **The bound in bits**: at most `2^-64` for an adversary of at most `2^64` calls of `π` and
+`π⁻¹` (`2^-64.87` at `2^64`), i.e. at least `128` bits as `Q / ε`. -/
+theorem uniBound128_le_bits (Q : ℕ) (hQ : Q ≤ 2 ^ 64) :
+    uniBound128 (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 := by
+  unfold uniBound128
+  rw [e32_eq, eps128_eq]
+  have hN : uniN Q ≤ 18446744082299486208 := by
+    unfold uniN
+    have : (2 : ℕ) ^ 64 = 18446744073709551616 := by norm_num
+    have : (2 : ℕ) ^ 33 = 8589934592 := by norm_num
+    omega
+  set X : ℕ := 18446744082299486208 with hX
+  have b1 : (uniN Q : ℝ≥0∞) * (((269 * 2 ^ 119 : ℕ) : ℝ≥0∞) / 2 ^ 256 +
+      ((5 * uniN Q : ℕ) : ℝ≥0∞) / 2 ^ 256) ≤ ((X * (269 * 2 ^ 119 + 5 * X) : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
+    rw [a256, d256]
+    exact le256 (Nat.mul_le_mul hN (by omega))
+  have b2 : (uniN Q : ℝ≥0∞) * (((9952 ^ 2 : ℕ) : ℝ≥0∞) * (((2 ^ 32 * 2 ^ 64 : ℕ) : ℝ≥0∞) / 2 ^ 256) +
+      ((8 * uniN Q : ℕ) : ℝ≥0∞) / 2 ^ 256) ≤
+      ((X * (9952 ^ 2 * (2 ^ 32 * 2 ^ 64) + 8 * X) : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
+    rw [d256, a256, d256]
+    exact le256 (Nat.mul_le_mul hN (by omega))
+  have b3 : ((2 * uniN Q ^ 2 : ℕ) : ℝ≥0∞) / 2 ^ 256 ≤ ((2 * X ^ 2 : ℕ) : ℝ≥0∞) / 2 ^ 256 :=
+    le256 (Nat.mul_le_mul_left 2 (Nat.pow_le_pow_left hN 2))
+  have b4 : ((2 ^ 81 + Q : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 ≤ ((1 : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
+    have hq : (2 ^ 81 + Q) ^ 2 ≤ 2 ^ 164 := by
+      have h82 : 2 ^ 81 + Q ≤ 2 ^ 82 := by
+        have : (2 : ℕ) ^ 82 = 2 ^ 81 + 2 ^ 81 := by norm_num
+        have h64 : (2 : ℕ) ^ 64 ≤ 2 ^ 81 := Nat.pow_le_pow_right (by norm_num) (by norm_num)
+        omega
+      calc (2 ^ 81 + Q) ^ 2 ≤ (2 ^ 82) ^ 2 := Nat.pow_le_pow_left h82 2
+        _ = 2 ^ 164 := by norm_num
+    rw [← Nat.cast_pow]
+    calc (((2 ^ 81 + Q) ^ 2 : ℕ) : ℝ≥0∞) / 2 ^ 508 ≤ ((2 ^ 164 : ℕ) : ℝ≥0∞) / 2 ^ 508 :=
+          ENNReal.div_le_div_right (Nat.cast_le.mpr hq) _
+      _ = (2 : ℝ≥0∞)⁻¹ ^ 344 := by
+          rw [Nat.cast_pow, Nat.cast_ofNat, show (508 : ℕ) = 164 + 344 from rfl,
+            two_pow_div_two_pow]
+      _ ≤ (2 : ℝ≥0∞)⁻¹ ^ 256 :=
+          pow_le_pow_right_of_le_one' (ENNReal.inv_le_one.mpr (by norm_num)) (by norm_num)
+      _ = ((1 : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
+          rw [Nat.cast_one, one_div, ENNReal.inv_pow]
+  refine (add_le_add (add_le_add (add_le_add b1 b2) b3) b4).trans ?_
+  rw [a256, a256, a256]
+  calc _ ≤ ((2 ^ 192 : ℕ) : ℝ≥0∞) / 2 ^ 256 := le256 (by rw [hX]; norm_num)
+    _ = (2 : ℝ≥0∞)⁻¹ ^ 64 := by
+        rw [Nat.cast_pow, Nat.cast_ofNat, show (256 : ℕ) = 192 + 64 from rfl, two_pow_div_two_pow]
+
+end Bits
+
 /-! ## The seed is `name ‖ iv ‖ input`, the IV an answer the adversary asked -/
 
 theorem uniLabel_take32 (s : FSt) : (uniLabel s).take 32 = name ++ s.1.toList.take 16 := by
@@ -110,3 +188,7 @@ end UniSound
 /-- info: 'UniSound.hlab_uni' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.hlab_uni
+
+/-- info: 'UniSound.uniBound128_le_bits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniBound128_le_bits
