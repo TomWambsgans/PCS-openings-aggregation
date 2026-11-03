@@ -9,6 +9,8 @@ import RecStatement.Calls
 import RecStatement.Data
 import UniStatement.RecSecurity
 import RecGraph.Pi1.Main
+import RecGraph.Emitted
+import RecCircuit.Sound
 
 /-!
 # The recursive verifier's end statements, against leanVM 42422001's relation
@@ -169,15 +171,25 @@ def RecDeployment.pi1IvAt (D : RecDeployment) (roots : UniStatement.SetupRoots) 
 def RecDeployment.circuitAt (D : RecDeployment) (roots : UniStatement.SetupRoots) : Pi2Circuit :=
   D.pi2 (D.pi1IvAt roots)
 
+/-- **The real deployment's setup columns are the circuit compiler's** (how the deployment builds them: `Setup::new`
+of `adapt` of `compile`, at π1's contract IV): at every π1 IV at which the Lean compiler (`RecCircuit.compile`, the
+Rust's by `RecCircuitTest`) accepts π1-rec3's recorded graph at the emitted graph's roots, π2's `σ` and `κ` are the
+compiled circuit's (`sigmaAt`, `kappaAt`). (Composition, `lean-pi2-complete`: `RecCompose.Pi2SetupColumns` follows.) -/
+def RecDeployment.SetupFromCompiler (D : RecDeployment) : Prop :=
+  ∀ (iv : List UInt8) (c : RecCircuit.Compiled),
+    RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph RecGraph.Emitted.rootsAt iv) = .ok c →
+      (D.pi2 iv).sigma = c.circuit.sigmaAt ∧ (D.pi2 iv).kappa = c.circuit.kappaAt
+
 /-- **The real deployment's data**: π2's circuit for π1-rec3's real proof (the emitted tables at every IV, and at π1's
 reference IV the `σ`, `κ` whose digest and setup root the Rust computed), π1's calls, the reference shape and leanVM's
-program IV. -/
+program IV, and the setup columns the compiler's at every IV (`SetupFromCompiler`). -/
 def RecDeployment.Real (D : RecDeployment) : Prop :=
   (∀ iv, (D.pi2 iv).circuit = Data.circuit) ∧ D.pi1Calls = Data.pi1Calls ∧ D.pi1.shape = UniStatement.reference ∧
     D.pi1.programIv = UniStatement.programIv ∧
     Id.run ((D.pi2 Data.pi1Iv).digestWith (m := Id) fun x ↦ pure (LeanVM.Semantics.keccakF1600 x)) = Data.digest ∧
     digestBytes (Id.run ((D.pi2 Data.pi1Iv).setupTreeWith (m := Id)
-      fun x ↦ pure (LeanVM.Semantics.keccakF1600 x))).root = Data.setupRoot
+      fun x ↦ pure (LeanVM.Semantics.keccakF1600 x))).root = Data.setupRoot ∧
+    D.SetupFromCompiler
 
 /-- **The setup's roots**: π1's three (`F`, `A0`, `B0`) and π2's (the commitment of `κ`, `κ + σ`). -/
 structure RecSetupRoots where

@@ -22,6 +22,7 @@ import RecCompose.OpeningsAgree
 import RecCompose.Bridge
 import RecCompose.Final
 import RecCompose.Tables
+import RecCompose.Real
 
 /-!
 # RecCompose: the recursive verifier's end theorems
