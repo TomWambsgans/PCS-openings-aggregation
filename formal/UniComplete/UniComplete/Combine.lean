@@ -401,8 +401,495 @@ theorem termEval_add (layout : StackLayout) (stack : Array K) (ringMap : Option 
     rw [← termEval_mul, mul_one]
   rw [h (a + b), h a, h b, add_mul]
 
+/-! ### A term read at a longer point -/
+
+/-- **A term reads its own point** among the points `others` of its commitment's relations (what `combine`'s
+renumbering needs of it): an ordinary column's blocks have at most as many variables as the point has
+coordinates, so a longer point having it as a prefix is read at the same coordinates; a slot of `q_flock`, which
+`denseWeight` (and `weightAt`) read whole, has no strictly longer point among `others` having it as a prefix. -/
+def ReadsOwnPoint (layout : StackLayout) (others : List (List E)) (column : Column) (point : List E) : Prop :=
+  match column with
+  | .qflockSlot _ => ∀ q ∈ others, point <+: q → q = point
+  | column => ∀ b ∈ layout.limbs column, b.2.1 ≤ point.length
+
+theorem readsOwnPoint_generic {column : Column} (hs : ∀ j, column ≠ .qflockSlot j) {layout : StackLayout}
+    {others : List (List E)} {point : List E} :
+    ReadsOwnPoint layout others column point ↔ ∀ b ∈ layout.limbs column, b.2.1 ≤ point.length := by
+  cases column <;> first | exact Iff.rfl | exact absurd rfl (hs _)
+
+theorem readsOwnPoint_mono {layout : StackLayout} {others others' : List (List E)}
+    (hsub : ∀ q ∈ others', q ∈ others) {column : Column} {point : List E}
+    (h : ReadsOwnPoint layout others column point) : ReadsOwnPoint layout others' column point := by
+  by_cases hs : ∃ j, column = .qflockSlot j
+  · obtain ⟨j, rfl⟩ := hs
+    exact fun q hq hpq ↦ h q (hsub q hq) hpq
+  · have hs' : ∀ j, column ≠ .qflockSlot j := fun j h ↦ hs ⟨j, h⟩
+    exact (readsOwnPoint_generic hs').2 ((readsOwnPoint_generic hs').1 h)
+
+theorem blockEq_extend {P Q : List E} {vars : ℕ} (hPQ : P <+: Q) (hv : vars ≤ P.length) :
+    blockEq Q vars = blockEq P vars := by
+  unfold blockEq
+  obtain ⟨R, rfl⟩ := hPQ
+  rw [List.append_assoc, List.take_append_of_le_length hv, List.take_append_of_le_length hv]
+
+theorem genericFold_extend {layout : StackLayout} {ringMap : Option (List E)} {P Q : List E} {column : Column}
+    {twist : ℕ} {coefficient : E} (hcov : ∀ b ∈ layout.limbs column, b.2.1 ≤ P.length) (hPQ : P <+: Q) :
+    genericFold layout ringMap Q column twist coefficient = genericFold layout ringMap P column twist coefficient := by
+  funext W
+  unfold genericFold
+  apply List.foldl_ext
+  intro W b hb
+  unfold genericBlock
+  rw [blockEq_extend hPQ (hcov b hb)]
+
+/-- **A term reads its own point at a longer one** having it as a prefix, among `others`. -/
+theorem termEval_extend (layout : StackLayout) (stack : Array K) (ringMap : Option (List E))
+    {others : List (List E)} {column : Column} {P Q : List E} (twist : ℕ) (a : E)
+    (hwf : ReadsOwnPoint layout others column P) (hPQ : P <+: Q) (hQ : Q ∈ others) :
+    termEval layout stack ringMap ⟨column, Q, twist, a⟩ = termEval layout stack ringMap ⟨column, P, twist, a⟩ := by
+  by_cases hs : ∃ j, column = .qflockSlot j
+  · obtain ⟨j, rfl⟩ := hs
+    rw [hwf Q hQ hPQ]
+  · have hs' : ∀ j, column ≠ .qflockSlot j := fun j h ↦ hs ⟨j, h⟩
+    unfold termEval
+    rw [denseWeight_termClaim, denseWeight_termClaim]
+    dsimp only
+    rw [termStep_generic hs', termStep_generic hs', genericFold_extend ((readsOwnPoint_generic hs').1 hwf) hPQ]
+
+/-! ### Merging terms -/
+
+theorem sum_map_modify {α : Type} (F : α → E) (f : α → α) (δ : E) :
+    ∀ (l : List α) (i : ℕ) (hi : i < l.length), F (f l[i]) = F l[i] + δ →
+      ((l.modify i f).map F).sum = (l.map F).sum + δ
+  | [], _, hi, _ => absurd hi (by simp)
+  | a :: l, 0, _, h => by
+    rw [List.modify_zero_cons, List.map_cons, List.map_cons, List.sum_cons, List.sum_cons]
+    rw [List.getElem_cons_zero] at h
+    rw [h, add_right_comm]
+  | a :: l, i + 1, hi, h => by
+    rw [List.modify_succ_cons, List.map_cons, List.map_cons, List.sum_cons, List.sum_cons,
+      sum_map_modify F f δ l i (by simpa using hi) (by simpa using h), add_assoc]
+
+/-- **Merging a term adds its value**, for a functional additive in the coefficient. -/
+theorem sum_mergeTerm (F : Column × ℕ × ℕ × E → E)
+    (hF : ∀ c p k a b, F (c, p, k, a + b) = F (c, p, k, a) + F (c, p, k, b))
+    (terms : Array (Column × ℕ × ℕ × E)) (column : Column) (p twist : ℕ) (coefficient : E) :
+    ((mergeTerm terms column p twist coefficient).toList.map F).sum =
+      (terms.toList.map F).sum + F (column, p, twist, coefficient) := by
+  unfold mergeTerm
+  split
+  · next i hi =>
+    rw [Array.findIdx?_eq_some_iff_getElem] at hi
+    obtain ⟨hlt, hpred, -⟩ := hi
+    rw [Array.toList_modify]
+    refine sum_map_modify F _ _ terms.toList i (by simpa using hlt) ?_
+    rw [Array.getElem_toList]
+    generalize terms[i] = x at hpred ⊢
+    obtain ⟨c', q', k', v⟩ := x
+    simp only [Bool.and_eq_true, beq_iff_eq] at hpred
+    obtain ⟨⟨rfl, rfl⟩, rfl⟩ := hpred
+    exact hF _ _ _ _ _
+  · rw [Array.toList_push, List.map_append, List.sum_append, List.map_singleton, List.sum_singleton]
+
+/-- **Merging a list of terms renumbered by `ren` adds their values.** -/
+theorem sum_mergeFold (F : Column × ℕ × ℕ × E → E)
+    (hF : ∀ c p k a b, F (c, p, k, a + b) = F (c, p, k, a) + F (c, p, k, b)) (ren : ℕ → ℕ) :
+    ∀ (L : List (Column × ℕ × ℕ × E)) (acc : Array (Column × ℕ × ℕ × E)),
+      ((L.foldl (fun acc e ↦ mergeTerm acc e.1 (ren e.2.1) e.2.2.1 e.2.2.2) acc).toList.map F).sum =
+        (acc.toList.map F).sum + (L.map fun e ↦ F (e.1, ren e.2.1, e.2.2.1, e.2.2.2)).sum
+  | [], acc => by simp
+  | e :: L, acc => by
+    rw [List.foldl_cons, sum_mergeFold F hF ren L, sum_mergeTerm F hF, List.map_cons, List.sum_cons, add_assoc]
+
+/-! ### The longest extension -/
+
+/-- `longestOf`'s step. -/
+def longestStep (points : Array (List E)) (pp : List E) (best q : ℕ) : ℕ :=
+  let pq := points.getD q []
+  if pq.length ≥ pp.length ∧ pq.take pp.length == pp ∧ pq.length > (points.getD best []).length then q
+  else best
+
+/-- `if_pos` (which this Mathlib deprecates). -/
+theorem iteT {α : Sort*} {c : Prop} [Decidable c] {a b : α} (h : c) : (if c then a else b) = a := by simp [h]
+
+/-- `if_neg` (which this Mathlib deprecates). -/
+theorem iteF {α : Sort*} {c : Prop} [Decidable c] {a b : α} (h : ¬c) : (if c then a else b) = b := by simp [h]
+
+theorem longestOf_eq (points : Array (List E)) (p : ℕ) :
+    longestOf points p = (List.range points.size).foldl (longestStep points (points.getD p [])) p := rfl
+
+theorem prefix_iff_cond {pp pq : List E} :
+    (pq.length ≥ pp.length ∧ (pq.take pp.length == pp) = true) ↔ pp <+: pq := by
+  rw [beq_iff_eq]
+  constructor
+  · rintro ⟨-, h⟩
+    rw [← h]
+    exact List.take_prefix _ _
+  · intro h
+    exact ⟨h.length_le, (List.prefix_iff_eq_take.mp h).symm⟩
+
+theorem longestStep_spec (points : Array (List E)) (pp : List E) (best q : ℕ) (hb : best < points.size)
+    (hq : q < points.size) (hpb : pp <+: points.getD best []) :
+    longestStep points pp best q < points.size ∧ pp <+: points.getD (longestStep points pp best q) [] ∧
+      (points.getD best []).length ≤ (points.getD (longestStep points pp best q) []).length ∧
+      (pp <+: points.getD q [] →
+        (points.getD q []).length ≤ (points.getD (longestStep points pp best q) []).length) := by
+  unfold longestStep
+  dsimp only
+  by_cases h : (points.getD q []).length ≥ pp.length ∧ (points.getD q []).take pp.length == pp ∧
+    (points.getD q []).length > (points.getD best []).length
+  · rw [iteT h]
+    obtain ⟨h1, h2, h3⟩ := h
+    exact ⟨hq, prefix_iff_cond.mp ⟨h1, h2⟩, le_of_lt h3, fun _ ↦ le_refl _⟩
+  · rw [iteF h]
+    refine ⟨hb, hpb, le_refl _, fun hpq ↦ ?_⟩
+    have := prefix_iff_cond.mpr hpq
+    by_contra hlt
+    exact h ⟨this.1, this.2, not_le.mp hlt⟩
+
+theorem longestFold_spec (points : Array (List E)) (pp : List E) :
+    ∀ (L : List ℕ) (best : ℕ), (∀ q ∈ L, q < points.size) → best < points.size → pp <+: points.getD best [] →
+      L.foldl (longestStep points pp) best < points.size ∧
+      pp <+: points.getD (L.foldl (longestStep points pp) best) [] ∧
+      (points.getD best []).length ≤ (points.getD (L.foldl (longestStep points pp) best) []).length ∧
+      ∀ q ∈ L, pp <+: points.getD q [] →
+        (points.getD q []).length ≤ (points.getD (L.foldl (longestStep points pp) best) []).length
+  | [], _, _, hb, hpb => ⟨hb, hpb, le_refl _, fun _ hq ↦ absurd hq (by simp)⟩
+  | q :: L, best, hL, hb, hpb => by
+    obtain ⟨h1, h2, h3, h4⟩ := longestStep_spec points pp best q hb (hL q (by simp)) hpb
+    obtain ⟨i1, i2, i3, i4⟩ := longestFold_spec points pp L _ (fun q' hq' ↦ hL q' (by simp [hq'])) h1 h2
+    refine ⟨i1, i2, h3.trans i3, fun q' hq' hpq' ↦ ?_⟩
+    rcases List.mem_cons.mp hq' with rfl | hq'
+    · exact (h4 hpq').trans i3
+    · exact i4 q' hq' hpq'
+
+/-- **`longestOf` is the longest extension**: a point of the array, having point `p` as a prefix, at least as
+long as every point having `p` as a prefix. -/
+theorem longestOf_spec (points : Array (List E)) {p : ℕ} (hp : p < points.size) :
+    longestOf points p < points.size ∧ points.getD p [] <+: points.getD (longestOf points p) [] ∧
+      ∀ q < points.size, points.getD p [] <+: points.getD q [] →
+        (points.getD q []).length ≤ (points.getD (longestOf points p) []).length := by
+  rw [longestOf_eq]
+  obtain ⟨h1, h2, -, h4⟩ := longestFold_spec points (points.getD p []) (List.range points.size) p
+    (fun q hq ↦ List.mem_range.mp hq) hp (List.prefix_refl _)
+  exact ⟨h1, h2, fun q hq hpq ↦ h4 q (List.mem_range.mpr hq) hpq⟩
+
+theorem foldl_fixed {f : ℕ → ℕ → ℕ} {b : ℕ} : ∀ (L : List ℕ), (∀ q ∈ L, f b q = b) → L.foldl f b = b
+  | [], _ => rfl
+  | q :: L, h => by
+    rw [List.foldl_cons, h q (by simp)]
+    exact foldl_fixed L (fun q' hq' ↦ h q' (by simp [hq']))
+
+/-- **`longestOf` is idempotent**: the longest extension is its own. -/
+theorem longestOf_longestOf (points : Array (List E)) {p : ℕ} (hp : p < points.size) :
+    longestOf points (longestOf points p) = longestOf points p := by
+  obtain ⟨-, hpre, hmax⟩ := longestOf_spec points hp
+  rw [longestOf_eq points (longestOf points p)]
+  refine foldl_fixed _ fun q hq ↦ ?_
+  unfold longestStep
+  dsimp only
+  by_cases h : (points.getD q []).length ≥ (points.getD (longestOf points p) []).length ∧
+    (points.getD q []).take (points.getD (longestOf points p) []).length ==
+      points.getD (longestOf points p) [] ∧
+    (points.getD q []).length > (points.getD (longestOf points p) []).length
+  · exfalso
+    obtain ⟨h1, h2, h3⟩ := h
+    have hpq := prefix_iff_cond.mp ⟨h1, h2⟩
+    have := hmax q (List.mem_range.mp hq) (hpre.trans hpq)
+    omega
+  · rw [iteF h]
+
+/-! ### The renumbering -/
+
+/-- `combine`'s `longest`. -/
+def longestList (points : Array (List E)) : List ℕ := (List.range points.size).map (longestOf points)
+
+/-- `combine`'s `kept`: the points that are their own longest extension. -/
+def keptOf (points : Array (List E)) : List ℕ :=
+  (List.range points.size).filter fun p ↦ (longestList points).getD p p == p
+
+/-- `combine`'s `renumber`. -/
+def renumberOf (points : Array (List E)) (p : ℕ) : ℕ := (keptOf points).idxOf ((longestList points).getD p p)
+
+theorem longestList_getD (points : Array (List E)) {p : ℕ} (hp : p < points.size) :
+    (longestList points).getD p p = longestOf points p := by
+  unfold longestList
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range hp, Option.map_some, Option.getD_some]
+
+/-- **A renumbered point is the longest extension.** -/
+theorem getD_renumber (points : Array (List E)) {p : ℕ} (hp : p < points.size) :
+    ((keptOf points).map (points.getD · [])).getD (renumberOf points p) [] =
+      points.getD (longestOf points p) [] := by
+  obtain ⟨hlt, -, -⟩ := longestOf_spec points hp
+  have hmem : longestOf points p ∈ keptOf points := by
+    simp only [keptOf, List.mem_filter, List.mem_range]
+    rw [longestList_getD points hlt, longestOf_longestOf points hp]
+    exact ⟨hlt, beq_self_eq_true _⟩
+  unfold renumberOf
+  rw [longestList_getD points hp]
+  have hi := List.idxOf_lt_length_of_mem hmem
+  rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_eq_getElem hi, Option.map_some,
+    Option.getD_some, List.getElem_idxOf hi]
+
+/-! ### `combine`, step by step -/
+
+/-- `combine`'s inner step: one term of a relation, at the relation's scale. -/
+def combineTerm (scale : E) (acc : Array (List E) × Array (Column × ℕ × ℕ × E)) (t : Term) :
+    Array (List E) × Array (Column × ℕ × ℕ × E) :=
+  let (points, terms) := acc
+  let (points, p) := match points.findIdx? (· == t.point) with
+    | some p => (points, p)
+    | none => (points.push t.point, points.size)
+  (points, mergeTerm terms t.column p t.twist (scale * t.coefficient))
+
+/-- `combine`'s outer step: one relation. -/
+def combineRel (rho : E) (acc : Array (List E) × Array (Column × ℕ × ℕ × E) × E × E) (relation : Relation) :
+    Array (List E) × Array (Column × ℕ × ℕ × E) × E × E :=
+  let (points, terms, value, scale) := acc
+  let value := value + scale * relation.value
+  let (points, terms) := relation.terms.foldl (combineTerm scale) (points, terms)
+  (points, terms, value, scale * rho)
+
+/-- `combine`'s end: the kept points, the terms renumbered and merged. -/
+def combineEnd (points : Array (List E)) (terms : Array (Column × ℕ × ℕ × E)) (value : E) (n : ℕ) : Combined :=
+  ⟨(keptOf points).map (points.getD · []),
+    (terms.foldl (fun acc e ↦ mergeTerm acc e.1 (renumberOf points e.2.1) e.2.2.1 e.2.2.2) #[]).toList, value, n⟩
+
+theorem combine_eq (relations : List Relation) (c : Commitment) (rho : E) :
+    combine relations c rho =
+      if (relations.filter (·.commitment == c)).isEmpty then none else
+        some (combineEnd ((relations.filter (·.commitment == c)).foldl (combineRel rho) (#[], #[], 0, 1)).1
+          ((relations.filter (·.commitment == c)).foldl (combineRel rho) (#[], #[], 0, 1)).2.1
+          ((relations.filter (·.commitment == c)).foldl (combineRel rho) (#[], #[], 0, 1)).2.2.1
+          (relations.filter (·.commitment == c)).length) := rfl
+
+theorem combineRel_eq (rho : E) (acc : Array (List E) × Array (Column × ℕ × ℕ × E) × E × E)
+    (relation : Relation) :
+    combineRel rho acc relation =
+      ((relation.terms.foldl (combineTerm acc.2.2.2) (acc.1, acc.2.1)).1,
+        (relation.terms.foldl (combineTerm acc.2.2.2) (acc.1, acc.2.1)).2,
+        acc.2.2.1 + acc.2.2.2 * relation.value, acc.2.2.2 * rho) := rfl
+
+theorem combineTerm_spec (scale : E) (acc : Array (List E) × Array (Column × ℕ × ℕ × E)) (t : Term) :
+    ∃ p, acc.1.toList <+: (combineTerm scale acc t).1.toList ∧
+      (∀ q ∈ (combineTerm scale acc t).1.toList, q ∈ acc.1.toList ∨ q = t.point) ∧
+      p < (combineTerm scale acc t).1.size ∧ (combineTerm scale acc t).1.getD p [] = t.point ∧
+      (combineTerm scale acc t).2 = mergeTerm acc.2 t.column p t.twist (scale * t.coefficient) := by
+  obtain ⟨points, terms⟩ := acc
+  rcases hp : points.findIdx? (· == t.point) with _ | p
+  · have h : combineTerm scale (points, terms) t =
+        (points.push t.point, mergeTerm terms t.column points.size t.twist (scale * t.coefficient)) := by
+      simp only [combineTerm, hp]
+    rw [h]
+    refine ⟨points.size, ?_, ?_, ?_, ?_, rfl⟩
+    · rw [Array.toList_push]
+      exact List.prefix_append _ _
+    · intro q hq
+      rw [Array.toList_push, List.mem_append, List.mem_singleton] at hq
+      exact hq
+    · simp
+    · simp
+  · have h : combineTerm scale (points, terms) t =
+        (points, mergeTerm terms t.column p t.twist (scale * t.coefficient)) := by
+      simp only [combineTerm, hp]
+    rw [h]
+    rw [Array.findIdx?_eq_some_iff_getElem] at hp
+    obtain ⟨hlt, hpt, -⟩ := hp
+    refine ⟨p, List.prefix_refl _, fun q hq ↦ Or.inl hq, hlt, ?_, rfl⟩
+    rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem hlt, Option.getD_some]
+    exact beq_iff_eq.mp hpt
+
+theorem getD_of_prefix {A B : Array (List E)} (h : A.toList <+: B.toList) {p : ℕ} (hp : p < A.size) :
+    p < B.size ∧ B.getD p [] = A.getD p [] := by
+  obtain ⟨R, hR⟩ := h
+  have hB : B.size = A.size + R.length := by
+    rw [← Array.length_toList, ← hR, List.length_append, Array.length_toList]
+  refine ⟨by omega, ?_⟩
+  rw [Array.getD_eq_getD_getElem?, Array.getD_eq_getD_getElem?, ← Array.getElem?_toList,
+    ← Array.getElem?_toList, ← hR, List.getElem?_append_left (by simpa using hp)]
+
+theorem getD_mem_toList {A : Array (List E)} {p : ℕ} (hp : p < A.size) : A.getD p [] ∈ A.toList := by
+  rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem hp, Option.getD_some]
+  exact Array.getElem_mem_toList hp
+
+theorem combineTerms_mono (scale : E) :
+    ∀ (L : List Term) (acc : Array (List E) × Array (Column × ℕ × ℕ × E)),
+      acc.1.toList <+: (L.foldl (combineTerm scale) acc).1.toList
+  | [], _ => List.prefix_refl _
+  | t :: L, acc => by
+    obtain ⟨_, h, -⟩ := combineTerm_spec scale acc t
+    exact h.trans (combineTerms_mono scale L _)
+
+theorem combineTerms_mem (scale : E) :
+    ∀ (L : List Term) (acc : Array (List E) × Array (Column × ℕ × ℕ × E)),
+      ∀ q ∈ (L.foldl (combineTerm scale) acc).1.toList, q ∈ acc.1.toList ∨ q ∈ L.map (·.point)
+  | [], _, _, hq => Or.inl hq
+  | t :: L, acc, q, hq => by
+    obtain ⟨_, -, hmem, -⟩ := combineTerm_spec scale acc t
+    rcases combineTerms_mem scale L _ q hq with h | h
+    · rcases hmem q h with h' | h'
+      · exact Or.inl h'
+      · exact Or.inr (by simp [h'])
+    · exact Or.inr (List.mem_cons_of_mem _ h)
+
+/-- **A relation's terms add their values** to `combine`'s terms, at the final points `PF`. -/
+theorem combineTerms_sum (PF : Array (List E)) (G : Column × ℕ × ℕ × E → E)
+    (hG : ∀ c p k a b, G (c, p, k, a + b) = G (c, p, k, a) + G (c, p, k, b)) (scale : E) (val : Term → E) :
+    ∀ (L : List Term) (acc : Array (List E) × Array (Column × ℕ × ℕ × E)),
+      (L.foldl (combineTerm scale) acc).1.toList <+: PF.toList →
+      (∀ t ∈ L, ∀ p < PF.size, PF.getD p [] = t.point → G (t.column, p, t.twist, scale * t.coefficient) = val t) →
+      ((L.foldl (combineTerm scale) acc).2.toList.map G).sum = (acc.2.toList.map G).sum + (L.map val).sum
+  | [], _, _, _ => by simp
+  | t :: L, acc, hpre, hval => by
+    obtain ⟨p, -, -, hp, hpt, hterms⟩ := combineTerm_spec scale acc t
+    have hpre' := (combineTerms_mono scale L (combineTerm scale acc t)).trans hpre
+    obtain ⟨hpPF, hget⟩ := getD_of_prefix hpre' hp
+    have ih := combineTerms_sum PF G hG scale val L (combineTerm scale acc t) hpre
+      (fun t' ht' ↦ hval t' (List.mem_cons_of_mem _ ht'))
+    rw [List.foldl_cons, ih, hterms, sum_mergeTerm G hG, hval t (by simp) p hpPF (hget.trans hpt),
+      List.map_cons, List.sum_cons, add_assoc]
+
+theorem combineRels_mono (rho : E) :
+    ∀ (L : List Relation) (acc : Array (List E) × Array (Column × ℕ × ℕ × E) × E × E),
+      acc.1.toList <+: (L.foldl (combineRel rho) acc).1.toList
+  | [], _ => List.prefix_refl _
+  | r :: L, acc => by
+    have h : acc.1.toList <+: (combineRel rho acc r).1.toList := by
+      rw [combineRel_eq]
+      exact combineTerms_mono acc.2.2.2 r.terms (acc.1, acc.2.1)
+    exact h.trans (combineRels_mono rho L _)
+
+theorem combineRels_mem (rho : E) :
+    ∀ (L : List Relation) (acc : Array (List E) × Array (Column × ℕ × ℕ × E) × E × E),
+      ∀ q ∈ (L.foldl (combineRel rho) acc).1.toList,
+        q ∈ acc.1.toList ∨ q ∈ L.flatMap fun r ↦ r.terms.map (·.point)
+  | [], _, _, hq => Or.inl hq
+  | r :: L, acc, q, hq => by
+    rcases combineRels_mem rho L _ q hq with h | h
+    · rw [combineRel_eq] at h
+      rcases combineTerms_mem acc.2.2.2 r.terms (acc.1, acc.2.1) q h with h' | h'
+      · exact Or.inl h'
+      · exact Or.inr (List.mem_flatMap.mpr ⟨r, by simp, h'⟩)
+    · rw [List.flatMap_cons]
+      exact Or.inr (List.mem_append_right _ h)
+
+/-- **The relations' values add up** to `combine`'s value, at the final points `PF`: if every relation holds
+and every term's value at its index is its own, the terms' values are the value. -/
+theorem combineRels_value (PF : Array (List E)) (G : Column × ℕ × ℕ × E → E)
+    (hG : ∀ c p k a b, G (c, p, k, a + b) = G (c, p, k, a) + G (c, p, k, b)) (rho : E)
+    (layout : StackLayout) (stack : Array K) (ringMap : Option (List E)) :
+    ∀ (L : List Relation) (acc : Array (List E) × Array (Column × ℕ × ℕ × E) × E × E),
+      (L.foldl (combineRel rho) acc).1.toList <+: PF.toList →
+      (∀ r ∈ L, (r.terms.map (termEval layout stack ringMap)).sum = r.value) →
+      (∀ r ∈ L, ∀ t ∈ r.terms, ∀ p < PF.size, PF.getD p [] = t.point → ∀ a,
+        G (t.column, p, t.twist, a) = termEval layout stack ringMap ⟨t.column, t.point, t.twist, a⟩) →
+      (acc.2.1.toList.map G).sum = acc.2.2.1 →
+      ((L.foldl (combineRel rho) acc).2.1.toList.map G).sum = (L.foldl (combineRel rho) acc).2.2.1
+  | [], _, _, _, _, h => h
+  | r :: L, acc, hpre, hholds, hterm, hacc => by
+    refine combineRels_value PF G hG rho layout stack ringMap L (combineRel rho acc r) hpre
+      (fun r' h' ↦ hholds r' (List.mem_cons_of_mem _ h')) (fun r' h' ↦ hterm r' (List.mem_cons_of_mem _ h')) ?_
+    have hpre' : (r.terms.foldl (combineTerm acc.2.2.2) (acc.1, acc.2.1)).1.toList <+: PF.toList := by
+      have := (combineRels_mono rho L (combineRel rho acc r)).trans hpre
+      rwa [combineRel_eq] at this
+    rw [combineRel_eq]
+    dsimp only
+    rw [combineTerms_sum PF G hG acc.2.2.2 (fun t ↦ acc.2.2.2 * termEval layout stack ringMap t) r.terms
+      (acc.1, acc.2.1) hpre' ?_]
+    · dsimp only
+      rw [hacc, List.sum_map_mul_left, hholds r (by simp)]
+    · intro t ht p hp hpt
+      rw [hterm r (by simp) t ht p hp hpt, termEval_mul]
+
+/-! ### Combining true relations -/
+
+/-- The points of the relations on `c`, every term's (`combine`'s points are these, each once). -/
+def pointsOn (rels : List Relation) (c : Commitment) : List (List E) :=
+  (rels.filter (·.commitment == c)).flatMap fun r ↦ r.terms.map (·.point)
+
+/-- **Combining true relations with the powers of `ρ` gives a true weighted claim**: if every relation of `rels`
+on `c` holds on `c`'s stack and layout (its terms' values, each on `c`'s stack, add up to its value), and every
+term of those relations reads its own point among their points (`ReadsOwnPoint`), then the claim
+`combine rels c ρ` holds. -/
+theorem combine_holds (rels : List Relation) (c : Commitment) (rho : E) (layout : StackLayout)
+    (stack : Array K) (ringMap : Option (List E)) (claim : Combined)
+    (hholds : ∀ r ∈ rels, r.commitment = c → (r.terms.map (termEval layout stack ringMap)).sum = r.value)
+    (hwf : ∀ r ∈ rels, r.commitment = c → ∀ t ∈ r.terms,
+      ReadsOwnPoint layout (pointsOn rels c) t.column t.point)
+    (h : combine rels c rho = some claim) : Combined.Holds layout stack ringMap claim := by
+  rw [combine_eq] at h
+  split at h
+  · exact absurd h (by simp)
+  · have hclaim := Option.some.inj h
+    subst hclaim
+    have hmem : ∀ r ∈ rels.filter (·.commitment == c), r ∈ rels ∧ r.commitment = c := fun r hr ↦ by
+      rw [List.mem_filter, beq_iff_eq] at hr
+      exact hr
+    set mine := rels.filter (·.commitment == c) with hmine
+    set st := mine.foldl (combineRel rho) (#[], #[], 0, 1) with hst
+    set PF := st.1 with hPF
+    have hPFsub : ∀ q ∈ PF.toList, q ∈ pointsOn rels c := by
+      intro q hq
+      rcases combineRels_mem rho mine (#[], #[], 0, 1) q hq with h' | h'
+      · simp at h'
+      · exact h'
+    have hF : ∀ (c : Column) (p k : ℕ) (a b : E),
+        termEval layout stack ringMap ⟨c, ((keptOf PF).map (PF.getD · [])).getD p [], k, a + b⟩ =
+          termEval layout stack ringMap ⟨c, ((keptOf PF).map (PF.getD · [])).getD p [], k, a⟩ +
+            termEval layout stack ringMap ⟨c, ((keptOf PF).map (PF.getD · [])).getD p [], k, b⟩ :=
+      fun c p k a b ↦ termEval_add layout stack ringMap c _ k a b
+    have hterm : ∀ r ∈ mine, ∀ t ∈ r.terms, ∀ p < PF.size, PF.getD p [] = t.point → ∀ a,
+        termEval layout stack ringMap ⟨t.column, ((keptOf PF).map (PF.getD · [])).getD (renumberOf PF p) [],
+          t.twist, a⟩ = termEval layout stack ringMap ⟨t.column, t.point, t.twist, a⟩ := by
+      intro r hr t ht p hp hpt a
+      rw [getD_renumber PF hp]
+      obtain ⟨hlt, hpre, -⟩ := longestOf_spec PF hp
+      rw [hpt] at hpre
+      exact termEval_extend layout stack ringMap t.twist a
+        (readsOwnPoint_mono hPFsub (hwf r (hmem r hr).1 (hmem r hr).2 t ht)) hpre (getD_mem_toList hlt)
+    have hval := combineRels_value PF
+      (fun e ↦ termEval layout stack ringMap
+        ⟨e.1, ((keptOf PF).map (PF.getD · [])).getD (renumberOf PF e.2.1) [], e.2.2.1, e.2.2.2⟩)
+      (fun c p k a b ↦ hF c (renumberOf PF p) k a b) rho layout stack ringMap mine (#[], #[], 0, 1)
+      (List.prefix_refl _) (fun r hr ↦ hholds r (hmem r hr).1 (hmem r hr).2) hterm (by simp)
+    unfold Combined.Holds
+    rw [dotK_denseWeight]
+    simp only [combineEnd, termAt]
+    rw [← Array.foldl_toList]
+    refine (sum_mergeFold (fun e ↦ termEval layout stack ringMap
+        ⟨e.1, ((keptOf PF).map (PF.getD · [])).getD e.2.1 [], e.2.2.1, e.2.2.2⟩)
+      (fun c p k a b ↦ hF c p k a b) (renumberOf PF) st.2.1.toList #[]).trans ?_
+    rw [Array.toList_empty, List.map_nil, List.sum_nil, zero_add]
+    exact hval
+
+/-- **`combine_holds` for relations all of whose terms are on `c`**, with `Relation.Holds`. -/
+theorem combine_holds_of_relations (rels : List Relation) (c : Commitment) (rho : E)
+    (layoutOf : Commitment → StackLayout) (stackOf : Commitment → Array K) (ringMap : Option (List E))
+    (claim : Combined)
+    (hon : ∀ r ∈ rels, r.commitment = c → ∀ t ∈ r.terms, t.column.commitment = c)
+    (hholds : ∀ r ∈ rels, r.commitment = c → Relation.Holds layoutOf stackOf ringMap r)
+    (hwf : ∀ r ∈ rels, r.commitment = c → ∀ t ∈ r.terms,
+      ReadsOwnPoint (layoutOf c) (pointsOn rels c) t.column t.point)
+    (h : combine rels c rho = some claim) : Combined.Holds (layoutOf c) (stackOf c) ringMap claim := by
+  refine combine_holds rels c rho (layoutOf c) (stackOf c) ringMap claim (fun r hr hc ↦ ?_) hwf h
+  rw [← hholds r hr hc]
+  refine congrArg List.sum (List.map_congr_left fun t ht ↦ ?_)
+  rw [hon r hr hc t ht]
+
 end UniComplete
 
 /-- info: 'UniComplete.dotK_denseWeight' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniComplete.dotK_denseWeight
+
+/-- info: 'UniComplete.denseWeight_getD_eq_sum' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.denseWeight_getD_eq_sum
+
+/-- info: 'UniComplete.combine_holds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.combine_holds
+
+/-- info: 'UniComplete.combine_holds_of_relations' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.combine_holds_of_relations
