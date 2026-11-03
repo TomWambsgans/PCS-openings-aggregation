@@ -65,6 +65,7 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `FsSetup.lean` | **`uniSetupBridge_of_small`**: `UniSetupBridge` under `LayoutVarsSmall` (false without: a layout word's byte reads the setup's variables mod `256`). |
 | `FsExtract.lean` | **`uniExtractBridge`**: `UniExtractBridge` under `LayoutVarsSmall` (the Statement's word is mumbai's committed leaves, the two Merkle words agree, the list decoder's list holds the candidate), as `Soundness/Extract.lean`. |
 | `FsVerifier.lean` | **`uniVerifierBridge_of_walk`**: the verifier bridge `UniVerifierBridge` (`FsCouple.lean`) from the walk's two halves (`UniWalk`, `UniWalkReject`, `FsWalk.lean`) and `UniOutRoots`: the same chain on both sides, then the Statement's five `PCS_OPEN` calls as F2's early-stop openings (`Bridge.openingWith_eq_ourVerifier'`) below the composed ones, acceptance giving `uniCheck`. |
+| `FsFinal.lean` | **`uniGameLeV_holds`**, **`fsLayer_holds`**: the coupling and the Fiat–Shamir layer proved, from `LayoutVarsSmall`, `UniShapes`, `UniIv` and the chain's numbers. |
 | `FsWalkProof.lean` | **`uniWalk`**, **`uniWalkReject`**: the verifier bridge's walk (`FsWalk.lean`'s `UniWalk`, `UniWalkReject`) for every code-level link: on a stream of the main line's length the walk is the chain (`progRun`: any chain program on a stream holding its bytes is the chain's steps; the row counts, the seed, `finish`), on another length every outcome rejects (`Consumes`). |
 
 ## What is proved, what is assumed
@@ -113,11 +114,13 @@ the bound in bits (`uniBound_le_bits`).
    the coupling `UniGameLeV`, itself **proved** from three bridge facts (`uniGameLeV_of`,
    `FsCouple.lean`): the setup's (`uniSetupBridge_of_small`) and the extractor's
    (`uniExtractBridge`), both under `LayoutVarsSmall`, and the verifier's (`uniVerifierBridge_of_walk`
-   from the walk's `UniWalk`, `UniWalkReject`, `FsWalk.lean`). The reference deployment's numbers
-   (`UniShapes`, `LayoutVarsSmall`, `UniIv`, `κ = 18`, the chain's `86` queries) are
-   `formal/FlockSound/FlockSoundUni/GameNumbers.lean`'s; `FlockSoundUni/Game.lean` assembles the end
-   theorems (`uniKnowledgeSoundness_bridges`, `uniKnowledgeSoundness_reference_game`,
-   `uniKnowledgeSoundness_reference_walk`).
+   with the walk's `uniWalk`, `uniWalkReject`, `FsWalkProof.lean`): **`fsLayer_holds`**
+   (`FsFinal.lean`), `FsLayer` at `uniCodeAt` from the deployment's numbers alone. The reference
+   deployment's numbers (`UniShapes`, `LayoutVarsSmall`, `UniIv`, `κ = 18`, the chain's `86`
+   queries) are `formal/FlockSound/FlockSoundUni/GameNumbers.lean`'s; `FlockSoundUni/Game.lean`
+   gives the end theorems with the layer in place: **`uniKnowledgeSoundness_fs`** (every deployment,
+   its numbers as hypotheses) and **`uniKnowledgeSoundness_reference_fs`** (the reference deployment,
+   no Fiat–Shamir hypothesis left).
 7. Numbers: `4 N + ncv ≤ 2^32`, Flock's rounds' errors at most `2^32 / |E|`, `degSum ≤ 2^32`,
    `nRel + 2 ≤ 2^32`.
 
