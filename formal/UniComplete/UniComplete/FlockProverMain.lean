@@ -3,6 +3,7 @@ import UniComplete.FlockProverTerminal
 import UniComplete.FlockProverSync
 import UniComplete.FlockProverRing
 import UniComplete.FlockProverSum
+import UniComplete.FlockProverSkip
 
 /-!
 # Flock's honest prover: the headline theorems and their axioms
@@ -13,8 +14,8 @@ import UniComplete.FlockProverSum
 * `pendingTerminalHolds` (`k ≤ 6`, `log_n ≥ 14`, the slices sent): `PendingTerminalHolds`;
 * `flockSyncs` (the slices sent): `FlockSyncs H (flockProve (pure ∘ H)) log_n variant q` (`SyncBasic`'s statement);
 * `flockRingHolds` (tower order): `FlockRingHolds`;
-* `pendingSumHolds` (`k ≤ 6`, `log_n = 14 + κ`, the slices sent, `FlockHolds κ q`, and for `k > 0` the univariate
-  skip's completeness `SkipComplete k`): `PendingSumHolds`;
+* `pendingSumHolds_honest` (`k ≤ 6`, `log_n = 14 + κ`, the slices sent, `FlockHolds κ q`): `PendingSumHolds`
+  (`pendingSumHolds` with the univariate skip's completeness discharged, `Skip.skipComplete`);
 * `tables_shape`: the tables' shape the batch reads (`BatchWF`).
 
 `flockHolds_of_traceHonest`: an honest trace's `TraceHonest.flock` is `FlockHolds (tr.height 5) tr.qflock`.
@@ -26,6 +27,14 @@ The guards below fail the build if a theorem's axioms grow beyond Lean's three.
 definition). -/
 theorem UniComplete.FlockP.flockHolds_of_traceHonest (tr : UniComplete.Trace) (h : UniComplete.TraceHonest tr) :
     UniComplete.FlockP.FlockHolds (tr.height 5) tr.qflock := h.flock
+
+/-- **`PendingSumHolds` of the honest prover**, unconditionally but for Flock's relation on `q_flock`: the
+univariate skip's completeness holds at every `k ≤ 6` (`Skip.skipComplete`). -/
+theorem UniComplete.FlockP.pendingSumHolds_honest (H : List UInt8 → Id LeanVM.Protocol.Digest) (κ : ℕ)
+    (variant : UniStatement.Flock.Variant) (q : Array LeanVM.Parameters.K) (w : UniComplete.Wr)
+    (hk : variant.skip ≤ 6) (hc : variant.slices ≠ .claim) (hF : UniComplete.FlockP.FlockHolds κ q) :
+    UniComplete.FlockP.PendingSumHolds ((UniComplete.FlockP.flockProve H (14 + κ) variant q).run w).1 :=
+  UniComplete.FlockP.pendingSumHolds H κ variant q w hk hc hF fun _ ↦ UniComplete.FlockP.Skip.skipComplete _ hk
 
 /-- info: 'UniComplete.FlockP.pendingTerminalHolds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
@@ -66,3 +75,11 @@ theorem UniComplete.FlockP.flockHolds_of_traceHonest (tr : UniComplete.Trace) (h
 /-- info: 'UniComplete.FlockP.pendingSum_pure' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniComplete.FlockP.pendingSum_pure
+
+/-- info: 'UniComplete.FlockP.Skip.skipComplete' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.FlockP.Skip.skipComplete
+
+/-- info: 'UniComplete.FlockP.pendingSumHolds_honest' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.FlockP.pendingSumHolds_honest
