@@ -353,6 +353,232 @@ theorem eqKernel_psim (st : RecState) (hg : Good st) {ps : List Nat} {xs : List 
     unfold UniStatement.eqKernel
     exact rpL_of_getD (by rw [hos, hts]) fun j hj ↦ hI j (by rw [hos] at hj; exact hj)
 
+/-! ## Squares, digits, the coordinates -/
+
+theorem sqn_succ' (x : E) (k : Nat) : sqn x (k + 1) = sqn x k * sqn x k := by
+  induction k generalizing x with
+  | zero => simp only [sqn]
+  | succ k ih => rw [sqn.eq_2 x (k + 1), sqn.eq_2 x k]; exact ih (x * x)
+
+theorem squares_eq (x : E) (n : Nat) : UniStatement.squares x n = (List.range n).map (sqn x) := by
+  induction n generalizing x with
+  | zero => rfl
+  | succ n ih =>
+    rw [List.range_succ_eq_map, List.map_cons, List.map_map]
+    show x :: UniStatement.squares (x * x) n = _
+    rw [ih]
+    rfl
+
+theorem map_range_succ {α : Type} (f : Nat → α) (i : Nat) :
+    (List.range (i + 1)).map f = (List.range i).map f ++ [f i] := by
+  rw [List.range_succ, List.map_append, List.map_singleton]
+
+/-- **`squares(first, count)`**: `first, first², first⁴, …`. -/
+theorem squares_psim (st : RecState) (hg : Good st) {a : Nat} {x : E} (ha : Rp π iv publicInput stream st a x)
+    (count : Nat) :
+    PSim st (Pi1.squares a count) (UniStatement.squares x count) (RpL π iv publicInput stream) := by
+  rw [squares_eq]
+  cases count with
+  | zero => exact PSim.pure hg List.Forall₂.nil
+  | succ n =>
+    unfold Pi1.squares
+    simp only [Nat.add_one_ne_zero, ↓reduceIte]
+    refine PSim.bind (PSim.congr (forIn_range 1 (n + 1) _ _).symm rfl
+      (PSim.forIn_inv st (List.range' 1 (n + 1 - 1))
+        (fun i st (s : Array Nat × Nat) ↦ RpL π iv publicInput stream st s.1.toList ((List.range (i + 1)).map (sqn x)) ∧
+          Rp π iv publicInput stream st s.2 (sqn x i)) _ ?_ st _ (PStep.refl st hg)
+        ⟨List.Forall₂.cons ha List.Forall₂.nil, ha⟩)) fun st' s hst' hs ↦ PSim.pure hst'.good ?_
+    · intro i _ st1 s hst1 ⟨hout, hlast⟩
+      refine PSim.bind (PSim.square hst1.good hlast) fun st2 l hst2 hl ↦ PSim.pure hst2.good ⟨_, rfl, ?_, ?_⟩
+      · rw [Array.toList_push, map_range_succ (sqn x) (i + 1), sqn_succ']
+        exact (hout.pgrow hst1.good hst2).snoc hl
+      · rw [sqn_succ']; exact hl
+    · have h := hs.1
+      simp only [List.length_range', Nat.add_sub_cancel] at h
+      exact h
+
+/-- The digits' sequence: `w_0 = t`, `w_(l+1) = w_l² + w_l`. -/
+def wseq (t : E) : Nat → E
+  | 0 => t
+  | k + 1 => wseq t k * wseq t k + wseq t k
+
+theorem digits_fold (t : E) (k : Nat) :
+    ((List.range k).foldl (fun (ws : Array E) _ ↦ let w := ws.back?.getD t; ws.push (w * w + w)) #[t]).toList =
+      (List.range (k + 1)).map (wseq t) := by
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+    rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    generalize hA : (List.range k).foldl (fun (ws : Array E) _ ↦ let w := ws.back?.getD t; ws.push (w * w + w)) #[t] = A
+      at ih
+    have hb : A.back? = some (wseq t k) := by
+      have hsz : A.size = k + 1 := by rw [← Array.length_toList, ih]; simp
+      rw [Array.back?_eq_getElem?, hsz, Nat.add_sub_cancel, ← Array.getElem?_toList, ih]
+      simp
+    simp only [Array.toList_push, hb, Option.getD_some]
+    rw [ih, map_range_succ (wseq t) (k + 1)]
+    rfl
+
+theorem digits_eq (t : E) (count : Nat) : UniStatement.digits t count = (List.range count).map (wseq t) := by
+  unfold UniStatement.digits
+  rw [digits_fold]
+  cases count with
+  | zero => rfl
+  | succ c =>
+    rw [Nat.add_sub_cancel]
+    exact List.take_of_length_le (by simp)
+
+/-- **`digits(t, count)`**: `w_0 = t`, `w_(l+1) = w_l² + w_l`. -/
+theorem digits_psim (st : RecState) (hg : Good st) {a : Nat} {t : E} (ha : Rp π iv publicInput stream st a t)
+    (count : Nat) :
+    PSim st (Pi1.digits a count) (UniStatement.digits t count) (RpL π iv publicInput stream) := by
+  rw [digits_eq]
+  unfold Pi1.digits
+  refine PSim.bind (PSim.congr (forIn_range 0 count _ _).symm rfl
+    (PSim.forIn_inv st (List.range' 0 (count - 0))
+      (fun i st (s : Array Nat × Nat) ↦ RpL π iv publicInput stream st s.1.toList ((List.range i).map (wseq t)) ∧
+        Rp π iv publicInput stream st s.2 (wseq t i)) _ ?_ st _ (PStep.refl st hg)
+      ⟨List.Forall₂.nil, ha⟩)) fun st' s hst' hs ↦ PSim.pure hst'.good ?_
+  · intro i _ st1 s hst1 ⟨hout, hw⟩
+    refine PSim.bind (PSim.mul hst1.good hw hw) fun st2 ww hst2 hww ↦ ?_
+    refine PSim.bind (PSim.add hst2.good hww (hw.pgrow hst1.good hst2)) fun st3 w' hst3 hw' ↦
+      PSim.pure hst3.good ⟨_, rfl, ?_, hw'⟩
+    rw [Array.toList_push, map_range_succ]
+    exact ((hout.pgrow hst1.good hst2).pgrow hst2.good hst3).snoc ((hw.pgrow hst1.good hst2).pgrow hst2.good hst3)
+  · have h := hs.1
+    simp only [List.length_range', Nat.sub_zero] at h
+    exact h
+
+/-- A row's coordinate (`coordinates_at`'s inner sum). -/
+def rowValue (frobenius : List E) (row : Array K) : E :=
+  (row.toList.zip frobenius).foldl (fun acc p ↦ if p.1 ≠ 0 then acc + ofK p.1 * p.2 else acc) 0
+
+theorem coordinatesAt_eq (t : E) (functionals : Array (Array K)) :
+    UniStatement.coordinatesAt t functionals =
+      functionals.toList.map (rowValue ((List.range functionals.size).map (sqn t))) := by
+  unfold UniStatement.coordinatesAt rowValue
+  rfl
+
+theorem take_succ_map {α β : Type} (f : α → β) (l : List α) (i : Nat) (h : i < l.length) :
+    (l.take (i + 1)).map f = (l.take i).map f ++ [f l[i]] := by
+  rw [List.take_add_one, List.map_append, List.getElem?_eq_getElem h]
+  rfl
+
+/-- **`coordinates_at(t, functionals)`**: `t`'s Frobenius powers, then each functional's sum. -/
+theorem coordinatesAt_psim (st : RecState) (hg : Good st) {a : Nat} {t : E} (ha : Rp π iv publicInput stream st a t)
+    (functionals : Array (Array K)) :
+    PSim st (Pi1.coordinatesAt a functionals) (UniStatement.coordinatesAt t functionals)
+      (RpL π iv publicInput stream) := by
+  rw [coordinatesAt_eq]
+  unfold Pi1.coordinatesAt
+  refine PSim.bind (PSim.congr (forIn_range 0 functionals.size _ _).symm rfl
+    (PSim.forIn_inv st (List.range' 0 (functionals.size - 0))
+      (fun i st (s : Array Nat × Nat) ↦ RpL π iv publicInput stream st s.1.toList ((List.range i).map (sqn t)) ∧
+        Rp π iv publicInput stream st s.2 (sqn t i)) _ ?_ st _ (PStep.refl st hg)
+      ⟨List.Forall₂.nil, ha⟩)) fun st1 s hst1 hs ↦ ?_
+  · intro i _ st1 s hst1 ⟨hout, hx⟩
+    refine PSim.bind (PSim.square hst1.good hx) fun st2 x' hst2 hx' ↦ PSim.pure hst2.good ⟨_, rfl, ?_, ?_⟩
+    · rw [Array.toList_push, map_range_succ]
+      exact (hout.pgrow hst1.good hst2).snoc (hx.pgrow hst1.good hst2)
+    · rw [sqn_succ']; exact hx'
+  · obtain ⟨hfrob, _⟩ := hs
+    simp only [List.length_range', Nat.sub_zero] at hfrob
+    -- The functionals, one row each.
+    refine PSim.bind (PSim.forIn_inv st1 functionals.toList
+      (fun i st (out : Array Nat) ↦ RpL π iv publicInput stream st out.toList
+        ((functionals.toList.take i).map (rowValue ((List.range functionals.size).map (sqn t))))) _ ?_ st1 #[]
+      (PStep.refl st1 hst1.good) List.Forall₂.nil) fun st2 out hst2 hout ↦ PSim.pure hst2.good ?_
+    · intro i hi st' out' hst' hI
+      have hfrob' := hfrob.pgrow hst1.good hst'
+      refine PSim.bind (zeroP π iv publicInput stream hst'.good) fun s1 z hs1 hz ↦ ?_
+      have hfr1 := hfrob'.pgrow hst'.good hs1
+      have hlen : (functionals.toList[i].toList.zip s.1.toList).length =
+          (functionals.toList[i].toList.zip ((List.range functionals.size).map (sqn t))).length := by
+        simp [hfr1.length]
+      refine PSim.bind (PSim.forIn_list s1 _ _ (fun _ st (u : Nat) (v : E) ↦ Rp π iv publicInput stream st u v) _
+        (fun acc p ↦ if p.1 ≠ 0 then acc + ofK p.1 * p.2 else acc) hlen ?_ s1 z 0 (PStep.refl s1 hs1.good) hz)
+        fun s2 acc hs2 hacc ↦ PSim.pure hs2.good ⟨_, rfl, ?_⟩
+      · intro j hj hj' s3 u v hs3 huv
+        simp only [List.getElem_zip]
+        simp only [List.length_zip] at hj hj'
+        have hf := (hfr1.get j (by omega) (by omega)).pgrow hs1.good hs3
+        by_cases h0 : functionals.toList[i].toList[j] ≠ 0
+        · simp only [h0, ↓reduceIte, ne_eq, not_false_eq_true]
+          refine PSim.bind (constP π iv publicInput stream hs3.good _) fun s4 c hs4 hc ↦ ?_
+          refine PSim.bind (PSim.mul hs4.good hc (hf.pgrow hs3.good hs4)) fun s5 p hs5 hp ↦ ?_
+          exact PSim.bind (PSim.add hs5.good ((huv.pgrow hs3.good hs4).pgrow hs4.good hs5) hp) fun s6 q hs6 hq ↦
+            PSim.pure hs6.good ⟨q, rfl, hq⟩
+        · simp only [h0, ↓reduceIte]
+          exact PSim.pure hs3.good ⟨u, rfl, huv⟩
+      · rw [Array.toList_push, take_succ_map _ _ i hi]
+        exact ((hI.pgrow hst'.good hs1).pgrow hs1.good hs2).snoc hacc
+    · rw [List.take_length] at hout
+      exact hout
+
+/-! ## The vanishing polynomials -/
+
+/-- **`vanishing_ratio(w, r, m)`**: `Π_(r ≤ j < m) (w_j + 1)` (the digits held to `m`). -/
+theorem vanishingRatio_psim (st : RecState) (hg : Good st) {w : List Nat} {ws : List E}
+    (hw : RpL π iv publicInput stream st w ws) (r m : Nat) (hm : m ≤ ws.length) :
+    PSim st (Pi1.vanishingRatio w r m) (UniStatement.vanishingRatio ws r m) (Rp π iv publicInput stream) := by
+  unfold Pi1.vanishingRatio UniStatement.vanishingRatio
+  refine PSim.bind (oneP π iv publicInput stream hg) fun st1 o hst1 ho ↦ ?_
+  refine PSim.bind (PSim.congr (forIn_range r m _ _).symm rfl
+    (PSim.forIn_list st1 (List.range' r (m - r)) (List.range' r (m - r))
+      (fun _ st (s : Nat) (t : E) ↦ Rp π iv publicInput stream st s t) _
+      (fun acc j ↦ acc * (ws.getD j 0 + 1)) rfl ?_ st1 o 1 (PStep.refl st1 hst1.good) ho))
+    fun st2 a hst2 ha ↦ PSim.pure hst2.good ha
+  intro i hi _ s1 s t hs1 hI
+  simp only [List.getElem_range', Nat.one_mul]
+  simp only [List.length_range'] at hi
+  have hj : r + i < w.length := by rw [hw.length]; omega
+  have hwj := (hw.get (r + i) hj (by omega)).pgrow hg (hst1.trans hs1)
+  rw [List.getD_eq_getElem _ _ hj, List.getD_eq_getElem _ _ (by omega)]
+  refine PSim.bind (oneP π iv publicInput stream hs1.good) fun s2 o' hs2 ho' ↦ ?_
+  refine PSim.bind (PSim.add hs2.good (hwj.pgrow hs1.good hs2) ho') fun s3 sv hs3 hsv ↦ ?_
+  exact PSim.bind (PSim.mul hs3.good ((hI.pgrow hs1.good hs2).pgrow hs2.good hs3) hsv) fun s4 q hs4 hq ↦
+    PSim.pure hs4.good ⟨q, rfl, hq⟩
+
+/-- **`active_vanishing_from_bits(w, bits, r)`** (the digits and the count's bits held past `r`). -/
+theorem activeVanishingFromBits_psim (st : RecState) (hg : Good st) {w bits : List Nat} {ws bs : List E}
+    (hw : RpL π iv publicInput stream st w ws) (hb : RpL π iv publicInput stream st bits bs) (r : Nat)
+    (hrw : r < ws.length) (hrb : r < bs.length) :
+    PSim st (Pi1.activeVanishingFromBits w bits r) (UniStatement.activeVanishingFromBits ws bs r)
+      (Rp π iv publicInput stream) := by
+  have hwl := hw.length
+  have hbl := hb.length
+  unfold Pi1.activeVanishingFromBits UniStatement.activeVanishingFromBits
+  rw [List.getD_eq_getElem _ _ (by omega : r < w.length), List.getD_eq_getElem _ _ hrw,
+    List.getD_eq_getElem _ _ (by omega : r < bits.length), List.getD_eq_getElem _ _ hrb]
+  refine PSim.bind (oneP π iv publicInput stream hg) fun s1 o hs1 ho ↦ ?_
+  refine PSim.bind (PSim.add hs1.good ((hw.get r (by omega) hrw).pgrow hg hs1) ho) fun s2 sv hs2 hsv ↦ ?_
+  refine PSim.bind (PSim.mul hs2.good (((hb.get r (by omega) hrb).pgrow hg hs1).pgrow hs1.good hs2) hsv)
+    fun s3 p hs3 hp ↦ ?_
+  have hs13 := hs2.trans hs3
+  refine PSim.bind (PSim.add hs3.good (ho.pgrow hs1.good hs13) hp) fun s4 prod hs4 hprod ↦ ?_
+  have hs14 := hs13.trans hs4
+  have hlen : ((bits.take r).zip (List.range r)).length = (List.range r).length := by simp; omega
+  refine PSim.bind (PSim.forIn_list s4 ((bits.take r).zip (List.range r)) (List.range r)
+    (fun _ st (s : Nat) (t : E) ↦ Rp π iv publicInput stream st s t) _
+    (fun product b ↦ product * (1 + bs.getD b 0 * (ws.getD b 0 + (cosetOffset r b + 1)))) hlen ?_ s4 prod _
+    (PStep.refl s4 hs4.good) hprod) fun s5 a hs5 ha ↦ PSim.pure hs5.good ha
+  intro i hi hj s6 u v hs6 huv
+  simp only [List.getElem_zip, List.getElem_take, List.getElem_range]
+  simp only [List.length_range] at hj
+  have hs16 := hs14.trans hs6
+  have hbi := (hb.get i (by omega) (by omega)).pgrow hg ((hs1.trans hs16))
+  have hwi := (hw.get i (by omega) (by omega)).pgrow hg ((hs1.trans hs16))
+  have ho6 := ho.pgrow hs1.good hs16
+  rw [List.getD_eq_getElem _ _ (by omega : i < w.length), List.getD_eq_getElem _ _ (by omega : i < ws.length),
+    List.getD_eq_getElem _ _ (by omega : i < bs.length)]
+  refine PSim.bind (constP π iv publicInput stream hs6.good _) fun t1 c ht1 hc ↦ ?_
+  refine PSim.bind (PSim.add ht1.good (hwi.pgrow hs6.good ht1) hc) fun t2 sv ht2 hsv ↦ ?_
+  refine PSim.bind (PSim.mul ht2.good ((hbi.pgrow hs6.good ht1).pgrow ht1.good ht2) hsv) fun t3 p ht3 hp ↦ ?_
+  have ht13 := (ht1.trans ht2).trans ht3
+  refine PSim.bind (PSim.add ht3.good (ho6.pgrow hs6.good ht13) hp) fun t4 f ht4 hf ↦ ?_
+  exact PSim.bind (PSim.mul ht4.good ((huv.pgrow hs6.good ht13).pgrow ht3.good ht4) hf) fun t5 q ht5 hq ↦
+    PSim.pure ht5.good ⟨q, rfl, hq⟩
+
 end Pure
 
 end RecGraph.Sim
