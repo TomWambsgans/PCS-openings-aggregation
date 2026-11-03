@@ -896,4 +896,184 @@ theorem uniWalk (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ) (C
   · rintro ⟨h1, h2, h3⟩ z ((hz | hz) | hz)
     exacts [h1 z hz, h2 z hz, h3 z hz]
 
+/-! ## WALK REJECTS -/
+
+/-- The model's monad: computations with the random permutation's oracles. -/
+abbrev OC := OracleComp Common.RandomPermutationOracles
+
+/-- **A program consumes `n` bytes**: from a channel whose cursor is within the stream, every
+successful outcome read exactly `n` bytes of it, and the stream had them. -/
+def Consumes {α : Type} (n : ℕ) (p : ChanM OC α) : Prop :=
+  ∀ (c : Chan) (y : Except UniError α × Chan), c.cursor ≤ c.data.size → y ∈ support (p.run.run c) →
+    ∀ a, y.1 = .ok a → y.2.data = c.data ∧ y.2.cursor = c.cursor + n ∧ c.cursor + n ≤ c.data.size
+
+theorem Consumes.mono_eq {α : Type} {n k : ℕ} {p : ChanM OC α} (h : Consumes n p) (e : n = k) :
+    Consumes k p := e ▸ h
+
+theorem consumes_pure {α : Type} (a : α) : Consumes 0 (pure a : ChanM OC α) := by
+  intro c y hc hy b _
+  rw [run_pure_chan, support_pure, Set.mem_singleton_iff] at hy
+  subst hy
+  exact ⟨rfl, rfl, hc⟩
+
+theorem Consumes.bind {α β : Type} {n k : ℕ} {p : ChanM OC α} {f : α → ChanM OC β}
+    (hp : Consumes n p) (hf : ∀ a, Consumes k (f a)) : Consumes (n + k) (p >>= f) := by
+  intro c y hc hy b hb
+  simp only [ExceptT.run_bind, StateT.run_bind] at hy
+  rw [mem_support_bind_iff] at hy
+  obtain ⟨⟨r, c'⟩, hq, hy⟩ := hy
+  cases r with
+  | error e =>
+    simp only [StateT.run_pure, support_pure, Set.mem_singleton_iff] at hy
+    subst hy
+    cases hb
+  | ok a =>
+    obtain ⟨h1, h2, h3⟩ := hp c _ hc hq a rfl
+    simp only at h1 h2
+    obtain ⟨h4, h5, h6⟩ := hf a c' y (by rw [h1, h2]; exact h3) hy b hb
+    rw [h1] at h4 h6
+    exact ⟨h4, by omega, by omega⟩
+
+theorem consumes_takeBytes (n : ℕ) : Consumes n (takeBytes (m := OC) n) := by
+  intro c y hc hy b hb
+  rw [takeBytes_run] at hy
+  split_ifs at hy with h
+  · rw [support_pure, Set.mem_singleton_iff] at hy
+    subst hy
+    exact ⟨rfl, rfl, h⟩
+  · rw [support_pure, Set.mem_singleton_iff] at hy
+    subst hy
+    cases hb
+
+theorem consumes_requireZeros (zs : List E) : Consumes 0 (ChainProg.requireZeros (m := OC) zs) := by
+  intro c y hc hy b _
+  rw [requireZeros_run, support_pure, Set.mem_singleton_iff] at hy
+  subst hy
+  exact ⟨rfl, rfl, hc⟩
+
+theorem consumes_requireZero (z : E) : Consumes 0 (requireZero (m := OC) z) := by
+  intro c y hc hy b _
+  rw [requireZero_run, support_pure, Set.mem_singleton_iff] at hy
+  subst hy
+  exact ⟨rfl, rfl, hc⟩
+
+theorem consumes_sample (F : KeccakState → OC KeccakState) : Consumes 0 (sample F) := by
+  intro c y hc hy a _
+  have h := sample_bind F (fun x => (pure x : ChanM OC E)) c
+  rw [bind_pure] at h
+  rw [h, mem_support_bind_iff] at hy
+  obtain ⟨st, -, hy⟩ := hy
+  rw [run_pure_chan, support_pure, Set.mem_singleton_iff] at hy
+  subst hy
+  exact ⟨rfl, rfl, hc⟩
+
+theorem consumes_repeatM {α : Type} {k : ℕ} {act : ChanM OC α} (h : Consumes k act) :
+    ∀ n, Consumes (n * k) (FlockSound.Uni.repeatM act n)
+  | 0 => (consumes_pure []).mono_eq (by simp)
+  | n + 1 => by
+    show Consumes ((n + 1) * k) (act >>= fun a => FlockSound.Uni.repeatM act n >>= fun l => pure (a :: l))
+    exact (h.bind fun _ => (consumes_repeatM h n).bind fun _ => consumes_pure _).mono_eq (by ring)
+
+theorem consumes_nextScalars (n : ℕ) : Consumes (n * 24) (nextScalars (m := OC) n) := by
+  rw [FlockSound.Uni.nextScalars_eq]
+  exact consumes_repeatM ((consumes_takeBytes 24).bind fun _ => consumes_pure _) n
+
+theorem consumes_samples (F : KeccakState → OC KeccakState) (n : ℕ) : Consumes 0 (samples F n) := by
+  rw [FlockSound.Uni.samples_eq]
+  exact (consumes_repeatM (consumes_sample F) n).mono_eq (by simp)
+
+theorem consumes_rootRead (r : Bool) : Consumes (if r then 32 else 0) (rootRead (m := OC) r) := by
+  cases r with
+  | false => exact consumes_pure _
+  | true =>
+    simp only [rootRead, ite_true, map_eq_bind_pure_comp]
+    exact (((consumes_takeBytes 16).bind fun _ => (consumes_takeBytes 16).bind fun _ =>
+      consumes_pure _).bind fun _ => consumes_pure _).mono_eq rfl
+
+theorem consumes_runRounds {α : Type} (P : ChainProg α) (F : KeccakState → OC KeccakState) :
+    ∀ (rs : List RoundSpec) (done : Done), Consumes (roundsBytes rs) (P.runRounds F rs done)
+  | [], done => consumes_pure done
+  | r :: rs, done => by
+    rw [runRounds_cons]
+    refine ((consumes_rootRead r.root).bind fun _ => (consumes_nextScalars r.nv).bind fun _ =>
+      (consumes_requireZeros _).bind fun _ => (consumes_samples F _).bind fun _ =>
+        consumes_runRounds P F rs _).mono_eq ?_
+    simp only [roundsBytes, roundBytes]
+    ring
+
+theorem consumes_run {α : Type} (P : ChainProg α) (F : KeccakState → OC KeccakState) :
+    Consumes (roundsBytes P.rounds + (P.tail * 24 + (0 + 0))) (P.run F) :=
+  (consumes_runRounds P F _ _).bind fun _ => (consumes_nextScalars _).bind fun _ =>
+    (consumes_requireZeros _).bind fun _ => consumes_pure _
+
+theorem consumes_readCounts : ∀ hs : List ℕ, Consumes (hs.length * 4) (readCounts (m := OC) hs)
+  | [] => consumes_pure []
+  | r :: hs => by
+    rw [readCounts_eq, List.mapM_cons, ← readCounts_eq]
+    refine (((((consumes_takeBytes 4).bind fun _ => consumes_pure _).bind fun _ =>
+      (consumes_requireZero _).bind fun _ => (consumes_requireZero _).bind fun _ =>
+        consumes_pure _).bind fun _ => (consumes_readCounts hs).bind fun _ =>
+          consumes_pure _)).mono_eq ?_
+    simp only [List.length_cons]
+    ring
+
+/-- **The main line consumes the main line's length**, `uLen`. -/
+theorem consumes_main (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ)
+    (C : UniCode D Fl nV V) (input : Vector UInt8 32) (F : KeccakState → OC KeccakState) :
+    Consumes (uLen Fl nV V) (readCounts D.shape.heights >>= fun rows => (C.prog input rows).run F) := by
+  refine ((consumes_readCounts _).bind (k := roundsBytes (uRounds Fl nV V) + (5 * 24 + (0 + 0)))
+    fun rows => ?_).mono_eq ?_
+  · have h := consumes_run (C.prog input rows) F
+    rw [C.rounds_eq, C.tail_eq] at h
+    exact h
+  · rw [D.valid.1, uLen]
+    ring
+
+/-- **WALK REJECTS**: on a stream of another length, every outcome of the walk over `π` rejects:
+a successful run of the main line reads exactly `uLen` bytes (`consumes_main`, through the
+code-level link), so the stream ran out (`StreamExhausted`) or is left unread
+(`StreamNotConsumed`). -/
+theorem uniWalkReject (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ)
+    (C : UniCode D Fl nV V) : UniWalkReject D Fl nV V := by
+  intro π hne o ho
+  have key := runWith_pair (m := OC) Common.queryPermutation D.shape π.iv.toList π.input.toList
+    π.proof.stream (.flock flockMain) .point
+  have h1 : (o.accepts, o.result) ∈ support ((fun o : Outcome => (o.accepts, o.result)) <$>
+      runWith Common.queryPermutation D.shape π.iv.toList π.input.toList π.proof.stream
+        (.flock flockMain) .point) := by
+    rw [support_map]
+    exact ⟨o, ho, rfl⟩
+  rw [key, mem_support_bind_iff] at h1
+  obtain ⟨seed, -, h2⟩ := h1
+  have hl := congrArg (fun z => walkOf <$> z)
+    (C.link π.input Common.queryPermutation (Chan.start seed π.proof.stream))
+  simp only [Functor.map_map] at hl
+  rw [hl, support_map] at h2
+  obtain ⟨y, hy, hyo⟩ := h2
+  have hc := consumes_main D Fl nV V C π.input Common.queryPermutation
+    (Chan.start seed π.proof.stream) y (by simp [Chan.start]) hy
+  have hacc : (walkOf (obsOf y)).1 = false := by
+    rcases y with ⟨r, c'⟩
+    cases r with
+    | error e => rfl
+    | ok a =>
+      obtain ⟨h3, h4, -⟩ := hc a rfl
+      simp only [Chan.start] at h3 h4
+      simp only [obsOf, walkOf]
+      split_ifs with h
+      · exact absurd (by rw [← h3, ← h, h4, Nat.zero_add]) hne
+      · rfl
+  have := congrArg Prod.fst hyo
+  simp only at this
+  rw [← this]
+  exact hacc
+
 end UniSound
+
+/-- info: 'UniSound.uniWalk' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniWalk
+
+/-- info: 'UniSound.uniWalkReject' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniWalkReject
