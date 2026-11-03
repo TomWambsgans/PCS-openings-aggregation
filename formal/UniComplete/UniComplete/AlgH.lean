@@ -41,9 +41,32 @@ theorem treeQuotient_exact_fits (tr : Trace) (weights : Array E) (beta : E) (hH 
   exact ⟨treeNumerator_eq_mul hL.one_le hH (heapValues_size' tr weights beta) (heapValues_tree tr weights beta hL),
     natDegree_treeQuotient_lt hL.one_le _⟩
 
+/-- **`h ≤ 28` when `C2` fits WHIR's `2^28` words** (the heap's three limbs are blocks of `C2`'s stack; in fact then
+`h ≤ 26`): the hypothesis `h ≤ 28` of the layer is the openings'. -/
+theorem heap_h_le_of_c2 (shape : Shape) (hvars : (((layoutsOf shape).lookup .c2).getD default).vars ≤ 28) :
+    shape.heap.h ≤ 28 := by
+  rw [c2Layout_eq] at hvars
+  have hnd := c2Names_nodup shape
+  have hmem := mem_c2_heap shape
+  have hperm := AlgC.limbs_map_new (List.count_eq_one_of_mem hnd (List.mem_map_of_mem hmem))
+    (fun p hp hp1 ↦ by rw [List.inj_on_of_nodup_map hnd hp hmem hp1])
+  have h0 : (0, shape.heap.h) ∈ ((StackLayout.new (Shape.c2Columns shape)).limbs .heap).map
+      (fun b ↦ (b.1, b.2.1)) := hperm.mem_iff.mpr (by simp)
+  obtain ⟨b, hb, hbe⟩ := List.mem_map.mp h0
+  have hin := AlgC.blocks_inRange _ _ (AlgC.mem_limbs.mp hb)
+  simp only [Prod.mk.injEq] at hbe
+  have h2 : 2 ^ shape.heap.h ≤ 2 ^ (StackLayout.new (Shape.c2Columns shape)).vars := by
+    rw [← hbe.2]; simp only at hin; omega
+  have := (Nat.pow_le_pow_iff_right (by norm_num)).mp h2
+  omega
+
 end UniComplete.AlgH
 
 /-! ### Axioms -/
+
+/-- info: 'UniComplete.AlgH.heap_h_le_of_c2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.AlgH.heap_h_le_of_c2
 
 /-- info: 'UniComplete.AlgH.treeQuotient_exact_fits' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
