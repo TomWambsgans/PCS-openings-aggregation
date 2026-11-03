@@ -18,16 +18,17 @@ import Bridge.Ntt
 * **The stack layouts** (`layoutAligned_new`, for any columns): `StackLayout.new` lays its pieces end to
   end sorted largest first (`List.pairwise_mergeSort`), so each offset is a sum of larger powers of two
   and the stack's `max (⌈log₂ offset⌉) 15` variables hold them all. A column listed once, `K`-valued,
-  is one limb (`limbs_new_single`, by `mergeSort`'s permutation: no evaluation of the sort); so
-  **`C1`'s and the setup's columns at the reference shape** (`c1Limbs_reference`, `setupLimbs_reference`),
-  the column lists' filters being checked by the kernel.
+  is one limb (`limbs_new_single`, by `mergeSort`'s permutation: no evaluation of the sort). `C1`'s
+  column list names each column once whatever the shape (its names, `c1Names`, checked by the kernel),
+  so **`C1`'s and the setup's columns are one limb each at every shape** (`c1Limbs`, `setupLimbs`; at the
+  reference shape `c1Limbs_reference`, `setupLimbs_reference`).
 * **The heap at the reference shape** (`heapGood_reference`): its used blocks sorted are the explicit list
   (`List.Perm.eq_of_pairwise`: `mergeSort`'s order is a total preorder, antisymmetric on these blocks),
   then the kernel lays them out (`8` used blocks and one unused).
 * **The basis-`B` inverse** (`basisValueInv`, for every `r ≤ 24`): `basisValue c r x` is the multilinear
   extension `Σ_k c_k Π_l (k_l ? w_l : 1 + w_l)` at the digits `w_l = S^l(ω_x)` (`mleK_eq`,
   `point_eq_domain`, `Bridge.Ntt.iterate_point`); each subset-sum stage turns one factor into the novel
-  basis's (`stage_sum`: `1 + w + w = 1` in characteristic two), so `subsetSums` of the novel-basis
+  basis's (`stage_gv`: `1 + w + w = 1` in characteristic two), so `subsetSums` of the novel-basis
   coefficients is the novel-basis polynomial `Σ_j X_j(ω_x) d_j`, which is `v_x`
   (`Bridge.Ntt.values_getD_K`, `values_coefficients_K`).
 -/
@@ -745,6 +746,576 @@ theorem functionalsCorrect18 : FunctionalsCorrect 18 := by
   refine congrArg List.sum (List.map_congr_left fun m hm ↦ ?_)
   rw [← cfInit_eq, cfInit_getD hk (List.mem_range.mp hm)]
 
+/-! ## The stack layouts (`LayoutAligned`, `C1Limbs`, `SetupLimbs`)
+
+`StackLayout.new` sorts its pieces largest first (`mergeSort`, well-founded, so not evaluated here: only
+its permutation and order are used) and lays them end to end (`place`). -/
+
+/-- Pieces laid end to end from `o`: each at the sum of the sizes before it. -/
+def place : ℕ → List (Column × ℕ × ℕ) → List (Column × ℕ × ℕ × ℕ)
+  | _, [] => []
+  | o, (c, l, v) :: xs => (c, l, v, o) :: place (o + 2 ^ v) xs
+
+/-- The words pieces fill. -/
+def total (xs : List (Column × ℕ × ℕ)) : ℕ := (xs.map fun x ↦ 2 ^ x.2.2).sum
+
+/-- **`StackLayout.new`'s fold** lays the pieces out (`place`) and ends at their total. -/
+theorem foldl_place
+    (F : Array (Column × ℕ × ℕ × ℕ) × ℕ → Column × ℕ × ℕ → Array (Column × ℕ × ℕ × ℕ) × ℕ)
+    (hF : ∀ acc c l v, F acc (c, l, v) = (acc.1.push (c, l, v, acc.2), acc.2 + 2 ^ v)) :
+    ∀ (xs : List (Column × ℕ × ℕ)) (A : Array (Column × ℕ × ℕ × ℕ)) (o : ℕ),
+      (xs.foldl F (A, o)).1.toList = A.toList ++ place o xs ∧ (xs.foldl F (A, o)).2 = o + total xs
+  | [], A, o => by simp [place, total]
+  | (c, l, v) :: xs, A, o => by
+    rw [List.foldl_cons, hF]
+    obtain ⟨h1, h2⟩ := foldl_place F hF xs (A.push (c, l, v, o)) (o + 2 ^ v)
+    refine ⟨?_, ?_⟩
+    · rw [h1]
+      simp [place]
+    · rw [h2]
+      simp only [total, List.map_cons, List.sum_cons]
+      ring
+
+/-- **Largest first is aligned**: from an offset every piece's size divides, each piece's offset is a
+multiple of its size, and it ends by the pieces' end. -/
+theorem place_aligned : ∀ (xs : List (Column × ℕ × ℕ)) (o : ℕ), xs.Pairwise (fun a b ↦ b.2.2 ≤ a.2.2) →
+    (∀ x ∈ xs, 2 ^ x.2.2 ∣ o) →
+      ∀ b ∈ place o xs, 2 ^ b.2.2.1 ∣ b.2.2.2 ∧ b.2.2.2 + 2 ^ b.2.2.1 ≤ o + total xs
+  | [], _, _, _ => by simp [place]
+  | (c, l, v) :: xs, o, hs, hd => by
+    rw [List.pairwise_cons] at hs
+    intro b hb
+    simp only [place, List.mem_cons] at hb
+    have ht : o + total ((c, l, v) :: xs) = (o + 2 ^ v) + total xs := by
+      simp only [total, List.map_cons, List.sum_cons]
+      ring
+    rw [ht]
+    rcases hb with rfl | hb
+    · exact ⟨hd _ (List.mem_cons_self ..), by dsimp only; omega⟩
+    · refine place_aligned xs (o + 2 ^ v) hs.2 (fun x hx ↦ ?_) b hb
+      exact dvd_add (hd x (List.mem_cons_of_mem _ hx)) (Nat.pow_dvd_pow 2 (hs.1 x hx))
+
+/-- `n ≤ 2^⌈log₂ n⌉`. -/
+theorem le_pow_log2Ceil (n : ℕ) : n ≤ 2 ^ log2Ceil n := by
+  unfold log2Ceil
+  split_ifs with h
+  · simp only [pow_zero]
+    exact h
+  · have := Nat.lt_log2_self (n := n - 1)
+    omega
+
+/-- `mergeSort` largest first is sorted largest first. -/
+theorem pairwise_sorted (xs : List (Column × ℕ × ℕ)) :
+    (xs.mergeSort fun a b ↦ decide (b.2.2 ≤ a.2.2)).Pairwise (fun a b ↦ b.2.2 ≤ a.2.2) :=
+  (List.pairwise_mergeSort (fun a b c h1 h2 ↦ by simp only [decide_eq_true_eq] at *; omega)
+    (fun a b ↦ by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega) _).imp fun h ↦ by simpa using h
+
+/-- **A stack layout's blocks are aligned inside its stack**, for any columns. -/
+theorem layoutAligned_new (cols : List (Column × ℕ × Bool)) : LayoutAligned (StackLayout.new cols) := by
+  unfold StackLayout.new
+  dsimp only
+  rw [(foldl_place _ ?_ _ #[] 0).1, (foldl_place _ ?_ _ #[] 0).2]
+  · intro b hbm
+    simp only [List.nil_append] at hbm
+    obtain ⟨h1, h2⟩ := place_aligned _ 0 (pairwise_sorted _) (fun _ _ ↦ dvd_zero _) b hbm
+    refine ⟨h1, h2.trans ?_⟩
+    calc 0 + total _ ≤ max (0 + total _) 2 := le_max_left _ _
+      _ ≤ 2 ^ log2Ceil (max (0 + total _) 2) := le_pow_log2Ceil _
+      _ ≤ 2 ^ max (log2Ceil (max (0 + total _) 2)) 15 :=
+        Nat.pow_le_pow_right (by norm_num) (le_max_left _ _)
+  all_goals intro _ _ _ _; rfl
+
+/-- `limbs` as a `filterMap` on the blocks. -/
+theorem limbs_eq (L : StackLayout) (col : Column) :
+    L.limbs col = L.blocks.filterMap fun b ↦ if b.1 = col then some b.2 else none := by
+  unfold StackLayout.limbs
+  congr 1
+  funext b
+  obtain ⟨c, l, v, o⟩ := b
+  simp
+
+/-- A column's blocks in laid-out pieces: its pieces, with their offsets. -/
+theorem limbs_place (col : Column) : ∀ (xs : List (Column × ℕ × ℕ)) (o : ℕ),
+    ((place o xs).filterMap fun b ↦ if b.1 = col then some b.2 else none).map
+        (fun b ↦ (col, b.1, b.2.1)) = xs.filter (fun x ↦ x.1 == col)
+  | [], _ => by simp [place]
+  | (c, l, v) :: xs, o => by
+    have ih := limbs_place col xs (o + 2 ^ v)
+    simp only [place, List.filterMap_cons, List.filter_cons]
+    by_cases hc : c = col
+    · subst hc
+      simp [ih]
+    · simp [hc, ih]
+
+/-- The pieces of the columns of one name are that column's pieces. -/
+theorem filter_flatMap_pieces (G : Column × ℕ × Bool → List (Column × ℕ × ℕ))
+    (hG : ∀ x, ∀ y ∈ G x, y.1 = x.1) (col : Column) :
+    ∀ cols : List (Column × ℕ × Bool),
+      (cols.flatMap G).filter (fun x ↦ x.1 == col) = (cols.filter (fun x ↦ x.1 == col)).flatMap G
+  | [] => rfl
+  | x :: cols => by
+    rw [List.flatMap_cons, List.filter_append, filter_flatMap_pieces G hG col cols, List.filter_cons]
+    by_cases hx : x.1 = col
+    · rw [List.filter_eq_self.mpr fun y hy ↦ by simp [hG x y hy, hx]]
+      simp [hx]
+    · rw [List.filter_eq_nil_iff.mpr fun y hy ↦ by simp [hG x y hy, hx]]
+      simp [hx]
+
+/-- A column of one piece `(col, 0, v)` is one limb, wherever it is laid. -/
+theorem limbs_single_of {col : Column} {v : ℕ} (V o : ℕ) (xs : List (Column × ℕ × ℕ))
+    (hp : xs.filter (fun x ↦ x.1 == col) = [(col, 0, v)]) :
+    ∃ off, (StackLayout.mk V (place o xs)).limbs col = [(0, v, off)] := by
+  have hm := limbs_place col xs o
+  rw [hp] at hm
+  obtain ⟨b, hb, hfb⟩ := List.map_eq_singleton_iff.mp hm
+  refine ⟨b.2.2, ?_⟩
+  rw [limbs_eq]
+  simp only
+  rw [hb]
+  obtain ⟨b1, b2, b3⟩ := b
+  simp only [Prod.mk.injEq, true_and] at hfb
+  rw [hfb.1, hfb.2]
+
+/-- **A `K`-valued column listed once is one limb**: `[(0, vars, offset)]` (by `mergeSort`'s
+permutation: the sort is not evaluated). -/
+theorem limbs_new_single (cols : List (Column × ℕ × Bool)) (col : Column) (v : ℕ)
+    (h : cols.filter (fun x ↦ x.1 == col) = [(col, v, false)]) :
+    ∃ off, (StackLayout.new cols).limbs col = [(0, v, off)] := by
+  unfold StackLayout.new
+  dsimp only
+  rw [(foldl_place _ ?_ _ #[] 0).1]
+  · simp only [List.nil_append]
+    refine limbs_single_of _ _ _ (List.perm_singleton.mp (((List.mergeSort_perm _ _).filter _).trans ?_))
+    rw [filter_flatMap_pieces _ ?_ col cols, h]
+    · simp
+    · intro x y hy
+      simp only [List.mem_map, List.mem_range] at hy
+      obtain ⟨_, _, rfl⟩ := hy
+      rfl
+  · intro _ _ _ _
+    rfl
+
+/-! ### `C1`'s and the setup's columns, at every shape
+
+`C1`'s column list (`layouts`) names each column once, whatever the shape: its names (`c1Names`) do not
+depend on the shape, and the kernel checks that each of `C1Limbs`'s columns occurs once among them. -/
+
+/-- `C1`'s columns at a shape (`layouts`'s `c1`). -/
+def c1Cols (S : Shape) : List (Column × ℕ × Bool) :=
+  [(.qflock, S.heights.getD opBlake2s 0 + 8, false)] ++
+    tables.flatMap (fun t ↦
+      (List.range t.width).map (fun c ↦ (Column.table t.opcode c, S.heights.getD t.opcode 0, false)) ++
+        [(.inverse t.opcode, S.heights.getD t.opcode 0, false)]) ++
+    (List.range 4).map (fun k ↦ (Column.memory k, S.logMemory, false)) ++
+    [(.bytecodeFinal, S.logBytecode, false)]
+
+/-- The setup's columns at a shape (`layouts`'s `setup`). -/
+def setupCols (S : Shape) : List (Column × ℕ × Bool) :=
+  [(.bytecodeTuple, S.logBytecode + 4, false), (.address, S.logMemory, false)]
+
+theorem layoutOf_c1 (S : Shape) : layoutOf S .c1 = StackLayout.new (c1Cols S) := rfl
+
+theorem layoutOf_setup (S : Shape) : layoutOf S .setup = StackLayout.new (setupCols S) := rfl
+
+/-- `C1`'s column names (no shape). -/
+def c1Names : List Column :=
+  [.qflock] ++ tables.flatMap (fun t ↦
+      (List.range t.width).map (fun c ↦ Column.table t.opcode c) ++ [.inverse t.opcode]) ++
+    (List.range 4).map Column.memory ++ [.bytecodeFinal]
+
+/-- A `C1` column's variables at a shape. -/
+def c1Vars (S : Shape) : Column → ℕ
+  | .qflock => S.heights.getD opBlake2s 0 + 8
+  | .table o _ => S.heights.getD o 0
+  | .inverse o => S.heights.getD o 0
+  | .memory _ => S.logMemory
+  | .bytecodeFinal => S.logBytecode
+  | _ => 0
+
+theorem c1Cols_eq (S : Shape) : c1Cols S = c1Names.map fun c ↦ (c, c1Vars S c, false) := by
+  simp only [c1Cols, c1Names, List.map_append, List.map_flatMap, List.map_cons, List.map_nil,
+    List.map_map]
+  rfl
+
+/-- A column named once in `C1`'s list is listed once, at its variables. -/
+theorem c1Cols_filter (S : Shape) (col : Column) (h : c1Names.filter (· == col) = [col]) :
+    (c1Cols S).filter (fun x ↦ x.1 == col) = [(col, c1Vars S col, false)] := by
+  rw [c1Cols_eq, List.filter_map]
+  have e : ((fun x : Column × ℕ × Bool ↦ x.1 == col) ∘ fun c ↦ (c, c1Vars S c, false)) = (· == col) := rfl
+  rw [e, h]
+  rfl
+
+section Kernel
+
+set_option maxRecDepth 100000
+
+theorem c1Names_table : ∀ o < 6, ∀ i < (tables.getD o default).width,
+    c1Names.filter (· == Column.table o i) = [.table o i] := by decide +kernel
+
+theorem c1Names_inverse : ∀ o < 6, c1Names.filter (· == Column.inverse o) = [.inverse o] := by
+  decide +kernel
+
+theorem c1Names_memory : ∀ k < 4, c1Names.filter (· == Column.memory k) = [.memory k] := by
+  decide +kernel
+
+theorem c1Names_bytecodeFinal : c1Names.filter (· == Column.bytecodeFinal) = [.bytecodeFinal] := by
+  decide +kernel
+
+theorem c1Names_qflock : c1Names.filter (· == Column.qflock) = [.qflock] := by decide +kernel
+
+end Kernel
+
+/-- **`C1`'s columns are one limb each**, at every shape. -/
+theorem c1Limbs (S : Shape) : C1Limbs S := by
+  refine ⟨fun o ho i hi ↦ ?_, fun o ho ↦ ?_, fun k hk ↦ ?_, ?_, ?_⟩ <;> rw [layoutOf_c1]
+  · exact limbs_new_single _ _ _ (c1Cols_filter S _ (c1Names_table o ho i hi))
+  · exact limbs_new_single _ _ _ (c1Cols_filter S _ (c1Names_inverse o ho))
+  · exact limbs_new_single _ _ _ (c1Cols_filter S _ (c1Names_memory k hk))
+  · exact limbs_new_single _ _ _ (c1Cols_filter S _ c1Names_bytecodeFinal)
+  · exact limbs_new_single _ _ _ (c1Cols_filter S _ c1Names_qflock)
+
+theorem c1Limbs_reference : C1Limbs reference := c1Limbs reference
+
+/-- **The setup's two columns are one limb each**, at every shape. -/
+theorem setupLimbs (S : Shape) : SetupLimbs S := by
+  refine ⟨?_, ?_⟩ <;> rw [layoutOf_setup] <;> exact limbs_new_single _ _ _ (by simp [setupCols])
+
+theorem setupLimbs_reference : SetupLimbs reference := setupLimbs reference
+
+/-! ## The heap at the reference shape (`HeapGood reference`)
+
+`HeapLayout.new`'s sort is `mergeSort` (well-founded): its result is the explicit order (`heapSorted`), the
+unique list sorted by its comparator (a total preorder, antisymmetric on these blocks) and a permutation of
+the used blocks; then the kernel lays the blocks out (`heap_blocks`). -/
+
+/-- **The reference shape** (`shapes::reference`): `2^21` memory cells, `2^19` instructions, the heights. -/
+theorem reference_eq : reference = ⟨21, 19, [18, 18, 18, 18, 17, 18]⟩ := by
+  unfold reference shapeOf shapeWith
+  congr 1
+
+/-- `HeapLayout.new`'s comparator: larger first, ties in `Leaves.order`. -/
+def heapLe (a b : Leaves × ℕ) : Bool := b.2 < a.2 || (a.2 == b.2 && a.1.order ≤ b.1.order)
+
+/-- The used blocks of the reference shape, sorted. -/
+def heapSortedRef : List (Leaves × ℕ) :=
+  [(.memory, 21), (.bytecode, 19), (.table 0, 18), (.table 1, 18), (.table 2, 18), (.table 3, 18),
+    (.table 5, 18), (.table 4, 17)]
+
+theorem heapLe_trans (a b c : Leaves × ℕ) (h1 : heapLe a b = true) (h2 : heapLe b c = true) :
+    heapLe a c = true := by
+  simp only [heapLe, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at *
+  omega
+
+theorem heapLe_total (a b : Leaves × ℕ) : (heapLe a b || heapLe b a) = true := by
+  simp only [heapLe, Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq]
+  omega
+
+theorem heapLe_antisymm : ∀ a ∈ heapSortedRef, ∀ b ∈ heapSortedRef, heapLe a b = true →
+    heapLe b a = true → a = b := by
+  decide +kernel
+
+/-- **The reference shape's used blocks, sorted** (no evaluation of `mergeSort`). -/
+theorem heapSorted :
+    ([(Leaves.memory, 21), (.bytecode, 19)] ++ (List.range [18, 18, 18, 18, 17, 18].length).map
+        fun t ↦ (Leaves.table t, [18, 18, 18, 18, 17, 18].getD t 0)).mergeSort
+      (fun a b ↦ b.2 < a.2 || (a.2 == b.2 && a.1.order ≤ b.1.order)) = heapSortedRef := by
+  have hp := List.mergeSort_perm
+    ([(Leaves.memory, 21), (.bytecode, 19)] ++ (List.range [18, 18, 18, 18, 17, 18].length).map
+        fun t ↦ (Leaves.table t, [18, 18, 18, 18, 17, 18].getD t 0)) heapLe
+  have hu : ([(Leaves.memory, 21), (.bytecode, 19)] ++ (List.range [18, 18, 18, 18, 17, 18].length).map
+        fun t ↦ (Leaves.table t, [18, 18, 18, 18, 17, 18].getD t 0)).Perm heapSortedRef := by
+    decide +kernel
+  refine List.Perm.eq_of_pairwise (le := fun a b ↦ heapLe a b = true) (fun a b ha hb h1 h2 ↦ ?_)
+    (List.pairwise_mergeSort heapLe_trans heapLe_total _) (by decide +kernel) (hp.trans hu)
+  exact heapLe_antisymm a ((hp.trans hu).mem_iff.mp ha) b hb h1 h2
+
+/-- A block as a tuple. -/
+def Block.toTuple (b : Block) : Leaves × ℕ × ℕ := (b.leaves, b.r, b.position)
+
+/-- A tuple as a block. -/
+def Block.ofTuple (t : Leaves × ℕ × ℕ) : Block := ⟨t.1, t.2.1, t.2.2⟩
+
+/-- The reference heap's blocks: the eight used (largest first, from leaf `2^22`), then one unused
+block of `2^17` leaves. -/
+def heapBlocksRef : List (Leaves × ℕ × ℕ) :=
+  [(.memory, 21, 4194304), (.bytecode, 19, 6291456), (.table 0, 18, 6815744), (.table 1, 18, 7077888),
+    (.table 2, 18, 7340032), (.table 3, 18, 7602176), (.table 5, 18, 7864320), (.table 4, 17, 8126464),
+    (.unused, 17, 8257536)]
+
+/-- **The reference heap**: `2^23` positions, its blocks. -/
+theorem heap_reference : reference.heap.h = 23 ∧ reference.heap.blocks.map Block.toTuple = heapBlocksRef := by
+  rw [reference_eq]
+  unfold Shape.heap HeapLayout.new
+  dsimp only
+  rw [heapSorted]
+  decide +kernel
+
+theorem heap_blocks_reference : reference.heap.blocks = heapBlocksRef.map Block.ofTuple := by
+  rw [← heap_reference.2, List.map_map]
+  conv_lhs => rw [← List.map_id reference.heap.blocks]
+  exact List.map_congr_left fun b _ ↦ by cases b; rfl
+
+/-- **The heap's blocks at the reference shape** fill the leaves end to end, aligned. -/
+theorem heapGood_reference : HeapGood reference := by
+  unfold HeapGood
+  rw [heap_reference.1, heap_blocks_reference]
+  refine ⟨by norm_num, by norm_num, by decide +kernel, by decide +kernel, by decide +kernel, ?_⟩
+  rw [reference_eq]
+  simp [heapBlocksRef, Block.ofTuple]
+
+/-! ## The basis-`B` inverse (`BasisValueInv`)
+
+For `r ≤ 24` and `x < 2^r`, with `y_l = S^l(B(x))` (`= ω_{x >> l}`, the digits): `basisValue c r x` is
+`Σ_k c_k Π_l (k_l ? y_l : 1 + y_l)` (`mleK_eq`). Write `gv r f a = Σ_{k<2^r} a_k Π_{l<r} f_l(k_l)`:
+subset-sum stage `l` (`ssStage`) turns factor `l` from `(y, 1 + y)` into `(y, 1 + y + y) = (y, 1)`
+(`stage_gv`, pairing `k` with `k + 2^l`), so after all `r` stages (`subsetSums`) the sum is the
+novel-basis polynomial `Σ_j d_j X_j(B(x))`, `d` the novel-basis coefficients of `v`: that is `v_x`. -/
+
+/-- `Σ_{k<2^r} a_k Π_{l<r} f_l(bit l of k)`. -/
+def gv (r : ℕ) (f : ℕ → Bool → K) (a : ℕ → K) : K :=
+  ∑ k ∈ range (2 ^ r), a k * ∏ l ∈ range r, f l (k.testBit l)
+
+theorem sum_range_two_mul (g : ℕ → K) : ∀ m : ℕ,
+    ∑ k ∈ range (2 * m), g k = ∑ i ∈ range m, (g (2 * i) + g (2 * i + 1))
+  | 0 => by simp
+  | m + 1 => by
+    rw [show 2 * (m + 1) = 2 * m + 1 + 1 by ring, Finset.sum_range_succ, Finset.sum_range_succ,
+      sum_range_two_mul g m, Finset.sum_range_succ, add_assoc]
+
+/-- One fold of `mleK`. -/
+def foldK (cur : Array K) (p : K) : Array K := Array.ofFn (n := cur.size / 2) fun i ↦
+  cur.getD (2 * i.val) 0 + p * (cur.getD (2 * i.val) 0 + cur.getD (2 * i.val + 1) 0)
+
+theorem mleK_cons (c : Array K) (p : K) (ps : List K) : mleK c (p :: ps) = mleK (foldK c p) ps := rfl
+
+theorem testBit_two_mul (i l : ℕ) : (2 * i).testBit (l + 1) = i.testBit l := by
+  rw [Nat.testBit_add_one, show 2 * i / 2 = i by omega]
+
+theorem testBit_two_mul_add_one (i l : ℕ) : (2 * i + 1).testBit (l + 1) = i.testBit l := by
+  rw [Nat.testBit_add_one, show (2 * i + 1) / 2 = i by omega]
+
+/-- **`mleK` is the multilinear extension**: `Σ_k c_k Π_l (k_l ? p_l : 1 + p_l)`. -/
+theorem mleK_eq : ∀ (pts : List K) (c : Array K), c.size = 2 ^ pts.length →
+    mleK c pts = ∑ k ∈ range (2 ^ pts.length), c.getD k 0 *
+      ∏ l ∈ range pts.length, (if k.testBit l then pts.getD l 0 else 1 + pts.getD l 0)
+  | [], c, _ => by simp [mleK]
+  | p :: ps, c, hc => by
+    have hs : (foldK c p).size = 2 ^ ps.length := by
+      rw [foldK, Array.size_ofFn, hc, List.length_cons, pow_succ, Nat.mul_div_cancel _ (by norm_num)]
+    rw [mleK_cons, mleK_eq ps _ hs, List.length_cons, pow_succ, mul_comm (2 ^ ps.length) 2,
+      sum_range_two_mul]
+    refine Finset.sum_congr rfl fun i hi ↦ ?_
+    have hi' : i < 2 ^ ps.length := Finset.mem_range.mp hi
+    rw [Finset.prod_range_succ', Finset.prod_range_succ']
+    have hg : (foldK c p).getD i 0 = c.getD (2 * i) 0 + p * (c.getD (2 * i) 0 + c.getD (2 * i + 1) 0) := by
+      simp [foldK, Array.getD_eq_getD_getElem?, hc, pow_succ, hi']
+    have h0 : (2 * i).testBit 0 = false := by simp [Nat.testBit_zero]
+    have h1 : (2 * i + 1).testBit 0 = true := by simp [Nat.testBit_zero]
+    simp only [testBit_two_mul, testBit_two_mul_add_one, h0, h1, List.getD_cons_succ,
+      List.getD_cons_zero, hg]
+    simp only [Bool.false_eq_true, ↓reduceIte]
+    ring
+
+/-- Stage `l` of `subsetSums`. -/
+def ssStage (a : Array K) (l : ℕ) : Array K := Array.ofFn (n := a.size) fun k ↦
+  if k.val.testBit l then a.getD k.val 0 + a.getD (k.val - 2 ^ l) 0 else a.getD k.val 0
+
+theorem subsetSums_eq (r : ℕ) (d : Array K) : subsetSums r d = (List.range r).foldl ssStage d := rfl
+
+theorem ssStage_size (a : Array K) (l : ℕ) : (ssStage a l).size = a.size := Array.size_ofFn
+
+theorem foldl_ssStage_size (d : Array K) : ∀ j, ((List.range j).foldl ssStage d).size = d.size
+  | 0 => rfl
+  | j + 1 => by
+    rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil, ssStage_size,
+      foldl_ssStage_size d j]
+
+theorem ssStage_getD (a : Array K) (l k : ℕ) (hk : k < a.size) :
+    (ssStage a l).getD k 0 =
+      a.getD k 0 + if k.testBit l then a.getD (k - 2 ^ l) 0 else 0 := by
+  simp only [ssStage, Array.getD_eq_getD_getElem?, Array.getElem?_ofFn, hk]
+  split_ifs <;> simp_all
+
+/-- Bit `m` of `j + 2^l`, bit `l` of `j` clear. -/
+theorem testBit_add_two_pow_of_false {j l : ℕ} (h : j.testBit l = false) (m : ℕ) :
+    (j + 2 ^ l).testBit m = (decide (m = l) || j.testBit m) := by
+  have hj : j = 2 ^ l * (j / 2 ^ l) + j % 2 ^ l := (Nat.div_add_mod j (2 ^ l)).symm
+  have hlt : j % 2 ^ l < 2 ^ l := Nat.mod_lt _ (by positivity)
+  have hq : (j / 2 ^ l) % 2 = 0 := by
+    have := Nat.testBit_div_two_pow (n := l) j 0
+    rw [zero_add, h, Nat.testBit_zero] at this
+    simpa using this
+  have e : j + 2 ^ l = 2 ^ l * (j / 2 ^ l + 1) + j % 2 ^ l := by
+    conv_lhs => rw [hj]
+    ring
+  rw [e, Nat.testBit_two_pow_mul_add _ hlt]
+  conv_rhs => rw [hj, Nat.testBit_two_pow_mul_add _ hlt]
+  by_cases hm : m < l
+  · simp [hm, show m ≠ l by omega]
+  · simp only [hm, ↓reduceIte]
+    rcases Nat.eq_or_lt_of_le (not_lt.mp hm) with rfl | hml
+    · simp only [Nat.sub_self, Nat.testBit_zero, decide_true, Bool.true_or, decide_eq_true_eq]
+      omega
+    · obtain ⟨s, hs⟩ : ∃ s, m - l = s + 1 := ⟨m - l - 1, by omega⟩
+      rw [hs, Nat.testBit_add_one, Nat.testBit_add_one, show (j / 2 ^ l + 1) / 2 = j / 2 ^ l / 2 by omega]
+      simp [show m ≠ l by omega]
+
+/-- Factor `l` turned (`(f_l(true), f_l(false))` to `(f_l(true), f_l(false) + f_l(true))`). -/
+def upd (f : ℕ → Bool → K) (l : ℕ) : ℕ → Bool → K := fun m b ↦
+  if m = l then (if b then f l true else f l false + f l true) else f m b
+
+/-- A row's product, factor `l` taken out. -/
+theorem prod_split (r l : ℕ) (hl : l < r) (g : ℕ → Bool → K) (k : ℕ) :
+    ∏ m ∈ range r, g m (k.testBit m) =
+      g l (k.testBit l) * ∏ m ∈ (range r).erase l, g m (k.testBit m) :=
+  (Finset.mul_prod_erase _ (fun m ↦ g m (k.testBit m)) (Finset.mem_range.mpr hl)).symm
+
+/-- **The turned factor's product**: `P_upd(k) = P(k) + [k_l = 0] P(k + 2^l)`. -/
+theorem prod_upd (r l : ℕ) (hl : l < r) (f : ℕ → Bool → K) (k : ℕ) :
+    ∏ m ∈ range r, upd f l m (k.testBit m) =
+      ∏ m ∈ range r, f m (k.testBit m) +
+        if k.testBit l then 0 else ∏ m ∈ range r, f m ((k + 2 ^ l).testBit m) := by
+  rw [prod_split r l hl, prod_split r l hl f, prod_split r l hl f (k + 2 ^ l)]
+  have hrest : ∀ k' : ℕ, ∏ m ∈ (range r).erase l, upd f l m (k'.testBit m) =
+      ∏ m ∈ (range r).erase l, f m (k'.testBit m) := fun k' ↦
+    Finset.prod_congr rfl fun m hm ↦ by simp [upd, Finset.ne_of_mem_erase hm]
+  rw [hrest]
+  cases hk : k.testBit l
+  · have hrest' : ∏ m ∈ (range r).erase l, f m ((k + 2 ^ l).testBit m) =
+        ∏ m ∈ (range r).erase l, f m (k.testBit m) :=
+      Finset.prod_congr rfl fun m hm ↦ by
+        rw [testBit_add_two_pow_of_false hk, decide_eq_false (Finset.ne_of_mem_erase hm), Bool.false_or]
+    rw [hrest', testBit_add_two_pow_of_false hk]
+    simp only [upd, ↓reduceIte, Bool.false_eq_true, decide_true, Bool.true_or]
+    ring
+  · simp [upd]
+
+/-- The pairing `k ↦ k − 2^l` of the rows with bit `l` set with those without. -/
+theorem sum_pair (r l : ℕ) (hl : l < r) (A : ℕ → K) (P : ℕ → K) :
+    ∑ k ∈ range (2 ^ r), (if k.testBit l then A (k - 2 ^ l) * P k else 0) =
+      ∑ k ∈ range (2 ^ r), (if k.testBit l then 0 else A k * P (k + 2 ^ l)) := by
+  rw [← Finset.sum_filter]
+  have e : ∀ k, (if k.testBit l then (0 : K) else A k * P (k + 2 ^ l)) =
+      if k.testBit l = false then A k * P (k + 2 ^ l) else 0 := fun k ↦ by cases k.testBit l <;> rfl
+  simp only [e]
+  rw [← Finset.sum_filter]
+  refine Finset.sum_nbij' (fun k ↦ k - 2 ^ l) (fun j ↦ j + 2 ^ l) ?_ ?_ ?_ ?_ ?_
+  · intro k hk
+    simp only [Finset.mem_filter, Finset.mem_range] at hk ⊢
+    have hge := Nat.ge_two_pow_of_testBit hk.2
+    refine ⟨lt_of_le_of_lt (Nat.sub_le _ _) hk.1, ?_⟩
+    have := Nat.testBit_two_pow_add_eq (k - 2 ^ l) l
+    rw [show 2 ^ l + (k - 2 ^ l) = k by omega, hk.2] at this
+    revert this
+    cases (k - 2 ^ l).testBit l <;> simp
+  · intro j hj
+    simp only [Finset.mem_filter, Finset.mem_range] at hj ⊢
+    refine ⟨Nat.lt_pow_two_of_testBit _ fun i hi ↦ ?_, ?_⟩
+    · rw [testBit_add_two_pow_of_false hj.2, decide_eq_false (by omega), Bool.false_or]
+      exact Nat.testBit_lt_two_pow (lt_of_lt_of_le hj.1 (Nat.pow_le_pow_right (by norm_num) hi))
+    · rw [testBit_add_two_pow_of_false hj.2]
+      simp
+  · intro k hk
+    simp only [Finset.mem_filter, Finset.mem_range] at hk
+    have := Nat.ge_two_pow_of_testBit hk.2
+    show k - 2 ^ l + 2 ^ l = k
+    omega
+  · intro j _
+    show j + 2 ^ l - 2 ^ l = j
+    omega
+  · intro k hk
+    simp only [Finset.mem_filter, Finset.mem_range] at hk
+    have := Nat.ge_two_pow_of_testBit hk.2
+    show A (k - 2 ^ l) * P k = A (k - 2 ^ l) * P (k - 2 ^ l + 2 ^ l)
+    rw [show k - 2 ^ l + 2 ^ l = k by omega]
+
+/-- **Stage `l` turns factor `l`.** -/
+theorem stage_gv (r l : ℕ) (hl : l < r) (f : ℕ → Bool → K) (a : Array K) (ha : a.size = 2 ^ r) :
+    gv r f (fun k ↦ (ssStage a l).getD k 0) = gv r (upd f l) (fun k ↦ a.getD k 0) := by
+  unfold gv
+  have hL : ∀ k ∈ range (2 ^ r), (ssStage a l).getD k 0 * ∏ m ∈ range r, f m (k.testBit m) =
+      a.getD k 0 * ∏ m ∈ range r, f m (k.testBit m) +
+        if k.testBit l then a.getD (k - 2 ^ l) 0 * ∏ m ∈ range r, f m (k.testBit m) else 0 :=
+    fun k hk ↦ by
+      rw [ssStage_getD a l k (by rw [ha]; exact Finset.mem_range.mp hk)]
+      split_ifs <;> ring
+  have hR : ∀ k ∈ range (2 ^ r), a.getD k 0 * ∏ m ∈ range r, upd f l m (k.testBit m) =
+      a.getD k 0 * ∏ m ∈ range r, f m (k.testBit m) +
+        if k.testBit l then 0 else a.getD k 0 * ∏ m ∈ range r, f m ((k + 2 ^ l).testBit m) :=
+    fun k _ ↦ by
+      rw [prod_upd r l hl]
+      split_ifs <;> ring
+  rw [Finset.sum_congr rfl hL, Finset.sum_congr rfl hR, Finset.sum_add_distrib, Finset.sum_add_distrib,
+    sum_pair r l hl (fun k ↦ a.getD k 0) fun k ↦ ∏ m ∈ range r, f m (k.testBit m)]
+
+/-- The first `j` factors turned. -/
+def conv (j : ℕ) (f : ℕ → Bool → K) : ℕ → Bool → K := fun m b ↦
+  if m < j then (if b then f m true else f m false + f m true) else f m b
+
+theorem conv_upd (j : ℕ) (f : ℕ → Bool → K) : conv j (upd f j) = conv (j + 1) f := by
+  funext m b
+  unfold conv upd
+  by_cases h1 : m < j
+  · simp [h1, show m ≠ j by omega, show m < j + 1 by omega]
+  · by_cases h2 : m = j
+    · subst h2
+      simp
+    · simp [h1, h2, show ¬ m < j + 1 by omega]
+
+/-- **The stages turn the factors**, one each. -/
+theorem stages_gv (r : ℕ) (d : Array K) (hd : d.size = 2 ^ r) : ∀ j ≤ r, ∀ f : ℕ → Bool → K,
+    gv r f (fun k ↦ ((List.range j).foldl ssStage d).getD k 0) = gv r (conv j f) (fun k ↦ d.getD k 0)
+  | 0, _, f => by
+    have : conv 0 f = f := by funext m b; simp [conv]
+    rw [this]
+    rfl
+  | j + 1, hj, f => by
+    have e : (List.range (j + 1)).foldl ssStage d = ssStage ((List.range j).foldl ssStage d) j := by
+      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    rw [e, stage_gv r j (by omega) f _ (by rw [foldl_ssStage_size, hd]),
+      stages_gv r d hd j (by omega) (upd f j), conv_upd]
+
+/-- **The basis-`B` coefficients are the values'** (`bCoefficients`, `basisValue`), `r ≤ 24`. -/
+theorem basisValueInv : BasisValueInv := by
+  intro r hr v hv x hx
+  have hB := cantorUpTo_le hr
+  have hr28 : r ≤ PcsQuotient.Domain.basisSize := by unfold PcsQuotient.Domain.basisSize; omega
+  set d := PcsQuotient.Domain.coefficients r 0 v with hd_def
+  have hd : d.size = 2 ^ r := by rw [hd_def, Bridge.Ntt.coefficients_size, hv]
+  -- The digits `y_l = ω_{x >> l} = S^l(B(x))`.
+  set y : ℕ → K := fun l ↦ PcsQuotient.Domain.S^[l] (PcsQuotient.Domain.point x) with hy
+  have hpts : ∀ l < r, ((List.range r).map fun l ↦ point (x >>> l)).getD l 0 = y l := by
+    intro l hl
+    rw [List.getD_eq_getElem?_getD, List.getElem?_map, List.getElem?_range hl, Option.map_some,
+      Option.getD_some, Nat.shiftRight_eq_div_pow, hy]
+    dsimp only
+    rw [point_eq_domain (lt_of_le_of_lt (Nat.div_le_self _ _)
+        (lt_of_lt_of_le hx (Nat.pow_le_pow_right (by norm_num) hr))),
+      Bridge.Ntt.iterate_point hB hr28 hx hl.le]
+  have hlen : ((List.range r).map fun l ↦ point (x >>> l)).length = r := by simp
+  -- `basisValue` is `gv` with the basis-`B` factors.
+  have h1 : basisValue (bCoefficients r v) r x =
+      gv r (fun l b ↦ if b then y l else 1 + y l) (fun k ↦ (bCoefficients r v).getD k 0) := by
+    unfold basisValue
+    rw [mleK_eq _ _ (by rw [hlen, bCoefficients, subsetSums_eq, foldl_ssStage_size, hd]), hlen, gv]
+    refine Finset.sum_congr rfl fun k _ ↦ congrArg _ (Finset.prod_congr rfl fun l hl ↦ ?_)
+    rw [hpts l (Finset.mem_range.mp hl)]
+  rw [h1, bCoefficients, subsetSums_eq, ← hd_def, stages_gv r d hd r le_rfl, gv]
+  -- The turned factors are the novel basis's: `1 + y + y = 1`.
+  have h2 : ∀ k ∈ range (2 ^ r), d.getD k 0 * ∏ l ∈ range r,
+      conv r (fun l b ↦ if b then y l else 1 + y l) l (k.testBit l) =
+        Bridge.Ntt.X r k (0 + PcsQuotient.Domain.point x) * d.getD k 0 := fun k _ ↦ by
+    rw [mul_comm, zero_add, Bridge.Ntt.X]
+    congr 1
+    refine Finset.prod_congr rfl fun l hl ↦ ?_
+    have hl' : l < r := Finset.mem_range.mp hl
+    cases k.testBit l
+    · simp only [conv, hl', ↓reduceIte, Bool.false_eq_true]
+      rw [add_assoc, CharTwo.add_self_eq_zero, add_zero]
+    · simp [conv, hl', hy]
+  rw [Finset.sum_congr rfl h2, ← Bridge.Ntt.values_getD_K hB hr28 0 d hd hx,
+    hd_def, Bridge.Ntt.values_coefficients_K r 0 v hv]
+
 end UniSound.Ids
 
 
@@ -765,3 +1336,35 @@ end UniSound.Ids
 /-- info: 'UniSound.Ids.functionalsCorrect18' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.Ids.functionalsCorrect18
+
+/-- info: 'UniSound.Ids.layoutAligned_new' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.layoutAligned_new
+
+/-- info: 'UniSound.Ids.limbs_new_single' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.limbs_new_single
+
+/-- info: 'UniSound.Ids.c1Limbs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.c1Limbs
+
+/-- info: 'UniSound.Ids.c1Limbs_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.c1Limbs_reference
+
+/-- info: 'UniSound.Ids.setupLimbs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.setupLimbs
+
+/-- info: 'UniSound.Ids.setupLimbs_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.setupLimbs_reference
+
+/-- info: 'UniSound.Ids.heapGood_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.heapGood_reference
+
+/-- info: 'UniSound.Ids.basisValueInv' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Ids.basisValueInv
