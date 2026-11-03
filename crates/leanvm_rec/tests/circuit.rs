@@ -253,6 +253,12 @@ fn pi1_rec_d16v() {
     deep(|| run("main_line_rec", Layout::D16v, 24, (0.80, 0.90)));
 }
 
+/// π1-rec2 (SPEC-REC.md §12): the walk of the BLAKE2s circuit in π1's verifier, no claims on `A0`, `B0`: still `2^24`.
+#[test]
+fn pi1_rec2_d16v() {
+    deep(|| run("main_line_rec2", Layout::D16v, 24, (0.80, 0.99)));
+}
+
 #[test]
 fn pi1_rec_d32v() {
     deep(|| run("main_line_rec", Layout::D32v, 23, (0.60, 0.75)));

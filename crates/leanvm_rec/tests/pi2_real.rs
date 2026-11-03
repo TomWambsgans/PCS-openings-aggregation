@@ -113,6 +113,7 @@ fn gas(name: &str, layout: Layout) {
 #[ignore]
 fn real_gas() {
     deep(|| {
+        gas("main_line_rec2", Layout::D16v);
         gas("main_line_rec", Layout::D16v);
         gas("main_line_rec", Layout::D32v);
         gas("main_line", Layout::D32v);
@@ -179,7 +180,7 @@ fn real_end_to_end() {
             .map(|words| words.concat())
             .collect();
         let registry = contract::block(&inst, &[]);
-        for (k, (made, opening)) in expected[..5].iter().zip(&pi1_openings).enumerate() {
+        for (k, (made, opening)) in expected[..pi1_openings.len()].iter().zip(&pi1_openings).enumerate() {
             assert_eq!(
                 registry.decode(made).as_ref(),
                 Some(opening),
@@ -213,8 +214,10 @@ fn real_end_to_end() {
         }
         contract::parity(&inst, &recorded, &public_input, &stream);
         println!(
-            "end to end: π1's real proof → π2's proof ({} B of calldata) → the contract accepts, PCS_OPEN attesting its 9 claims; {} flipped bytes rejected",
+            "end to end: π1's real proof → π2's proof ({} B of calldata) → the contract accepts, PCS_OPEN attesting its {} claims in {} calls; {} flipped bytes rejected",
             data.len(),
+            block.iter().map(|o| o.claims.len()).sum::<usize>(),
+            block.len(),
             flips.len()
         );
     });

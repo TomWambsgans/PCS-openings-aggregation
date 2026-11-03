@@ -152,6 +152,8 @@ pub enum Matrices {
     Done { point: Vec<E>, a: E, b: E },
     /// Its sum `Σ_(x, y) G'(x, y) L̂(x) ŝ(y)`, run by the batching sumcheck.
     Pending(Pending),
+    /// None: the verifier walks the circuit (π1-rec2, `Slices::TowerWalk`).
+    Walked,
 }
 
 /// The matrices' reduction left to the batching sumcheck: its three tables over the skip's `k` row bits (low) and the
@@ -330,8 +332,22 @@ pub fn prove(
     }
     let slices_end = writer.stream.len();
 
-    // The matrices' reduction: Σ_(x, y) L(x) s(y) G'(x, y) over the skip's k row bits and the 6 packing bits.
     let reduction_secs = started.elapsed().as_secs_f64();
+    // π1-rec2: the verifier checks the lincheck's terminal by walking the circuit; nothing more is sent before the
+    // ring map's challenges.
+    if variant.slices == Slices::TowerWalk {
+        for _ in 0..RING_MAP_CHALLENGES {
+            writer.sample();
+        }
+        return Ok(FlockOut {
+            point,
+            slices,
+            slices_end,
+            matrices: Matrices::Walked,
+            reduction_secs,
+        });
+    }
+    // The matrices' reduction: Σ_(x, y) L(x) s(y) G'(x, y) over the skip's k row bits and the 6 packing bits.
     let g = sliced(k, row_low, chi_in, &chi_in_prime, alpha);
     let skip = lagrange_weights(1 << k, z_skip);
     let size = (1 << k) * K_BITS;

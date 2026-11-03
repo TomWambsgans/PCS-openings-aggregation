@@ -48,6 +48,11 @@ pub enum Slices {
     /// As [`Slices::Weighted`], with the ring map's stages in tower order ([`crate::ring_tower`]): the target through
     /// `K`'s subfields, the weight at a point from the inside out.
     Tower,
+    /// As [`Slices::Tower`], and the lincheck's terminal checked by a walk of the BLAKE2s circuit on the sent slices
+    /// (leanVM's own check, [`walked_terminal`]): no matrices' reduction, no claims on `A0`, `B0`. Too dear for a
+    /// contract (about 49,000 products), it is for a verifier that runs inside a recursion (`crates/leanvm_rec`,
+    /// π1-rec2: `SPEC-REC.md` §12), where it costs positions of π2's circuit instead of calldata and calls.
+    TowerWalk,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,7 +78,12 @@ impl Variant {
     pub fn scalars(&self, log_n: usize) -> usize {
         let skip = if self.skip > 0 { 1 << self.skip } else { 0 };
         let slices = if self.slices == Slices::Claim { 0 } else { K_BITS };
-        skip + 2 * (log_n - self.skip) + 2 + 2 * FLOCK_NUM_LINCHECK_ROUNDS + slices + 2 * (self.skip + PACKING) + 2
+        let matrices = if self.slices == Slices::TowerWalk {
+            0
+        } else {
+            2 * (self.skip + PACKING) + 2
+        };
+        skip + 2 * (log_n - self.skip) + 2 + 2 * FLOCK_NUM_LINCHECK_ROUNDS + slices + matrices
     }
 }
 
@@ -141,12 +151,75 @@ fn row_low_weights<S: Scalar>(z_skip: Option<S>, low: &[S]) -> (Vec<S>, Vec<S>) 
     (skip, weights)
 }
 
+/// Flock with the lincheck's terminal checked by the circuit's walk ([`Slices::TowerWalk`]): the zerocheck, the
+/// lincheck, the slices, the terminal `r_lc` against [`walked_terminal`], then the ring switch's map and target. What it
+/// leaves: the slices' point and the ring switch's end (no claims on `A0`, `B0`).
+pub fn verify_walked<S: Scalar>(
+    log_n: usize,
+    variant: Variant,
+    transcript: &mut impl Channel<S>,
+) -> Result<(Vec<S>, End<S>), VerifierError> {
+    assert_eq!(variant.slices, Slices::TowerWalk, "the walked variant");
+    let front = front(log_n, variant, transcript)?;
+    let slices = front.slices.as_ref().expect("the walked variant sends the slices");
+    let terminal = {
+        let _phase = enter("flock lincheck: the terminal by the circuit's walk");
+        walked_terminal(
+            front.z_skip,
+            &front.row_low,
+            &front.chi_in,
+            &front.chi_in_prime,
+            slices,
+            front.alpha,
+        )
+    };
+    transcript.require_zero(terminal + front.r_lc, VerifierError::FlockMatrixTerminal)?;
+    let end = ring_end(variant, &front, slices, transcript);
+    Ok((front.point, end))
+}
+
+/// The lincheck's terminal as leanVM's verifier computes it, at the skip's `k` row bits (`PACKING - row_low.len()`):
+/// the matrix terms `Σ_(row, col) e(row) (Â0 + α B̂0)(row, col) w(col)`, `e = (L(z_skip) ⊗ eq(row_low)) ⊗ eq(chi_in)`
+/// and `w = s ⊗ eq(chi_in')` (one forward walk of the BLAKE2s circuit gives `A0 w` and `B0 w`), the `C = I` claim's
+/// term and the constant position's pin. About `2^14` products for `w`, `2 · 2^14` for the sums, the walk's additions.
+pub fn walked_terminal<S: Scalar>(
+    z_skip: Option<S>,
+    row_low: &[S],
+    chi_in: &[S],
+    chi_in_prime: &[S],
+    s: &[S],
+    alpha: S,
+) -> S {
+    let (_, low_weights) = row_low_weights(z_skip, row_low);
+    let high = eq_kernel(chi_in_prime);
+    let mut w = vec![S::zero(); 1 << BLAKE2S_R1CS_LOG_SIZE];
+    for (h, &weight) in high.iter().enumerate() {
+        for (l, &slice) in s.iter().enumerate() {
+            w[h * K_BITS + l] = slice * weight;
+        }
+    }
+    let (left, right) = crate::flock::blake2s_row_values(&w);
+    let rows = eq_kernel(chi_in);
+    let mut matrix = S::zero();
+    for (h, &row_weight) in rows.iter().enumerate() {
+        let (mut l_sum, mut r_sum) = (S::zero(), S::zero());
+        for (low, &weight) in low_weights.iter().enumerate() {
+            l_sum += weight * left[h * K_BITS + low];
+            r_sum += weight * right[h * K_BITS + low];
+        }
+        matrix += row_weight * (l_sum + alpha * r_sum);
+    }
+    let (c_weight, pin_weight) = known_weights(alpha, chi_in, chi_in_prime);
+    matrix + c_weight * dot(&low_weights, s) + pin_weight * s[BLAKE2S_CONSTANT_COLUMN % K_BITS]
+}
+
 /// Flock at `log_n = 14 + log(instances)` variables, as `variant` has it.
 pub fn verify<S: Scalar>(
     log_n: usize,
     variant: Variant,
     transcript: &mut impl Channel<S>,
 ) -> Result<Reduced<S>, VerifierError> {
+    assert_ne!(variant.slices, Slices::TowerWalk, "the walked variant is verify_walked's");
     let front = front(log_n, variant, transcript)?;
     let (matrices, combination) = reduce_terminal(
         transcript,
@@ -180,6 +253,7 @@ pub fn verify_deferred<S: Scalar>(
     variant: Variant,
     transcript: &mut impl Channel<S>,
 ) -> Result<(Vec<S>, Option<End<S>>, Pending<S>), VerifierError> {
+    assert_ne!(variant.slices, Slices::TowerWalk, "the walked variant is verify_walked's");
     let front = front(log_n, variant, transcript)?;
     let pending = Pending::new(
         front.z_skip,
@@ -357,7 +431,7 @@ fn front<S: Scalar>(log_n: usize, variant: Variant, transcript: &mut impl Channe
 fn ring_end<S: Scalar>(variant: Variant, front: &Front<S>, s: &[S], transcript: &mut impl Channel<S>) -> End<S> {
     let _phase = enter("ring switch: map, coefficients, target");
     let map = transcript.samples(crate::flock::RING_MAP_SHIFTS.len());
-    let target = if variant.slices == Slices::Tower {
+    let target = if matches!(variant.slices, Slices::Tower | Slices::TowerWalk) {
         crate::ring_tower::target(s, &map)
     } else {
         let images: Vec<S> = s.iter().map(|&value| ring_map(value, &map)).collect();
@@ -724,6 +798,46 @@ mod tests {
                 verify::<E>(log_n, variant, &mut channel).expect("reads what it states");
                 channel.finish().expect("nothing left");
             }
+        }
+    }
+
+    /// The walked variant's terminal is leanVM's walk (the test's reference `walked`) at every skip size, and its
+    /// verifier reads exactly `scalars` (no matrices' rounds, no `a`, `b`).
+    #[test]
+    fn the_walked_terminal_is_leanvms() {
+        for k in [6, 3, 0] {
+            let mut seed = 0x0a1c_e5ed ^ k as u64;
+            let z_skip = element(&mut seed);
+            let low: Vec<E> = (0..PACKING - k).map(|_| element(&mut seed)).collect();
+            let chi_in: Vec<E> = (0..8).map(|_| element(&mut seed)).collect();
+            let chi_in_prime: Vec<E> = (0..8).map(|_| element(&mut seed)).collect();
+            let s: Vec<E> = (0..K_BITS).map(|_| element(&mut seed)).collect();
+            let alpha = element(&mut seed);
+            let z = (k > 0).then_some(z_skip);
+            assert_eq!(
+                walked_terminal(z, &low, &chi_in, &chi_in_prime, &s, alpha),
+                walked(k, z_skip, &low, &chi_in, &chi_in_prime, &s, alpha),
+                "skip {k}"
+            );
+        }
+        for (skip, fs) in [3, 6].into_iter().flat_map(|k| [(k, FsShape::Main), (k, FsShape::Rec)]) {
+            let variant = Variant {
+                skip,
+                slices: Slices::TowerWalk,
+                fs,
+            };
+            let log_n = BLAKE2S_R1CS_LOG_SIZE + 8;
+            let stream = vec![0x5au8; 24 * variant.scalars(log_n)];
+            let mut channel = KeccakChannel::new(
+                [7; 32],
+                &stream,
+                Checks::Collect {
+                    zero: vec![],
+                    nonzero: vec![],
+                },
+            );
+            verify_walked::<E>(log_n, variant, &mut channel).expect("reads what it states");
+            channel.finish().expect("nothing left");
         }
     }
 }

@@ -860,3 +860,10 @@ in `PI2.md` §9.
    of `h(t)` and `q(t)`, with one inversion at the end. 1,844 → 1,796 B; execution 39,674 → 35,787; 73,550 → 71,630.
 3. **The fold's siblings** (π2's verifier only). The row's cells fold with half the products (`ω_{2k+1} = ω_{2k} + 1`).
    Execution 35,787 → 35,212; the floor binds (71,630).
+4. **π1-rec2: no claims on `A0`, `B0`** (**π1's Fiat–Shamir shape and claims change**; `FLOCK_REC2`,
+   `Slices::TowerWalk`). Flock's lincheck terminal is checked by π1's verifier walking the BLAKE2s circuit (leanVM's
+   check), so the matrices' reduction leaves the batching sumcheck, `a`, `b` leave the stream (7,072 → 7,024 B), and the
+   claims are three, `C1`, `C2`, `F`, all at the batch's point `r` (27 coordinates; was 46). π2 grows to 94.7% of
+   `2^24`. π2's public elements 51 → 30, calls 8 → 6. 1,796 → 1,292 B; execution 35,212 → 32,646; EIP-7623 `c = 0`
+   71,630 → 53,270. This is lever 1(a) taken further: `A0`, `B0` need no point at all. For lever 1(b)'s design
+   (branch `leanvm-rec-points`) it removes the matrices' claims from the problem.

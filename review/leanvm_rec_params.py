@@ -290,6 +290,9 @@ def main():
     openings = 5 + 3
     print(f"  WHIR openings: pi1's 5 + pi2's 3 = {openings}, {WHIR_BITS} bits each: a plain union"
           f" {WHIR_BITS - math.log2(openings):.1f}; in the query-bounded model about {WHIR_BITS:.1f}")
+    # pi1-rec2 (SPEC-REC.md §12 item 4): no claims on A0, B0 (the lincheck's terminal by the circuit's walk).
+    openings = 3 + 3
+    print(f"  pi1-rec2: pi1's 3 + pi2's 3 = {openings} openings: a plain union {WHIR_BITS - math.log2(openings):.1f}")
 
     print("\n== gas (MODELLED): transaction gas without the 21,000 base; claims c = 0 / 2K / 5K / 20K")
     configs = [

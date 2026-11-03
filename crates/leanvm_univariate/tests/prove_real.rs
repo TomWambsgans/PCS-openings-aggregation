@@ -20,7 +20,7 @@ use leanvm_univariate::prover::opening;
 use leanvm_univariate::prover::poly::to_v;
 use leanvm_univariate::prover::prove::{Config, OpeningProof, Proof, prove, verify};
 use leanvm_univariate::prover::trace::{Trace, placement};
-use leanvm_univariate::{Blake2s, Claims, FLOCK_LEANVM_SKIP, FLOCK_MAIN, FLOCK_REC};
+use leanvm_univariate::{Blake2s, Claims, FLOCK_LEANVM_SKIP, FLOCK_MAIN, FLOCK_REC, FLOCK_REC2};
 use primitives::field::F192;
 
 fn dir() -> Option<std::path::PathBuf> {
@@ -423,6 +423,14 @@ fn proves_and_verifies_main_line() {
 #[ignore]
 fn proves_and_verifies_main_line_rec() {
     end_to_end(Blake2s::Flock(FLOCK_REC));
+}
+
+/// π1-rec2 (`crates/leanvm_rec/SPEC-REC.md` §12): π1-rec with Flock's lincheck terminal checked by the circuit's walk
+/// (`FLOCK_REC2`, `Slices::TowerWalk`): no matrices' reduction, three claims (`C1`, `C2`, `F`).
+#[test]
+#[ignore]
+fn proves_and_verifies_main_line_rec2() {
+    end_to_end(Blake2s::Flock(FLOCK_REC2));
 }
 
 /// Extension B: Flock (a), its skip of 4, the slices not sent, the matrices' reduction in the batch whose terminal

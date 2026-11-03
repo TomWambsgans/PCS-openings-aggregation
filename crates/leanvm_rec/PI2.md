@@ -278,6 +278,29 @@ proof; transaction gas without the 21,000 base, `c = 0`. Each row is one commit.
 | before (9d1bf46, and the review's fixes) | 1,844 B | 39,674 | 73,550 | 71,097 | |
 | **2: π2's values 19 → 17**, one final inversion | 1,796 B | 35,787 | 71,630 | 61,659 | `ξ = κ(t) + βσ(t)` sent for `σ(t)`, `κ(t)`; `h(t)` not sent |
 | **3a: the fold's siblings** | 1,796 B | 35,212 | 71,630 (floor) | 60,339 | `v_{2k+1} = v_{2k} + d`: 32 products, not 64 |
+| **1a′: π1-rec2, the BLAKE2s circuit walked inside π2** | 1,292 B | 32,646 | **53,270** | | no claims on `A0`, `B0`: 51 → 30 elements, 5 → 3 calls |
+
+**Lever 1a′: π1-rec2, the lincheck's terminal by the circuit's walk** (`leanvm_univariate::FLOCK_REC2`,
+`flock_min::Slices::TowerWalk`; SPEC-REC §12 item 4). π1's `A0`, `B0` claims (28 coordinates, 19 of them outside the
+batch's point, and 2 values) are what Flock's matrices' reduction leaves; π1-rec2 drops that reduction and checks the
+lincheck's terminal as leanVM's own verifier does, by one walk of the BLAKE2s circuit on the sent slices
+(`flock_min::walked_terminal`: `2^14` products for the column weights, `2 · 2^14` for the row sums, the walk's
+additions). Too dear for a contract, it costs π2 positions instead:
+
+- **π1-rec2** (measured, real 1,000-signature proof, `prove_real`'s `proves_and_verifies_main_line_rec2`): 6.3 s, 10.4 GB, the
+  same prover but no matrices' tables; the stream 7,072 → 7,024 B (no `a`, `b`); 14 zero checks (the terminal's
+  added); three claims (`C1`, `C2`, `F`), all at the batch's point `r`; vector `main_line_rec2.txt` (stream keccak
+  `92d372ae4324f2c9…`). Its own contract would be 5.5M gas (the walk on chain): it is only for π2.
+- **π2 on it** (`tests/circuit.rs`, `pi1_rec2_d16v`): still `N = 2^24`, now 15,880,064 positions used (94.7%, from
+  85.7%), 992,504 rows (1,045,551 in blocks), 144 selector pairs in 66 groups (from 120), 47 ports (from 67), 107
+  Keccak-f. `Q = 15N = 2^27.91` as before.
+- **The contract**: 30 public elements (27 coordinates and 3 values) instead of 51, 6 calls instead of 8, 7 claims:
+  1,292 B; execution 32,646 (the public side 6,794 → 4,723, `PCS_OPEN` 5,492 → 4,048; the indicators 4,686 → 6,134 for
+  the 24 more pairs). EIP-7623 at `c = 0` **53,270**: the standard price binds now (`16 B + execution`; the floor is
+  51,560), so execution counts from here on.
+- **Soundness**: no new challenge; the batch combines 3 claims instead of 4 (its terminal no longer the matrices'); the
+  openings are 6 (π1's 3, π2's 3): a plain union 128.97 − log₂ 6 = 126.4 bits (from 126.0).
+- **The prover of π2** on the real witness: prove 7.9 s, open 1.3 s, 11.9 GB.
 
 **Lever 3a: the fold's siblings.** At every level of the row's fold, the cells `2k` and `2k + 1` fold their parent at
 `z = w_l + ω_{2k}` and `z + 1` (`ω_{2k+1} = ω_{2k} + β_0`, `β_0 = 1`), so the odd one is the even one plus the

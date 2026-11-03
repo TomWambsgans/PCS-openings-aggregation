@@ -144,6 +144,7 @@ pub fn variant_bytes(blake2s: Blake2s) -> Vec<u8> {
         Slices::Weighted => 1,
         Slices::Claim => 2,
         Slices::Tower => 3,
+        Slices::TowerWalk => 4,
     };
     let mut out = b"fs-rec".to_vec();
     out.extend([v.skip as u8, slices]);

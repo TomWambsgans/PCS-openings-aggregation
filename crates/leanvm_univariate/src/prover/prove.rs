@@ -278,6 +278,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
         match out.matrices {
             Matrices::Done { point, a, b } => report.flock = Some((point, a, b)),
             Matrices::Pending(p) => pending = Some(p),
+            Matrices::Walked => {}
         }
         clock.lap(&mut report, "Flock: zerocheck, lincheck, slices");
     }
@@ -655,6 +656,7 @@ pub fn verify(
             }
         }
         (None, Blake2s::Omitted) => {}
+        (None, Blake2s::Flock(v)) if v.slices == leanvm_flock_gas::flock_min::Slices::TowerWalk => {}
         _ => return Err("Flock's matrices' claims".into()),
     }
     Ok(unproven)

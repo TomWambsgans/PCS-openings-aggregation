@@ -333,6 +333,16 @@ pub const FLOCK_REC: Variant = Variant {
     ..FLOCK_MAIN
 };
 
+/// **π1-rec2** (`crates/leanvm_rec/SPEC-REC.md` §12): π1-rec with Flock's lincheck terminal checked by a walk of the
+/// BLAKE2s circuit on the sent slices (leanVM's own check, `flock_min::walked_terminal`, [`Slices::TowerWalk`]): no
+/// matrices' reduction in the batching sumcheck, no `a`, `b` after it, no claims on `A0`, `B0`. Three claims in three
+/// calls (`C1`, `C2`, `F`), all at the batch's point. Too dear for a contract (the walk is about 49,000 products), it
+/// is for π2 to prove.
+pub const FLOCK_REC2: Variant = Variant {
+    slices: Slices::TowerWalk,
+    ..FLOCK_REC
+};
+
 /// The twist field of the term that stands for the whole ring-switch weight `Φ(eq(p, ·))` on the main line: the
 /// batch's weight evaluates it at its point by [`ring_tower::weight_at`] (64 twisted eq products and the map's stages)
 /// rather than as 64 terms with explicit coefficients (SPEC.md §13).
@@ -418,6 +428,11 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     // (SPEC.md §13): it is left pending here.
     let mut pending = None;
     let flock = match blake2s {
+        // π1-rec2: the lincheck's terminal by the circuit's walk, in either mode (no matrices' reduction).
+        Blake2s::Flock(variant) if variant.slices == Slices::TowerWalk => {
+            let (point, end) = flock_min::verify_walked(flock_log_n, variant, channel)?;
+            Some((point, Some(end), None))
+        }
         Blake2s::Flock(variant) if mode == Claims::Point => {
             let (point, end, left) = flock_min::verify_deferred(flock_log_n, variant, channel)?;
             pending = Some((left, point.clone()));
@@ -656,7 +671,13 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
     let mut matrices = None;
     let mut bit_slice = Relations::default();
     let mut ring_map: Option<Vec<S>> = None;
-    let tower = matches!(blake2s, Blake2s::Flock(Variant { slices: Slices::Tower, .. }));
+    let tower = matches!(
+        blake2s,
+        Blake2s::Flock(Variant {
+            slices: Slices::Tower | Slices::TowerWalk,
+            ..
+        })
+    );
     if let Some((flock_point, Some(flock_end), flock_matrices)) = flock {
         match flock_end {
             End::Ring { map, target, .. } if tower && mode == Claims::Point => {
