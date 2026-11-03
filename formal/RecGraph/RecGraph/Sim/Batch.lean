@@ -1,6 +1,7 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import RecGraph.Sim.Claims
 import RecGraph.Sim.Transcript
+import RecGraph.Sim.ComposeSpec
 
 /-!
 # The simulation: the paired batch
@@ -341,17 +342,6 @@ end Batch
 
 /-! ## The tail of `reduce`: one claim per commitment, then the batch -/
 
-/-- **`reduce`'s tail** (after `ρ`): one combined claim per commitment that has relations, then the batch at the
-layouts of `reference` with `C2`'s columns `c2`. -/
-def tailS (relsS : List RelationS) (rhoS : Sym) (c2 : List (Column × ℕ × Bool)) (mapS : List Sym) :
-    Prog (List (Commitment × List Sym × Sym)) := do
-  let mut combined : Array (Commitment × CombinedS) := #[]
-  for c in commitments do
-    if let some claim ← combine relsS c rhoS then
-      combined := combined.push (c, claim)
-  let _ ← one
-  batch combined.toList (layouts reference c2) (some mapS)
-
 /-- A layout's blocks lie inside its stack: each block's variables at most the stack's. -/
 theorem limbs_vars_le {L : StackLayout} (hal : UniSound.Ids.LayoutAligned L) (col : Column) :
     ∀ b ∈ L.limbs col, b.2.1 ≤ L.vars := by
@@ -368,7 +358,7 @@ theorem limbs_vars_le {L : StackLayout} (hal : UniSound.Ids.LayoutAligned L) (co
   · simp [hc] at he
 
 /-- The layouts' blocks lie inside their stacks, at every shape and `C2` column list. -/
-theorem layouts_vars_le (shape : Shape) (c2 : List (Column × ℕ × Bool)) (c : Commitment) (col : Column) :
+theorem layouts_vars_le (shape : UniStatement.Shape) (c2 : List (Column × ℕ × Bool)) (c : Commitment) (col : Column) :
     ∀ b ∈ (layoutAt (layouts shape c2) c).limbs col, b.2.1 ≤ (layoutAt (layouts shape c2) c).vars := by
   cases c
   · exact limbs_vars_le (UniSound.Ids.layoutAligned_new _) col
@@ -399,30 +389,50 @@ def TailOK (rels : List Relation) (c2 : List (Column × ℕ × Bool)) : Prop :=
       ∀ r' ∈ UniSound.Ids.mine rels c, ∀ tm' ∈ r'.terms, tm.point.length < tm'.point.length →
         tm'.point.take tm.point.length ≠ tm.point)
 
-/-- The openings, as `Compose` states them. -/
-def OpeningsR (st : RecState) (a : List (Commitment × List Nat × Nat)) (b : List (Commitment × Opening)) : Prop :=
-  List.Forall₂ (fun x y ↦ ∃ ptE vE, y = (x.1, .point ptE vE none) ∧ RpL π iv publicInput stream st x.2.1 ptE ∧
-    Rp π iv publicInput stream st x.2.2 vE) a b
+theorem filterMap_length_congrC {α β γ : Type} (f : α → Option β) (g : α → Option γ)
+    (h : ∀ x, (f x).isSome = (g x).isSome) : ∀ l : List α, (l.filterMap f).length = (l.filterMap g).length
+  | [] => rfl
+  | x :: l => by
+    rw [List.filterMap_cons, List.filterMap_cons]
+    have hx := h x
+    cases hf : f x <;> cases hg : g x <;> rw [hf, hg] at hx <;> simp at hx <;>
+      simp [filterMap_length_congrC f g h l]
+
+/-- `combine` has a claim exactly when its commitment has relations, whatever `ρ`. -/
+theorem combine_isSome (rels : List Relation) (c : Commitment) (ρ ρ' : E) :
+    (combine rels c ρ).isSome = (combine rels c ρ').isSome := by
+  rw [UniSound.Ids.Weights.combine_eq, UniSound.Ids.Weights.combine_eq]
+  by_cases h : (UniSound.Ids.mine rels c).isEmpty = true
+  · rw [ite_eq_left h, ite_eq_left h]
+  · rw [ite_eq_right h, ite_eq_right h, Option.isSome_some, Option.isSome_some]
 
 /-- The tail's bytes: the paired sumcheck's and the claims' values. -/
-def tailBytes (rels : List Relation) (rho : E) (c2 : List (Column × ℕ × Bool)) : ℕ :=
+def tailBytes (rels : List Relation) (c2 : List (Column × ℕ × Bool)) : ℕ :=
   pairsBytes 2 (bvars (layouts reference c2)) +
-    24 * (commitments.filterMap fun x ↦ (combine rels x rho).map ((x, ·))).length
+    24 * (commitments.filterMap fun x ↦ (combine rels x 0).map ((x, ·))).length
+
+/-- The tail's challenges: `λ` and the paired sumcheck's. -/
+def tailCh (_rels : List Relation) (c2 : List (Column × ℕ × Bool)) : ℕ := 1 + pairsCh (bvars (layouts reference c2))
+
+theorem openingsR_of {st : RecState} {a : List (Commitment × List Nat × Nat)} {b : List (Commitment × Opening)}
+    (h : List.Forall₂ (RpOpening π iv publicInput stream st) a b) : OpeningsR π iv publicInput stream st a b := by
+  induction h with
+  | nil => exact List.Forall₂.nil
+  | cons h _ ih =>
+    obtain ⟨h1, pt, v, h2, h3, h4⟩ := h
+    exact List.Forall₂.cons ⟨pt, v, Prod.ext h1.symm h2, h3, h4⟩ ih
 
 /-- **`reduce`'s tail, off the merge hazard**: one claim per commitment (`combine_weight`), then the batch
-(`sim_batch`), against `UniStatement`'s `filterMap` of `combine` and `batchFs`'s `.rec3` branch. -/
+(`sim_batch`), against `UniStatement`'s `filterMap` of `combine` and `batchFs`'s `.rec3` branch (`tailP`, `tailU`). -/
 theorem sim_tail (st : RecState) {relsS : List RelationS} {rels : List Relation}
     (hr : RpRels π iv publicInput stream st relsS rels) {rhoS : Nat} {ρ : E}
     (hrho : Rp π iv publicInput stream st rhoS ρ) (c2 : List (Column × ℕ × Bool)) {mapS : List Nat} {map : List E}
     (hm : RpL π iv publicInput stream st mapS map) (h0 : 0 < st.nodes.size) (hok : TailOK rels c2) :
-    Sim π iv publicInput stream st (tailS relsS rhoS c2 mapS)
-      (batchFs (Fp π) .rec3 (commitments.filterMap fun x ↦ (combine rels x ρ).map ((x, ·))) (layouts reference c2)
-        (combine [] .c1 1) (some map) none)
-      (tailBytes rels ρ c2) (1 + pairsCh (bvars (layouts reference c2)))
-      (fun st' a b ↦ OpeningsR π iv publicInput stream st' a b.1 ∧ b.2 = none) := by
+    Sim π iv publicInput stream st (tailP relsS rhoS c2 mapS) (tailU π rels ρ c2 map) (tailBytes rels c2)
+      (tailCh rels c2) (fun st' a b ↦ OpeningsR π iv publicInput stream st' a b.1 ∧ b.2 = none) := by
   refine Sim.of_good fun hg ↦ ?_
+  unfold tailP tailU
   rw [combine_nil]
-  unfold tailS
   refine Sim.pbind (phc_psim (b := commitments.filterMap fun x ↦ (combine rels x ρ).map ((x, ·)))
     (R := fun st' (a : Array (Commitment × CombinedS)) (b : List (Commitment × Combined)) ↦
       List.Forall₂ (fun a b ↦ a.1 = b.1 ∧ CombRep π iv publicInput stream st'
@@ -438,7 +448,9 @@ theorem sim_tail (st : RecState) {relsS : List RelationS} {rels : List Relation}
     intro c b acc s hg' hc ⟨hr', hrho'⟩ hb
     obtain ⟨hL, hK, hself⟩ := hok c hc
     refine phc_bind (combine_weight π iv publicInput stream hg' hr' c hrho' _ hL hK hself) fun out s' hs hout ↦ ?_
-    have hb' := hb.imp fun _ _ h ↦ ⟨h.1, CombRep.grow π iv publicInput stream hg'.inv.kinv hs.grows h.2⟩
+    have hb' : List.Forall₂ (fun a b ↦ a.1 = b.1 ∧ CombRep π iv publicInput stream s'
+        (layoutAt (layouts reference c2) a.1) a.2 b.2) b.toList acc :=
+      hb.imp fun _ _ h ↦ ⟨h.1, CombRep.grow π iv publicInput stream hg'.inv.kinv hs.grows h.2⟩
     cases hcb : combine rels c ρ with
     | none =>
       rw [hcb] at hout
@@ -456,18 +468,22 @@ theorem sim_tail (st : RecState) {relsS : List RelationS} {rels : List Relation}
   · refine Sim.pbind (phc_psim (b := ()) (R := fun _ _ _ ↦ True) (phc_conseq (phc_one π iv publicInput stream hg1)
       fun _ _ _ _ ↦ trivial)) fun st2 _ hg2 hgr2 _ ↦ ?_
     have hgr02 := hgr1.trans hgr2
-    have hc2 := hcS.imp fun _ _ h ↦ ⟨h.1, CombRep.grow π iv publicInput stream hg1.inv.kinv hgr2 h.2⟩
+    have hc2 : List.Forall₂ (fun a b ↦ a.1 = b.1 ∧ CombRep π iv publicInput stream st2
+        (layoutAt (layouts reference c2) a.1) a.2 b.2) cS.toList
+        (commitments.filterMap fun x ↦ (combine rels x ρ).map ((x, ·))) :=
+      hcS.imp fun _ _ h ↦ ⟨h.1, CombRep.grow π iv publicInput stream hg1.inv.kinv hgr2 h.2⟩
     refine Sim.mono (Sim.cast ?_ rfl (sim_batch π iv publicInput stream st2 (layouts reference c2) hc2
       (layouts_vars_le reference c2) (RpL.grow π iv publicInput stream hg.inv.kinv hgr02 hm)
       (lt_of_lt_of_le h0 (Grows.size_le hgr02)))) fun st' a b _ _ ⟨hb2, hops⟩ ↦ ⟨?_, hb2⟩
-    · rfl
-    · clear hb2
-      induction hops with
-      | nil => exact List.Forall₂.nil
-      | cons h _ ih =>
-        obtain ⟨h1, pt, v, h2, h3, h4⟩ := h
-        refine List.Forall₂.cons ⟨pt, v, ?_, h3, h4⟩ ih
-        exact Prod.ext h1.symm h2
+    · unfold tailBytes
+      rw [filterMap_length_congrC (fun x ↦ (combine rels x ρ).map ((x, ·))) (fun x ↦ (combine rels x 0).map ((x, ·)))
+        (fun x ↦ by rw [Option.isSome_map, Option.isSome_map]; exact combine_isSome rels x ρ 0)]
+    · exact openingsR_of π iv publicInput stream hops
+
+/-- **`TailSpec`**, `Compose`'s interface for the tail. -/
+theorem tailSpec : TailSpec TailOK tailBytes tailCh :=
+  fun π iv publicInput stream st _ _ _ _ c2 _ _ _ h0 hr hrho hm hok ↦
+    sim_tail π iv publicInput stream st hr hrho c2 hm h0 hok
 
 end Tail
 
