@@ -12,6 +12,8 @@
 //!   permutation's input slot) has a copy;
 //! - `Input` (24-byte scalars, 4-byte integers), `Low`, `Statement`, `Bits` → **packings** of their bits into `K`
 //!   limbs; reads never hashed are free limbs;
+//! - rejected (a panic, as the Lean compiler `formal/RecCircuit` refuses them; π1's graphs have none): a read never
+//!   hashed that is not a 24-byte scalar, a bit field of a read of more than 8 bytes, an empty hashed read;
 //! - `Add`, `Mul` → `E` units on limbs (a product, a square, a sum), constants → `κ` slots;
 //! - the calls' elements, `π1`'s roots, the statement, and the zero checks → **ports** (`spec::Source`).
 //!
@@ -315,16 +317,15 @@ pub fn compile<P: Permutation>(
                     "a read partly hashed"
                 );
                 if !all_hashed {
-                    // Never hashed: free limbs.
+                    // Never hashed: free limbs, so a 24-byte scalar only (a shorter read's high limbs are zero in
+                    // the graph, which free limbs would not constrain; the Lean compiler rejects it alike).
+                    assert_eq!(len, 24, "a read never hashed is a 24-byte scalar");
                     let bytes = &stream[offset..offset + len];
                     let be = |r: &[u8]| r.iter().fold(0u64, |acc, &x| acc << 8 | x as u64);
-                    let words = match len {
-                        24 => [be(&bytes[16..24]), be(&bytes[8..16]), be(&bytes[0..8])],
-                        16 => [be(&bytes[8..16]), be(&bytes[0..8]), 0],
-                        _ => [be(bytes), 0, 0],
-                    };
+                    let words = [be(&bytes[16..24]), be(&bytes[8..16]), be(&bytes[0..8])];
                     (words.map(|w| b.free(K(w))), false)
                 } else {
+                    assert!(len >= 1, "a hashed read is not empty");
                     packings += 1;
                     let mut pack = |first: usize, n: usize| {
                         packer.pack(&mut b, &mut sponge.constants, &be_bits(&stream_bit, first, n))
@@ -370,6 +371,9 @@ pub fn compile<P: Permutation>(
                     panic!("a bit field of a read integer")
                 };
                 let (offset, len) = (offset as usize, len as usize);
+                // `E::bits` takes the low limb's bits only: a wider read's field could reach past it (the Lean
+                // compiler rejects every `len > 8` alike).
+                assert!(len <= 8, "a bit field of an integer of at most 8 bytes");
                 let field: Vec<(usize, Value)> = be_bits(&stream_bit, offset, len)
                     .into_iter()
                     .filter(|&(e, _)| e >= shift as usize && e < shift as usize + width as usize)
