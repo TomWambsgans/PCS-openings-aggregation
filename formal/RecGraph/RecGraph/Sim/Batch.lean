@@ -339,4 +339,136 @@ theorem sim_batch (st : RecState) {combS : List (Commitment × CombinedS)} {comb
 
 end Batch
 
+/-! ## The tail of `reduce`: one claim per commitment, then the batch -/
+
+/-- **`reduce`'s tail** (after `ρ`): one combined claim per commitment that has relations, then the batch at the
+layouts of `reference` with `C2`'s columns `c2`. -/
+def tailS (relsS : List RelationS) (rhoS : Sym) (c2 : List (Column × ℕ × Bool)) (mapS : List Sym) :
+    Prog (List (Commitment × List Sym × Sym)) := do
+  let mut combined : Array (Commitment × CombinedS) := #[]
+  for c in commitments do
+    if let some claim ← combine relsS c rhoS then
+      combined := combined.push (c, claim)
+  let _ ← one
+  batch combined.toList (layouts reference c2) (some mapS)
+
+/-- A layout's blocks lie inside its stack: each block's variables at most the stack's. -/
+theorem limbs_vars_le {L : StackLayout} (hal : UniSound.Ids.LayoutAligned L) (col : Column) :
+    ∀ b ∈ L.limbs col, b.2.1 ≤ L.vars := by
+  intro b hb
+  unfold StackLayout.limbs at hb
+  obtain ⟨blk, hblk, he⟩ := List.mem_filterMap.mp hb
+  obtain ⟨c, l, v, o⟩ := blk
+  by_cases hc : c = col
+  · simp only [hc, beq_self_eq_true, ↓reduceIte, Option.some.injEq] at he
+    subst he
+    have h := (hal _ hblk).2
+    have h2 : 2 ^ v ≤ 2 ^ L.vars := le_trans (Nat.le_add_left _ _) h
+    exact (Nat.pow_le_pow_iff_right (by norm_num)).mp h2
+  · simp [hc] at he
+
+/-- The layouts' blocks lie inside their stacks, at every shape and `C2` column list. -/
+theorem layouts_vars_le (shape : Shape) (c2 : List (Column × ℕ × Bool)) (c : Commitment) (col : Column) :
+    ∀ b ∈ (layoutAt (layouts shape c2) c).limbs col, b.2.1 ≤ (layoutAt (layouts shape c2) c).vars := by
+  cases c
+  · exact limbs_vars_le (UniSound.Ids.layoutAligned_new _) col
+  · exact limbs_vars_le (UniSound.Ids.layoutAligned_new _) col
+  · exact limbs_vars_le (UniSound.Ids.layoutAligned_new _) col
+
+theorem foldl_filterMapC {α β : Type} (f : α → Option β) (l : List α) (a0 : List β) :
+    l.foldl (fun acc x ↦ acc ++ (f x).toList) a0 = a0 ++ l.filterMap f := by
+  induction l generalizing a0 with
+  | nil => simp
+  | cons x l ih =>
+    rw [List.foldl_cons, ih, List.filterMap_cons]
+    cases f x <;> simp
+
+theorem combine_nil (c : Commitment) (ρ : E) : combine [] c ρ = none := rfl
+
+section Tail
+
+variable (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8)
+
+/-- **The terms' kinds and the hazard's absence**, for every commitment, at the layouts of `reference` with `C2`'s
+columns `c2`: what `combine_weight` asks of the relations. -/
+def TailOK (rels : List Relation) (c2 : List (Column × ℕ × Bool)) : Prop :=
+  ∀ c ∈ commitments, LayoutOK (layoutAt (layouts reference c2) c) ∧
+    (∀ r ∈ UniSound.Ids.mine rels c, ∀ tm ∈ r.terms,
+      TermKind (layoutAt (layouts reference c2) c) tm.column tm.point tm.twist) ∧
+    (∀ r ∈ UniSound.Ids.mine rels c, ∀ tm ∈ r.terms, (∃ j, tm.column = .qflockSlot j) →
+      ∀ r' ∈ UniSound.Ids.mine rels c, ∀ tm' ∈ r'.terms, tm.point.length < tm'.point.length →
+        tm'.point.take tm.point.length ≠ tm.point)
+
+/-- The openings, as `Compose` states them. -/
+def OpeningsR (st : RecState) (a : List (Commitment × List Nat × Nat)) (b : List (Commitment × Opening)) : Prop :=
+  List.Forall₂ (fun x y ↦ ∃ ptE vE, y = (x.1, .point ptE vE none) ∧ RpL π iv publicInput stream st x.2.1 ptE ∧
+    Rp π iv publicInput stream st x.2.2 vE) a b
+
+/-- The tail's bytes: the paired sumcheck's and the claims' values. -/
+def tailBytes (rels : List Relation) (rho : E) (c2 : List (Column × ℕ × Bool)) : ℕ :=
+  pairsBytes 2 (bvars (layouts reference c2)) +
+    24 * (commitments.filterMap fun x ↦ (combine rels x rho).map ((x, ·))).length
+
+/-- **`reduce`'s tail, off the merge hazard**: one claim per commitment (`combine_weight`), then the batch
+(`sim_batch`), against `UniStatement`'s `filterMap` of `combine` and `batchFs`'s `.rec3` branch. -/
+theorem sim_tail (st : RecState) {relsS : List RelationS} {rels : List Relation}
+    (hr : RpRels π iv publicInput stream st relsS rels) {rhoS : Nat} {ρ : E}
+    (hrho : Rp π iv publicInput stream st rhoS ρ) (c2 : List (Column × ℕ × Bool)) {mapS : List Nat} {map : List E}
+    (hm : RpL π iv publicInput stream st mapS map) (h0 : 0 < st.nodes.size) (hok : TailOK rels c2) :
+    Sim π iv publicInput stream st (tailS relsS rhoS c2 mapS)
+      (batchFs (Fp π) .rec3 (commitments.filterMap fun x ↦ (combine rels x ρ).map ((x, ·))) (layouts reference c2)
+        (combine [] .c1 1) (some map) none)
+      (tailBytes rels ρ c2) (1 + pairsCh (bvars (layouts reference c2)))
+      (fun st' a b ↦ OpeningsR π iv publicInput stream st' a b.1 ∧ b.2 = none) := by
+  refine Sim.of_good fun hg ↦ ?_
+  rw [combine_nil]
+  unfold tailS
+  refine Sim.pbind (phc_psim (b := commitments.filterMap fun x ↦ (combine rels x ρ).map ((x, ·)))
+    (R := fun st' (a : Array (Commitment × CombinedS)) (b : List (Commitment × Combined)) ↦
+      List.Forall₂ (fun a b ↦ a.1 = b.1 ∧ CombRep π iv publicInput stream st'
+        (layoutAt (layouts reference c2) a.1) a.2 b.2) a.toList b) ?_) fun st1 cS hg1 hgr1 hcS ↦ ?_
+  · rw [← List.nil_append (commitments.filterMap _), ← foldl_filterMapC]
+    refine phc_forIn_same (fun c ↦ c ∈ commitments)
+      (fun s ↦ RpRels π iv publicInput stream s relsS rels ∧ Rp π iv publicInput stream s rhoS ρ)
+      (fun _ _ hg hs h ↦ ⟨RpRels.pgrow π iv publicInput stream hg hs h.1, Rp.pgrow hg hs h.2⟩) _ _
+      (fun (b : Array (Commitment × CombinedS)) (acc : List (Commitment × Combined)) s ↦
+        List.Forall₂ (fun a b ↦ a.1 = b.1 ∧ CombRep π iv publicInput stream s
+          (layoutAt (layouts reference c2) a.1) a.2 b.2) b.toList acc) ?_ commitments (fun _ h ↦ h) st #[] [] hg
+      ⟨hr, hrho⟩ List.Forall₂.nil
+    intro c b acc s hg' hc ⟨hr', hrho'⟩ hb
+    obtain ⟨hL, hK, hself⟩ := hok c hc
+    refine phc_bind (combine_weight π iv publicInput stream hg' hr' c hrho' _ hL hK hself) fun out s' hs hout ↦ ?_
+    have hb' := hb.imp fun _ _ h ↦ ⟨h.1, CombRep.grow π iv publicInput stream hg'.inv.kinv hs.grows h.2⟩
+    cases hcb : combine rels c ρ with
+    | none =>
+      rw [hcb] at hout
+      cases out with
+      | none => exact phc_pure _ hs.good ⟨_, rfl, by simpa using hb'⟩
+      | some _ => exact hout.elim
+    | some cb =>
+      rw [hcb] at hout
+      cases out with
+      | none => exact hout.elim
+      | some cS =>
+        refine phc_pure _ hs.good ⟨_, rfl, ?_⟩
+        rw [Array.toList_push]
+        exact List.rel_append hb' (List.Forall₂.cons ⟨rfl, hout⟩ List.Forall₂.nil)
+  · refine Sim.pbind (phc_psim (b := ()) (R := fun _ _ _ ↦ True) (phc_conseq (phc_one π iv publicInput stream hg1)
+      fun _ _ _ _ ↦ trivial)) fun st2 _ hg2 hgr2 _ ↦ ?_
+    have hgr02 := hgr1.trans hgr2
+    have hc2 := hcS.imp fun _ _ h ↦ ⟨h.1, CombRep.grow π iv publicInput stream hg1.inv.kinv hgr2 h.2⟩
+    refine Sim.mono (Sim.cast ?_ rfl (sim_batch π iv publicInput stream st2 (layouts reference c2) hc2
+      (layouts_vars_le reference c2) (RpL.grow π iv publicInput stream hg.inv.kinv hgr02 hm)
+      (lt_of_lt_of_le h0 (Grows.size_le hgr02)))) fun st' a b _ _ ⟨hb2, hops⟩ ↦ ⟨?_, hb2⟩
+    · rfl
+    · clear hb2
+      induction hops with
+      | nil => exact List.Forall₂.nil
+      | cons h _ ih =>
+        obtain ⟨h1, pt, v, h2, h3, h4⟩ := h
+        refine List.Forall₂.cons ⟨pt, v, ?_, h3, h4⟩ ih
+        exact Prod.ext h1.symm h2
+
+end Tail
+
 end RecGraph.Sim
