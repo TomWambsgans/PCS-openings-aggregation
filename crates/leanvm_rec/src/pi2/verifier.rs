@@ -179,28 +179,58 @@ pub fn formula<S: Scalar>(f: &Formula, cell: &dyn Fn(usize) -> S, gammas: &[S]) 
     })
 }
 
-/// `x^-1` for a nonzero `x`: `x^(2^192 - 2)` by Itoh–Tsujii, `t_k = x^(2^k - 1)`, `t_{2k} = t_k^(2^k) t_k`,
-/// `t_{2k+1} = t_{2k}^2 x`, up to `k = 191`: 191 squarings and 13 products.
-pub fn inverse<S: Scalar>(x: S) -> S {
-    let (mut t, mut k) = (x, 1usize);
-    for bit in (0..7).rev() {
+/// What the verifier needs of a scalar beyond `Scalar`: its limbs above the lowest, `x >> 64 = c_1 + c_2 Y` and
+/// `x >> 128 = c_2` for `x = c_0 + c_1 Y + c_2 Y²`. On the recorder's symbol they are `Node::Bits(x, 64, 64)` and
+/// `Node::Bits(x, 128, 64)`: one `SHR` each in the contract (a 64-bit field takes no mask).
+pub trait Limbs: Scalar {
+    fn shifted(self) -> [Self; 2];
+}
+
+impl Limbs for E {
+    fn shifted(self) -> [Self; 2] {
+        [E::new(self.c1, self.c2, 0), E::new(self.c2, 0, 0)]
+    }
+}
+
+impl Limbs for leanvm_flock_gas::evm::record::Sym {
+    fn shifted(self) -> [Self; 2] {
+        [self.bits(64, 64), self.bits(128, 64)]
+    }
+}
+
+/// `x^(2^64)`: `(c_0, c_1, c_2) ↦ (c_0, c_2, c_1 + c_2)` (`Y^(2^64) = Y²`), that is `x + (Y + Y²)(x >> 64) + (1 + Y²)(x >> 128)`.
+pub fn frobenius<S: Limbs>(x: S) -> S {
+    let [u, v] = x.shifted();
+    let (y, y2) = (F192::Y, F192::Y * F192::Y);
+    x + ext::<S>(y + y2) * u + ext::<S>(F192::ONE + y2) * v
+}
+
+/// `x^-1` for a nonzero `x`, by its norm to `K`: `m = x^(2^64) x^(2^128)` makes `N = x m` the norm, in `K`, whose
+/// inverse is `N^(2^64 - 2)` by Itoh–Tsujii (`t_k = N^(2^k - 1)`, the chain `1, 2, 3, 6, 7, …, 62, 63`: 63 squarings, 10
+/// products); then `x^-1 = m N^-1`. Two Frobenius maps and 76 products (crates/quotient's `protocol::inverse`).
+pub fn inverse<S: Limbs>(x: S) -> S {
+    let f = frobenius(x);
+    let m = f * frobenius(f);
+    let norm = x * m;
+    let (mut t, mut k) = (norm, 1usize);
+    for bit in (0..5).rev() {
         let mut s = t;
         for _ in 0..k {
             s = s.square();
         }
         t = s * t;
         k *= 2;
-        if (191 >> bit) & 1 == 1 {
-            t = t.square() * x;
+        if (63 >> bit) & 1 == 1 {
+            t = t.square() * norm;
             k += 1;
         }
     }
-    debug_assert_eq!(k, 191);
-    t.square()
+    debug_assert_eq!(k, 63);
+    m * t.square()
 }
 
 /// Every `x^-1` by one inversion, the verifier requiring their product nonzero.
-pub fn batch_inverse<S: Scalar, C: Channel<S>>(channel: &mut C, xs: &[S]) -> Result<Vec<S>, VerifierError> {
+pub fn batch_inverse<S: Limbs, C: Channel<S>>(channel: &mut C, xs: &[S]) -> Result<Vec<S>, VerifierError> {
     let mut prefix = Vec::with_capacity(xs.len());
     let mut acc = S::one();
     for &x in xs {
@@ -220,6 +250,27 @@ pub fn batch_inverse<S: Scalar, C: Channel<S>>(channel: &mut C, xs: &[S]) -> Res
     Ok(out)
 }
 
+/// The order the verifier takes the public terms in: from the smallest tag, each next the one whose tag differs from
+/// the last in the fewest bits (the smallest on a tie), so that `β ω_τ` costs an addition or two a term.
+pub fn tag_walk(public: &[PublicTerm]) -> Vec<usize> {
+    let mut left: Vec<usize> = (0..public.len()).collect();
+    left.sort_by_key(|&j| public[j].tag);
+    let mut out = Vec::with_capacity(left.len());
+    let mut at: Option<u32> = None;
+    while !left.is_empty() {
+        let k = match at {
+            None => 0,
+            Some(tag) => (0..left.len())
+                .min_by_key(|&k| ((public[left[k]].tag ^ tag).count_ones(), public[left[k]].tag))
+                .expect("a term left"),
+        };
+        let j = left.remove(k);
+        at = Some(public[j].tag);
+        out.push(j);
+    }
+    out
+}
+
 /// The two coordinates of the extension over `K` and the scale of their weights `(1, Y, Y², Y³)`.
 pub fn extension() -> ([F192; 2], F192) {
     quotient::protocol::extension()
@@ -227,7 +278,7 @@ pub fn extension() -> ([F192; 2], F192) {
 
 /// The verifier: the public data and the proof read from `channel`, down to the four claims. `statement` is the
 /// public input's four words. It rejects only a challenge at which a denominator vanishes.
-pub fn reduce<S: Scalar, C: Channel<S>>(
+pub fn reduce<S: Limbs, C: Channel<S>>(
     spec: &Spec,
     statement: [S; 4],
     channel: &mut C,
@@ -312,13 +363,27 @@ pub fn reduce<S: Scalar, C: Channel<S>>(
             .collect()
     };
     let gammas = leanvm_flock_gas::scalar::powers(gamma, spec.max_gamma + 1);
+    // The public side, its terms in [`tag_walk`]'s order: `β ω_τ` is linear in the tag's bits, so each term's is the
+    // last one's plus the products `β β_b` of the bits that differ.
     let public_side = {
         let _phase = enter("pi2: public side (fingerprints)");
-        (!spec.public.is_empty()).then(|| {
-            fraction(&mut spec.public.iter().map(|term| {
-                alpha + lin(&term.value, &|c| public[c], &gammas) + beta * base::<S>(point(term.tag as usize))
-            }))
-        })
+        let mut bits: Vec<Option<S>> = vec![None; super::circuit::TAG_BITS];
+        let mut last: Option<(u32, S)> = None;
+        let mut terms = tag_walk(&spec.public).into_iter().map(|j| {
+            let term = &spec.public[j];
+            let beta_tag = match last {
+                None => beta * base::<S>(point(term.tag as usize)),
+                Some((tag, value)) => {
+                    let diff = tag ^ term.tag;
+                    (0..super::circuit::TAG_BITS).filter(|b| diff >> b & 1 == 1).fold(value, |acc, b| {
+                        acc + *bits[b].get_or_insert_with(|| beta * base::<S>(quotient::domain::beta()[b]))
+                    })
+                }
+            };
+            last = Some((term.tag, beta_tag));
+            alpha + lin(&term.value, &|c| public[c], &gammas) + beta_tag
+        });
+        (!spec.public.is_empty()).then(|| fraction(&mut terms))
     };
 
     // One inversion: of every group's denominator, the public side's, and the digits `w_0 … w_{m+2}`.
