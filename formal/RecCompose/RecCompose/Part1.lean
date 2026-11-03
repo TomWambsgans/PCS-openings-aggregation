@@ -59,8 +59,9 @@ public limbs of its ports for a statement, π2's extraction for that circuit's r
 * `rootsAt`, `compiled`, `compile_ok`: the compiler's input (π1's roots' stream offsets, the IV) and output;
   `compile_ok` is established by `RecCircuitTest/Main.lean` (the Lean compiler on π1-rec3's graph, compiled
   evaluation, against the Rust's circuit), not in the kernel (no kernel evaluation of the `2^24`-position circuit);
-* `stream_eq`: the deployment's π1 stream is the compiler's decoding of the witness's free bits (`RecDeployment`'s
-  docstring: `pi1Stream` is meant to be `RecCircuit.Compiled.decodeStream`);
+* `stream_eq`: the deployment's π1 stream is the compiler's decoding of the witness's free bits, `streamW`
+  (`decodeStream` of the witness's values `ctx.val w`; `RecDeployment`'s docstring: `pi1Stream` is meant to be
+  RecCircuit's `decodeStream`);
 * `pub`: port `J`'s public limbs, for the setup's roots, the public input and π2's stream (the statement's four
   words, π1's roots' limbs, π1's claims' elements, zeros);
 * `extraction` (**open, `lean-rec-compose`**): π2's Fiat–Shamir layer, openings, PIOP and tables' layer;
@@ -71,7 +72,7 @@ structure Pi2Layers (D : RecDeployment) (ε2 : ℕ → ℝ≥0∞) where
   compiled : List UInt8 → RecCircuit.Compiled
   compile_ok : ∀ iv, RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) = .ok (compiled iv)
   stream_eq : ∀ iv (w : ℕ → K),
-    D.pi1Stream w = ((compiled iv).decodeStream RecGraph.Pi1.pi1Graph.streamLen w).toArray
+    D.pi1Stream w = ((compiled iv).streamW (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) w).toArray
   pub : RecSetupRoots → Vector UInt8 32 → Array UInt8 → ℕ → List Primitives.F192
   extraction : Pi2Extraction D (fun roots input stream w ↦
     ((compiled (D.pi1IvAt roots.pi1)).circuit.toPiop).Satisfies (pub roots input stream) (RecCircuit.emb w)) ε2

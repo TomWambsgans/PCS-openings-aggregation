@@ -184,7 +184,7 @@ structure Pi2Circuits (D : RecDeployment) where
   compiled : List UInt8 → RecCircuit.Compiled
   compile_ok : ∀ iv, RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) = .ok (compiled iv)
   stream_eq : ∀ iv (w : ℕ → K),
-    D.pi1Stream w = ((compiled iv).decodeStream RecGraph.Pi1.pi1Graph.streamLen w).toArray
+    D.pi1Stream w = ((compiled iv).streamW (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) w).toArray
 
 variable {D : RecDeployment}
 
