@@ -609,3 +609,57 @@ theorem claim_sum {T : ℕ → K} {m : ℕ} (hz : QZero T m) :
   rfl
 
 end RecCompose
+
+namespace RecCompose
+
+open RecStatement LeanVM.Parameters LeanVM.Protocol Finset Polynomial
+open scoped ENNReal
+
+/-! ### `h` and `q` at a point, `Σ_V h` -/
+
+/-- The digits `w_l(x) = s^l(x)`. -/
+theorem wP_eval_sq (l : ℕ) (x : E) : (UniComplete.Domain.wP l).eval x = QuotientSecurity.sq^[l] x :=
+  UniComplete.Domain.wP_eval x l
+
+/-- **A novel-basis polynomial at a point**: `Σ_k d_k Π_{l : k_l} s^l(x)`. -/
+theorem novP_eval_sq (m : ℕ) (d : ℕ → E) (x : E) :
+    (UniComplete.AlgC.novP m d).eval x =
+      ∑ k ∈ range (2 ^ m), d k * UniComplete.AlgC.novX m k (fun l ↦ QuotientSecurity.sq^[l] x) := by
+  rw [UniComplete.AlgC.novP_eval]
+  simp only [wP_eval_sq]
+
+/-- The novel polynomial as `QuotientSecurity.tablePoly` of the table its bits index. -/
+theorem novP_eval_tablePoly (m : ℕ) (d : ℕ → E) (x : E) :
+    (UniComplete.AlgC.novP m d).eval x = (QuotientSecurity.tablePoly (fun b : Fin m → Bool ↦
+      ∑ i ∈ range (2 ^ m), if (fun k : Fin m ↦ i.testBit k) = b then d i else 0)).eval x := by
+  rw [novP_eval_sq, QuotientSecurity.tablePoly_eval]
+  unfold QuotientSecurity.digitsEval
+  simp only [Finset.sum_mul]
+  rw [Finset.sum_comm]
+  refine Finset.sum_congr rfl fun i _ ↦ ?_
+  simp only [ite_mul, zero_mul]
+  rw [Finset.sum_ite_eq]
+  simp only [Finset.mem_univ, ite_true]
+  congr 1
+  unfold UniComplete.AlgC.novX
+  rw [← Fin.prod_univ_eq_prod_range (fun l ↦ if i.testBit l then QuotientSecurity.sq^[l] x else 1) m]
+
+/-- **`Σ_V h` is `h`'s top coefficient**: `Σ_{i<2^m} h(ω_i) = d_{2^m − 1}` (`RecPiop.sum_tablePoly_omega`). -/
+theorem sum_novP_omega {m : ℕ} (hm : m ≤ 32) (d : ℕ → E) :
+    ∑ i ∈ range (2 ^ m), (UniComplete.AlgC.novP m d).eval (pi2Omega i) = d (2 ^ m - 1) := by
+  simp only [novP_eval_tablePoly]
+  rw [RecPiop.sum_tablePoly_omega UniComplete.Domain.basisE hm]
+  have hbits : (fun k : Fin m ↦ (2 ^ m - 1).testBit k) = fun _ ↦ true := by
+    funext k
+    rw [Nat.testBit_two_pow_sub_one]
+    simp
+  have hlt : 2 ^ m - 1 < 2 ^ m := Nat.sub_lt (Nat.two_pow_pos m) Nat.one_pos
+  rw [Finset.sum_eq_single (2 ^ m - 1) (fun i hi hne ↦ by
+      rw [if_neg]
+      intro h
+      apply hne
+      exact (RecPiop.image_bits m).2 (Finset.mem_coe.mpr hi) (Finset.mem_coe.mpr (Finset.mem_range.mpr hlt))
+        (h.trans hbits.symm))
+    (fun h ↦ absurd (Finset.mem_range.mpr hlt) h), if_pos hbits]
+
+end RecCompose
