@@ -304,7 +304,7 @@ theorem okp_Q : WhirOp.OKP p2Tc p2Good (p2Setup D hs) p2Fix (p2Stk D)
       (p2Out_sumPoint_length π ch)).mpr h2
 
 /-- **An opening of no `2^25`-word stack has no stack.** -/
-theorem p2Stk_none (o : WhirOp P2Pf E Stk) (h : o.S.L.logN ≠ 25) : p2Stk D o = none := by
+theorem p2StkNone (o : WhirOp P2Pf E Stk) (h : o.S.L.logN ≠ 25) : p2Stk D o = none := by
   unfold p2Stk
   exact dite_eq_right_iff.mpr fun h' => absurd h' h
 
@@ -315,14 +315,14 @@ theorem okp_pi1 (k : ℕ) (r : P2Pf → Bytes32) (q₀ : Column (sh1 k).L.logN) 
   unfold WhirOp.OKP
   dsimp only
   intro f hf
-  rw [p2Stk_none D _ (by
+  rw [p2StkNone D _ (by
     show pi1Vars k ≠ 25
     unfold pi1Vars
     split_ifs <;> decide)] at hf
   exact absurd hf (by simp)
 
 /-- **The setup's opening's stack** is the setup's table at the proof's roots. -/
-theorem p2Stk_setup :
+theorem p2StkSetup :
     p2Stk D (⟨shS, clS, fun π => π.proof.setup, .setup (fun π => π.roots.2) (col0 _)⟩ : WhirOp P2Pf E Stk) =
       some fun π => setupCol D (p2Roots π) := by
   unfold p2Stk
@@ -367,7 +367,7 @@ theorem hS_p2 (π : P2Pf) (ch : List (List E))
     (⟨shS, clS, fun π => π.proof.setup, .setup (fun π => π.roots.2) (col0 _)⟩ : WhirOp P2Pf E Stk) ∈ p2Ops D)
   unfold WhirOp.SetupHoldsP at h5
   dsimp only at h5
-  have hcl := h5 _ (p2Stk_setup D) _ (by rw [clS_claims]; exact List.mem_singleton_self _)
+  have hcl := h5 _ (p2StkSetup D) _ (by rw [clS_claims]; exact List.mem_singleton_self _)
   unfold p2GoodS
   rw [layoutsOf_cc]
   exact (claimOn_setupCol D _ _).mp ((claimOn_iff' lS shS.L layoutTr_S rfl lanes_S.1 lanes_S.2 _ _ _
