@@ -35,6 +35,10 @@ import UniSound.Ids.Remaining
 import UniSound.Ids.Align
 import UniSound.Ids.WeightMle
 import UniSound.Closed
+import UniSound.Fs128
+import UniSound.FsGame128
+import UniSound.FsFinal128
+import UniSound.Closed128
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001
@@ -52,6 +56,16 @@ discharged there (Flock by `flockSoundInstance`, `B`, `J` by `Ids/`'s `busModelR
 `Ids/WeightMle.lean`, the counts by `countsZero`, the Fiat–Shamir layer by `fsLayer_holds`, the numbers
 by `GameNumbers.lean` and `Closed.lean`). `uniBound (2^-160) (2^64) = 2^-61.41`
 (`EndToEnd/Review/UniSoundnessNumbers.py`, exact rationals).
+
+**Closed at `≥ 128` bits** (`Closed128.lean`): **`UniSound.Closed.uniKnowledgeSoundness_closed128`**, the
+same with the error `uniBound128 (2^32 / |E|) Q`, at most `2^-64` for `Q ≤ 2^64`
+(`uniBound128 (2^-160) (2^64) = 2^-64.87`, 128.87 bits as `Q / ε`:
+`EndToEnd/Review/UniSoundnessNumbers128.py`). No hypothesis. Its Fiat–Shamir layer (`FsLayer128`,
+`fsLayer128_holds`) charges the five WHIR openings **once**, as one union family whose bad events are
+per fresh query (`Compose.prEvent_doomF_le`, generic in the number and shapes of the openings), at the
+exact certified per-group bound `WhirBridge.εExact = 269 · 2^-137`; and separates the seed from the
+chain's steps by a pair of answers (`name ‖ iv[0:16]`, `iv` an answer: `Compose.prEvent_pairTr_le`,
+`2 N² / 2^256`) instead of the 16-byte tag (`2^-128` a query).
 
 **The merge polynomial** (`UniIds.zb`, iteration of this proof): `combine` may merge a `q_flock` slot
 term's point `y(t)` into a longer `C1` point, where its weight is not multilinear; the states after `t`
@@ -78,6 +92,9 @@ are `zb(t) = 0 ∨ …` (`Piop.lean`'s `uniS`), `t`'s error counts `zb`'s roots 
 | `PendingLink.lean` | **`pendingTerminalLink`**: the batch's `λ³` product at its point is the pending reduction's terminal times the zero extension (`multilinear_eval` as the extension, substitution into `Â0`, `B̂0`). |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
 | `Closed.lean` | **`uniKnowledgeSoundness_closed`**: the end theorem at the reference deployment, no hypothesis (`idsRef`, `batchIsVerifiers_ref`, `weightMle_ref`, `hB_ref`, `hdeg_ref`, `hrel_ref`, into `FlockSound.Uni.uniKnowledgeSoundness_fs`). |
+| `Fs128.lean` | **`uniBound128`**, **`FsLayer128`**, `uniBound128_le_bits` (`≤ 2^-64` at `Q ≤ 2^64`), `le_uniBound128`, `hlab_uni` (the seed's first 32 bytes are `name ‖ iv[0:16]`, `iv` the answer to the adversary's IV query). |
+| `FsGame128.lean`, `FsFinal128.lean` | **`fsLayer128_of_gameV`**, **`fsLayer128_holds`**: `FsLayer128` through `Compose.knowledgeSoundness_listChainU_closed128` (the chain without the tag, doom at the run's end), `Compose.prEvent_doomF_le` at `WhirBridge.largeShapes` (the openings once), `Compose.prEvent_pairTr_expL_le` (the seed's pair). |
+| `Closed128.lean` | **`uniKnowledgeSoundness_closed128`**: the end theorem at the reference deployment at `uniBound128`, no hypothesis. |
 | `FsChain.lean` | The univariate transcript as `Compose.ChainSpecU` (`uniSpec`: 24-byte scalars, the root's reversed halves, the seed's 16-byte tag, the row counts before `C1`'s root), the PIOP lifted to the chain's statement (`liftPiop`), the proof the chain reads (`UPf`, `uView`). |
 | `FsOps.lean` | The five `PCS_OPEN` calls as `WhirOp`s on plain layouts (`uniOps`: `C1`, `C2` by `tableCode`; the setup's stack, `A0`, `B0` at the setup's roots), the check (`uniCheck`), `good` (`uniGood`, `uniGoodS`). |
 | `FsCost.lean` | `uniNumbers_of`: the composed verifier's calls of `π` below `2^80` (every query short), from the chain's `< 2^10` queries and every round's `≤ 2^30` scalars; `fsLayer_of_game'`. |

@@ -24,6 +24,12 @@ and differential-tested, with its end statements `UniKnowledgeSoundness` and `Un
 its knowledge soundness is proved, with no hypothesis, in `UniSound/` and `FlockSound/`
 ([below](#the-univariate-verifier-for-leanvm-42422001-knowledge-soundness)).
 
+**The recursion's inner verifier as a graph** (`crates/leanvm_rec`, π1-rec3): [`RecGraph/`](RecGraph/README.md), a
+library of `EndToEnd/`: π1-rec3's recorded verifier graph (written by the Rust, data only), its semantics over any
+permutation, the Lean recorder with "recording commutes with evaluation" (proved), and graph = `UniStatement`'s
+verifier at π1-rec3 (`UniStatement/UniStatement/Rec.lean`) by differential tests, with an oracle under which they
+differ (the verifier merges points by value, the graph by symbol).
+
 ## End-to-end theorems
 
 `EndToEnd/` (a Lake workspace, `EndToEnd/lakefile.toml`) proves the Statement's end statements about the
@@ -159,11 +165,102 @@ at `Q = 2^64` (`EndToEnd/Review/UniSoundnessNumbers.py`, exact rationals: the fi
 else is assumed. Sorry-free, on `propext`, `Classical.choice`, `Quot.sound` (`#guard_msgs`), no `native_decide`.
 The proof's route and what each layer contributes are in `UniSound/UniSound.lean`'s report.
 
+**At `≥ 128` bits** (`UniSound/UniSound/Closed128.lean`), the same theorem with a tighter error, still with no
+hypothesis:
+
+```lean
+theorem uniKnowledgeSoundness_closed128 (D : Deployment) (hD : D.shape = reference)
+    (hIv : D.programIv = programIv) :
+    UniKnowledgeSoundness D (uniBound128 (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
+      ∀ Q ≤ 2 ^ 64,
+        uniBound128 (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64
+```
+
+```
+uniBound128 e Q = N (ε + 5N/2^256) + N (9952² e + 8N/2^256) + 2N²/2^256 + (2^81 + Q)²/2^508,
+N = 2^33 + Q,  ε = εExact = 269 · 2^-137 = 2^-128.93
+```
+
+It is `2^-64.87` at `Q = 2^64`, or 128.87 bits as `Q / ε` (`EndToEnd/Review/UniSoundnessNumbers128.py`, exact
+rationals). The terms are: the openings `2^-64.93`, the list term `2^-69.44`, and the chain's collisions, the seed's
+pair and the openings' failure term at `2^-125`, `2^-127` and `2^-125.7`. Three changes produce it, all in the
+proof; the Rust and the transcript are unchanged:
+
+1. **The exact WHIR certificate** (`WhirBridge/WhirBridge/Exact.lean`). mumbai's ladder check is re-decided at
+   the rational threshold `269 · 2^-137` instead of `2^-128`, by `decide +kernel` on the certificates' `Nat`
+   numbers at `2^24 ..= 2^28` (`chkLevelsQ`, `chkQ_large`, `chkLevelsQ_sound`). The weakest group is
+   `2^-128.949` (`2^26`, level 0's queries; the smallest numerator passing at `2^-137` is `266`). The opening
+   chain then takes the per-group bound `ε` as a parameter (`stackedAtE` … `variantCertE`, `ours_sound_public_atE`,
+   instance `ours_sound_public_exact`).
+2. **The openings charged once** (`WhirBridge/WhirBridge/Union.lean`, `Compose/Compose/FirstDoom.lean`). Shapes
+   with distinct prefixes form one Fiat–Shamir family (`union_sound`: `(QA + QV)(ε + 5(QA + QV)/2^256)` for all
+   of them together). A fresh query extends at most one opening's transcript, because every IV hashes its
+   layout's prefix and its claims. Doom is read at the run's end (`DoomF`, `Compose/Compose/Final128Defs.lean`);
+   the union adversary runs the whole experiment and names the first doomed opening, whose verifier then replays
+   from the run's cache (`run_replay_of_mem_support`). The theorem, **generic in the number and shapes of the
+   openings**:
+
+   ```lean
+   theorem prEvent_doomF_le {F St M Pf : Type} [SampleableType F] (ε : ℝ≥0∞)
+       (shs : List (ExactShape ε)) (hpre : (shs.map fun s => openingPrefix s.L s.R).Nodup)
+       (view : Pf → St × List (RMsg F)) (ops : List (WhirOp Pf F M))
+       (hops : ∀ o ∈ ops, ∃ s ∈ shs, s.L = o.S.L ∧ s.R = o.S.R)
+       (X : OracleComp KeccakCalls (PreK Pf F)) (QX : ℕ) (hX : IsTotalQueryBound X QX)
+       (QV : ℕ) (hQV : ∀ s ∈ shs, s.QO ≤ QV) :
+       Pr{let z ← (simulateQ randomOracle (expL view X ops)).run' ∅}[DoomF view ops z] ≤
+         ((QX + (ops.map fun o => o.S.QO).sum + QV : ℕ) : ℝ≥0∞) *
+           (ε + ((5 * (QX + (ops.map fun o => o.S.QO).sum + QV) : ℕ) : ℝ≥0∞) / 2 ^ 256)
+   ```
+
+   `prEvent_doomF_le_large` instantiates it for any openings on plain layouts of `2^24 ..= 2^28` words
+   (`largeShapes`, `εExact`, `QV = 9018`): the recursion's six openings are of this kind.
+3. **The seed through a pair of answers** (`Compose/Compose/ListChainU128.lean`, `ListChainUDoom128.lean`,
+   `SeedPair.lean`). The chain is separated from its label by the label's first 32 bytes (`NoPre`,
+   `chain_uniqueU'`), not by the 16-byte tag. The univariate label `name ‖ iv ‖ input` starts with
+   `name ‖ iv[0:16]`, where `iv` is the answer to the IV query (`hlab`, `UniSound.hlab_uni`). A step input that
+   is the label therefore needs two answers, one being `name ‖` the other's first 16 bytes (`PairTr`). That has
+   probability at most `Q²/2^256` (`prEvent_pairTr_le_sq`, by a budgeted potential on the cache), in place of
+   the tag's `2^-128` per query. `knowledgeSoundness_listChainU_closed128` is the composed theorem with the
+   tag-free bad events, its three terms explicit.
+
 ```sh
 cd formal/EndToEnd   # on h1, under /root/pcs-quotient-fv/ only, with formal/leanervm linked as above
 systemd-run --scope -p MemoryMax=10G lake build UniSound FlockSoundUni FlockSoundUni.PendingShape \
   FlockSoundUni.Good FlockSoundUni.Game
 python3 -I Review/UniSoundnessNumbers.py      # uniBound in exact rationals
+python3 -I Review/UniSoundnessNumbers128.py   # uniBound128 in exact rationals
+```
+
+## π1-rec3: the recursion's inner verifier (knowledge soundness and completeness)
+
+π1-rec3 (`crates/leanvm_rec/SPEC-REC.md` §12 items 5, 7, 8, §1.4; `SPEC-POINTS.md`) is the univariate verifier with
+`α = (c, c², c⁴, c⁸)`, Flock's zerocheck coordinates as squares of one challenge, Flock's lincheck terminal walked
+(no `A0`, `B0` claims: three openings), and the batch two variables a round with narrow (160-bit) challenges. Its
+statement is `UniStatement/UniStatement/RecSecurity.lean`'s (`UniKnowledgeSoundnessRec3`, `UniCompletenessRec3`, over
+`Rec.lean`'s `verifyWithFs … .rec3 true`); the proofs are `UniSound/UniSound/Rec3*` (report: `UniSound/Rec3.lean`),
+`FlockSound/FlockSound/{Kronecker, FlockSq}.lean`, `FlockSound/FlockSoundUni/{Rec3*, Walk*}.lean` and
+`UniComplete/UniComplete/Rec3*`.
+
+```lean
+theorem UniSound.Rec3Ref.uniKnowledgeSoundness_closed_rec3_of_rows (hR : RowsSpec) (D : Deployment)
+    (hD : D.shape = reference) (hIv : D.programIv = programIv) :
+    UniKnowledgeSoundnessRec3 D (uniBound128 (((2 ^ 35 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
+      ∀ Q ≤ 2 ^ 64, uniBound128 (((2 ^ 35 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64
+theorem UniComplete.Rec3.uniCompletenessRec3_end_of_rows (D : Deployment) (hD : D.shape = reference)
+    (hiv : D.programIv.length ≤ 2 ^ 16) (hR : FlockSound.Uni.RowsSpec) :
+    UniCompletenessRec3 D (uniProverRec3RP flockProve3H D) deltaRec3
+```
+
+`uniBound128 (2^35/|E|)` is `2^-64.494` at `Q = 2^64` (128.49 bits; `Review/UniRec3Numbers.py`): every round errs
+with probability at most `2^35/|E|`, the narrow pairs' `8 · 2^32/|E|` the largest (the bus `16 N/|E|`, Flock's squares
+`(2^22 − 1)/|E|`). `deltaRec3 < 2^-167` (about `2^-167.97`). Both take `RowsSpec` (the BLAKE2s circuit walk
+`blake2sRowValues` computes `A0 w`, `B0 w`, `FlockSoundUni/WalkAlg.lean`), from which the walk's lemma and its converse
+follow (`walkLemma_of_rows`, `walkLemmaConverse_of_rows`).
+
+```sh
+cd formal/EndToEnd   # on h1
+systemd-run --scope -p MemoryMax=10G lake build UniSound.Rec3 UniComplete.Rec3EndRows
+python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|E|, the rounds' bits
 ```
 
 ## Layers
