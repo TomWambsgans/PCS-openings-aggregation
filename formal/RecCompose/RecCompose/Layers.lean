@@ -32,7 +32,7 @@ compiled circuit's relation, but with probability `ε2 Q`) refined into the laye
 * **`Pi2Facts D C`** (the circuit's facts, established by the compiler's checks and tests, `RecCircuitTest/Main.lean`,
   `RecStatementTest/Runner.lean`; `SpecOf` by `RecStatement.Lemmas.SpecLink` and the circuit compiler, `lean-rec-statement`
   and `lean-rec-circuit`): `SpecOf` of π2's verifier's constants and the compiled circuit, the circuit valid, its shape
-  (`2^24` positions, rows of `16`), the four-limb ports three, the public limbs in `K`.
+  (`2^24` positions, rows of `16`), the four-limb ports three, the public limbs determined by their fingerprint.
 
 **Proved** (`pi2Extraction_of_layers`): from them, `Pi2Extraction D (the compiled circuit's relation) pi2Bound`. The
 protocol is `RecPiop.piop` at each setup's circuit (`pi2Piop`): its errors are `pi2_rounds_le`'s, the copy argument's
@@ -205,7 +205,15 @@ circuit on the Cantor basis `UniComplete.Domain.basisE` (`ω = pointE`), its pai
 (`RecStatement.Lemmas.SpecLink` proves `Spec::of`'s constants `SpecOf`'s, `lean-rec-statement`; that they are the
 compiled circuit's is the compiler's, `lean-rec-circuit`, and the runners' comparison of the tables, compiled
 evaluation); the circuit valid (`RecPiop.Circuit.validate`, the Rust's `validate` and `check_shape`); `2^24` positions,
-rows of `16`; three four-limb ports (the statement, π1's two roots); every public limb in `K`, as many as the port's. -/
+rows of `16`; three four-limb ports (the statement, π1's two roots); as many public limbs as the port's, and
+**determined by their fingerprint among limbs in `K`** (`pub_canon`: the copy argument's binding).
+
+(Composition, `lean-pi2-facts`: this field was `pub_K`, every public limb in `K` at every scalar list. With `SpecOf`'s
+`term_value`, which is at every scalar list too, no `pubOf` has both: a four-limb port's term is `h₁ + γ h₀` (a root's
+halves, or the statement's `S₀ + Y S₁`, `S₂ + Y S₃`), the fingerprint of limbs in `K` is `(L₀ + Y L₁) + γ (L₂ + Y L₃)`,
+so at scalars with a `Y²` limb there no limbs in `K` fit, and `Pi2Facts` could not be built. What the binding needs is
+`pub_canon`: limbs in `K` with the public fingerprint at every `γ` are the public limbs; `RecCompose.Facts`' `pubOfC`
+has it, its limbs in `K` at the scalars the verifier reads.) -/
 structure Pi2Facts (D : RecDeployment) (C : Pi2Circuits D) where
   pairOf : RecSetupRoots → ℕ → RecPiop.Block × ℕ
   portOf : RecSetupRoots → ℕ → ℕ
@@ -218,7 +226,10 @@ structure Pi2Facts (D : RecDeployment) (C : Pi2Circuits D) where
   logW : ∀ roots, (C.G roots).logW = 4
   four : ∀ roots, ∑ j ∈ range (C.G roots).nP, C.d roots j = 3
   pub_len : ∀ roots scalars, ∀ j < (C.G roots).nP, (pubOf roots scalars j).length = ((C.G roots).limbs j).length
-  pub_K : ∀ roots scalars, ∀ j < (C.G roots).nP, ∀ x ∈ pubOf roots scalars j, x ∈ subK
+  pub_canon : ∀ roots scalars, ∀ j < (C.G roots).nP, ∀ u : List E, u.length = ((C.G roots).limbs j).length →
+    (∀ x ∈ u, x ∈ subK) →
+    (∀ γ, RecPiop.fpList ((C.G roots).limbs j) γ u = (C.G roots).pubFp γ (pubOf roots scalars) j) →
+      u = pubOf roots scalars j
 
 /-- The points `ω_i` (`Heap.omega` of the Cantor basis, `pointE`). -/
 noncomputable abbrev pi2Omega : ℕ → E := Heap.omega UniComplete.Domain.basisE
@@ -308,7 +319,8 @@ theorem source_limbs (s : RecCircuit.Source) : s.limbs = 3 ∨ s.limbs = 4 := by
   cases s <;> simp [RecCircuit.Source.limbs]
 
 /-- **The copy argument's binding**: a port's limbs that are not the public ones agree on at most `d_j` of the `γ`s
-(`0` for three limbs, `1` for four), for limbs in `K` (`RecPiop.Circuit.bind_elem`, `bind_root`). -/
+(`0` for three limbs, `1` for four), the witness's limbs in `K`: the fingerprints are affine in `γ`, and they agree at every
+`γ` only at the public limbs (`Pi2Facts.pub_canon`). -/
 theorem hbind_of (C : Pi2Circuits D) (Fa : Pi2Facts D C) (T : Pi2Tables D C) (roots : RecSetupRoots)
     (s : Pi2St) (c : Stk) :
     ∀ j < (C.G roots).nP,
@@ -336,20 +348,63 @@ theorem hbind_of (C : Pi2Circuits D) (Fa : Pi2Facts D C) (T : Pi2Tables D C) (ro
     simp only
     rw [T.witness_eval roots c _ hlt]
     exact RingHom.mem_fieldRange.mpr ⟨_, rfl⟩
-  have hpK := Fa.pub_K roots s.2 j hj
   have hpl := Fa.pub_len roots s.2 j hj
+  have hul : ((C.G roots).limbVals (fun i ↦ ((T.model roots).wP c).eval (pi2Omega i)) j).length =
+      ((C.G roots).limbs j).length := by rw [RecPiop.Circuit.limbVals, List.length_map]
+  have hcan := Fa.pub_canon roots s.2 j hj _ hul hwK
+  have hpush := fun γ ↦ RecPiop.Circuit.push_port hV hj (fun i ↦ ((T.model roots).wP c).eval (pi2Omega i)) γ
   unfold Pi2Circuits.d
   rcases source_limbs ((C.compiled (D.pi1IvAt roots.pi1)).circuit.ports.getD j default).source with h3 | h4
   · have e3 : List.range 3 = [0, 1, 2] := rfl
     rw [h3, e3] at hl
     have hl' : (C.G roots).limbs j = RecPiop.elemLimbs 0 1 2 Primitives.F192.Y := hl
     rw [ite_eq_right (by omega)]
-    exact RecPiop.Circuit.bind_elem hV indep_K hj hl' _ _ hwK hpK (by rw [hpl, hl']; rfl) hne
+    -- no `γ` in a three-limb fingerprint: one agreement is every agreement
+    refine Nat.le_zero.mpr (Finset.card_eq_zero.mpr (Finset.filter_eq_empty_iff.mpr fun γ _ hγ ↦
+      hne (hcan fun γ' ↦ ?_)))
+    rw [hpush] at hγ
+    unfold RecPiop.Circuit.pubFp at hγ ⊢
+    rw [hl'] at hγ ⊢ hul hpl
+    obtain ⟨a, b, d, ha⟩ := RecPiop.list_three (hul.trans rfl)
+    obtain ⟨a', b', d', hb⟩ := RecPiop.list_three (hpl.trans rfl)
+    rw [ha, hb, RecPiop.fpList_elem, RecPiop.fpList_elem] at hγ ⊢
+    exact hγ
   · have e4 : List.range 4 = [0, 1, 2, 3] := rfl
     rw [h4, e4] at hl
     have hl' : (C.G roots).limbs j = RecPiop.rootLimbs 0 1 2 3 Primitives.F192.Y := hl
     rw [ite_eq_left h4]
-    exact RecPiop.Circuit.bind_root hV indep_K hj hl' _ _ hwK hpK (by rw [hpl, hl']; rfl) hne
+    -- an affine function of `γ`, not zero (else every `γ` agrees): at most one root
+    by_cases hall : ∀ γ, RecPiop.fpList ((C.G roots).limbs j) γ
+        ((C.G roots).limbVals (fun i ↦ ((T.model roots).wP c).eval (pi2Omega i)) j) =
+        (C.G roots).pubFp γ (Fa.pubOf roots s.2) j
+    · exact absurd (hcan hall) hne
+    · rw [not_forall] at hall
+      obtain ⟨γ₀, hγ₀⟩ := hall
+      unfold RecPiop.Circuit.pubFp at hγ₀
+      rw [hl'] at hγ₀ hul hpl
+      obtain ⟨a, b, d, e, ha⟩ := RecPiop.list_four (hul.trans rfl)
+      obtain ⟨a', b', d', e', hb⟩ := RecPiop.list_four (hpl.trans rfl)
+      rw [ha, hb, RecPiop.fpList_root, RecPiop.fpList_root] at hγ₀
+      set e₀ := (a + Primitives.F192.Y * b) - (a' + Primitives.F192.Y * b')
+      set e₁ := (d + Primitives.F192.Y * e) - (d' + Primitives.F192.Y * e')
+      have hne0 : e₀ + γ₀ * e₁ ≠ 0 := fun h0 ↦ hγ₀ (by linear_combination h0)
+      refine (Finset.card_le_card (t := univ.filter fun γ : E ↦ e₀ + γ * e₁ = 0) fun γ hγ ↦ ?_).trans ?_
+      · rw [Finset.mem_filter] at hγ ⊢
+        refine ⟨Finset.mem_univ _, ?_⟩
+        have h := hγ.2
+        rw [hpush] at h
+        unfold RecPiop.Circuit.pubFp at h
+        rw [hl', ha, hb, RecPiop.fpList_root, RecPiop.fpList_root] at h
+        linear_combination h
+      · by_cases h1 : e₁ = 0
+        · have h0 : e₀ ≠ 0 := fun h0 ↦ hne0 (by rw [h0, h1, mul_zero, add_zero])
+          rw [Finset.filter_false_of_mem fun γ _ hγ ↦ h0 (by rw [h1, mul_zero, add_zero] at hγ; exact hγ)]
+          exact Nat.zero_le _
+        · refine (Finset.card_le_card (t := {-e₀ / e₁}) fun γ hγ ↦ ?_).trans (Finset.card_singleton _).le
+          rw [Finset.mem_filter] at hγ
+          rw [Finset.mem_singleton]
+          field_simp
+          linear_combination hγ.2
 
 /-! ## The protocol -/
 

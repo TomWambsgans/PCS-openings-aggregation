@@ -222,10 +222,13 @@ variable (D : RecDeployment) (C : Pi2Circuits D) (Fa : Pi2Facts D C)
 abbrev pubAt (roots : RecSetupRoots) (input : Vector UInt8 32) (stream : Array UInt8) : ℕ → List E :=
   Fa.pubOf roots (pi2Scalars D roots input stream)
 
-/-- **The statement port's public limbs are the calldata's four words** (the verifier's statement term,
-`SpecOf.term_value`, at the compiler's statement port; RecStatementTest's public terms and RecCircuitTest's ports). -/
+/-- **The statement port's public limbs are the calldata's four words**, on a stream π2's verifier reads (the verifier's
+statement term, `SpecOf.term_value`, at the compiler's statement port; proved for `pi2Facts`:
+`RecCompose.statementPortMeaning`). (Composition, `lean-pi2-facts`: on a stream the run rejects, π2's scalars are empty,
+`pi2Scalars`, so no public limbs are the input's words there; the bridge reads it on accepted runs only.) -/
 def StatementPortMeaning : Prop :=
-  ∀ (roots : RecSetupRoots) (input : Vector UInt8 32) (stream : Array UInt8),
+  ∀ (roots : RecSetupRoots) (input : Vector UInt8 32) (stream : Array UInt8) (r : Reduced),
+    (run (Spec.of (D.circuitAt roots.pi1).circuit) [] input.toList stream).result = .ok r →
     ∃ J < (C.compiled (D.pi1IvAt roots.pi1)).circuit.ports.size,
       ((C.compiled (D.pi1IvAt roots.pi1)).circuit.ports.getD J default).source = .statement ∧
       pubAt D C Fa roots input stream J =
@@ -366,6 +369,13 @@ theorem circuitBridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa 
     (hlay : Pi1CallsLayouts D) :
     CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream) := by
   intro roots input stream w ops hw hE hops
+  have hrun : ∃ r0, (run (Spec.of (D.circuitAt roots.pi1).circuit) [] input.toList stream).result = .ok r0 := by
+    unfold pi1OpsOf at hops
+    dsimp only at hops
+    split at hops
+    · exact absurd hops (by simp)
+    · exact ⟨_, by assumption⟩
+  obtain ⟨r0, hr0⟩ := hrun
   unfold GraphsAgree at hg
   have hc : RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt
       (D.pi1IvAt roots.pi1)) = .ok (C.compiled (D.pi1IvAt roots.pi1)) := by
@@ -382,7 +392,7 @@ theorem circuitBridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa 
       (hw.ports J (by simpa [RecPiop.Circuit.nP, RecCircuit.Circuit.toPiop] using hJ))
   -- The witness's public input is the calldata's.
   have hpub : c.pubW w = input.toList := by
-    obtain ⟨J, hJ, hsrc, hpJ⟩ := hstmt roots input stream
+    obtain ⟨J, hJ, hsrc, hpJ⟩ := hstmt roots input stream r0 hr0
     rw [hiv, hcd] at hJ hsrc
     have h1 := hE.1 J hJ hsrc
     have h2 := (hP J hJ).trans hpJ

@@ -16,9 +16,10 @@ The end statements at the real deployment with every proved layer in place, thei
 * the compiled circuit `C : Pi2Circuits D` (the Lean compiler accepts π1-rec3's graph at every π1 IV, **checked by
   evaluation**: `rec-circuit-emitted`), at the emitted graph's roots (`hroots`), the Lean recording being the emitted
   graph (`GraphsAgree`, **checked by evaluation**: `RecGraphTest/Pi1Check.lean`);
-* the circuit's facts `Fa : Pi2Facts D C` (`SpecOf` and the shape: `RecStatement.Lemmas.SpecLink`, the compiler's checks,
-  the runners) and the ports' and calls' meaning in the contract's terms (`StatementPortMeaning`, `ZeroPortsMeaning`,
-  `CallWordsAgree`, `Pi1CallsLayouts`: the runners, RecStatementTest and RecCircuitTest, `tests/pi2.rs`);
+* the circuit's facts `Fa : Pi2Facts D C` and the ports' and calls' meaning in the contract's terms
+  (`StatementPortMeaning`, `ZeroPortsMeaning`, `CallWordsAgree`, `Pi1CallsLayouts`), kept here as hypotheses; proved for
+  `pi2Facts` from the evaluated view check `Pi2ViewChecked C` (`Facts.lean`, `Meanings.lean`, `Layouts.lean`), so
+  `FsClosed.lean` restates these theorems without them;
 * for part 2, the Fiat–Shamir heuristic for Keccak-f[1600] (`Pi1FsKeccak`, `Pi1HazardKeccak`), `Pi1GraphIsVerifier`
   being proved (`RecGraph.Pi1.pi1GraphIsVerifier`).
 -/

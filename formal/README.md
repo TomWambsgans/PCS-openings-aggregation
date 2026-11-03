@@ -289,15 +289,11 @@ The end theorems are in `RecCompose/FsClosed.lean` (π2's Fiat–Shamir layer pr
 
 ```lean
 theorem RecCompose.recKnowledgeSoundness2_closed (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
-    (Fa : Pi2Facts D C) (hcol : Pi2SetupColumns D C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt)
-    (hg : GraphsAgree) (hstmt : StatementPortMeaning D C Fa) (hzero : ZeroPortsMeaning D C Fa)
-    (hcalls : CallWordsAgree D C Fa) (hlay : Pi1CallsLayouts D) :
+    (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hchk : Pi2ViewChecked C) :
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64
 theorem RecCompose.recKnowledgeSoundness_closed_fs (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
-    (Fa : Pi2Facts D C) (hcol : Pi2SetupColumns D C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt)
-    (hg : GraphsAgree) (hstmt : StatementPortMeaning D C Fa) (hzero : ZeroPortsMeaning D C Fa)
-    (hcalls : CallWordsAgree D C Fa) (hlay : Pi1CallsLayouts D) (ε1 εh : ℕ → ℝ≥0∞) (h1 : Pi1FsKeccak D ε1)
-    (hh : Pi1HazardKeccak D εh) :
+    (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hchk : Pi2ViewChecked C) (ε1 εh : ℕ → ℝ≥0∞)
+    (h1 : Pi1FsKeccak D ε1) (hh : Pi1HazardKeccak D εh) :
     RecKnowledgeSoundnessWith D (recExtractor D) fun Q ↦ pi2Bound Q + ε1 Q + εh Q
 theorem RecCompose.recCompleteness_end_fs (D : RecDeployment) (hD : D.Real) (P1 : Pi1Prover D) (P2 : Pi2Prover)
     (δ2 : ℝ≥0∞) (h2 : RecCompleteness2 D P1 P2 δ2) (δ1 δh : ℝ≥0∞) (h1 : Pi1CompletenessKeccak D P1 δ1)
@@ -305,7 +301,8 @@ theorem RecCompose.recCompleteness_end_fs (D : RecDeployment) (hD : D.Real) (P1 
 ```
 
 They are `Final.lean`'s `recKnowledgeSoundness2_final`, `recKnowledgeSoundness_final_fs` (kept) with their hypothesis
-`hfs : Pi2FsLayer D` discharged by `pi2FsLayer_real`. `recKnowledgeSoundness_closed` and `recCompleteness_end` state the `RecStatement` Props `RecKnowledgeSoundness D
+`hfs : Pi2FsLayer D` discharged by `pi2FsLayer_real`, the circuit's facts `Fa` by `pi2Facts hD C hchk` and the ports' and
+calls' meaning by `statementPortMeaning`, `zeroPortsMeaning`, `callWordsAgree`, `pi1CallsLayouts_of_real`. `recKnowledgeSoundness_closed` and `recCompleteness_end` state the `RecStatement` Props `RecKnowledgeSoundness D
 pi2Bound ε1 εh` and `RecCompleteness D P1 P2 δ1 δh δ2` themselves. Their own premise `Pi1GraphIsVerifier` is proved
 (`RecGraph.Pi1.pi1GraphIsVerifier`), so the `_fs` forms keep only the Fiat–Shamir heuristic for Keccak-f[1600]:
 `Pi1FsKeccak ε1` and `Pi1HazardKeccak εh`, or `Pi1CompletenessKeccak δ1` and `Pi1HazardKeccakHonest δh`. These are
@@ -333,6 +330,19 @@ bound is `pi2Bound Q + ε1 Q + εh Q`.
 - The couplings: `experimentsAgree`, `hazardCoupling`, `pi1Coupling`, `pi1OpeningsAgree`, `completenessAgree`,
   `completenessPi1Coupling`, by eager sampling and the logging lemmas.
 - π1-rec3's run's shape: `pi1RunShape`, `pi1RunOpenings`.
+- **The circuit's facts and the ports' and calls' meaning** (`lean-pi2-facts`): `Pi2Facts D C` is `pi2Facts hD C hchk`
+  (`Facts.lean`), from the compiled circuits and the evaluated view check `Pi2ViewChecked C`. `SpecOf` of
+  `Spec.of Data.circuit` against the compiled circuit (`specOf_data`, `FactsSpecOf.lean`): the pairs the slots of the
+  blocks' non-forward roles, the groups `Spec.of`'s partition with their formulas the roles' values, the recursion's and
+  the pairs' constants (SpecLink, the coset constants nonzero by the basis's independence), the zero coset, the walk and
+  the terms from `Data` by kernel decision (`List.mergeSort` taken off sorted lists), the public terms the ports'
+  fingerprints of `pubOfC`; validity by `validB_sound` (`Valid.lean`). `statementPortMeaning`, `zeroPortsMeaning`,
+  `callWordsAgree` (`Meanings.lean`: π2's scalars on an accepted run, the root ports' limbs rebuilding the stream's 32
+  bytes, the element ports' limbs the elements); `pi1CallsLayouts_of_real` (`Layouts.lean`). **Found**: `Pi2Facts`'
+  field `pub_K` (every public limb in `K` at every scalar list) contradicted `SpecOf.term_value` (at every scalar list)
+  at the four-limb ports, so `Pi2Facts` could not be built; it is now `pub_canon` (limbs in `K` with the public
+  fingerprint at every `γ` are the public limbs), which is what the binding needs (`hbind_of`). `StatementPortMeaning`
+  now asks for a run π2's verifier accepts (on a rejected stream π2's scalars are empty).
 - **π2's Fiat–Shamir layer and openings**, `Pi2FsLayer D` at the real deployment: `pi2FsLayer_real` (`FsClosed.lean`),
   the port of UniSound's `Fs128`/`FsGame128`/`FsFinal128` to π2's transcript. The chain `pi2Spec` (the seed
   `name ‖ iv ‖ input`, the public data's 472 bytes before `W`'s root); the six `PCS_OPEN` calls as `WhirOp`s on
@@ -352,14 +362,13 @@ Part 1 ⇒ part 2 has no hypothesis left.
 | Input | What | Who closes it |
 |---|---|---|
 | `Pi2Circuits D`, `hroots`, `GraphsAgree` | the Lean compiler accepts π1-rec3's graph at every π1 IV; `recordedGraph pi1Rec3 = Emitted.graph` | **checked by evaluation**, not by the kernel (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
-| `Pi2Facts D C` | `SpecOf` of π2's constants and the compiled circuit; validity; `2^24` positions; rows of 16; three four-limb ports; the public limbs in `K` | `RecStatement.Lemmas.SpecLink` (`lean-rec-statement`), the compiler's checks and the runners (compiled evaluation) |
-| `Pi2SetupColumns D C` | the deployment's `σ`, `κ` are the compiled circuit's at every π1 IV (`RecDeployment.Real` pins them at `Data.pi1Iv` only) | the deployment's construction; at the reference IV, the digest, the setup root and `RecCircuitTest` |
-| `StatementPortMeaning`, `ZeroPortsMeaning`, `CallWordsAgree`, `Pi1CallsLayouts` | the compiled ports' and calls' meaning in the contract's terms | the runners: RecStatementTest's public terms and calls, RecCircuitTest's ports, `tests/pi2.rs` |
+| `Pi2ViewChecked C` | at every π1 IV the compiled circuit passes `viewCheck`: its view (`viewOf`, the Rust's `adapt` transcribed) is `Data.circuit`, its calls `Data.pi1Calls`, `validB` (RecPiop's validity by loops) accepts it | **checked by evaluation** (`rec-view-check`, at π1's reference IV and the zero IV: `viewCheck true`); from it `pi2Facts` (`Facts.lean`: `SpecOf` by `specOf_data`, validity by `validB_sound`), the meanings (`Meanings.lean`) |
 | `RecCompleteness2 D P1 P2 δ2` | π2's completeness | π2's honest prover is not transcribed |
 
 ```sh
 cd formal/EndToEnd   # on h1
 systemd-run --scope -p MemoryMax=10G lake build RecCompose
+systemd-run --scope -p MemoryMax=12G lake exe rec-view-check   # Pi2ViewChecked, evaluated
 python3 -I Review/RecSoundnessNumbers.py     # pi2Bound in exact rationals
 ```
 
