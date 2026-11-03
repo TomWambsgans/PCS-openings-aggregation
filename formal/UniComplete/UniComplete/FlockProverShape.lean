@@ -47,16 +47,31 @@ theorem flockProve_eq (logN : ℕ) (variant : Variant) (q : Array K) (w : Wr) :
     ((frontW H logN variant q).run w).2).1, rfl, ?_⟩
   simp only [flockProve, run_bind_id, run_pure_id]
 
-/-- **The front** is `frontOf` of the zerocheck's output, `α` and the lincheck's output. -/
+/-- The slices `sendSlices` returns. -/
+theorem sendSlices_fst (variant : Variant) (s : List E) (w : Wr) :
+    ((sendSlices (m := Id) variant s).run w).1 = if variant.slices = .claim then none else some s := by
+  unfold sendSlices
+  split <;> rfl
+
+/-- **The front** is `frontOf` of the zerocheck's output, `α`, the lincheck's output and the slices. -/
 theorem frontW_eq (logN : ℕ) (variant : Variant) (q : Array K) (w : Wr) :
     ∃ (zc : Option E × List E × E × E × E) (alpha : E) (lc : LcOut),
       zc = ((zerocheckW H logN variant.skip (witOf logN q)).run w).1 ∧
       (∃ w2, lc = ((lcRounds H lincheckRounds (lcClaim zc alpha) (lcWeightsOf variant.skip zc alpha)
         (lcWitnessOf variant.skip q zc)).run w2).1) ∧
-      ((frontW H logN variant q).run w).1 = frontOf variant zc alpha lc := by
+      ((frontW H logN variant q).run w).1 =
+        frontOf variant zc alpha lc (if variant.slices = .claim then none else some lc.z.toList) := by
   refine ⟨_, ((sampleW H).run ((zerocheckW H logN variant.skip (witOf logN q)).run w).2).1, _, rfl,
     ⟨((sampleW H).run ((zerocheckW H logN variant.skip (witOf logN q)).run w).2).2, rfl⟩, ?_⟩
-  simp only [frontW, run_bind_id, run_pure_id]
+  simp only [frontW, run_bind_id, run_pure_id, sendSlices_fst]
+
+/-- **The prover's front holds the slices it sent** (with the slices sent). -/
+theorem frontW_slices (logN : ℕ) (variant : Variant) (q : Array K) (w : Wr) (hc : variant.slices ≠ .claim) :
+    ((frontW H logN variant q).run w).1.1.slices = some ((frontW H logN variant q).run w).1.2 := by
+  obtain ⟨zc, alpha, lc, _, _, hfr⟩ := frontW_eq H logN variant q w
+  rw [hfr]
+  show (if variant.slices = .claim then none else some lc.z.toList) = some lc.z.toList
+  simp [hc]
 
 /-- **The zerocheck** is the skip's start and the rounds' output. -/
 theorem zerocheckW_eq (logN k : ℕ) (wit : Wit) (w : Wr) :
@@ -140,21 +155,25 @@ theorem zerocheckW_shape (logN k : ℕ) (wit : Wit) (w : Wr) (hN : k + nFixed �
 
 /-- **The front's shape**, at `log_n ≥ 14`, `k ≤ 6`. -/
 theorem frontOf_shape (variant : Variant) (zc : Option E × List E × E × E × E) (alpha : E) (lc : LcOut)
+    (slices : Option (List E))
     (logN : ℕ) (hk : variant.skip ≤ 6) (hN : 14 ≤ logN) (hchi : zc.2.1.length = logN - variant.skip)
-    (hlc : lc.challenges.length = 8) (hz : lc.z.size = 64) :
-    (frontOf variant zc alpha lc).1.rowLow.length = 6 - variant.skip ∧
-      (frontOf variant zc alpha lc).1.chiIn.length = 8 ∧ (frontOf variant zc alpha lc).1.chiInPrime.length = 8 ∧
-      (frontOf variant zc alpha lc).2.length = 64 ∧
-      (variant.slices ≠ .claim → (frontOf variant zc alpha lc).1.slices = some (frontOf variant zc alpha lc).2) ∧
-      (frontOf variant zc alpha lc).1.zSkip = zc.1 ∧
-      (frontOf variant zc alpha lc).1.point.length = logN - 6 := by
+    (hlc : lc.challenges.length = 8) (hz : lc.z.size = 64)
+    (hsl : variant.slices ≠ .claim → slices = some lc.z.toList) :
+    (frontOf variant zc alpha lc slices).1.rowLow.length = 6 - variant.skip ∧
+      (frontOf variant zc alpha lc slices).1.chiIn.length = 8 ∧
+      (frontOf variant zc alpha lc slices).1.chiInPrime.length = 8 ∧
+      (frontOf variant zc alpha lc slices).2.length = 64 ∧
+      (variant.slices ≠ .claim →
+        (frontOf variant zc alpha lc slices).1.slices = some (frontOf variant zc alpha lc slices).2) ∧
+      (frontOf variant zc alpha lc slices).1.zSkip = zc.1 ∧
+      (frontOf variant zc alpha lc slices).1.point.length = logN - 6 := by
   refine ⟨?_, ?_, ?_, ?_, fun hc ↦ ?_, rfl, ?_⟩
   · simp only [frontOf, List.length_take, hchi]; unfold packing; omega
   · simp only [frontOf, List.length_take, List.length_drop, hchi]
     unfold packing lincheckRounds blake2sR1csLogSize; omega
   · simp only [frontOf, List.length_reverse, hlc]
   · simp only [frontOf, Array.length_toList, hz]
-  · simp only [frontOf, hc, ↓reduceIte]
+  · exact hsl hc
   · simp only [frontOf, List.length_append, List.length_reverse, List.length_drop, hlc, hchi]
     unfold packing lincheckRounds blake2sR1csLogSize; omega
 
@@ -184,7 +203,10 @@ theorem frontW_shape (logN : ℕ) (variant : Variant) (q : Array K) (w : Wr) (hk
     refine foldl_foldHigh_size _ 6 _ ?_
     rw [lcRounds_length, lcWitnessOf_size]
     rfl
-  obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := frontOf_shape variant zc alpha lc logN hk hN hchi hlen hsz
+  have hsl' : variant.slices ≠ .claim →
+      (if variant.slices = .claim then none else some lc.z.toList) = some lc.z.toList := fun hc ↦ by
+    simp [hc]
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := frontOf_shape variant zc alpha lc _ logN hk hN hchi hlen hsz hsl'
   rw [hfr]
   exact ⟨h1, h2, h3, h4, h5, fun h ↦ h6.trans (hnone h), fun h ↦ h6 ▸ hsome h, h7⟩
 

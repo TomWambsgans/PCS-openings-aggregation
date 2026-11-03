@@ -19,3 +19,4 @@ import UniComplete.FlockProver
 import UniComplete.FlockProverMle
 import UniComplete.FlockProverShape
 import UniComplete.FlockProverTerminal
+import UniComplete.FlockProverSync

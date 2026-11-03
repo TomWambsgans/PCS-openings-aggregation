@@ -281,9 +281,11 @@ def lcRounds : ℕ → E → Array E → Array E → WrM m LcOut
     let out ← lcRounds n claim' (foldHigh w x) (foldHigh z x)
     return ⟨x :: out.challenges, out.claim, out.z⟩
 
-/-- The slices sent, unless `Slices.claim`. -/
-def sendSlices (variant : Variant) (s : List E) : WrM m Unit :=
-  if variant.slices = .claim then pure () else sendScalars s
+/-- The slices sent, unless `Slices.claim`; returns them as the verifier's front holds them. -/
+def sendSlices (variant : Variant) (s : List E) : WrM m (Option (List E)) :=
+  if variant.slices = .claim then pure none else do
+    sendScalars s
+    pure (some s)
 
 end With
 
@@ -300,15 +302,15 @@ def lcWeightsOf (k : ℕ) (zc : Option E × List E × E × E × E) (alpha : E) :
 def lcWitnessOf (k : ℕ) (q : Array K) (zc : Option E × List E × E × E × E) : Array E :=
   lincheckWitness q ((zc.2.1.drop (packing - k)).drop lincheckRounds)
 
-/-- **The front** from the zerocheck's output, `α` and the lincheck's: the verifier's `Front` (the point's split
-as `front` makes it, `chi_in' = rounds.reverse`, the slices unless `Slices.claim`) and the true slices. -/
-def frontOf (variant : Variant) (zc : Option E × List E × E × E × E) (alpha : E) (lc : LcOut) : Front × List E :=
+/-- **The front** from the zerocheck's output, `α`, the lincheck's output and the slices sent (if any): the
+verifier's `Front` (the point's split as `front` makes it, `chi_in' = rounds.reverse`) and the true slices. -/
+def frontOf (variant : Variant) (zc : Option E × List E × E × E × E) (alpha : E) (lc : LcOut)
+    (slices : Option (List E)) : Front × List E :=
   let k := variant.skip
   let chi := zc.2.1
   let chiInPrime := lc.challenges.reverse
   (⟨zc.1, chi, chi.take (packing - k), (chi.drop (packing - k)).take lincheckRounds, chiInPrime, alpha, lc.claim,
-      if variant.slices = .claim then none else some lc.z.toList,
-      chiInPrime ++ (chi.drop (packing - k)).drop lincheckRounds⟩, lc.z.toList)
+      slices, chiInPrime ++ (chi.drop (packing - k)).drop lincheckRounds⟩, lc.z.toList)
 
 section With
 
@@ -321,8 +323,8 @@ def frontW (logN : ℕ) (variant : Variant) (q : Array K) : WrM m (Front × List
   let alpha ← sampleW H
   let lc ← lcRounds H lincheckRounds (lcClaim zc alpha) (lcWeightsOf variant.skip zc alpha)
     (lcWitnessOf variant.skip q zc)
-  sendSlices variant lc.z.toList
-  return frontOf variant zc alpha lc
+  let slices ← sendSlices variant lc.z.toList
+  return frontOf variant zc alpha lc slices
 
 /-- **The ring switch's end** (`ring_end`): the map's 6 challenges, the target as the verifier computes it. -/
 def ringEndW (variant : Variant) (s : List E) : WrM m End := do
