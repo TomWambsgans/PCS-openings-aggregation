@@ -14,12 +14,13 @@
 #[path = "../../leanvm_univariate/tests/vectors/mod.rs"]
 mod vectors;
 
+use leanvm_flock_gas::evm::machine;
 use leanvm_flock_gas::evm::record::Node;
 use leanvm_flock_gas::field::K;
 use leanvm_flock_gas::shapes::PROGRAM_IV;
 use leanvm_flock_gas::transcript::keccak_seed;
 use leanvm_rec::circuit::compile::{Compiled, Inputs, Layout, pi2};
-use leanvm_rec::circuit::spec::Failure;
+use leanvm_rec::circuit::spec::{CallWord, Failure};
 use leanvm_rec::eval::{Value, evaluate};
 use leanvm_univariate::Claims;
 use leanvm_univariate::contract::{NAME, Recorded, record_verifier};
@@ -149,24 +150,32 @@ fn run(name: &str, layout: Layout, log_n: u8, fill: (f64, f64)) {
         Ok(()),
         "{name} {layout:?}: the circuit holds"
     );
-    // The calls on the public inputs are the vector's PCS_OPEN inputs in PCS_OPEN's ABI (REVIEW-REC.md M1: each
-    // root word `machine::root_word` of the hash π1's own contract passes as it is).
-    let abi: Vec<Vec<u8>> = v
-        .calls
-        .iter()
-        .map(|input| {
-            let mut x = input.clone();
-            let raw: [u8; 32] = x[..32].try_into().expect("a root");
-            x[..32].copy_from_slice(&leanvm_flock_gas::evm::machine::root_word(&raw));
-            x
-        })
-        .collect();
+    // The calls on the public inputs are the vector's PCS_OPEN inputs in PCS_OPEN's ABI (REVIEW-REC.md M1, R1: `C1`'s
+    // and `C2`'s root words as π1's own contract passes them, the stream's bytes; a setup root's word
+    // `machine::root_word` of the hash π1's own contract holds as it is).
+    let abi: Vec<Vec<u8>> = v.calls.iter().map(|input| vectors::pi1_abi(input)).collect();
     assert_eq!(circuit.call_inputs(&c.public), abi, "{name}: the calls are the vector's");
     assert_eq!(
         circuit.public_from_calls(v.public, &abi).as_ref(),
         Some(&c.public),
         "{name}: the public inputs are read back from the calls"
     );
+    // REVIEW-REC.md R1: read as a decoding `PCS_OPEN` reads them (`machine::decode`), the calls are of the roots π1's
+    // prover committed (the vector's `whir_root`s, from the prover's output, not from any contract's encoding). The
+    // encoding before R1 (π2's word for a stream root its stream bytes' halves reversed, which on this stream is the
+    // hash as it is, the word π1's stream used to carry) names another root.
+    assert_eq!(v.whir_roots.len(), v.calls.len(), "{name}: the vector has the committed roots");
+    let decode = |input: &[u8]| machine::decode(input, |layout| Some(layout[24] as usize)).expect("a call decodes");
+    for (k, (input, root)) in circuit.call_inputs(&c.public).iter().zip(&v.whir_roots).enumerate() {
+        assert_eq!(&decode(input).root, root, "{name}: call {k} is of the committed root");
+        if let CallWord::Root(_) = circuit.calls[k][0] {
+            let word: [u8; 32] = input[..32].try_into().expect("a root word");
+            let mut old = input.clone();
+            old[..32].copy_from_slice(&machine::root_word(&word));
+            assert_eq!(old[..32], root[..], "{name}: call {k}: the old word is the hash as it is");
+            assert_ne!(&decode(&old).root, root, "{name}: call {k}: the old encoding names another root");
+        }
+    }
     // The digests and the elements are the evaluator's.
     let seed = keccak_seed(&NAME, &iv, &v.public);
     let values = evaluate(&c.expanded, seed, &v.public, &stream);

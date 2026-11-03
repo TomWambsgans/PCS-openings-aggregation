@@ -13,6 +13,14 @@
 //! k = 1, P`, the `P` points (a length, then the coordinates), the claim's `m` terms (`column | point << 32 |
 //! twist << 48`, then the coefficient) and its value; `A0` and `B0` as evaluation claims (`root, layout, 1`, the
 //! point, the value). The setup roots are constants in the code (no `SLOAD`).
+//!
+//! **Root words** (`crates/leanvm_rec/REVIEW-REC.md`, R1). `C1`'s and `C2`'s are the stream's 32 bytes as they are:
+//! the prover sends each root as its two WHIR scalars (`prover::prove::halves`, `hash_to_scalars`), so those bytes
+//! are `PCS_OPEN`'s root word `s_0 · 2^128 + s_1` (`crates/evm/src/machine.rs`), which a decoding precompile reads as
+//! the root the opening is of. The setup roots' words are the hashes as they are ([`SetupRoots`]), not their root
+//! words: a precompile with machine.rs's decoding reads each as another root (`root_word` of it), so this contract,
+//! deployed alone, needs `Word::Const(root_word(..))` there (free: constants). π2's contract, which makes π1's calls,
+//! passes their root words (`crates/leanvm_rec`, `circuit::compile`).
 
 use leanvm_flock_gas::evm::codegen::{CALLS, Contract, ENTRY, Ending, Entry, MEASURE, VERIFY, Word, compile, word};
 use leanvm_flock_gas::evm::machine::{Outcome, PcsOpen, call};

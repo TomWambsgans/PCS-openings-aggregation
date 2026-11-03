@@ -9,7 +9,7 @@
 //! `cargo test --release -p leanvm_univariate --test prove_real -- --ignored --nocapture --test-threads 1`.
 
 use leanvm_flock_gas::evm::codegen::word;
-use leanvm_flock_gas::evm::machine::{PcsOpen, call, element_word};
+use leanvm_flock_gas::evm::machine::{PcsOpen, call, element_word, root_of_word};
 use leanvm_flock_gas::layout::OP_BLAKE2S;
 use leanvm_flock_gas::shapes::PROGRAM_IV;
 use leanvm_univariate::claims::Commitment;
@@ -146,6 +146,18 @@ fn copy(proof: &Proof, stream: Vec<u8>) -> Proof {
     }
 }
 
+/// `PCS_OPEN`'s root word (`crates/evm/src/machine.rs`: `s_0 · 2^128 + s_1`) of the root a WHIR opening is of, read
+/// off the opening itself: its first two scalars, each 128 bits.
+fn whir_word(opening_stream: &[F192]) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    for (h, s) in opening_stream[..2].iter().enumerate() {
+        assert_eq!(s.c2, 0, "a root scalar is 128-bit");
+        word[16 * h..16 * h + 8].copy_from_slice(&s.c1.to_be_bytes());
+        word[16 * h + 8..16 * h + 16].copy_from_slice(&s.c0.to_be_bytes());
+    }
+    word
+}
+
 fn number(n: u64) -> [u8; 32] {
     let mut b = [0u8; 32];
     b[24..].copy_from_slice(&n.to_be_bytes());
@@ -245,15 +257,34 @@ fn end_to_end(blake2s: Blake2s) {
         println!("  extension B: the bit-slice claim on C1 holds on the committed q_flock (PCS_OPEN's to prove)");
     }
 
-    // The contract on the real calldata: its PCS_OPEN mock attests exactly the claims the openings prove (the setup's
-    // root being the contract's constant, the layout words the contract's) and Flock's A0, B0 claims, which are the
-    // matrices' values.
+    // The roots the openings are of, from the prover's output: each WHIR opening's first two scalars are its
+    // commitment's root's (`hash_to_scalars`), and the stream carries C1's and C2's as those scalars, so that the
+    // stream's 32 bytes are the root's `PCS_OPEN` word (machine.rs: `s_0 · 2^128 + s_1`; REVIEW-REC.md R1).
+    let order: Vec<Commitment> = proof.openings.iter().map(|o| o.commitment).collect();
+    assert_eq!(order, [Commitment::C1, Commitment::C2, Commitment::Setup], "the calls' order");
+    let mut whir_roots: Vec<[u8; 32]> = Vec::new();
+    for o in &proof.openings {
+        let scalars = fiat_shamir::merkle::hash_to_scalars(&o.root);
+        assert_eq!(o.proof.stream[..2], scalars, "{:?}: the WHIR opening's first two scalars are its root's", o.commitment);
+        if o.commitment == Commitment::C1 {
+            // After the six row counts.
+            assert_eq!(proof.stream[24..56], whir_word(&o.proof.stream), "C1's root word in the stream");
+        }
+        whir_roots.push(o.root);
+    }
+    if report.flock.is_some() {
+        whir_roots.extend([roots.a0, roots.b0]);
+    }
+
+    // The contract on the real calldata: its PCS_OPEN mock attests exactly the claims the openings prove (C1's and
+    // C2's root words their WHIR openings' first two scalars, the setup's root the contract's constant, the hash as it
+    // is; the layout words the contract's) and Flock's A0, B0 claims, which are the matrices' values.
     let words = layout_words(&shape);
     let mut inputs: Vec<Vec<u8>> = Vec::new();
     for o in &proof.openings {
         let root = match o.commitment {
             Commitment::Setup => roots.f,
-            _ => o.root,
+            _ => whir_word(&o.proof.stream),
         };
         let mut input = root.to_vec();
         input.extend(o.layout);
@@ -276,6 +307,7 @@ fn end_to_end(blake2s: Blake2s) {
     }
     let data = calldata(&public, &proof.stream);
     let stream = proof.stream.clone();
+    let opened = whir_roots.clone();
     let (accepted, rejected, gas, linked, calls) = deep(move || {
         let recorded = record_verifier_with(&shape, blake2s, Claims::Point, &roots);
         assert_eq!(recorded.stream_len, stream.len(), "the contract's stream is the proof's");
@@ -294,6 +326,13 @@ fn end_to_end(blake2s: Blake2s) {
             } else {
                 assert_eq!(made, proven, "call {k}: the opening's claim");
             }
+        }
+        // C1's and C2's calls, read as a decoding PCS_OPEN reads them (machine.rs: the root word, then the root it
+        // names), are of the roots the prover committed. The setup's constants are the hashes as they are (π1's own
+        // contract; π2 passes their root words, REVIEW-REC.md R1).
+        for (k, (made, root)) in calls.iter().zip(&opened).enumerate().take(2) {
+            let word: [u8; 32] = made[..32].try_into().expect("a root word");
+            assert_eq!(&root_of_word(&word), root, "call {k}: PCS_OPEN reads the root the opening is of");
         }
         let attesting = |skip: Option<usize>| {
             let mut pcs = PcsOpen::default();
@@ -342,6 +381,7 @@ fn end_to_end(blake2s: Blake2s) {
             public,
             calldata: calldata(&public, &proof.stream),
             calls: calls.clone(),
+            whir_roots,
             accepts: true,
             gas_straight: gas,
             gas_deployed: linked.2,

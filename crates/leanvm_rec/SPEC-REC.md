@@ -6,8 +6,8 @@
 (π2's circuit compiled and its witness on the real proofs, §10: D16v × π1-rec is `2^24` positions, 85.7% used); R3
 steps 1–3 done (π2's prover, verifier and contract, measured end to end on the real proof, §11 and `PI2.md`: 73,550 at
 `c = 0`, 94,550 with the base); the review (R3 step 4, `REVIEW-REC.md`) found no attack, its fixes are in; the
-optimisation (§12, branch `leanvm-rec-opt`): D16v × π1-rec3, measured end to end on the real proof, **44,792 at
-`c = 0`** (980 B, execution 29,832), 65,792 with the base.** §0–§11 are the design before §12; where they differ,
+optimisation (§12, branch `leanvm-rec-opt`): D16v × π1-rec3, measured end to end on the real proof, **44,804 at
+`c = 0`** (980 B, execution 29,832), 65,804 with the base** (44,792 before R1's regenerated proof, one zero byte more). §0–§11 are the design before §12; where they differ,
 §12 and `PI2.md` §8–§9 hold.
 Branch `leanvm-rec`, from `leanvm-univariate` @ 29d3095; π1-rec on `leanvm-rec-pi1`; π2's circuit on
 `leanvm-rec-circuit`; π2's PIOP on `leanvm-rec-piop`.
@@ -893,6 +893,12 @@ in `PI2.md` §9.
    the design is `SPEC-POINTS.md`'s, branch `leanvm-rec-points` merged). 14 narrow challenges for the 27 coordinates;
    π2's ports bind the 14 challenges and the contract derives the coordinates (`CallWord::Pair`). 129.0 bits after the
    lists. On the real calldata (980 B, 60 zero): EIP-7623 `c = 0` 49,534 → **44,792**; EIP-7976 82,688 → 62,720.
+9. **R1: π1's stream carries its roots as root words** (`REVIEW-REC.md` R1; **π1's stream changes**, not its
+   Fiat–Shamir shape or its verifier: π1's prover sends each root as its two WHIR scalars, `hash_to_scalars`, instead
+   of the hash's bytes). π1's contract's `C1`, `C2` words then decode to the commitments; π2's root ports read the
+   stream's bytes as they are (σ changes: π2's setup root and digest), π2's calldata words are the same. Every vector
+   regenerated; every execution unchanged (π1's contracts, π2's 29,832); on the real calldata 59 zero bytes, one
+   fewer by chance: EIP-7623 `c = 0` 44,792 → **44,804**.
 
 ### Where it stands (measured on h1, the real 1,000-signature proof, `c = 0`, no base)
 
@@ -900,7 +906,7 @@ in `PI2.md` §9.
 |---|---:|---:|---:|---:|---:|---|
 | D16v × π1-rec, before (9d1bf46) | 1,844 B | 39,674 | 73,550 | 118,016 | 9 / 8 | 14.37M of `2^24` |
 | D16v × π1-rec2 (f7a0b28) | 1,292 B (110 zero) | 30,182 | 49,534 | 82,688 | 7 / 6 | 15.88M of `2^24` (94.6%) |
-| **D16v × π1-rec3, now** (§12 item 8) | 980 B (60 zero) | 29,832 | **44,792** | 62,720 | 7 / 6 | 15.93M of `2^24` (94.9%) |
+| **D16v × π1-rec3, now** (§12 items 8, 9) | 980 B (59 zero) | 29,832 | **44,804** | 62,720 | 7 / 6 | 15.93M of `2^24` (94.9%) |
 
 The calldata (π1-rec3): the selector 4, the public input 32, π1's roots 64, π1's claims 408 (14 narrow challenges and 3
 values), π2's roots 64, π2's 17 values 408. EIP-7623's standard price binds (`16 · 920 + 4 · 60 + 29,832`); its floor is

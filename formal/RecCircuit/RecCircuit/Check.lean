@@ -406,14 +406,15 @@ def portsOk (X : Ctx) : Bool :=
       allBelow L (fun l => vs.getD l NONE != NONE && X.cellAt (X.rowStart p.position + l) == vs.getD l NONE) &&
       (p.source != .pad || allBelow 3 (fun l => X.constOk (vs.getD l NONE) 0))
 
-/-- The roots' packings: limb `l` the little-endian word of the stream's bytes `at + [16, 24, 0, 8][l]`. -/
+/-- The roots' packings: limb `l` the big-endian word of the stream's bytes `at + [24, 16, 8, 0][l]` (the root word is
+the stream's 32 bytes, REVIEW-REC.md R1). -/
 def rootsOk (rootsAt : List ℕ) (packOf : Array (Option ℕ)) : Bool :=
   c.rootLimbs.size == rootsAt.length &&
   allBelow rootsAt.length fun i =>
     let at_ := rootsAt.getD i 0
     let rl := c.rootLimbs.getD i #[]
     rl.size == 4 && (List.range 256).all (fun k => (c.bitSelf.getD (8 * at_ + k) none).isSome) &&
-      allBelow 4 fun l => c.packIs packOf (rl.getD l NONE) (leBits c.streamBit (at_ + [16, 24, 0, 8].getD l 0) 8)
+      allBelow 4 fun l => c.packIs packOf (rl.getD l NONE) (beBits c.streamBit (at_ + [24, 16, 8, 0].getD l 0) 8)
 
 /-- The free bits: every stream and public-input bit a self-loop, every copy a copy. -/
 def bitsOk (X : Ctx) : Bool :=

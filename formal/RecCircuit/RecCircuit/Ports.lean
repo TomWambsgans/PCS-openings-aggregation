@@ -8,8 +8,8 @@ import RecCircuit.Nodes
 its source means (`portMeaning`), on the public input and the stream the witness's free bits encode:
 
 * the statement port: the public input's four big-endian words;
-* root `i`'s port: the little-endian words of the stream's bytes `at + 16, at + 24, at, at + 8` (root `i` at `at`),
-  that is `PCS_OPEN`'s root word's four big-endian limbs (`root_word`, each half reversed);
+* root `i`'s port: the big-endian words of the stream's bytes `at + 24, at + 16, at + 8, at` (root `i` at `at`),
+  that is `PCS_OPEN`'s root word's four big-endian limbs, the word being the stream's 32 bytes (REVIEW-REC.md R1);
 * element `e`'s port: the limbs of the value of the calls' `e`-th element node (a pair's challenge for a pair's
   coordinates), in the expanded graph;
 * the `m`-th zero port: the limbs of the value of the graph's `m`-th non-constant zero check;
@@ -32,7 +32,7 @@ def portMeaning (c : Compiled) (r : Recorded) (w : ℕ → K) (J : ℕ) : List K
   match (c.circuit.ports.getD J default).source with
   | .statement => (List.range 4).map fun k => F64.ofNat (beNat (slice (c.pubW w) (8 * k) 8))
   | .root i => (List.range 4).map fun l =>
-      F64.ofNat (leNat (slice (c.streamW r w) (r.rootsAt.getD i 0 + [16, 24, 0, 8].getD l 0) 8))
+      F64.ofNat (beNat (slice (c.streamW r w) (r.rootsAt.getD i 0 + [24, 16, 8, 0].getD l 0) 8))
   | .element e => limbsL ((c.valsW r w).getD (c.elementNodes.getD e 0) default).toE
   | .zero => limbsL ((c.valsW r w).getD (c.zeroNodes.getD (c.zeroIndex J) 0) default).toE
   | .pad => [0, 0, 0]
@@ -132,14 +132,14 @@ theorem ports_carry (hc : c.Checked r) (hw : c.circuit.Satisfied w) :
     intro l hlm
     rw [List.mem_range] at hlm
     set at_ := r.rootsAt.getD i 0
-    have hfirst : [16, 24, 0, 8].getD l 0 + 8 ≤ 32 := by interval_cases l <;> decide
+    have hfirst : [24, 16, 8, 0].getD l 0 + 8 ≤ 32 := by interval_cases l <;> decide
     have hall' : ∀ k < 8 * 32, (c.bitSelf.getD (8 * at_ + k) none).isSome := fun k hk => hall k hk
     obtain ⟨hb, hbits⟩ := read_bits hc hw (by norm_num) hall'
-    apply packLE_word hc G c.streamBit (c.streamW r w) (at_ + [16, 24, 0, 8].getD l 0) 8
+    apply packBE_word hc G c.streamBit (c.streamW r w) (at_ + [24, 16, 8, 0].getD l 0) 8
       (by rw [streamW_length]; omega) _ (allBelow_spec hpk l hlm)
     intro i' hi' j hj
-    have := hbits ([16, 24, 0, 8].getD l 0 + i') (by omega) j hj
-    rwa [show at_ + ([16, 24, 0, 8].getD l 0 + i') = at_ + [16, 24, 0, 8].getD l 0 + i' by ring] at this
+    have := hbits ([24, 16, 8, 0].getD l 0 + i') (by omega) j hj
+    rwa [show at_ + ([24, 16, 8, 0].getD l 0 + i') = at_ + [24, 16, 8, 0].getD l 0 + i' by ring] at this
   | element e =>
     rw [hsrc] at hsize hl
     simp only [Source.limbs] at hsize hl ⊢
