@@ -1,0 +1,13 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+[package]
+name = "gf2_linear"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "GF(2)-linear maps of GF(2^192) of the form x -> sum_k c_k x^(2^k): byte tables, and eight at once with GFNI"
+
+[lints]
+workspace = true
+
+[dependencies]
+primitives.workspace = true

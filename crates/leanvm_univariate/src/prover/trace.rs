@@ -8,9 +8,10 @@
 use std::path::Path;
 
 use leanvm_flock_gas::N_TABLES;
-use leanvm_flock_gas::layout::tables;
+use leanvm_flock_gas::layout::{OP_BLAKE2S, tables};
 use primitives::field::F64;
 
+use crate::domain::{active_positions, is_active};
 use crate::verifier::Shape;
 
 /// One execution: every column leanVM 42422001 commits or carries, at its padded height.
@@ -31,6 +32,40 @@ pub struct Trace {
     pub tables: Vec<Vec<Vec<F64>>>,
     /// leanVM's stacked bytecode: word `instruction + 2^log_bytecode · slot`.
     pub bytecode: Vec<F64>,
+    /// Whether the rows sit at the verifier's positions ([`Trace::place`]); leanVM's trace has the active rows first.
+    pub placed: bool,
+}
+
+/// Where row `i` of a height-`r` table of `rows` active rows goes: the active rows (leanVM's first `rows`) to
+/// `domain::active_positions(rows, r)`, in order, the padding rows to the other positions, in order.
+pub fn placement(rows: u64, r: usize) -> Vec<usize> {
+    let n = 1u64 << r;
+    let mut to: Vec<usize> = active_positions(rows, r).into_iter().map(|p| p as usize).collect();
+    to.extend((0..n).filter(|&i| !is_active(i, rows, r)).map(|i| i as usize));
+    assert_eq!(to.len() as u64, n);
+    to
+}
+
+/// `data` cut into `to.len()` equal blocks, block `i` moved to `to[i]`, in place: only the blocks that move are
+/// copied out and back (a placement leaves the first coset's, half a table or more, where they are).
+pub fn permute_blocks<T: Copy + Send + Sync>(data: &mut [T], to: &[usize]) {
+    let block = data.len() / to.len();
+    assert_eq!(block * to.len(), data.len());
+    let moved: Vec<usize> = (0..to.len()).filter(|&i| to[i] != i).collect();
+    // The moved blocks, in `moved`'s order, then where each destination's block comes from in that buffer.
+    let mut temp: Vec<T> = Vec::with_capacity(moved.len() * block);
+    for &i in &moved {
+        temp.extend_from_slice(&data[i * block..(i + 1) * block]);
+    }
+    let mut source = vec![usize::MAX; to.len()];
+    for (j, &i) in moved.iter().enumerate() {
+        source[to[i]] = j;
+    }
+    parallel::chunks_mut(data, block, |p, chunk| {
+        if source[p] != usize::MAX {
+            chunk.copy_from_slice(&temp[source[p] * block..(source[p] + 1) * block]);
+        }
+    });
 }
 
 fn words(bytes: &[u8]) -> Vec<F64> {
@@ -107,7 +142,37 @@ impl Trace {
             qflock,
             tables: tables_columns,
             bytecode,
+            placed: false,
         })
+    }
+
+    /// The rows at the verifier's positions (SPEC.md §13, F1b and F1): table `t`'s active rows, in order, at
+    /// `domain::active_positions(rows, r)`, its padding rows at the others, in order ([`placement`]); BLAKE2S's
+    /// `q_flock` instances with its rows; the padding rows' counters 1, so that every row's are nonzero. leanVM puts
+    /// the active rows first; the rows' order is no part of its statement (the bus is a multiset, padding rows are
+    /// free). Flock's witness moves likewise ([`super::flock::FlockWitness::place`]).
+    pub fn place(&mut self) {
+        assert!(!self.placed, "placed once");
+        let layout = tables();
+        for (t, table) in layout.iter().enumerate() {
+            let to = placement(self.rows[t], self.heights[t]);
+            let rows = self.rows[t] as usize;
+            let counters: Vec<usize> = table.count_columns().collect();
+            let moved: Vec<(usize, usize)> = to.iter().enumerate().filter(|(i, p)| i != *p).map(|(i, &p)| (i, p)).collect();
+            parallel::for_each_mut(&mut self.tables[t], |c, column| {
+                if counters.contains(&c) {
+                    column[rows..].fill(F64::ONE);
+                }
+                let values: Vec<F64> = moved.iter().map(|&(i, _)| column[i]).collect();
+                for (&(_, p), v) in moved.iter().zip(values) {
+                    column[p] = v;
+                }
+            });
+            if t == OP_BLAKE2S {
+                permute_blocks(&mut self.qflock, &to);
+            }
+        }
+        self.placed = true;
     }
 
     /// The shape the verifier is built for.

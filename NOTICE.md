@@ -53,17 +53,24 @@ option. Every file says where it comes from in its first lines.
   - Its prover (`src/prover/`, `PROVER.md`) is new here. It reads the execution traces of leanVM `42422001` itself:
     its execution and witness generation, unchanged, written out by `src/prover/dump/trace_dump.rs`, which
     `src/prover/dump/apply.sh` copies into a leanVM checkout. It transforms them with `crates/quotient/src/domain.rs`'s
-    additive NTT, and commits and opens them with the vendored WHIR (`crates/pcs`, `crates/verifier`, leanVM
+    additive NTT, vectorized in `crates/quotient/src/ntt.rs` (the same layers in the same order; its lane-wise
+    product and reduction are those of the vendored `primitives`' AVX-512 field, after binius64), and commits and opens them with the vendored WHIR (`crates/pcs`, `crates/verifier`, leanVM
     `c445e3d5`), its openings in the transcript shape of `crates/quotient/src/opening.rs`.
   - Its Flock prover is leanVM `42422001`'s own, vendored for it:
     - `crates/lv42_primitives`, `crates/lv42_parallel` and `crates/lv42_flock` are leanVM `42422001`'s
       `primitives`, `parallel` and `flock`. They are renamed, since the workspace's `primitives` and `parallel` are
-      `c445e3d5`'s, and copied unchanged but for a header line. The exception is `flock/src/hash.rs`, which leaves
-      out the PCS packaging of the slices.
+      `c445e3d5`'s, and copied unchanged but for a header line. The exceptions say so in their headers:
+      `flock/src/hash.rs` leaves out the PCS packaging of the slices and adds `prove_reduction_skip`;
+      `zerocheck/bit_fold.rs` and `zerocheck/multilinear.rs` take rows of 1, 2 and 4 bytes (and the latter a
+      byte-row pass with a product table); `lincheck.rs` takes its row weights given.
+    - `crates/lv42_flock/src/zerocheck/skip.rs` (new here, built on leanVM `42422001`'s zerocheck prover and its
+      round-1 kernel, CREDIT flock-core): the zerocheck with a univariate skip of 3 to 6.
     - `crates/lv42_pcs` is the part of `42422001`'s `pcs` that `flock` uses: the GF(2^8) additive NTT, its inverse
       table, the packing constants and one inner product.
     - `crates/lv42_fiat_shamir` (new here) states as a trait the transcript methods `flock` calls (leanVM's
       `ProverState`'s), which the univariate prover's Keccak-256 chain implements.
+  - `crates/gf2_linear` (new here): the GF(2)-linear maps `x ↦ Σ_k c_k x^(2^k)` of `E` that the prover's batching
+    sumcheck evaluates the ring switch's twisted weight with, as byte tables and eight at a time with GFNI.
 - **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
   Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
   proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's

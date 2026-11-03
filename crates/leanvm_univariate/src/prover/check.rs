@@ -7,6 +7,7 @@ use primitives::field::{F64, F192};
 
 use super::bus::{Bus, all_leaves, expected_root, heap};
 use super::trace::Trace;
+use crate::domain::is_active;
 use crate::heap::Leaves;
 
 /// One identity: its name and the rows (or cells) where it fails.
@@ -40,24 +41,28 @@ pub fn on_domain(trace: &Trace, alphas: &[F192], beta: F192) -> Vec<Check> {
             .count();
         out.push(check("JUMP: b + v_cond w = 0, v_cond (b + 1) = 0 (all rows)", n, bad));
     }
-    // Counters: every count column nonzero on active rows.
+    // Counters: every count column nonzero on every row (SPEC.md §13, F1: the padding rows' are set to 1).
     for t in &layout {
-        let rows = trace.rows[t.opcode] as usize;
-        let bad = (0..rows)
+        let n = 1usize << trace.heights[t.opcode];
+        let bad = (0..n)
             .filter(|&i| t.count_columns().any(|c| trace.tables[t.opcode][c][i].is_zero()))
             .count();
-        out.push(check(format!("{}: counters nonzero (active rows)", leanvm_flock_gas::TABLE_NAMES[t.opcode]), rows, bad));
+        out.push(check(format!("{}: counters nonzero (every row)", leanvm_flock_gas::TABLE_NAMES[t.opcode]), n, bad));
     }
-    // Padding rows: what they hold against padRow (not a constraint here: their leaves are 1).
+    // Padding rows: what they hold against padRow, but their counters (not a constraint here: their leaves are 1).
     for t in &layout {
-        let rows = trace.rows[t.opcode] as usize;
-        let n = 1usize << trace.heights[t.opcode];
-        let bad = (rows..n)
-            .filter(|&i| (0..t.width()).any(|c| trace.tables[t.opcode][c][i].0 != t.padding[c].c0))
+        let (rows, r) = (trace.rows[t.opcode], trace.heights[t.opcode]);
+        let n = 1usize << r;
+        let counters: Vec<usize> = t.count_columns().collect();
+        let bad = (0..n)
+            .filter(|&i| !is_active(i as u64, rows, r))
+            .filter(|&i| {
+                (0..t.width()).any(|c| !counters.contains(&c) && trace.tables[t.opcode][c][i].0 != t.padding[c].c0)
+            })
             .count();
         out.push(check(
             format!("{}: padding rows hold padRow (informative)", leanvm_flock_gas::TABLE_NAMES[t.opcode]),
-            n - rows,
+            n - rows as usize,
             bad,
         ));
     }

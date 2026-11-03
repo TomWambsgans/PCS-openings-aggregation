@@ -10,6 +10,8 @@
 //! those absent lanes: the claim's `eq(point, ·)` restricted to the committed lanes, which is the same claim as the
 //! stack is zero there.
 
+use std::sync::Mutex;
+
 use fiat_shamir::digest_words;
 use fiat_shamir::merkle::Hash;
 use fiat_shamir::transcript::{Proof, ProverState};
@@ -22,18 +24,22 @@ pub const LANE_FOLD: usize = 6;
 /// WHIR's rate, `2^-LOG_INV_RATE` (the repository's: `review/whir_params.py`).
 pub const LOG_INV_RATE: usize = 1;
 const LABEL: &[u8; 20] = b"leanvm-univariate-op";
-/// The version of this opening (its transcript, WHIR's configuration at c445e3d5).
-pub const VERSION: u64 = 1;
+/// The version of this opening (its transcript, WHIR's configuration at c445e3d5): 2 since the layout word is
+/// `PCS_OPEN`'s 32 bytes (SPEC.md §13, F2).
+pub const VERSION: u64 = 2;
 
-/// A commitment: its root and Merkle tree, the stack's variables and the words its blocks place.
+/// A commitment: its root and Merkle tree, the stack's variables and the words its blocks place, and the codeword
+/// when it is kept, until an opening takes it.
 pub struct Committed {
     pub root: Hash,
     tree: Vec<Hash>,
     pub vars: usize,
     pub placed: u64,
+    codeword: Mutex<Option<Vec<F64>>>,
 }
 
-/// Commit to a stack of whole lanes (`words.len()` a multiple of `2^(vars - 6)`).
+/// Commit to a stack of whole lanes (`words.len()` a multiple of `2^(vars - 6)`), keeping the Merkle tree alone:
+/// the opening encodes the rows its queries open again from the stack.
 pub fn commit(words: &[F64], vars: usize, placed: u64) -> Committed {
     let (commitment, tree) = commit_tree_in(words, vars, LANE_FOLD, LOG_INV_RATE, Vec::new());
     Committed {
@@ -41,14 +47,32 @@ pub fn commit(words: &[F64], vars: usize, placed: u64) -> Committed {
         tree,
         vars,
         placed,
+        codeword: Mutex::new(None),
     }
 }
 
-/// The opening's IV: Keccak-256 of the label, the version, the layout's id (`PCS_OPEN`'s layout word), the stack's
-/// variables, the rate, then the point's coordinates and the value (three 8-byte little-endian limbs each).
-pub fn iv(layout: u64, vars: usize, point: &[F192], value: F192) -> [u8; 32] {
+/// [`commit`], keeping the codeword too (`2^LOG_INV_RATE` words per word of the stack), from which the first opening
+/// reads the rows its queries open instead of encoding them again, and which it frees. The root, the tree and the
+/// proofs are [`commit`]'s.
+pub fn commit_keeping_codeword(words: &[F64], vars: usize, placed: u64) -> Committed {
+    let (commitment, data) = pcs::whir::commit(words, vars, LANE_FOLD, LOG_INV_RATE);
+    Committed {
+        root: commitment.root,
+        tree: data.merkle_tree,
+        vars,
+        placed,
+        codeword: Mutex::new(Some(data.codeword)),
+    }
+}
+
+/// The opening's IV: Keccak-256 of the label, the version, `PCS_OPEN`'s layout word (32 bytes: the shape, the
+/// opening's code, the stack's variables and placed words: `contract::layout_word`), the stack's variables, the
+/// rate, then the point's coordinates and the value (three 8-byte little-endian limbs each).
+pub fn iv(layout: &[u8; 32], vars: usize, point: &[F192], value: F192) -> [u8; 32] {
     let mut bytes = LABEL.to_vec();
-    for n in [VERSION, layout, vars as u64, LOG_INV_RATE as u64, point.len() as u64] {
+    bytes.extend_from_slice(&VERSION.to_le_bytes());
+    bytes.extend_from_slice(layout);
+    for n in [vars as u64, LOG_INV_RATE as u64, point.len() as u64] {
         bytes.extend_from_slice(&n.to_le_bytes());
     }
     for x in point.iter().chain([&value]) {
@@ -65,8 +89,8 @@ fn eq_bits(index: usize, point: &[F192]) -> F192 {
     })
 }
 
-/// Prove `stack(point) = value`.
-pub fn open(words: &[F64], committed: &Committed, layout: u64, point: &[F192], value: F192) -> Proof {
+/// Prove `stack(point) = value`. A kept codeword serves this opening and is freed after it.
+pub fn open(words: &[F64], committed: &Committed, layout: &[u8; 32], point: &[F192], value: F192) -> Proof {
     let vars = committed.vars;
     assert_eq!(point.len(), vars);
     let config = config_for_rate(vars, LOG_INV_RATE).expect("a WHIR shape leanVM supports");
@@ -78,7 +102,17 @@ pub fn open(words: &[F64], committed: &Committed, layout: u64, point: &[F192], v
         scales: (0..lanes).map(|l| eq_bits(l, &point[log_lane..])).collect(),
         low: primitives::multilinear::eq_table(&point[..log_lane]),
     };
-    recursive_prover_with_lane_tensors(&config, vars, words, &[tensor], value, None, &committed.tree, &mut ps);
+    let codeword = committed.codeword.lock().expect("the codeword").take();
+    recursive_prover_with_lane_tensors(
+        &config,
+        vars,
+        words,
+        &[tensor],
+        value,
+        codeword.as_deref(),
+        &committed.tree,
+        &mut ps,
+    );
     ps.into_proof()
 }
 
@@ -102,17 +136,22 @@ pub fn wire_proof(proof: &Proof) -> verifier::Proof {
     }
 }
 
-/// Check an opening of `stack(point) = value` against `root`, with leanVM's WHIR verifier.
+/// Check an opening of `stack(point) = value` against `root`, with leanVM's WHIR verifier: the stack's variables and
+/// placed words are the layout word's (bytes 24 and 25..32).
 pub fn verify(
     root: &Hash,
-    vars: usize,
-    placed: u64,
-    layout: u64,
+    layout: &[u8; 32],
     point: &[F192],
     value: F192,
     proof: &verifier::Proof,
 ) -> Result<(), verifier::VerifierError> {
     use verifier::{Digest, E, Transcript};
+    let vars = layout[24] as usize;
+    let placed = {
+        let mut bytes = [0u8; 8];
+        bytes[1..].copy_from_slice(&layout[25..]);
+        u64::from_be_bytes(bytes)
+    };
     if point.len() != vars {
         return Err(verifier::VerifierError::WhirShape);
     }
@@ -140,6 +179,14 @@ pub fn verify(
         });
         eq_low * on_lanes
     };
-    verifier::whir::verify_whir(&mut transcript, vars, placed, LOG_INV_RATE, ext(value), Digest(*root), &weight)?;
+    verifier::whir::verify_whir(
+        &mut transcript,
+        vars,
+        placed,
+        LOG_INV_RATE,
+        ext(value),
+        Digest(*root),
+        &weight,
+    )?;
     transcript.finish().map(|_| ())
 }

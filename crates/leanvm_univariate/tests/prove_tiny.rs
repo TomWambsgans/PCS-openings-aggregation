@@ -1,5 +1,6 @@
 // Part of this repository. The tiny executions (`Rng`, `row_of`, `execution`) are copied from tests/review_honest.rs
-// (review M1's independent honest prover), unchanged but for `Witness` keeping only what a trace needs.
+// (review M1's independent honest prover) as iteration 2 has them (the rows placed at the fixed cosets, SPEC.md
+// §13), unchanged but for `Witness` keeping only what a trace needs.
 // MIT OR Apache-2.0; see NOTICE.md.
 //! The prover at tiny and uneven sizes: the review's 15- to 31-cycle executions over all six tables (memory and
 //! bytecode of `2^4` and `2^5`, tables of 0 to 6 rows, DEREF's gated store), as a leanVM trace, proven by the prover
@@ -16,6 +17,10 @@ use leanvm_flock_gas::layout::{
     Table, gpow, tables,
 };
 use leanvm_univariate::prover::prove::{Config, prove, verify};
+use leanvm_univariate::contract::SetupRoots;
+use leanvm_univariate::domain::active_positions;
+use leanvm_univariate::prover::columns::setup_polys;
+use leanvm_univariate::prover::setup::shape_roots;
 use leanvm_univariate::prover::trace::Trace;
 use leanvm_univariate::{Blake2s, Claims, Shape};
 use primitives::field::F64;
@@ -217,16 +222,27 @@ fn execution(rng: &mut Rng) -> Witness {
         slots[2] = ZERO;
     }
     let counts: [u64; N_TABLES] = std::array::from_fn(|t| active[t].len() as u64);
-    let heights = shape_of(counts).heights();
+    let shape = shape_of(counts);
+    let heights = shape.heights();
     let mut rows = Vec::new();
     for table in &tables {
-        let n = 1usize << heights[table.opcode];
-        let mut all = active[table.opcode].clone();
-        while all.len() < n {
-            all.push(table.padding.clone());
+        let r = heights[table.opcode];
+        let n = 1usize << r;
+        // Padding rows are free, but the counters' constraint holds on every row (SPEC.md §13): nonzero counters,
+        // here 1.
+        let mut padding = table.padding.clone();
+        for c in table.count_columns() {
+            padding[c] = ONE;
+        }
+        // The active rows sit at the fixed cosets of their count's set bits (SPEC.md §13), in order.
+        let mut all = vec![padding; n];
+        let count = active[table.opcode].len() as u64;
+        for (row, at) in active[table.opcode].iter().zip(active_positions(count, r)) {
+            all[at as usize] = row.clone();
         }
         rows.push(all);
     }
+    // q_flock: instance i's slots are BLAKE2S row i's limbs (padding rows included); the other words random.
     let h_b = heights[OP_BLAKE2S];
     let mut qflock: Vec<E> = (0..1usize << (h_b + 8)).map(|_| rng.k()).collect();
     let blake = &tables[OP_BLAKE2S];
@@ -283,6 +299,8 @@ fn trace_of(w: &Witness) -> Trace {
             .map(|t| (0..t.width()).map(|c| w.rows[t.opcode].iter().map(|row| k(row[c])).collect()).collect())
             .collect(),
         bytecode,
+        // The review's execution places its rows as the verifier wants them (SPEC.md §13, F1b).
+        placed: true,
     }
 }
 
@@ -293,36 +311,41 @@ fn tiny_executions_are_proven_and_verified() {
         SIZES.set((memory, bytecode));
         let mut rng = Rng(0x5EED ^ (memory << 8 | bytecode) as u64);
         let trace = trace_of(&execution(&mut rng));
+        // The contract for this shape binds its own F (and the R1CS's A0, B0).
+        let roots = shape_roots(&trace.shape(), &setup_polys(&trace));
         let config = Config {
             blake2s: Blake2s::Omitted,
             claims: Claims::Point,
             check: true,
             garbage: false,
             stand_in_roots: None,
+            roots,
         };
         let (proof, report) = prove(&trace, None, &[0x77; 32], config).expect("a proof");
         assert!(report.checks.iter().all(|(_, ok)| *ok), "{:?}", report.checks);
         for (name, degree, count, _) in &report.quotients {
             assert!(*degree < *count as i64, "{name}");
         }
-        verify(&trace.shape(), &[0x77; 32], &trace.public_input(), &proof, Blake2s::Omitted).expect("accepted");
-        // The review's honest prover sends these stand-in roots (it commits nothing): with them, the stream is the
-        // one it writes for the same execution, byte for byte, if the two provers agree on every value.
+        verify(&trace.shape(), &[0x77; 32], &roots, &trace.public_input(), &proof, Blake2s::Omitted).expect("accepted");
+        // The review's honest prover sends these stand-in roots (it commits nothing) and binds the reference setup
+        // roots: with them, the stream is the one it writes for the same execution, byte for byte, if the two
+        // provers agree on every value.
         let stand_in = Config {
             stand_in_roots: Some([
                 [E::new(0x1111, 0x2222, 0), E::new(0x3333, 0x4444, 0)],
                 [E::new(0x5555, 0x6666, 0), E::new(0x7777, 0x8888, 0)],
             ]),
+            roots: SetupRoots::REFERENCE,
             ..config
         };
         let (cross, _) = prove(&trace, None, &[0x77; 32], stand_in).expect("a proof");
-        // The review's prover's streams for these executions (`honest_proofs_at_other_sizes`, point claims, at
-        // leanvm-univariate b948bfc), their Keccak-256's first bytes: the same, byte for byte. A protocol change
-        // re-records them.
+        // The review's prover's streams for these executions (`honest_proofs_at_other_sizes`, point claims, as
+        // iteration 2 has it at leanvm-univariate ad49e74), their Keccak-256's first bytes: the same, byte for byte.
+        // A protocol change re-records them.
         let review: Option<[u8; 8]> = match (memory, bytecode) {
-            (5, 4) => Some([0x46, 0xf7, 0x32, 0xab, 0xb5, 0x70, 0x15, 0x64]),
-            (4, 5) => Some([0x64, 0xe3, 0x78, 0x10, 0xcc, 0xf4, 0x3b, 0xf0]),
-            (5, 5) => Some([0xfe, 0x6d, 0xc4, 0x8f, 0xc5, 0xe4, 0x5b, 0xb0]),
+            (5, 4) => Some([0x2b, 0x8a, 0x35, 0x8b, 0xbd, 0x38, 0xa4, 0x04]),
+            (4, 5) => Some([0xba, 0x29, 0x1b, 0x85, 0x0c, 0x6b, 0xae, 0x84]),
+            (5, 5) => Some([0x0d, 0x7a, 0xe5, 0x82, 0xf1, 0x09, 0xb4, 0x36]),
             _ => None,
         };
         if let Some(review) = review {

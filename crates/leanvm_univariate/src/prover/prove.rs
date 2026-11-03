@@ -11,22 +11,24 @@ use std::time::Instant;
 use fiat_shamir::merkle::Hash;
 use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::layout::{Form, OP_BLAKE2S, OP_JUMP, SEP_MEM, tables};
-use leanvm_flock_gas::transcript::{Checks, KeccakChannel, KeccakWriter, keccak_seed};
+use leanvm_flock_gas::transcript::{KeccakWriter, keccak_seed};
 use primitives::field::{F64, F192};
 
 use super::bus::{Bus, all_leaves, expected_root, heap};
 use super::columns::{c1_polys, setup_polys};
-use super::flock::FlockWitness;
+use super::flock::{FlockWitness, Matrices};
+use super::replay::Replay;
 use super::opening::{self, Committed};
-use super::poly::{eval_e, eval_k, from_v, novel_from_values, subset_sums, to_v};
+use super::poly::{eval_k, eval_limbs, from_v, novel_limbs, to_v};
 use super::quotients::{self, Quotient};
 use super::stack::{Stack, c1_columns, c2_columns};
 use super::trace::Trace;
+use super::weight::Weight;
 use crate::claims::{Column, Combined, Commitment};
-use crate::contract::NAME;
+use crate::contract::{NAME, SetupRoots, contract_iv, layout_words};
 use crate::heap::Leaves;
 use crate::stacks::StackLayout;
-use crate::verifier::{Blake2s, Claims, Opening, chunks, reduce, sent_columns};
+use crate::verifier::{Blake2s, Claims, Opening, Shape, chunks, degree, reduce, sent_columns};
 
 /// What a proof is: the verifier's stream (calldata after the selector and the public input) and one WHIR opening
 /// per commitment, with the point claim it proves.
@@ -38,6 +40,8 @@ pub struct Proof {
 pub struct OpeningProof {
     pub commitment: Commitment,
     pub root: Hash,
+    /// Its `PCS_OPEN` layout word, which carries `vars` and `placed`.
+    pub layout: [u8; 32],
     pub vars: usize,
     pub placed: u64,
     pub point: Vec<F192>,
@@ -45,13 +49,21 @@ pub struct OpeningProof {
     pub proof: fiat_shamir::transcript::Proof,
 }
 
-/// The `PCS_OPEN` layout word of each commitment (`crate::contract`'s).
-pub fn layout_word(commitment: Commitment) -> u64 {
+/// The `PCS_OPEN` layout word of a commitment of `shape` (`contract::layout_words`, SPEC.md §13, F2).
+pub fn layout_word(shape: &Shape, commitment: Commitment) -> [u8; 32] {
+    let words = layout_words(shape);
     match commitment {
-        Commitment::C1 => 0x5501,
-        Commitment::C2 => 0x5502,
-        Commitment::Setup => 0x5503,
+        Commitment::C1 => words[0],
+        Commitment::C2 => words[1],
+        Commitment::Setup => words[2],
     }
+}
+
+/// The stack's variables and placed words a layout word carries (bytes 24, and 25..32).
+pub fn layout_shape(word: &[u8; 32]) -> (usize, u64) {
+    let mut placed = [0u8; 8];
+    placed[1..].copy_from_slice(&word[25..]);
+    (word[24] as usize, u64::from_be_bytes(placed))
 }
 
 /// Every quotient's degree against the count the verifier declares, every stack's size, and the time of each phase.
@@ -68,6 +80,10 @@ pub struct Report {
     pub opening_bytes: Vec<usize>,
     /// Flock's claim on `A0`, `B0`: the point and the two values.
     pub flock: Option<(Vec<E>, E, E)>,
+    /// Finer timings inside a phase, as text.
+    pub notes: Vec<String>,
+    /// The setup roots the proof's contract binds.
+    pub roots: Option<SetupRoots>,
 }
 
 struct Clock {
@@ -112,31 +128,32 @@ fn tuple_degree(tuple: &[Form]) -> usize {
         .max(1)
 }
 
-/// The verifier's count of a table block's leaf quotient coefficients.
-fn table_leaf_count(t: usize, n: u64, rows: u64) -> u64 {
+/// The verifier's count of a table block's leaf quotient coefficients: sized for the height's fewest rows
+/// (`Shape::least_rows`, SPEC.md §13, F1).
+pub fn table_leaf_count(t: usize, r: usize) -> u64 {
     let table = &tables()[t];
+    let n = 1u64 << r;
     let pull = 1 + table.flushes.pull.iter().map(|tu| tuple_degree(tu)).sum::<usize>();
     let push: usize = table.flushes.push.iter().map(|tu| tuple_degree(tu)).sum();
-    pull.max(push) as u64 * (n - 1) + (n - rows) - n + 1
+    degree(pull.max(push) as u64 * (n - 1) + (n - Shape::least_rows(r)), n) + 1
 }
 
 /// The verifier's count of the constraint quotient's coefficients (`verifier::reduce`, step 5).
-fn constraint_count(trace: &Trace) -> u64 {
-    let mut degree = 0u64;
+pub fn constraint_count(trace: &Trace) -> u64 {
+    let mut most = 0u64;
     for table in tables() {
         let r = trace.heights[table.opcode];
         let n = 1u64 << r;
-        let rows = trace.rows[table.opcode];
         if table.opcode == OP_JUMP {
-            degree = degree.max(n - 2);
+            most = most.max(degree(n, 2));
         }
         let counts = table.count_columns().count() as u64;
-        degree = degree.max((n - 1) * (1 + counts) + (n - rows) - n);
+        most = most.max(degree((n - 1) * (1 + counts), n));
         if table.opcode == OP_BLAKE2S {
-            degree = degree.max(r as u64 * (n / 2) - n);
+            most = most.max(degree(r as u64 * (n / 2), n));
         }
     }
-    degree.max((1u64 << trace.log_memory) - 3) + 1
+    most.max(degree(1u64 << trace.log_memory, 3)) + 1
 }
 
 /// The prover's configuration.
@@ -152,18 +169,28 @@ pub struct Config {
     /// Send these root halves for `C1` and `C2` instead of the commitments' (no opening can then verify): a
     /// byte-for-byte cross-check of the stream against a prover that commits nothing (`tests/prove_tiny.rs`).
     pub stand_in_roots: Option<[[E; 2]; 2]>,
+    /// The setup roots the contract's IV binds (SPEC.md §13, F2): `F`'s must be this program's and shape's
+    /// (`setup::shape_roots`; at the reference shape `SetupRoots::REFERENCE`).
+    pub roots: SetupRoots,
 }
 
-/// Prove `trace`'s execution for the contract of `iv`; with Flock, from leanVM's Flock inputs `flock`.
-pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config: Config) -> Result<(Proof, Report), String> {
+/// Prove `trace`'s execution (its rows placed: [`Trace::place`]) for the contract of the program's IV `iv` (the
+/// contract's own binds the setup roots and the shape: `contract::contract_iv`); with Flock, from leanVM's Flock
+/// inputs `flock`, placed likewise.
+pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: Config) -> Result<(Proof, Report), String> {
     let mut report = Report::default();
     let mut clock = Clock { last: Instant::now() };
+    if !trace.placed {
+        return Err("the trace's rows are leanVM's order: place them first (Trace::place)".into());
+    }
     let shape = trace.shape();
     if shape.heights() != trace.heights {
         return Err(format!("leanVM's heights {:?} are not the verifier's {:?}", trace.heights, shape.heights()));
     }
+    shape
+        .validate(matches!(config.blake2s, Blake2s::Flock(_)))
+        .map_err(|e| format!("the shape: {e:?}"))?;
     let public = trace.public_input();
-    let mut writer = KeccakWriter::new(keccak_seed(&NAME, iv, &public));
 
     // 1. C1: every column in basis B, q_flock as values.
     let c1 = c1_polys(trace);
@@ -173,24 +200,47 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     stack1.put_k(Column::Qflock, &trace.qflock);
     for (t, columns) in c1.tables.iter().enumerate() {
         for (c, column) in columns.iter().enumerate() {
-            stack1.put_k(Column::Table { table: t, column: c }, &column.b);
+            stack1.put_b(Column::Table { table: t, column: c }, &column.novel);
         }
-        stack1.put_k(Column::Inverse(t), &c1.inverses[t].b);
+        stack1.put_b(Column::Inverse(t), &c1.inverses[t].novel);
     }
     for (k, column) in c1.memory.iter().enumerate() {
-        stack1.put_k(Column::Memory(k), &column.b);
+        stack1.put_b(Column::Memory(k), &column.novel);
     }
-    stack1.put_k(Column::BytecodeFinal, &c1.bytecode_final.b);
+    stack1.put_b(Column::BytecodeFinal, &c1.bytecode_final.novel);
     let mut stack_f = super::setup::f_stack(&shape, &setup);
     if config.garbage {
         stack1.fill_unused(0xC1);
         stack_f.fill_unused(0xF0);
     }
-    let committed1 = opening::commit(&stack1.words, stack1.layout.vars, stack1.placed());
-    let committed_f = opening::commit(&stack_f.words, stack_f.layout.vars, stack_f.placed());
+    let committed1 = opening::commit_keeping_codeword(&stack1.words, stack1.layout.vars, stack1.placed());
+    let committed_f = opening::commit_keeping_codeword(&stack_f.words, stack_f.layout.vars, stack_f.placed());
+    // The contract binds F's root (and opens F against it): it must be this program's and shape's. Garbage in the
+    // unused words makes another F, which only a contract built for it accepts: that contract's roots are used. (The
+    // stand-in roots' cross-check proves nothing.)
+    let roots = if config.garbage {
+        SetupRoots {
+            f: committed_f.root,
+            ..config.roots
+        }
+    } else {
+        config.roots
+    };
+    if config.stand_in_roots.is_none() && committed_f.root != roots.f {
+        return Err("the contract's F root is not this program's and shape's (prover::setup::f_root)".into());
+    }
+    report.roots = Some(roots);
     report.stacks.push((Commitment::C1, stack1.placed(), stack1.layout.vars));
     report.stacks.push((Commitment::Setup, stack_f.placed(), stack_f.layout.vars));
     clock.lap(&mut report, "C1 and setup: WHIR commits");
+
+    // 0. The seed (the contract's IV binds the setup roots), then the six row counts (SPEC.md §13, F1), absorbed with
+    // C1's root.
+    let seed = keccak_seed(&NAME, &contract_iv(&shape, iv, &roots), &public);
+    let mut writer = KeccakWriter::new(seed);
+    for &rows in &trace.rows {
+        writer.send_integer(rows, 4);
+    }
     writer.send_root(config.stand_in_roots.map_or_else(|| halves(&committed1.root), |r| r[0]));
 
     // 2. The bus's and the constraints' challenges.
@@ -198,13 +248,34 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     let beta = from_v(writer.sample());
     let gamma = from_v(writer.sample());
 
-    // 3. Flock, on q_flock: leanVM's prover (`flock.rs`).
+    // 3. Flock, on q_flock (`flock.rs`). On the point-claim ABI with the slices sent, its matrices' reduction runs in
+    // the batching sumcheck (SPEC.md §13, lever 4a), as `verifier::reduce` has it.
+    let mut pending = None;
+    let mut slices_end = None;
+    // The slices, when the stream does not carry them (extension B, `Slices::Claim`).
+    let mut flock_slices: Option<Vec<E>> = None;
     if let Blake2s::Flock(variant) = config.blake2s {
         let witness = flock.ok_or("Flock needs leanVM's Flock inputs (flock.bin)")?;
         let log_n = leanvm_flock_gas::layout::BLAKE2S_R1CS_LOG_SIZE + trace.heights[OP_BLAKE2S];
-        let out = super::flock::prove(&mut writer, witness, variant, log_n)?;
-        report.flock = Some((out.matrices_point, out.a, out.b));
-        clock.lap(&mut report, "Flock: zerocheck, lincheck, slices, matrices' reduction");
+        let deferred = config.claims == Claims::Point;
+        let out = super::flock::prove(&mut writer, &witness, variant, log_n, deferred)?;
+        // leanVM's Flock buffers (2 GB at 1,000 signatures) are not needed past here.
+        drop(witness);
+        slices_end = Some(out.slices_end);
+        if variant.slices == leanvm_flock_gas::flock_min::Slices::Claim {
+            flock_slices = Some(out.slices.clone());
+        }
+        report.notes.push(format!("Flock's zerocheck and lincheck: {:.3} s", out.reduction_secs));
+        if variant.skip != leanvm_flock_gas::flock_min::PACKING {
+            for (stage, secs) in std::mem::take(&mut *lv42_flock::zerocheck::skip::STAGES.lock().expect("the stages")) {
+                report.notes.push(format!("  the skip's zerocheck, {stage}: {secs:.3} s"));
+            }
+        }
+        match out.matrices {
+            Matrices::Done { point, a, b } => report.flock = Some((point, a, b)),
+            Matrices::Pending(p) => pending = Some(p),
+        }
+        clock.lap(&mut report, "Flock: zerocheck, lincheck, slices");
     }
 
     // 4. The heap.
@@ -217,10 +288,8 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     if heap_values[1] != root {
         return Err("the bus does not balance: the heap's root is not fp(final) / fp(initial)".into());
     }
-    let mut heap_novel = heap_values.clone();
-    novel_from_values(&mut heap_novel);
-    let mut heap_b = heap_novel.clone();
-    subset_sums(&mut heap_b);
+    let heap_novel = novel_limbs(&heap_values);
+    drop(heap_values);
     clock.lap(&mut report, "heap: leaves, products, inverse NTT");
 
     // 5. The quotients.
@@ -234,8 +303,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
             Leaves::Unused => continue,
             other => &leaves.iter().find(|(l, _)| *l == other).expect("leaves").1,
         };
-        let mut r_novel = values.clone();
-        novel_from_values(&mut r_novel);
+        let r_novel = novel_limbs(values);
         let (name, q) = match block.leaves {
             Leaves::Memory => ("leaf: memory".to_string(), quotients::memory_leaf(trace, &c1, &setup, &bus, &r_novel, n - 1)),
             Leaves::Bytecode => (
@@ -243,7 +311,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
                 quotients::bytecode_leaf(trace, &c1, &setup, &bus, &r_novel, n - 1),
             ),
             Leaves::Table(t) => {
-                let count = table_leaf_count(t, n, trace.rows[t]);
+                let count = table_leaf_count(t, block.r);
                 (
                     format!("leaf: {}", leanvm_flock_gas::TABLE_NAMES[t]),
                     quotients::table_leaf(trace, t, &c1, &bus, &r_novel, count),
@@ -262,7 +330,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
         let [a, b] = trace.public;
         [(F64(a[0]), F64(b[0])), (F64(a[1]), F64(b[1])), (F64::ZERO, F64::ZERO)]
     };
-    let constraint = quotients::constraints(trace, &c1, gamma, r_w, constraint_count(trace), lines);
+    let constraint = quotients::constraints(trace, &c1, gamma, constraint_count(trace), lines);
     report
         .quotients
         .push(("constraints Q_W".into(), constraint.degree, constraint.count, quotients::extension_vars(constraint.count, r_w)));
@@ -277,25 +345,28 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     let constraint_sizes = chunks(constraint.count);
     let leaf_sizes: Vec<(usize, Vec<usize>)> = leaf_quotients.iter().map(|(b, q)| (*b, chunks(q.count))).collect();
     let mut stack2 = Stack::new(StackLayout::new(&c2_columns(layout.h, &constraint_sizes, &leaf_sizes)));
-    stack2.put_e(Column::Heap, &heap_b);
-    let tree_chunks = tree.chunks_b(&[layout.h, 0]);
-    stack2.put_e(Column::TreeQuotient(0), &tree_chunks[0]);
-    stack2.put_e(Column::TreeQuotient(1), &tree_chunks[1]);
-    let constraint_chunks = constraint.chunks_b(&constraint_sizes);
-    for (c, chunk) in constraint_chunks.iter().enumerate() {
-        stack2.put_e(Column::ConstraintQuotient(c), chunk);
+    for (limb, novel) in heap_novel.iter().enumerate() {
+        quotient::ntt::subset_sums_from(novel, stack2.limb_mut(Column::Heap, limb));
     }
-    for ((block, q), (_, sizes)) in leaf_quotients.iter().zip(&leaf_sizes) {
-        for (chunk, part) in q.chunks_b(sizes).iter().enumerate() {
-            stack2.put_e(Column::LeafQuotient { block: *block, chunk }, part);
+    drop(heap_novel);
+    let mut put = |q: &Quotient, sizes: &[usize], column: &dyn Fn(usize) -> Column| {
+        for chunk in 0..sizes.len() {
+            for limb in 0..3 {
+                q.chunk_b(sizes, chunk, limb, stack2.limb_mut(column(chunk), limb));
+            }
         }
+    };
+    put(&tree, &[layout.h, 0], &Column::TreeQuotient);
+    put(&constraint, &constraint_sizes, &Column::ConstraintQuotient);
+    for ((block, q), (_, sizes)) in leaf_quotients.iter().zip(&leaf_sizes) {
+        put(q, sizes, &|chunk| Column::LeafQuotient { block: *block, chunk });
     }
-    drop(leaf_quotients);
+    drop((tree, constraint, leaf_quotients));
     clock.lap(&mut report, "C2: chunks in basis B");
     if config.garbage {
         stack2.fill_unused(0xC2);
     }
-    let committed2 = opening::commit(&stack2.words, stack2.layout.vars, stack2.placed());
+    let committed2 = opening::commit_keeping_codeword(&stack2.words, stack2.layout.vars, stack2.placed());
     report.stacks.push((Commitment::C2, stack2.placed(), stack2.layout.vars));
     clock.lap(&mut report, "C2: WHIR commit");
     writer.send_root(config.stand_in_roots.map_or_else(|| halves(&committed2.root), |r| r[1]));
@@ -308,7 +379,8 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     let weights = &bus.weights;
     for table in tables() {
         let tcols = &c1.tables[table.opcode];
-        let at: Vec<F192> = parallel::map_collect(tcols.len(), |c| primitives::multilinear::mle_eval(&tcols[c].b, &w[..tcols[c].vars()]));
+        let b = |c: usize| stack1.k(Column::Table { table: table.opcode, column: c });
+        let at: Vec<F192> = parallel::map_collect(tcols.len(), |c| primitives::multilinear::mle_eval(b(c), &w[..tcols[c].vars()]));
         let mut sent = vec![false; table.width()];
         for c in sent_columns(&table) {
             sent_values.push(at[c]);
@@ -335,7 +407,7 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     }
     let lm = trace.log_memory;
     let lb = trace.log_bytecode;
-    let mem_at: Vec<F192> = c1.memory.iter().map(|c| eval_k(&c.b, &w[..lm])).collect();
+    let mem_at: Vec<F192> = (0..4).map(|k| eval_k(stack1.k(Column::Memory(k)), &w[..lm])).collect();
     let address_at = eval_k(&setup.address.b, &w[..lm]);
     let memory_pull = beta
         + weights[0] * from_v(SEP_MEM)
@@ -343,18 +415,18 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
         + weights[2] * mem_at[3]
         + (0..3).fold(F192::ZERO, |acc, k| acc + weights[3 + k] * mem_at[k]);
     sent_values.extend([mem_at[3], address_at, memory_pull]);
-    let bytecode_final_at = eval_k(&c1.bytecode_final.b, &w[..lb]);
+    let bytecode_final_at = eval_k(stack1.k(Column::BytecodeFinal), &w[..lb]);
     let slots_at: Vec<F192> = setup.slots.iter().map(|s| eval_k(&s.b, &w[..lb])).collect();
     let bytecode_pull = beta
         + weights[2] * bytecode_final_at
         + (0..16).filter(|&s| s != 2).fold(F192::ZERO, |acc, s| acc + weights[s] * slots_at[s]);
     sent_values.extend([bytecode_final_at, bytecode_pull]);
-    let heap_at = eval_e(&heap_b, &w);
+    let heap_at = eval_limbs(stack2.limbs(Column::Heap), &w);
     let constraint_at = {
         let mut factor = F192::ONE;
         let mut sum = F192::ZERO;
-        for (chunk, &e) in constraint_chunks.iter().zip(&constraint_sizes) {
-            sum += factor * eval_e(chunk, &w);
+        for (c, &e) in constraint_sizes.iter().enumerate() {
+            sum += factor * eval_limbs(stack2.limbs(Column::ConstraintQuotient(c)), &w);
             factor *= w[e];
         }
         sum
@@ -365,20 +437,27 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
     }
     clock.lap(&mut report, "values at t");
 
-    // 8. ρ, and the combined claims: the verifier's own, on the stream so far.
+    // Past the values at t, the proof reads the stacks and their commitments alone (the heap and the quotients are
+    // in C2's stack since step 6).
+    drop((c1, setup, leaves));
+
+    // 8. ρ, and the combined claims: the verifier's own, on the stream so far, in weighted mode (which reads nothing
+    // after ρ). With the matrices' reduction pending, weighted mode reads it after the slices: `Replay` serves it there,
+    // an honest prover's at fixed challenges, outside the chain (`replay.rs`).
     let rho = writer.sample();
     let combined: Vec<(Commitment, Combined<E>)> = {
-        let mut channel = KeccakChannel::new(
-            keccak_seed(&NAME, iv, &public),
-            &writer.stream,
-            Checks::Collect {
-                zero: vec![],
-                nonzero: vec![],
-            },
-        );
+        let (insert_at, scalars, samples) = match (&pending, slices_end) {
+            (Some(p), Some(at)) => {
+                let challenges = super::replay::challenges(p.rounds());
+                (at, p.off_chain(&challenges)?, challenges)
+            }
+            _ => (0, Vec::new(), Vec::new()),
+        };
+        let mut channel = Replay::new(seed, &writer.stream, insert_at, scalars, samples);
         let words: [E; 4] = std::array::from_fn(|k| E::new(u64::from_be_bytes(public[8 * k..8 * k + 8].try_into().unwrap()), 0, 0));
         let reduced = reduce(&shape, words, &mut channel, config.blake2s, Claims::Weighted).map_err(|e| format!("{e:?}"))?;
-        channel.finish().map_err(|e| format!("the verifier reads the stream so far: {e:?}"))?;
+        channel.finish().map_err(|e| format!("the verifier reads the stream so far: {e}"))?;
+        report.checks.push(("the verifier's checks on the stream so far (weighted mode)".into(), channel.checks_hold()));
         for (commitment, vars) in &reduced.stack_vars {
             let mine = match commitment {
                 Commitment::C1 => stack1.layout.vars,
@@ -393,6 +472,23 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
             .openings
             .into_iter()
             .map(|(c, o)| match o {
+                // Without the slices (extension B), weighted mode adds their combination's terms to C1's claim; point
+                // mode makes it the batch's terminal instead, a bit-slice claim of C1's call. Its terms leave C1's
+                // claim here, and their part of its value, `Σ coefficient s_twist` at the true slices (the
+                // combination holds: an honest prover's at the inserted challenges).
+                Opening::Weighted(mut claim) if c == Commitment::C1 && flock_slices.is_some() => {
+                    let slices = flock_slices.as_ref().expect("the slices");
+                    let mut part = E::default();
+                    claim.terms.retain(|&(column, _, twist, coefficient)| {
+                        let bits = column == Column::QflockBits;
+                        if bits {
+                            part += coefficient * slices[twist as usize];
+                        }
+                        !bits
+                    });
+                    claim.value += part;
+                    (c, claim)
+                }
                 Opening::Weighted(claim) => (c, claim),
                 Opening::Point { .. } => unreachable!("weighted mode"),
             })
@@ -408,31 +504,20 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
             Commitment::Setup => (&stack_f, &committed_f),
         }
     };
-    let weights_dense: Vec<Vec<F192>> = combined
+    let weights: Vec<Weight> = combined
         .iter()
-        .map(|(c, claim)| {
-            let (stack, _) = stacks_of(*c);
-            super::batch::dense_weight(claim, &stack.layout, stack.words.len())
-        })
+        .map(|(c, claim)| Weight::new(claim, &stacks_of(*c).0.layout))
         .collect();
+    clock.lap(&mut report, "claims: weights");
     if config.check {
-        for ((c, claim), weight) in combined.iter().zip(&weights_dense) {
-            let (stack, _) = stacks_of(*c);
-            let sum = parallel::map_reduce(
-                stack.words.len().div_ceil(1 << 14),
-                || F192::ZERO,
-                |chunk| {
-                    let range = chunk << 14..((chunk + 1) << 14).min(stack.words.len());
-                    range.fold(F192::ZERO, |acc, i| acc + weight[i].mul_base(stack.words[i]))
-                },
-                |a, b| a + b,
-            );
+        for ((c, claim), weight) in combined.iter().zip(&weights) {
+            let sum = weight.sum(&stacks_of(*c).0.words);
             report
                 .checks
                 .push((format!("{c:?}: its {} relations, combined by ρ, hold", claim.relations), sum == from_v(claim.value)));
         }
+        clock.lap(&mut report, "claims: the combined-claims check (test only)");
     }
-    clock.lap(&mut report, "claims: dense weights");
 
     // 9. The point claims: the batching sumcheck.
     let mut openings = Vec::new();
@@ -446,15 +531,28 @@ pub fn prove(trace: &Trace, flock: Option<&FlockWitness>, iv: &[u8; 32], config:
                     (&s.words[..], s.layout.vars)
                 })
                 .collect();
-            let (point, values) = super::batch::prove(&mut writer, &stacks, weights_dense, lambda);
+            let (point, values, matrices) = super::batch::prove(&mut writer, &stacks, weights, lambda, pending.as_ref())?;
+            if let Some(claim) = matrices {
+                report.flock = Some(claim);
+            }
             clock.lap(&mut report, "batching sumcheck");
             for ((c, _), &value) in combined.iter().zip(&values) {
                 let (stack, committed) = stacks_of(*c);
                 let p = point[..stack.layout.vars].to_vec();
-                let proof = opening::open(&stack.words, committed, layout_word(*c), &p, value);
+                let layout = layout_word(&shape, *c);
+                if layout_shape(&layout) != (committed.vars, committed.placed) {
+                    return Err(format!(
+                        "{c:?}: the layout word's stack {:?} is not the committed one ({}, {})",
+                        layout_shape(&layout),
+                        committed.vars,
+                        committed.placed
+                    ));
+                }
+                let proof = opening::open(&stack.words, committed, &layout, &p, value);
                 openings.push(OpeningProof {
                     commitment: *c,
                     root: committed.root,
+                    layout,
                     vars: committed.vars,
                     placed: committed.placed,
                     point: p,
@@ -485,10 +583,25 @@ fn merkle_bytes(paths: &fiat_shamir::merkle::PrunedMerklePaths) -> usize {
 }
 
 /// Verify a proof: the verifier's `reduce` on the stream (its zero and nonzero checks held to account) and every
-/// opening's WHIR proof, its point and value the ones the verifier leaves.
-pub fn verify(trace_shape: &crate::verifier::Shape, iv: &[u8; 32], public: &[u8; 32], proof: &Proof, blake2s: Blake2s) -> Result<(), String> {
+/// opening's WHIR proof, its point and value the ones the verifier leaves, its layout word the contract's.
+///
+/// The contract binds `roots` in its IV (`contract::rust_verifier_with`), and the setup opening's root must be its
+/// `F`.
+///
+/// With extension B (`Slices::Claim`), `C1`'s call also carries a bit-slice claim, which a WHIR opening cannot prove
+/// (`PCS_OPEN` would ring-switch it): it is returned, for the caller to check against `q_flock`.
+pub fn verify(
+    trace_shape: &crate::verifier::Shape,
+    iv: &[u8; 32],
+    roots: &SetupRoots,
+    public: &[u8; 32],
+    proof: &Proof,
+    blake2s: Blake2s,
+) -> Result<Option<Combined<E>>, String> {
+    let mut unproven = None;
     let (reduced, zero, nonzero) =
-        crate::contract::rust_verifier(trace_shape, iv, public, &proof.stream, blake2s, Claims::Point).map_err(|e| format!("reduce: {e:?}"))?;
+        crate::contract::rust_verifier_with(trace_shape, iv, roots, public, &proof.stream, blake2s, Claims::Point)
+            .map_err(|e| format!("reduce: {e:?}"))?;
     if let Some(i) = zero.iter().position(|x| *x != E::default()) {
         return Err(format!("check {i} of {} required zero is not", zero.len()));
     }
@@ -502,31 +615,31 @@ pub fn verify(trace_shape: &crate::verifier::Shape, iv: &[u8; 32], public: &[u8;
         let Opening::Point { point, value, bit_slice } = opening else {
             return Err("point claims".into());
         };
-        if bit_slice.is_some() {
-            return Err("no bit-slice claim on the main line".into());
+        if let Some(claim) = bit_slice {
+            let ext_b = matches!(blake2s, Blake2s::Flock(v) if v.slices == leanvm_flock_gas::flock_min::Slices::Claim);
+            if *commitment != Commitment::C1 || !ext_b {
+                return Err("a bit-slice claim is extension B's, on C1".into());
+            }
+            unproven = Some(claim.clone());
         }
         if *commitment != mine.commitment || from_v(*value) != mine.value || point.iter().map(|&x| from_v(x)).collect::<Vec<_>>() != mine.point {
             return Err(format!("{commitment:?}: the opening is not of the verifier's claim"));
         }
-        // The root: the stream's for C1 and C2; the setup's is the contract's constant (here, the prover's).
+        // The root: the stream's for C1 and C2; the setup's is the contract's constant.
         let root_ok = match commitment {
             Commitment::C1 => reduced.roots[0] == halves(&mine.root),
             Commitment::C2 => reduced.roots[1] == halves(&mine.root),
-            Commitment::Setup => true,
+            Commitment::Setup => mine.root == roots.f,
         };
         if !root_ok {
-            return Err(format!("{commitment:?}: the opening's root is not the stream's"));
+            return Err(format!("{commitment:?}: the opening's root is not the stream's (or the contract's)"));
         }
-        opening::verify(
-            &mine.root,
-            mine.vars,
-            mine.placed,
-            layout_word(*commitment),
-            &mine.point,
-            mine.value,
-            &opening::wire_proof(&mine.proof),
-        )
-        .map_err(|e| format!("{commitment:?}: WHIR rejects: {e:?}"))?;
+        let layout = layout_word(trace_shape, *commitment);
+        if mine.layout != layout {
+            return Err(format!("{commitment:?}: the opening's layout word is not the contract's"));
+        }
+        opening::verify(&mine.root, &layout, &mine.point, mine.value, &opening::wire_proof(&mine.proof))
+            .map_err(|e| format!("{commitment:?}: WHIR rejects: {e:?}"))?;
     }
     // Flock's claims on the fixed A0, B0 (the BLAKE2s R1CS): checked against the matrices themselves, as an honest
     // setup opening proves them (A0 and B0 are not committed here: PROVER.md).
@@ -540,5 +653,5 @@ pub fn verify(trace_shape: &crate::verifier::Shape, iv: &[u8; 32], public: &[u8;
         (None, Blake2s::Omitted) => {}
         _ => return Err("Flock's matrices' claims".into()),
     }
-    Ok(())
+    Ok(unproven)
 }

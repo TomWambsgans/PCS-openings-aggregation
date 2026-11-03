@@ -3,268 +3,255 @@
 # The prover of the univariate PIOP (milestone 2)
 
 `src/prover/` proves SPEC.md's statement on real leanVM 42422001 traces. It writes the stream that
-`verifier::reduce` reads (through the contract's Keccak-256 chain) and one WHIR opening per commitment.
+`verifier::reduce` reads (through the contract's Keccak-256 chain) and one WHIR opening per commitment. It follows
+iteration 2's final verifier (leanvm-univariate `ad49e74`; every "Prover:" item of SPEC.md §13 is done).
 
 ## Status
 
-**End to end, with BLAKE2s's argument**, on the point-claim ABI, in the variant `Blake2s::Flock(FLOCK_LEANVM_SKIP)`:
-Flock (a′) with leanVM's skip of 6. It runs through:
+**Every configuration that has an opening proves end to end on the real trace** (1,000 leanXMSS signatures,
+1,023,109 cycles), on the point-claim ABI: the Rust verifier accepts; every WHIR opening verifies (`C1`, `C2`, the
+setup, and with Flock `A0`, `B0`); the straight contract and the deployable one (`evm_link`) accept the real
+calldata with `PCS_OPEN` attesting exactly the claims the openings prove; both reject a flipped byte and any call
+left unattested.
 
-- `C1`, the challenges, then leanVM's own Flock prover: zerocheck, lincheck, the 64 slices;
-- the matrices' reduction and the ring map;
-- the heap and every quotient, `C2`, the values at `t`;
-- the batching sumcheck and the three WHIR openings;
-- Flock's two setup claims, on `A0` and `B0` (the BLAKE2s R1CS, `2^28` words each), each committed and opened with
-  WHIR (`matrices.rs`).
+| configuration | Flock | gas, straight | gas, deployed (contracts) | calldata |
+|---|---|---:|---:|---:|
+| main line, `Flock(FLOCK_MAIN)` | (a′): skip 3, the ring map in tower order | 182,104 | 192,392 (3) | 7,108 B |
+| extension B, `Flock(FLOCK_BIT_SLICE)` | (a): skip 4, the slices' combination a bit-slice claim | 90,996 | 95,955 (2) | 5,716 B |
+| `Flock(FLOCK_LEANVM_SKIP)` | leanVM's skip 6, the slices sent | 251,276 | 263,557 (4) | 8,308 B |
+| `Blake2s::Omitted` | none | 66,206 | 70,019 (2) | 3,508 B |
 
-On the reference trace (1,000 leanXMSS signatures, 1,023,109 cycles):
+Gas is execution at a `PCS_OPEN` claim price of 0, as in SPEC §10: SPEC §13's numbers (measured there on random
+streams), here on real proofs. With extension B, `C1`'s call also carries the bit-slice claim
+`Σ_i μ_i ẑ(i, p) = κ`, which `PCS_OPEN` would ring-switch. WHIR cannot open it, so the test checks it on the
+committed `q_flock` directly. Extension W (weighted claims) has no opening prover.
 
-- the Rust verifier accepts the proof, and all five WHIR openings verify (`C1`, `C2`, setup, `A0`, `B0`);
-- the EVM contract accepts the proof's real calldata (283,941 gas of execution). Its `PCS_OPEN` mock attests
-  exactly the five claims the WHIR openings prove;
-- flipped stream bytes are rejected.
+The same holds at 32 signatures, where the contract binds that shape's own `F` (`4845a2c7…`), and at review M1's tiny
+executions (`prove_tiny`), where the stream is the review's independent prover's, byte for byte.
 
-The same holds without BLAKE2s's argument (`Blake2s::Omitted`), at 73,836 gas, which is SPEC §10's number on
-random streams.
+**Rust→EVM test vectors** (milestone 3): `tests/vectors/*.txt` hold the four real proofs' calldata, the `PCS_OPEN`
+inputs the contract calls with, the verdict and the gas, straight and deployed. `tests/evm_vectors.rs` replays them
+on both builds, with no prover and no trace. Both accept at the recorded gas, call `PCS_OPEN` with exactly the
+recorded inputs, and revert on 13 to 17 mutations each:
 
-**Not built** (§ "What is missing"):
-
-- (a′)'s skip of 3 (`FLOCK_MAIN`): leanVM's zerocheck prover hard-codes a skip of 6;
-- extension W's openings.
+- a row count, a root, Flock's and the batch's scalars, the last byte, or the public input flipped;
+- each call left unattested;
+- each attested value flipped.
 
 ## How it runs
 
-1. **Traces.** `src/prover/dump/apply.sh <leanVM 42422001 checkout>` adds `trace_dump.rs` to leanVM's
-   `leanvm_core`. Then any leanVM proof made with `LEANVM_TRACE_DUMP=<dir>` writes, right after leanVM's witness
-   build:
-   - every column it commits or carries, the stacked bytecode and the sizes;
-   - Flock's prover inputs (`z`, `A z`, `B z`, the lincheck's packed bytes).
-
-   That is leanVM's own execution and trace generation, unchanged. On h1, with the gas-dump command of
-   `crates/leanvm_flock_gas/dump` applied first:
+1. **Traces.** `src/prover/dump/apply.sh <leanVM 42422001 checkout>` adds `trace_dump.rs` to leanVM's `leanvm_core`.
+   Any leanVM proof made with `LEANVM_TRACE_DUMP=<dir>` then writes, right after leanVM's witness build, every
+   column it commits or carries, the stacked bytecode and the sizes, and Flock's prover inputs (`z`, `A z`, `B z`,
+   the lincheck's packed bytes). On h1:
 
    ```sh
-   cd /root/pcs-quotient-fv/leanvm-univariate-prover/leanvm-42422001
+   cd /root/pcs-quotient-fv/leanvm-univariate-prover2/leanvm-42422001
    LEANVM_TRACE_DUMP=../traces/xmss1000 ./target/release/leanvm --log-inv-rate 1 gas-dump --xmss 1000 --out ../traces/proof1000
    ```
 
-   `xmss32` (38,209 cycles) and `xmss1000` (1,023,109 cycles) are in `/root/pcs-quotient-fv/leanvm-univariate-prover/traces/`
-   (0.16 GB and 3.0 GB).
-2. **Proving and checking.** Build with `RUSTFLAGS="-C target-cpu=native"`, as leanVM's own `.cargo/config.toml`
-   does. Without it the field falls back to software carry-less products, 25× slower.
+   `xmss32` (38,209 cycles) and `xmss1000` (1,023,109 cycles) are in
+   `/root/pcs-quotient-fv/leanvm-univariate-prover2/traces/`.
+2. **Placement** (`Trace::place`, `FlockWitness::place`; SPEC §13, F1b). leanVM puts a table's active rows first;
+   the verifier wants them at the fixed cosets of the count's bits (`domain::active_positions`). Rows, and BLAKE2S's
+   `q_flock` instances with them, move there; the padding rows' counters become 1 (F1: the counters are nonzero on
+   every row). Every instance satisfies the R1CS alone, so the moved Flock witness is still one, and the lincheck's
+   stripes are rebuilt from it. In place, only the moved rows are copied: 0.08 s, 0.28 s with Flock's buffers. A
+   leanVM that placed its rows itself would not need it.
+3. **Proving and checking.** Build with `RUSTFLAGS="-C target-cpu=native"`, as leanVM's own `.cargo/config.toml`
+   does (without it the field is 25× slower). `/root/pcs-quotient-fv/leanvm-univariate-prover2/env.sh` has `build`
+   and `run` (memory caps, a lock so that timed runs never overlap, a wait for a quiet machine).
 
    ```sh
    LEANVM_TRACE=<trace dir> RUSTFLAGS="-C target-cpu=native" \
      cargo test --release -p leanvm_univariate --test prove_real -- --ignored --nocapture --test-threads 1
    ```
 
-   - `identities_hold_on_the_domain`: SPEC's identities on the domain itself.
-   - `proves_and_verifies_with_flock` and `proves_and_verifies` (without Flock): the proof, the quotients'
-     degrees, every commitment's combined relations against its stack, the Rust verifier, the EVM contract on the
-     real calldata, and mutations.
-   - `unused_words_are_not_relied_on`: the stacks' words past their blocks filled with pseudo-random words.
-   - `setup_roots`: the roots of `F` (from the program and the shape), `A0` and `B0` (from Flock's R1CS), for the
-     contract's generation.
+   - `proves_and_verifies_main_line`, `proves_and_verifies_ext_b`, `proves_and_verifies_with_flock`,
+     `proves_and_verifies`: the proof, the quotients' degrees, every combined claim against its stack, the Rust
+     verifier, the WHIR openings (`A0`, `B0` too), the straight and deployable contracts on the real calldata
+     (word-for-word parity with the Rust verifier), the calls' inputs against the proven claims, and mutations.
+     With `WRITE_VECTORS=<dir>` each writes its test vector.
+   - `identities_hold_on_the_domain`, `unused_words_are_not_relied_on`, `setup_roots`.
 
-   `tests/prove_tiny.rs` needs no trace, and runs with the other tests. It takes review M1's tiny executions
-   (15–31 cycles, all six tables, memory and bytecode of `2^4` and `2^5`), proves and verifies them, and compares
-   the stream byte for byte with the review's prover's. `tests/prove_kernels.rs` times the NTT kernels alone.
+   Without a trace: `prove_tiny` (review M1's tiny executions, byte for byte with its prover), `flock_skip` (the skip
+   kernels), `evm_vectors` (the committed vectors). `flock_skip`'s `skip_timings_on_a_real_witness`, `opening_profile`,
+   `prove_quotients` (the quotients alone on a trace, at fixed challenges) and `prove_kernels` (the transforms)
+   are ignored timing tests.
 
 ## The prover, phase by phase (`src/prover/prove.rs`)
 
-1. **`C1`** (`columns.rs`, `stack.rs`).
-   - Every table column, its values on `V_r`, goes through the inverse additive NTT of `crates/quotient/src/domain.rs`
-     (novel basis), then a subset-sum transform to basis `B` (`b_k = Σ_{j ⊆ k} a_j`).
-   - This applies to BLAKE2S's 18 limbs (the copies), the counter inverses `z_T` (`1/Π c_j` on active rows, 0 on
-     padding rows), the memory's four columns and the bytecode's final counts.
-   - `q_flock` is leanVM's packed witness, as values.
-   - The stack is `stacks::StackLayout::new` on the verifier's column list (rebuilt in `stack.rs`, and checked
-     against `Reduced::stack_vars`).
-   - The commit is leanVM's WHIR (`pcs::whir::commit_tree_in`), rate 1/2, 64 lanes.
-2. **Setup `F`.** The 16 tuple slots, interleaved (word `slot + 16 k`): slot 0 `SEP_BYTECODE`, 1 the pc `g^i`, 2
-   zero, 3..16 leanVM's stacked bytecode, whose slots 0..2 are zero (checked). Also the addresses `g^i` on `V_lm`.
-3. **The challenges** `α, β, γ` (`KeccakWriter`, the contract's chain).
-4. **Flock** (`flock.rs`, behind one call).
-   - `lv42_flock::hash::Blake2sSetup::prove_reduction_precomputed` is leanVM's prover, vendored unchanged
-     (`crates/lv42_*`). It runs on leanVM's witness buffers and writes to the Keccak chain through
-     `lv42_fiat_shamir::transcript::Transcript` (`flock::Chain`). It produces the zerocheck (skip 6, 64 values, 26
-     rounds, `v_a`, `v_b`), the lincheck (8 rounds) and the 64 slices.
-   - The challenges it drew are kept. From them, the matrices' reduction (`k + 6 = 12` rounds of `Σ L(x) s(y) G'(x,
-     y)`, then `a`, `b`) is written as `flock_min::reduce_terminal` reads it.
-   - Then the ring map's 6 challenges. The point the slices are at is checked against the one the verifier derives.
-5. **The heap** (`bus.rs`).
-   - Every leaf: `Π D'/Π D` per active row, 1 per padding row, `D_init/D_fin` per memory cell and per instruction.
-   - One batch inversion each, then the products up the tree.
-   - The root is checked against `fp(final)/fp(initial)`.
-6. **The quotients** (`quotients.rs`).
-   - Each numerator is evaluated on the extension coset `D_m = ω_{2^m} + V_m`, `2^m ≥` the verifier's count, and
-     divided there by the vanishing polynomial. The inverse NTT on `D_m` gives the quotient's novel coefficients.
-   - The sub-cosets of `V_r` are taken one at a time. `w_r`, and the lift `w_{r_W}/w_r`, are constant on them.
-   - Chunks: `Q = Q_0 + w_{e_0}(Q_1 + w_{e_1} Q_2)` are slices of the novel coefficients, since
-     `X_{2^e + k} = w_e X_k`. Each is put in basis `B`.
-   - `ℓ_j` on a sub-coset is the slot's multilinear on a shifted cube `bits(i) + y(ω_first)`: per variable,
-     `(v_0, v_1) ↦ (v_0 + δ(v_0 + v_1), v_1 + δ(v_0 + v_1))`, in `K`.
-   - A quotient whose numerator does not vanish on its domain has full degree. Every quotient's degree is checked
-     below the verifier's count.
-7. **`C2`**: the heap (basis `B`, three limbs), `Q_tree`'s two chunks, `Q_W`'s and every leaf quotient's chunks.
-8. **`t`, and the 84 values** in the verifier's order (`sent_columns`, then the fingerprints whose tuple reads an
-   unsent column, the memory's, the bytecode's, `T(t)`, `Q_W(t)`).
-9. **`ρ`.** The prover runs `verifier::reduce` in weighted mode on the stream so far, which reads nothing after
-   `ρ`, to learn each commitment's combined claim. The check `Σ_u W_k(u) S_k(u) = v_k` is made against the
-   committed stacks.
-10. **The batching sumcheck** (`batch.rs`, behind one call).
-    - Each commitment's weight is written out on its stack (`dense_weight`: the verifier's `weight_at`, term by
-      term, one eq table per point).
-    - The ring switch's 64 Frobenius-twisted terms on `q_flock` read one eq table: on the cube
-      `eq(φ^k(P), u) = eq(P, u)^(2^k)`, so their sum is one GF(2)-linear map of it (24 byte tables).
-    - The rounds go low variable first. A stack shorter than the longest is folded as zero-padded, so its
-      zero-extension's `(1 + r_j)` factors fall out of the same folds.
-    - The prover sends two scalars a round (`q(0)` and `q`'s `X^2` coefficient), then each stack's value at its
-      part of the end point.
-11. **The openings** (`opening.rs`).
-    - One point claim per commitment, proven with leanVM's WHIR (`recursive_prover_with_lane_tensors`) and checked
-      with its verifier (`verifier::whir::verify_whir`), in the transcript shape of `crates/quotient/src/opening.rs`.
-    - WHIR commits only the lanes that carry data. Its prover needs a weight that vanishes on the absent lanes, so
-      the claim's `eq(point, ·)` is restricted to the committed lanes. That is the same claim, since the stack is
-      zero there.
-    - So the opening's verifier must know `placed` (the words the blocks fill), which the layout word must fix.
+0. **The seed** is `keccak(name ‖ contract_iv(shape, program IV, roots) ‖ public input)` (F2): the contract's IV
+   binds the setup roots, the shape and the five layout words. The prover checks that the contract's `F` root is the
+   one it commits (`setup::f_root`; at the reference shape `SetupRoots::REFERENCE.f`). The stream starts with the six
+   row counts (F1), then `C1`'s root.
+1. **`C1`** (`columns.rs`, `stack.rs`): every column through the inverse additive NTT to its novel coefficients
+   (`crates/quotient/src/ntt.rs`: `quotient::domain`'s transform, vectorized), then by subset sums to basis `B`
+   straight into the stack (the polynomials keep their novel coefficients only); the counter inverses
+   `z_T = 1/Π c_j` on every row; `q_flock` as values; leanVM's WHIR commit.
+2. **Setup `F`**: the bytecode's 16 tuple slots interleaved and the addresses (`setup.rs`).
+3. **The challenges** `α, β, γ`.
+4. **Flock** (`flock.rs`, behind one call): the zerocheck, the lincheck, the 64 slices (sent but with extension B),
+   then the ring map's six challenges at once (lever 4a). The matrices' reduction's three tables are kept for the
+   batching sumcheck ([`flock::Pending`]).
+   - At a skip of 6 the zerocheck and lincheck are leanVM's own, vendored unchanged. Below 6 they are
+     `lv42_flock::zerocheck::skip` (below) and the lincheck at the row weights the skip leaves,
+     `L(z) ⊗ eq(ρ_(<6-k)) ⊗ eq(x_inner)` (`lincheck::prove_padded_capture_s_hat_v_rows`).
+   - leanVM's Flock buffers (2 GB) are freed after Flock.
+5. **The heap** (`bus.rs`): a leaf per row, the ratio on active rows (`domain::is_active`) and 1 on padding rows, the
+   fingerprints eight rows at a time (`prints.rs`); the heap's novel coefficients limb by limb.
+6. **The quotients** (`quotients.rs`, on `crates/quotient/src/ntt.rs`). Each leaf quotient is sized as the verifier
+   sizes it, for its height's fewest rows (`Shape::least_rows`, F1); `Q_W`'s counter term has no `Z_pad`.
+   - Each numerator is evaluated on the first `T` points of an extension coset `D_M = ω_{2^M} + V_M` (outside the
+     domain), `T = Σ 2^{e_j}` the verifier's count rounded up to `2^{r-2}`, in binary: blocks of points
+     `ω_{s_j} + V_{e_j}`. BLAKE2S's are 20.5 sub-cosets of `V_18` (not `D_23`'s 32), XOR's, MUL's and DEREF's 8.5
+     (not 16). Over the vanishing polynomial, the values give the novel coefficients (`ntt::interpolate_prefix`): with
+     `R_j = Q_j + w_{e_j} R_{j+1}` (`R_0 = Q`), `w_{e_j}` is a constant `λ_j` on block `j`, whose inverse NTT is
+     `U_j = Q_j + λ_j R_{j+1}`, and `λ_j + 1` on the later blocks, where `R_{j+1} = R_j + U_j`; then
+     `Q_j = U_j + λ_j R_{j+1}` from the last block back.
+   - The columns a numerator reads, and `R`'s three limbs, are transformed eight at a time (a batch, eight lanes a
+     carry-less product; a quotient of few columns or one piece transforms each alone), one transform a piece of at
+     most `2^r` points. The numerator is computed eight points at a time (`prints.rs`); `Z_act` and `Z_pad` are their
+     cosets' factors' products there.
+   - `Q_W` is the sum of each table's part `Σ γ^i W_i / w_r` and the public input's, each on its own points.
+     BLAKE2S's 18 copies are combined by their powers first: `Σ g_j copy_j` is one E-column, and `Σ g_j ℓ_j` the
+     multilinear of the combined slot table, one shifted cube a piece.
+   - A numerator that does not vanish on its domain is caught on one more block of points, where its value over the
+     vanishing polynomial's is checked against the interpolant's: the quotient is then reported at full degree, and
+     every quotient's degree is checked below the verifier's count.
+7. **`C2`**: the heap and every quotient's chunks (`Q = Q_0 + w_{e_0}(Q_1 + w_{e_1} Q_2)`, slices of the novel
+   coefficients since `X_{2^e + k} = w_e X_k`), put in basis `B` limb by limb in place in the stack; then **`t`** and
+   the values at `t`, in the verifier's order.
+8. **`ρ`, and the combined claims** ([`replay`]): the verifier's own `reduce` in weighted mode on the stream so far.
+   Weighted mode still reads the matrices' reduction after the slices; [`replay::Replay`] serves it there, an honest
+   prover's at fixed challenges outside the chain, so that every other challenge is the point-claim stream's. With
+   extension B, the slices' combination (weighted mode's addition to `C1`) leaves `C1`'s claim with its part of the
+   value. The verifier's own checks on the stream so far are required to hold.
+9. **The batching sumcheck** (`batch.rs`): the stacks' weighted sums, plus `λ^3` times the matrices' product sum
+   `Σ G' L̂ ŝ` over the first `k + 6` variables, zero-extended (lever 4a; with extension B the same messages, the
+   true slices'), then the stacks' values and `a`, `b`.
+10. **The openings** (`opening.rs`): one point claim per commitment, leanVM's WHIR, the IV binding `PCS_OPEN`'s
+    32-byte layout word (F2; version 2), whose `vars` and `placed` the verifier reads.
 
-## Measured (h1: AMD Ryzen 7 PRO 8700GE, 16 threads; `RUSTFLAGS="-C target-cpu=native"`)
+## The skip kernels (`crates/lv42_flock/src/zerocheck/skip.rs`)
 
-**Reference workload**: 1,000 signatures, 1,023,109 cycles. Tables have 183,266 / 195,439 / 223,851 / 137,591 /
-80,937 / 202,025 rows. The variant is `Flock(FLOCK_LEANVM_SKIP)`.
+leanVM's zerocheck prover hard-codes `K_SKIP = 6` in its round-1 kernel; its bit and table rounds were written for
+rows of 8 bytes or more. The skip module proves the zerocheck for any `3 ≤ k ≤ 6`:
 
-| phase | seconds |
-|---|---:|
-| `C1` and setup: inverse NTTs to basis `B` | 0.47 |
-| `C1` and setup: WHIR commits (`2^27`, `2^24`) | 0.91 |
-| Flock: zerocheck, lincheck, slices (leanVM's), matrices' reduction | 0.54 |
-| heap: leaves, products, inverse NTT (`2^23` E) | 0.49 |
-| quotient: tree (`T` on a coset of `2^24`) | 0.73 |
-| quotients: leaves (8 blocks) | 4.82 |
-| quotient: constraints `Q_W` | 1.85 |
-| `C2`: chunks in basis `B` | 0.94 |
-| `C2`: WHIR commit (`2^27`) | 0.50 |
-| values at `t` | 0.02 |
-| claims: dense weights (with the ring switch's) and the combined-claims check | 3.06 |
-| batching sumcheck (27 rounds over `2^27 + 2^27 + 2^24`) | 2.11 |
-| openings: WHIR (3) | 1.81 |
-| **total** (the trace's generation, by leanVM, apart) | **18.56** |
+- **round 1**: `P(λ) = Σ_x eq(r, x)(â b̂ + ĉ)(λ, x)` on `Λ = φ_8(2^k + i)`. The seven fixed coordinates keep
+  leanVM's small/medium structure (`eq(r_small, K) = C_s φ_8(X^K)`, asserted), so the 8 groups of a small run
+  combine in `F_8`. At `k = 3` a word's 8 groups extend in one `gf2p8affine` (`round1_bytes`); at 4 and 5 a group's
+  bytes are one affine each (`round1_words`); the 16 medium positions are one `BitFold` of 16-byte rows; the C part is
+  computed on `S` and extended to `Λ`, as leanVM does;
+- **bit rounds**: leanVM's pair kernels at levels `0, 2, ..` on rows of `2^(k + t)` bits, extended to rows of 1, 2,
+  4 bytes (`BitFold` GFNI included); at `k = 3`, level 0 reads its products from the table of all 65,536 byte
+  products (`multilinear::bit_round_pair_bytes`); the storing pass at the level whose rows are 64 or 128 bytes;
+- **table rounds**: leanVM's, copied.
 
-- **Peak RSS 15.7 GB.** Without Flock it is 13.5 GB and 18.0 s. The dense weights (`2^27` E each for `C1` and
-  `C2`) and their first fold dominate it.
-- **Proof.** The stream is 8,824 bytes: two roots, Flock's 224 scalars (5,376 bytes), 84 values, 27 rounds of 2
-  scalars, and 3 values. The WHIR openings are 295,576 / 300,168 / 240,728 bytes (`C1`, `C2`, setup), which the
-  block's `PCS_OPEN` aggregation carries.
-- **Verifier.** In Rust, reduce and three WHIR openings take 13 ms. The contract runs 283,941 gas of execution on the
-  real calldata.
+Tested (`tests/flock_skip.rs`):
 
-**leanVM 42422001's own prover, same workload, same machine** (`leanvm --tracing gas-dump --xmss 1000`,
-measured): 2.12–2.46 s for the whole proof, peak RSS 10.1 GB. That is execute 0.12 s, witness 0.24 s, commit
-0.34 s, bus GKR 0.20 s, constraints 0.07 s, Flock 0.39 s and PCS opening 0.76 s.
+- at `k = 6`, round 1 equals leanVM's optimized kernel's message, and the whole zerocheck writes leanVM's stream, byte
+  for byte (at `m = 14, 16, 18`);
+- at `k = 3..6` on honest witnesses: the verifier's checks of the zerocheck hold (the coset values, the rounds through
+  `transcript::sumcheck`), and its claims are the witness's evaluations;
+- every fast kernel against the generic one: `round1_bytes`, `round1_words`, `round1_folded` against
+  `round1_generic`; `bit_round_pair_bytes` against `bit_round_pair`; `BitFold` at every row width against its
+  definition;
+- Flock end to end on 128 BLAKE2s compressions: `flock_min::verify` accepts at every skip and both ring-map orders,
+  and the slices are the witness's; the placement moves the witness to the moved instances'.
 
-- The trace generation this prover reuses (execute and witness) is 0.36 s of it.
-- This prover is about 8× leanVM's whole prover, measured. SPEC §11 estimated 2–3×.
-- Flock costs the same in both (0.39 s leanVM, 0.54 s here with the matrices' reduction).
+On the real witness (2^32 bits), the zerocheck at skip 3 takes about 1.1 s: round 1 0.12, the level-0 pass 0.44, level
+2 0.27, level 4 0.10, the storing pass 0.08, the table rounds 0.06. leanVM's at skip 6 (its own kernels): 0.45 s with
+the lincheck.
 
-**Where the time goes** (`tests/prove_kernels.rs`: a K-NTT of `2^18` on a coset takes 1.4 ms, an E-NTT 4.4 ms):
+## Measured (h1: AMD Ryzen 7 PRO 8700GE, 8 cores, 16 threads; `RUSTFLAGS="-C target-cpu=native"`; jemalloc)
 
-- The leaf quotients are NTT-bound.
-  - BLAKE2S's numerator has degree 20.2 n, so its coset is `2^23`, 32 sub-cosets of `V_18`. Each evaluates its 36
-    columns: 1,152 NTTs of `2^18`, about 1.6 s.
-  - XOR, MUL and DEREF take 16 sub-cosets of about 15 columns each.
-  - A batched multi-column NTT, as leanVM's interleaved encode, would cut this.
-- The dense weights are written out instead of kept as eq tensors.
-- The batching sumcheck's first rounds run over `2^27` E-weights.
+**Reference workload**: 1,000 signatures, 1,023,109 cycles; tables of 183,266 / 195,439 / 223,851 / 137,591 / 80,937 /
+202,025 rows. Each configuration in its own process (`--exact`), at leanvm-univariate-prover2-quot `2d2b862`.
+Other agents' Lean jobs shared h1 (four `lean` processes at full load; the runs started at a load average of 3.6 to
+3.9): the main line took 5.67, 6.22 and 7.08 s over three runs, and the table gives the middle one.
 
-**Small trace** (32 signatures, 38,209 cycles): 2.66 s with Flock, 2.1 GB; stream 8,440 bytes; 257,890 gas. leanVM
-takes 0.14 s.
+| phase | main line | extension B | main line before (`d02dcbe`) |
+|---|---:|---:|---:|
+| placement: the rows (and Flock's instances) | 0.09 | 0.10 | 0.10 |
+| `C1` and setup: inverse NTTs to basis `B` | 0.17 | 0.32 | 0.54 |
+| `C1` and setup: WHIR commits (`2^27`, `2^24`) | 0.63 | 0.70 | 0.58 |
+| Flock: zerocheck, lincheck, slices | 1.25 | 1.35 | 1.09 |
+| heap: leaves, products, inverse NTT (`2^23` E) | 0.15 | 0.15 | 0.31 |
+| quotient: tree | 0.18 | 0.20 | 0.42 |
+| quotients: leaves (8 blocks) | 1.10 | 0.87 | 4.92 |
+| quotient: constraints `Q_W` | 0.27 | 0.20 | 3.04 |
+| `C2`: chunks in basis `B` | 0.24 | 0.19 | 0.58 |
+| `C2`: WHIR commit (`2^27`) | 0.55 | 0.47 | 0.51 |
+| values at `t` | 0.02 | 0.02 | 0.02 |
+| claims: the verifier's combination, the weights | 0.06 | 0.04 | 0.05 |
+| batching sumcheck | 0.57 | 0.29 | 0.54 |
+| openings: WHIR (3) | 0.82 | 0.70 | 0.78 |
+| **total** (the trace's generation, by leanVM, apart) | **6.22** | **5.63** | **13.62** |
+| peak RSS | 10.4 GB | 10.2 GB | 10.7 GB |
 
-## Checked on real traces (32 and 1,000 signatures)
+- The combined-claims check (a test's, 0.14 s on the main line) is not in the totals.
+- "Before" is leanvm-univariate-prover2 `d02dcbe`, the batch's work without the quotients', measured just before in
+  the same harness (load 3.4 at its start).
+- **Proof.** The main line's stream is 7,108 bytes of calldata with the public input; the contract runs 182,104 gas
+  (192,392 deployed in 3 contracts). The stream keccaks: main line `6b03217e…`, extension B `790270fb…`, leanVM's
+  skip `68669d93…`, Flock omitted `04568de0…`; unchanged by the quotients' work, and the vectors' calldata,
+  `PCS_OPEN` inputs and gas are the committed ones.
 
-- **On the domain** (`check.rs`, no randomness but the bus's challenges):
-  - JUMP's two constraints on every row;
-  - every counter nonzero on active rows;
-  - padding rows hold `padRow` (informative only);
-  - memory cells 0 and 1 are the public input;
-  - BLAKE2S's 18 limbs equal `q_flock`'s slots on every row (4,718,592 entries);
-  - leanVM's stacked bytecode slots 0..2 are zero;
-  - no pull fingerprint vanishes;
-  - **the bus balances**: the heap's root is `fp(final)/fp(initial)`;
-  - the unused leaves are 1, and the tree holds on `V_H \ V_1`.
+**leanVM 42422001's own prover, same workload, same machine** (`leanvm --tracing gas-dump --xmss 1000`, jemalloc):
+2.13 s for the whole proof, peak RSS 10.1 GB. This prover's main line is about 2.9× that, at about the same memory.
 
-  Every one holds.
-- **The quotients' degrees are exactly the verifier's counts minus one**, for every quotient at both sizes: tree
-  `2^23`; memory `2^21 - 2`; bytecode `2^19 - 2`; XOR 2,176,021; MUL 2,163,848; SET 1,086,864; DEREF 2,221,696;
-  BLAKE2S 5,302,978; JUMP 1,098,702; `Q_W` 2,681,548. SPEC's degree formulas are tight, not over-estimates.
-- **At `t`**: each commitment's relations, combined by `ρ` (`C1` 82 with the ring switch's, `C2` 13, setup 2 at
-  1,000 signatures), against the committed stacks.
-- **Flock**:
-  - `flock_min::verify(skip 6, slices sent)` accepts leanVM's own Flock prover's messages on the Keccak chain. That
-    is the first run of `flock_min` against a real prover.
-  - The matrices' terminal holds.
-  - The ring switch's target is `q_flock`'s.
-  - `A0`'s and `B0`'s claims are the matrices' values: direct evaluation and a WHIR opening each.
-  - `A0` and `B0` are built by one walk of the circuit per 64 columns, the weights bits of a word (the walk is
-    additive): 0.2 s. A WHIR commit at `2^28` takes 1.2 s each, and an opening 1.7 s.
-- **End to end**: the Rust verifier, five WHIR openings, and the EVM contract on the calldata, with `PCS_OPEN`
-  registering exactly the proven claims. Review M1's F4 asked for this at the reference shape with Flock.
-  - The straight verifying contract and the deployable one (`evm_link`) both accept: 2 contracts without Flock, 5
-    with it.
-  - Both reject the real proof with one byte changed, and with any one of its five calls not attested.
-  - The measuring build agrees word for word with the Rust verifier on the accepting stream (`contract::parity`).
-- **The stacks' unused words**: past every block, inside the last committed lane, filled with pseudo-random words,
-  the proof is accepted all the same. `StackLayout` places the blocks contiguously, so the only unused words are
-  the tail. The weights are zero there, and the point claims are on the whole stack's multilinear, whatever the
-  tail holds.
+**Where the time goes** (`tests/prove_kernels.rs`, `tests/prove_quotients.rs`):
 
-## Cross-checked against review M1's independent honest prover (`tests/prove_tiny.rs`)
+- **The transforms** (`crates/quotient/src/ntt.rs`). A K-NTT of `2^18` takes 0.32 ms on one column (eight positions
+  a row, AVX-512 carry-less products; `quotient::domain`'s: 1.1 ms), 1.4 ms for a batch of eight columns (one row a
+  position), 1.8 ms when several batches take turns (memory-bound: 16 MB in and out); `2^23` on one column 10.6 ms
+  (`quotient::domain`'s: 59 ms); an E-column is three of them, 32 ms against `quotient::domain`'s E-NTT's 150 ms.
+- **The leaf quotients**, about 1 s: BLAKE2S's is 0.42 s, its 40 columns in 5 batches on 20.5 pieces of `2^18`
+  points (the transforms 0.22 s, the numerator eight points at a time 0.09 s, the interpolation 0.05 s); XOR's, MUL's
+  and DEREF's about 0.1 s each.
+- **The tree**, 0.18 s: `T` on the first block (three `2^23` NTTs), `T(s(x))` on a coset of `V_22`, the
+  interpolation (three inverse `2^23` NTTs).
+- **`Q_W`**, 0.25 s: seven parts on their own points, BLAKE2S's 0.1 s (two batches on 10 pieces, the shifted cubes
+  0.02 s).
+- **`C1`'s polynomials** are page faults as much as transforms: each column's novel coefficients are a fresh 2 MB
+  vector (with jemalloc's `thp:always`, 0.12 s instead of 0.21; heap and chunks slower, so not taken).
+- The batching sumcheck's first 6 rounds are memory-bound: each reads the three stacks' words (2 GB) at about 43 ms.
+  The ring switch's twisted piece adds about 60, 25 and 10 ms to rounds 0-2 (two GF(2)-linear maps per pair of
+  `q_flock`'s words, by GFNI). Writing the folded stacks and weights out at `2^21` takes about 70 ms (two reads
+  of `C1`'s and `C2`'s words), and the remaining folds about 40 ms.
+- An opening of a `2^27` stack is about 0.3 s: leanVM's WHIR, mostly its level commits (encode and Merkle at rates
+  `1/16` and below) and the lane rounds' passes over the stack.
 
-`tests/review_honest.rs` (leanvm-univariate `b948bfc`) is the review's own prover, written from SPEC.md: polynomials
-in the monomial basis, every identity divided exactly, no WHIR (stand-in roots).
+Tried, and not kept: the lane product reduced by two more carry-less products (as the scalar product; 6.0 against
+5.4 ms for `2^24` products); the leaves' pieces cut in eighths after their top three layers, each eighth finished and
+read in the last-level cache (leaves 0.96 → 1.44 s); a tree whose second block is 2 points (the folds onto it are
+`2^23` each, on few workers: 2^13 points cost less).
 
-- On its executions at memory and bytecode sizes `(2^5, 2^4)`, `(2^4, 2^5)` and `(2^5, 2^5)`, this prover writes
-  **the same stream, byte for byte**, when it sends the same stand-in roots: the 84-or-so values at `t`, the 15
-  rounds of the batching sumcheck and its end values.
-- The batching sumcheck's rounds are sums over every word of the three stacks, so the two provers' `C1`, `C2` and
-  setup stacks agree: every basis-`B` coefficient, the heap, and every quotient chunk.
-- With its real WHIR roots, the prover's proofs of these executions are accepted at all four sizes, including
-  `(2^4, 2^4)` with DEREF's table empty (height 0).
-
-## What is missing
-
-1. **(a′)'s skip of 3** (`FLOCK_MAIN`; the prover returns an error).
-   - leanVM's zerocheck prover hard-codes `K_SKIP = 6` in its bit-sliced kernels (its round 1 extracts the 6
-     packing bits of each K-word).
-   - A skip of 3 needs a new round-1 kernel and new bit rounds. The lincheck, the slices, the matrices' reduction
-     (`k + 6` rounds) and the ring switch here take `k` as a parameter already.
-2. **Extension W** (weighted claims): no opening prover. `PCS_OPEN` would run the weight itself.
-3. **The setup roots in the contract** are placeholder constants (`contract::setup_root`). The prover computes the
-   real ones (`setup::roots`; test `setup_roots`), which a deployment must put in the code: `F`'s from the program
-   and the shape, `A0`'s and `B0`'s from the R1CS. Review M1's F2 asks for exactly this. The gas-iteration branch
-   is to bind them in the IV. At the aggregation guest and the 1,000-signature shape, measured in 3.3 s:
-
-   ```text
-   F  9b5a0f9bd796c09b8bc328113956464acf865c99b7dfc088c0c0a3208eab5fb7   (memory 2^21, bytecode 2^19)
-   A0 93cd9a0352a85dcc663f7068e1f3afa3a00f5220bd2b03d67244f0eb133fd2f7
-   B0 c07556508c416240dafd47665831fd51d2eb1104a52c63231101479c7f6cd467
-   ```
-4. **The `A0`, `B0` openings run in the test**, after the proof (`tests/prove_real.rs`), not in `prove`. They are
-   fixed commitments, opened per proof: about 3 s for the two, not in the phase table above.
+**Small trace** (32 signatures, 38,209 cycles): the contract binds that shape's own `F`; stream keccaks main line
+`cf38e74e…`, extension B `9b40b065…`, leanVM's skip `f815686e…`, omitted `c68b0838…`.
 
 ## Notes for the verifier and SPEC (from building the prover)
 
-- The verifier needs no change to accept these proofs (`Blake2s::Omitted` or `Flock(FLOCK_LEANVM_SKIP)`,
-  `Claims::Point`).
-- `PCS_OPEN`'s layout word must fix each stack's `vars` and `placed`: WHIR's verifier needs `placed` to know the
-  committed lanes.
-- SPEC §3's setup size is `2^23.32` (`2^23 + 2^21` words), not `2^23.2`.
-- SPEC §5.3's SET is `4.15 n` at 1,000 signatures (`5(n - 1) + (n - rows) - n`), not `4.6 n`. XOR 8.30 n, MUL 8.25
-  n, DEREF 8.48 n, JUMP 8.38 n and BLAKE2S 20.23 n agree with it.
-- SPEC §11's estimate (2–3× leanVM's prover) is 8× measured, unoptimized (above).
-- The public input in calldata is four big-endian words `(cell0.c0, cell0.c1, cell1.c0, cell1.c1)`
-  (`contract::rust_verifier`), not leanVM's little-endian digest bytes. The prover writes it so
-  (`Trace::public_input`).
-- The program's IV in the seed (`shapes::PROGRAM_IV`, leanVM's BLAKE2s digest of the R1CS and the bytecode) binds
-  the setup only through the bytecode. `F` is a deterministic function of the bytecode, so this is enough if the
-  contract's `F` root is the one computed from it.
+Nothing in iteration 2's verifier blocks proving: every configuration with an opening is proven against it
+unchanged. What its interface leaves to the prover, and how this one copes:
+
+- **The combined claims are not exposed in point mode.** The prover needs each commitment's combined claim (terms,
+  points, value) to write the batching sumcheck's weights; `reduce` returns them only in weighted mode, whose stream
+  differs from point mode's since lever 4a (weighted mode reads the matrices' reduction after the slices). The
+  prover replays point mode's stream through weighted mode with that reduction served outside the chain
+  (`replay.rs`), which relies on the two modes stating the same relations in the same order. A `reduce` that
+  returned its `combined` in point mode too (before `batch`) would remove the replay.
+- **The setup roots**: `rust_verifier`, `record_verifier` and `parity` bind `SetupRoots::REFERENCE` whatever the
+  shape. Added here, for the transcriber's item: `rust_verifier_with`, `record_verifier_with`, `parity_with`, which
+  take the shape's roots; the old ones call them with `REFERENCE`. The prover's tests verify every shape against the
+  contract that binds its own `F`.
+- `contract_iv` and the layout words come from `layouts(shape)`, which validates the shape without Flock: a Flock shape
+  with BLAKE2S below height 7 still gets an IV. Harmless, since `reduce` then rejects the shape before it reads
+  anything; left as it is. The shape's bytes are hashed twice into the IV (directly and in every layout word):
+  harmless, left.
+- **Extension B's bit-slice claim** has no WHIR opening: `PCS_OPEN` must ring-switch it. The test checks it on the
+  committed `q_flock`; the vectors' `C1` call carries it.
+- **`A0`, `B0` are opened per proof** (two `2^28` openings, about 1.7 s each with leanVM's WHIR, a fifth of the
+  words nonzero). They are fixed: a prover that kept their L0 codewords (8 GB, or on disk) would skip each opening's
+  re-encode of its queried rows (0.55 s of it).

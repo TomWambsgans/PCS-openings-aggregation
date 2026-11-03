@@ -1,5 +1,6 @@
 // Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/flock/src/zerocheck/multilinear.rs.
-// MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
+// Changed here: the bit-round kernels also take rows of 1, 2 and 4 bytes (for a univariate skip below 6); the rest is
+// unchanged. MIT OR Apache-2.0 (see LICENSE-MIT, LICENSE-APACHE and NOTICE.md at the repository root).
 // CREDIT: https://github.com/succinctlabs/flock (flock-core), MIT OR Apache-2.0.
 //! Multilinear sumcheck: rounds 2..(m − k_skip + 1) of the zerocheck protocol.
 //!
@@ -318,6 +319,9 @@ impl RoundPair {
 /// The linear `c` term reaches `G(1)` only.
 pub fn bit_round_pair(bits: PackedWitness<'_>, fold: &BitFold, r_eq: &[F192], padding: &PaddingSpec) -> RoundPair {
     match fold.n_chunks() {
+        1 => bit_round_pair_kernel::<1>(bits, fold, r_eq, padding),
+        2 => bit_round_pair_kernel::<2>(bits, fold, r_eq, padding),
+        4 => bit_round_pair_kernel::<4>(bits, fold, r_eq, padding),
         8 => bit_round_pair_kernel::<8>(bits, fold, r_eq, padding),
         16 => bit_round_pair_kernel::<16>(bits, fold, r_eq, padding),
         32 => bit_round_pair_kernel::<32>(bits, fold, r_eq, padding),
@@ -337,12 +341,84 @@ pub fn bit_round_materialize(
     padding: &PaddingSpec,
 ) -> ((F192, F192), [Vec<F192>; 3]) {
     match fold.n_chunks() {
+        1 => bit_round_store_kernel::<1>(bits, fold, r_eq, padding),
+        2 => bit_round_store_kernel::<2>(bits, fold, r_eq, padding),
+        4 => bit_round_store_kernel::<4>(bits, fold, r_eq, padding),
         8 => bit_round_store_kernel::<8>(bits, fold, r_eq, padding),
         16 => bit_round_store_kernel::<16>(bits, fold, r_eq, padding),
         32 => bit_round_store_kernel::<32>(bits, fold, r_eq, padding),
         64 => bit_round_store_kernel::<64>(bits, fold, r_eq, padding),
         128 => bit_round_store_kernel::<128>(bits, fold, r_eq, padding),
         n => panic!("no bit-round kernel for {n}-byte rows"),
+    }
+}
+
+/// [`bit_round_pair`] for rows of one byte (a univariate skip of 3 at level 0; this repository's addition): a
+/// position's value is `T[byte]`, `T` the fold's 256 values, so each of a quad's eight products is `T[x] T[y]` for
+/// bytes `x`, `y` (the sums of values being the values of the bytes' XOR), read from the table of all 65,536
+/// products instead of multiplied. The rest is [`bit_round_pair_kernel`]'s, the same sums in the same slots.
+pub fn bit_round_pair_bytes(bits: PackedWitness<'_>, weights: &[F192; 8], r_eq: &[F192], padding: &PaddingSpec) -> RoundPair {
+    let mut values = [F192::ZERO; 256];
+    for v in 1..256usize {
+        let low = v.trailing_zeros() as usize;
+        values[v] = values[v & (v - 1)] + weights[low];
+    }
+    let products: Vec<F192> = values.iter().flat_map(|&x| values.iter().map(move |&y| x * y)).collect();
+    let [a, b, c] = [bits.a, bits.b, bits.c];
+    let n_quads = a.len() / 4;
+    assert!(n_quads >= 1 && b.len() == a.len() && c.len() == a.len());
+    assert_eq!(r_eq.len(), n_quads.trailing_zeros() as usize + 1);
+    let (r_v, r_quad) = (r_eq[0], &r_eq[1..]);
+    let (eq_lo, eq_hi) = split_eq(r_quad);
+    let lo_size = eq_lo.len();
+    // A quad covers 4 bytes, 32 bits.
+    let (quad_in_block_mask, live_quads) = padding_pairs(padding, 4);
+    let live = |quad: usize| (quad & quad_in_block_mask) < live_quads;
+    let word = |data: &[u8], q: usize| u32::from_le_bytes(data[4 * q..4 * q + 4].try_into().expect("a quad"));
+    let product = |x: u32, y: u32| products[((x & 0xff) << 8 | (y & 0xff)) as usize];
+    let sums = parallel::map_reduce(
+        eq_hi.len(),
+        || [F192::ZERO; 8],
+        |hi| {
+            let mut acc = [F192Unreduced::ZERO; 8];
+            for lo in (0..lo_size).step_by(4) {
+                let n = (lo_size - lo).min(4);
+                let mut s = [[F192::ZERO; 4]; 8];
+                for k in 0..n {
+                    let quad = hi * lo_size + lo + k;
+                    if !live(quad) {
+                        continue;
+                    }
+                    let (x, y, z) = (word(a, quad), word(b, quad), word(c, quad));
+                    // Bytes 0..3 are positions (u, v) = (0,0), (1,0), (0,1), (1,1).
+                    let (xu0, xu1, xv0, xv1) = (x ^ x >> 8, x >> 16 ^ x >> 24, x ^ x >> 16, x >> 8 ^ x >> 24);
+                    let (yu0, yu1, yv0, yv1) = (y ^ y >> 8, y >> 16 ^ y >> 24, y ^ y >> 16, y >> 8 ^ y >> 24);
+                    let c1 = values[(z >> 8 & 0xff) as usize];
+                    let c2 = values[(z >> 16 & 0xff) as usize];
+                    let c3 = values[(z >> 24) as usize];
+                    s[0][k] = product(x >> 8, y >> 8) + c1;
+                    s[1][k] = product(x >> 24, y >> 24) + c3;
+                    s[2][k] = product(xu0, yu0);
+                    s[3][k] = product(xu1, yu1);
+                    s[4][k] = product(x >> 16, y >> 16) + c2;
+                    s[5][k] = product(xv0, yv0);
+                    s[6][k] = product(xv1, yv1);
+                    s[7][k] = product(xu0 ^ xu1, yu0 ^ yu1);
+                }
+                let e = std::array::from_fn::<F192, 4, _>(|k| if k < n { eq_lo[lo + k] } else { F192::ZERO });
+                for (acc, s) in acc.iter_mut().zip(&s) {
+                    let t = mul_quad_unreduced((e[0], e[1], e[2], e[3]), (s[0], s[1], s[2], s[3]));
+                    *acc ^= t.0 ^ t.1 ^ t.2 ^ t.3;
+                }
+            }
+            acc.map(|s| eq_hi[hi] * s.reduce())
+        },
+        |x, y| std::array::from_fn(|i| x[i] + y[i]),
+    );
+    let split_v = |v0: F192, v1: F192| v0 + r_v * (v0 + v1);
+    RoundPair {
+        first: (split_v(sums[0], sums[1]), split_v(sums[2], sums[3])),
+        second: [[sums[4], sums[1], sums[3]], [sums[5], sums[6], sums[7]]],
     }
 }
 
