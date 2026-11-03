@@ -88,10 +88,16 @@ def Graph.typedAt (g : Graph) (i : ℕ) : Node → Bool
       (g.kernels.getD k []).length == 2 * n + 6
   | _ => true
 
-/-- **The graph is well typed**: node 0 is the seed (π1's recorder makes it first, `Recorder::new`), and every node
-is well typed. -/
+/-- The checks and the calls name nodes of the graph. -/
+def Graph.outputsIn (g : Graph) : Bool :=
+  (g.zero ++ g.nonzero).all (· < g.nodes.size) &&
+    g.calls.all (·.all fun w => match w with | .node id => decide (id < g.nodes.size) | _ => true)
+
+/-- **The graph is well typed**: node 0 is the seed (π1's recorder makes it first, `Recorder::new`), every node is
+well typed, and the checks and the calls name nodes. -/
 def Graph.typed (g : Graph) : Bool :=
-  g.nodes.getD 0 default == .seed && (List.range g.nodes.size).all fun i => g.typedAt i (g.nodes.getD i default)
+  g.nodes.getD 0 default == .seed && (List.range g.nodes.size).all (fun i => g.typedAt i (g.nodes.getD i default)) &&
+    g.outputsIn
 
 /-! ## The expansion -/
 

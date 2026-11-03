@@ -439,6 +439,13 @@ def freeReadsOk (streamLen : ℕ) : Bool :=
     a == b || (c.freeReads.getD a default).1 + 24 ≤ (c.freeReads.getD b default).1 ||
       (c.freeReads.getD b default).1 + 24 ≤ (c.freeReads.getD a default).1
 
+/-- **`machine::root_word`** of a call's 32 bytes (M1): each 16-byte half reversed, the word `PCS_OPEN` takes for a
+root (`s_0 · 2^128 + s_1`, the two scalars the transcript carries). -/
+def _root_.RecCircuit.rootWordBytes (b : List UInt8) : List UInt8 := (b.take 16).reverse ++ (b.drop 16).reverse
+
+/-- The first port of a source. -/
+def _root_.RecCircuit.Circuit.portOf (C : Circuit) (s : Source) : Option ℕ := C.ports.findIdx? (·.source == s)
+
 /-- A node's operands (a ring weight's are its kernel's; the expanded graph has none). -/
 def _root_.RecCircuit.Node.ops : Node → List ℕ
   | .add a b | .mul a b => [a, b]
@@ -454,6 +461,37 @@ def graphOk (r : Recorded) : Bool :=
   c.zero == r.graph.zero.map (fun id => c.map.getD id 0) &&
   (c.zeroNodes ++ c.elementNodes.toList).all (fun id => id < c.nodes.size && c.live.getD id false) &&
   r.iv.length == 32
+
+/-- **A word of π2's calls against π1's** (`compile.rs`'s call words), at position `k` of its call: a constant word
+its bytes (word 0, a setup root, as `PCS_OPEN`'s root word); a stream word (word 0 only) a root port at its offset; a
+node word (never word 0) a live node of the expanded graph, a constant (its `element_word`), an element port's node,
+or a pair's coordinate of an element port's challenge. -/
+def wordOk (r : Recorded) (k : ℕ) : CallWord → Word → Bool
+  | .const x, .const v =>
+    wordBytes32 x == (if k = 0 then rootWordBytes (RecGraph.beBytes32 v) else RecGraph.beBytes32 v)
+  | .root i, .stream at_ =>
+    k == 0 && i < r.rootsAt.length && r.rootsAt.getD i 0 == at_ && (c.circuit.portOf (.root i)).isSome
+  | .const x, .node id =>
+    k != 0 && c.live.getD (c.map.getD id 0) false &&
+      match c.nodes.getD (c.map.getD id 0) default with
+      | .const c0 c1 c2 => wordBytes32 x == UniStatement.elementWord (UniStatement.eNew c0 c1 c2)
+      | _ => false
+  | .element e, .node id =>
+    k != 0 && c.live.getD (c.map.getD id 0) false && e < c.elementNodes.size &&
+      c.elementNodes.getD e 0 == c.map.getD id 0 && (c.circuit.portOf (.element e)).isSome
+  | .pair e co, .node id =>
+    k != 0 && c.live.getD (c.map.getD id 0) false && e < c.elementNodes.size && co < 2 &&
+      pairCoordinate c.nodes (c.map.getD id 0) == some (c.elementNodes.getD e 0, co) &&
+      (c.circuit.portOf (.element e)).isSome
+  | _, _ => false
+
+/-- **π2's calls are π1's**, word by word (`wordOk`). -/
+def callsOk (r : Recorded) : Bool :=
+  c.circuit.calls.length == r.graph.calls.length &&
+  allBelow r.graph.calls.length fun ci =>
+    (c.circuit.calls.getD ci []).length == (r.graph.calls.getD ci []).length &&
+    allBelow (r.graph.calls.getD ci []).length fun k =>
+      c.wordOk r k ((c.circuit.calls.getD ci []).getD k default) ((r.graph.calls.getD ci []).getD k default)
 
 /-- **Everything the theorems need**, checked. -/
 def checks (r : Recorded) : List (String × Bool) :=
@@ -471,6 +509,7 @@ def checks (r : Recorded) : List (String × Bool) :=
    ("nodes", allBelow c.nodes.size fun id => !c.live.getD id false || c.nodeOk X r.iv packOf id),
    ("ports", c.portsOk X),
    ("sources", c.sourcesOk),
+   ("calls", c.callsOk r),
    ("sizes", c.live.size == c.nodes.size && c.limbs.size == c.nodes.size && c.digests.size == c.nodes.size &&
       c.bitSelf.size == 8 * r.graph.streamLen && c.circuit.logWidth == 4 && c.circuit.logWidth ≤ c.circuit.logN)]
 

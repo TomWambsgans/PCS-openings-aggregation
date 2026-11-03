@@ -53,20 +53,6 @@ def rootWord (w : ℕ) : ℕ :=
 /-- `element_word`: `c0 + c1·2^64 + c2·2^128`. -/
 def elementWord (x : F192) : ℕ := x.c0.toNat + x.c1.toNat * 2 ^ 64 + x.c2.toNat * 2 ^ 128
 
-/-- `E::pow`, square and multiply. -/
-def epow (x : F192) (n : ℕ) : F192 := Id.run do
-  let mut (base, out, k) := (x, (1 : F192), n)
-  for _ in [0:64] do
-    if k % 2 == 1 then out := out * base
-    base := base * base
-    k := k / 2
-  return out
-
-/-- `cantor_beta1`. -/
-def cantorBeta1 : F192 :=
-  let g := epow (F192.new 2 0 0) (0xFFFFFFFFFFFFFFFF / 3)
-  if g.c0 &&& 1 == 0 then g else g + 1
-
 /-- The nodes `outputs` read, through their operands (`count::live`). -/
 def live (nodes : Array Node) (outputs : List ℕ) : Array Bool := Id.run do
   let mut live := Array.replicate nodes.size false
@@ -81,21 +67,29 @@ def live (nodes : Array Node) (outputs : List ℕ) : Array Bool := Id.run do
       | _ => pure ()
   return live
 
-/-- `pair_coordinate`: a call word's node `y_1(z) = z·z + z` or `y_0(z) = z + β_1 · y_1(z)` of a challenge `z`. -/
-def pairCoordinate (nodes : Array Node) (id : ℕ) : Option (ℕ × ℕ) :=
-  let node := fun i => nodes.getD i default
-  let isChallenge := fun z => match node z with | .narrow _ | .low _ => true | _ => false
-  let y1Of := fun (i : ℕ) => match node i with
-    | .add a b => [(a, b), (b, a)].findSome? fun (sq, z) => match node sq with
-      | .mul x y => if x == z && y == z && isChallenge z then some z else none
-      | _ => none
+/-- A challenge node (`pair_coordinate`'s `is_challenge`). -/
+def pairChallenge (nodes : Array Node) (z : ℕ) : Bool :=
+  match nodes.getD z default with
+  | .narrow _ | .low _ => true
+  | _ => false
+
+/-- `pair_coordinate`'s `y1_of`: node `i` is `y_1(z) = z·z + z` of a challenge `z`. -/
+def pairY1 (nodes : Array Node) (i : ℕ) : Option ℕ :=
+  match nodes.getD i default with
+  | .add a b => [(a, b), (b, a)].findSome? fun (sq, z) => match nodes.getD sq default with
+    | .mul x y => if x = z ∧ y = z ∧ pairChallenge nodes z = true then some z else none
     | _ => none
-  match y1Of id with
+  | _ => none
+
+/-- `pair_coordinate`: a call word's node `y_1(z) = z·z + z` or `y_0(z) = z + β_1 · y_1(z)` of a challenge `z`
+(`β_1` is `UniStatement.cantorBeta1`, `transcript::cantor_beta1`). -/
+def pairCoordinate (nodes : Array Node) (id : ℕ) : Option (ℕ × ℕ) :=
+  match pairY1 nodes id with
   | some z => some (z, 1)
-  | none => match node id with
-    | .add a b => [(a, b), (b, a)].findSome? fun (z, product) => match node product with
-      | .mul c y => [(c, y), (y, c)].findSome? fun (c, y) => match node c with
-        | .const l0 l1 l2 => if F192.new l0 l1 l2 == cantorBeta1 && y1Of y == some z then some (z, 0) else none
+  | none => match nodes.getD id default with
+    | .add a b => [(a, b), (b, a)].findSome? fun (z, product) => match nodes.getD product default with
+      | .mul c y => [(c, y), (y, c)].findSome? fun (c, y) => match nodes.getD c default with
+        | .const l0 l1 l2 => if F192.new l0 l1 l2 = UniStatement.cantorBeta1 ∧ pairY1 nodes y = some z then some (z, 0) else none
         | _ => none
       | _ => none
     | _ => none
