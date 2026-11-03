@@ -23,6 +23,7 @@ use super::poly::{eval_k, eval_limbs, from_v, novel_limbs, to_v};
 use super::quotients::{self, Quotient};
 use super::stack::{Stack, c1_columns, c2_columns};
 use super::trace::Trace;
+use super::weight::Weight;
 use crate::claims::{Column, Combined, Commitment};
 use crate::contract::{NAME, SetupRoots, contract_iv, layout_words};
 use crate::heap::Leaves;
@@ -212,8 +213,8 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
         stack1.fill_unused(0xC1);
         stack_f.fill_unused(0xF0);
     }
-    let committed1 = opening::commit(&stack1.words, stack1.layout.vars, stack1.placed());
-    let committed_f = opening::commit(&stack_f.words, stack_f.layout.vars, stack_f.placed());
+    let committed1 = opening::commit_keeping_codeword(&stack1.words, stack1.layout.vars, stack1.placed());
+    let committed_f = opening::commit_keeping_codeword(&stack_f.words, stack_f.layout.vars, stack_f.placed());
     // The contract binds F's root (and opens F against it): it must be this program's and shape's. Garbage in the
     // unused words makes another F, which only a contract built for it accepts: that contract's roots are used. (The
     // stand-in roots' cross-check proves nothing.)
@@ -365,7 +366,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     if config.garbage {
         stack2.fill_unused(0xC2);
     }
-    let committed2 = opening::commit(&stack2.words, stack2.layout.vars, stack2.placed());
+    let committed2 = opening::commit_keeping_codeword(&stack2.words, stack2.layout.vars, stack2.placed());
     report.stacks.push((Commitment::C2, stack2.placed(), stack2.layout.vars));
     clock.lap(&mut report, "C2: WHIR commit");
     writer.send_root(config.stand_in_roots.map_or_else(|| halves(&committed2.root), |r| r[1]));
@@ -436,6 +437,9 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     }
     clock.lap(&mut report, "values at t");
 
+    // Past the values at t, the proof reads the stacks and their commitments alone.
+    drop((c1, setup, leaves, heap_values, heap_novel, heap_b, tree, tree_chunks, constraint, constraint_chunks));
+
     // 8. ρ, and the combined claims: the verifier's own, on the stream so far, in weighted mode (which reads nothing
     // after ρ). With the matrices' reduction pending, weighted mode reads it after the slices: `Replay` serves it there,
     // an honest prover's at fixed challenges, outside the chain (`replay.rs`).
@@ -499,31 +503,20 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
             Commitment::Setup => (&stack_f, &committed_f),
         }
     };
-    let weights_dense: Vec<Vec<F192>> = combined
+    let weights: Vec<Weight> = combined
         .iter()
-        .map(|(c, claim)| {
-            let (stack, _) = stacks_of(*c);
-            super::batch::dense_weight(claim, &stack.layout, stack.words.len())
-        })
+        .map(|(c, claim)| Weight::new(claim, &stacks_of(*c).0.layout))
         .collect();
+    clock.lap(&mut report, "claims: weights");
     if config.check {
-        for ((c, claim), weight) in combined.iter().zip(&weights_dense) {
-            let (stack, _) = stacks_of(*c);
-            let sum = parallel::map_reduce(
-                stack.words.len().div_ceil(1 << 14),
-                || F192::ZERO,
-                |chunk| {
-                    let range = chunk << 14..((chunk + 1) << 14).min(stack.words.len());
-                    range.fold(F192::ZERO, |acc, i| acc + weight[i].mul_base(stack.words[i]))
-                },
-                |a, b| a + b,
-            );
+        for ((c, claim), weight) in combined.iter().zip(&weights) {
+            let sum = weight.sum(&stacks_of(*c).0.words);
             report
                 .checks
                 .push((format!("{c:?}: its {} relations, combined by ρ, hold", claim.relations), sum == from_v(claim.value)));
         }
+        clock.lap(&mut report, "claims: the combined-claims check (test only)");
     }
-    clock.lap(&mut report, "claims: dense weights");
 
     // 9. The point claims: the batching sumcheck.
     let mut openings = Vec::new();
@@ -537,7 +530,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
                     (&s.words[..], s.layout.vars)
                 })
                 .collect();
-            let (point, values, matrices) = super::batch::prove(&mut writer, &stacks, weights_dense, lambda, pending.as_ref())?;
+            let (point, values, matrices) = super::batch::prove(&mut writer, &stacks, weights, lambda, pending.as_ref())?;
             if let Some(claim) = matrices {
                 report.flock = Some(claim);
             }

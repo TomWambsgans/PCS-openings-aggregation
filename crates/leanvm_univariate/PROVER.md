@@ -81,7 +81,8 @@ random streams.
    - `q_flock` is leanVM's packed witness, as values.
    - The stack is `stacks::StackLayout::new` on the verifier's column list (rebuilt in `stack.rs`, and checked
      against `Reduced::stack_vars`).
-   - The commit is leanVM's WHIR (`pcs::whir::commit_tree_in`), rate 1/2, 64 lanes.
+   - The commit is leanVM's WHIR (`pcs::whir::commit`), rate 1/2, 64 lanes. Its codeword is kept for the opening
+     (`opening::commit_keeping_codeword`), as `C2`'s and the setup's.
 2. **Setup `F`.** The 16 tuple slots, interleaved (word `slot + 16 k`): slot 0 `SEP_BYTECODE`, 1 the pc `g^i`, 2
    zero, 3..16 leanVM's stacked bytecode, whose slots 0..2 are zero (checked). Also the addresses `g^i` on `V_lm`.
 3. **The challenges** `α, β, γ` (`KeccakWriter`, the contract's chain).
@@ -124,18 +125,33 @@ random streams.
 9. **`ρ`.** The prover runs `verifier::reduce` in weighted mode on the stream so far, which reads nothing after
    `ρ`, to learn each commitment's combined claim. The check `Σ_u W_k(u) S_k(u) = v_k` is made against the
    committed stacks.
-10. **The batching sumcheck** (`batch.rs`, behind one call).
-    - Each commitment's weight is written out on its stack (`dense_weight`: the verifier's `weight_at`, term by
-      term, one eq table per point).
+10. **The batching sumcheck** (`weight.rs`, `batch.rs`, behind one call).
+    - Each commitment's weight (the verifier's `weight_at`, term by term) is kept as pieces on the stack's blocks,
+      never written out at the stack's size (`Weight`): a column read at one point is `c · eq(p, ·)`, kept as
+      `eq(p_(<8), ·) ⊗ eq(p_(≥8), ·)` and shared by every column at that point and size; `q_flock`'s slots at one
+      point are the slots' coefficients `⊗ eq(y, ·)`; a column read at several points (the heap's 13) is one table
+      for its three limbs.
     - The ring switch's 64 Frobenius-twisted terms on `q_flock` read one eq table: on the cube
-      `eq(φ^k(P), u) = eq(P, u)^(2^k)`, so their sum is one GF(2)-linear map of it (24 byte tables).
-    - The rounds go low variable first. A stack shorter than the longest is folded as zero-padded, so its
-      zero-extension's `(1 + r_j)` factors fall out of the same folds.
+      `eq(φ^k(P), u) = eq(P, u)^(2^k)`, so their sum is one GF(2)-linear map `L` of it. After `j` rounds it is still
+      one map of `eq(P_(≥j), ·)`, its coefficients times `1 + r + P^(2^k)` a round. `crates/gf2_linear` evaluates
+      such maps eight elements at a time with GFNI (`vgf2p8affineqb`, one 8 × 8 bit block per lane), byte tables
+      otherwise.
+    - The rounds go low variable first. The first 6 read the stacks' `K`-words as they are, the folded stack
+      `C_j(m) = Σ_y eq(r_(<j), y) C(2^j m + y)` taken inside the sums: an eq piece's round is two inner products
+      of words with `E`-tables per 256 words (`dot_base`); a table's or the twisted piece's, its pair's two weights
+      against the pair's words, one mixed product a word, summed by the word's offset. Then every stack and
+      weight is written out folded (`2^21` words for `C1` and `C2`) and folded on, a round's fold and the next
+      round's sums in one pass.
+    - A stack shorter than the longest is folded as zero-padded, so its zero-extension's `(1 + r_j)` factors fall
+      out of the same folds.
     - The prover sends two scalars a round (`q(0)` and `q`'s `X^2` coefficient), then each stack's value at its
       part of the end point.
+    - The combined-claims check (`Config::check`, a test's) is its own phase.
 11. **The openings** (`opening.rs`).
     - One point claim per commitment, proven with leanVM's WHIR (`recursive_prover_with_lane_tensors`) and checked
       with its verifier (`verifier::whir::verify_whir`), in the transcript shape of `crates/quotient/src/opening.rs`.
+    - The rows the first queries open are read from the commitment's kept codeword (freed after its opening), not
+      encoded again from the stack: the same proof.
     - WHIR commits only the lanes that carry data. Its prover needs a weight that vanishes on the absent lanes, so
       the claim's `eq(point, ·)` is restricted to the committed lanes. That is the same claim, since the stack is
       zero there.
@@ -158,13 +174,19 @@ random streams.
 | `C2`: chunks in basis `B` | 0.94 |
 | `C2`: WHIR commit (`2^27`) | 0.50 |
 | values at `t` | 0.02 |
-| claims: dense weights (with the ring switch's) and the combined-claims check | 3.06 |
-| batching sumcheck (27 rounds over `2^27 + 2^27 + 2^24`) | 2.11 |
-| openings: WHIR (3) | 1.81 |
+| claims: weights (pieces on the stacks' blocks, with the ring switch's map) | 0.04 |
+| claims: the combined-claims check (a test's; not in the total) | 0.12 |
+| batching sumcheck (27 rounds over `2^27 + 2^27 + 2^24`, the first 6 on the stacks' words) | 0.50 |
+| openings: WHIR (3), the queried L0 rows from the kept codewords | 0.73 |
 | **total** (the trace's generation, by leanVM, apart) | **18.56** |
 
+- The claims, batching and openings rows are measured at `bbef4b9`, on jemalloc (the harness's allocator since
+  `a11ed4c`, as leanVM's own CLI's), the others earlier. On the main line (`FLOCK_MAIN`) the three are 0.04 / 0.56
+  / 0.78 s, and the whole prover 15.0 s at peak RSS 10.7 GB, where `a11ed4c` (dense weights and their check 2.90 s,
+  batching 1.13–1.15 s, openings 1.02–1.08 s) takes 16.2–17.1 s at 16.6 GB.
 - **Peak RSS 15.7 GB.** Without Flock it is 13.5 GB and 18.0 s. The dense weights (`2^27` E each for `C1` and
-  `C2`) and their first fold dominate it.
+  `C2`) and their first fold dominated it; no weight is written out at the stacks' size now, and the openings set
+  the peak (the three kept codewords, 3.6 GB, each freed after its opening).
 - **Proof.** The stream is 8,824 bytes: two roots, Flock's 224 scalars (5,376 bytes), 84 values, 27 rounds of 2
   scalars, and 3 values. The WHIR openings are 295,576 / 300,168 / 240,728 bytes (`C1`, `C2`, setup), which the
   block's `PCS_OPEN` aggregation carries.
@@ -186,8 +208,12 @@ measured): 2.12–2.46 s for the whole proof, peak RSS 10.1 GB. That is execute 
     columns: 1,152 NTTs of `2^18`, about 1.6 s.
   - XOR, MUL and DEREF take 16 sub-cosets of about 15 columns each.
   - A batched multi-column NTT, as leanVM's interleaved encode, would cut this.
-- The dense weights are written out instead of kept as eq tensors.
-- The batching sumcheck's first rounds run over `2^27` E-weights.
+- The batching sumcheck's first 6 rounds are memory-bound: each reads the three stacks' words (2 GB) at about 43 ms.
+  The ring switch's twisted piece adds about 60, 25 and 10 ms to rounds 0-2 (two GF(2)-linear maps per pair of
+  `q_flock`'s words, by GFNI). Writing the folded stacks and weights out at `2^21` takes about 70 ms (two reads
+  of `C1`'s and `C2`'s words), and the remaining folds about 40 ms.
+- An opening of a `2^27` stack is about 0.3 s: leanVM's WHIR, mostly its level commits (encode and Merkle at rates
+  `1/16` and below) and the lane rounds' passes over the stack.
 
 **Small trace** (32 signatures, 38,209 cycles): 2.66 s with Flock, 2.1 GB; stream 8,440 bytes; 257,890 gas. leanVM
 takes 0.14 s.

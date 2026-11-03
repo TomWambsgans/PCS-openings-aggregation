@@ -69,6 +69,8 @@ option. Every file says where it comes from in its first lines.
       table, the packing constants and one inner product.
     - `crates/lv42_fiat_shamir` (new here) states as a trait the transcript methods `flock` calls (leanVM's
       `ProverState`'s), which the univariate prover's Keccak-256 chain implements.
+  - `crates/gf2_linear` (new here): the GF(2)-linear maps `x ↦ Σ_k c_k x^(2^k)` of `E` that the prover's batching
+    sumcheck evaluates the ring switch's twisted weight with, as byte tables and eight at a time with GFNI.
 - **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
   Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
   proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's

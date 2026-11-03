@@ -51,6 +51,11 @@ fn trace() -> Option<(Trace, f64)> {
 mod vectors;
 use vectors::{deployable, name_of as vector_name};
 
+/// The allocator leanVM's own CLI and benches run on (jemalloc, freed pages kept: `bench::Jemalloc`), so that the
+/// prover is measured as leanVM's is; on glibc's every large buffer faults its pages in again.
+#[global_allocator]
+static ALLOCATOR: bench::Jemalloc = bench::Jemalloc;
+
 /// Whether `Σ_terms μ eq(p, u) bit_twist(q_u) = κ` on `q_flock` (extension B's bit-slice claim): per point, the
 /// GF(2)-linear `ℓ(y) = Σ_i μ_i bit_i(y)` by byte tables, then its multilinear at the point, low half by a table.
 fn bit_slice_holds(claim: &leanvm_univariate::claims::Combined<leanvm_flock_gas::field::E>, qflock: &[primitives::field::F64]) -> bool {
