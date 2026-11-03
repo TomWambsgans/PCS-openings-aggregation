@@ -32,11 +32,13 @@ the chain's list term with both roots' lists at most `9952` (`largeList` at `2^2
 of `2^24 … 2^28`), and the random-permutation term, with `N = 2^33 + Q` bounding every count (the
 setup's `< 2^26` Keccak-256 calls, twice, the chain's `< 2^10`, the openings' `5 · 10122`):
 
-`5 · openingBoundAt 10122 N + N · (9952² e + 8 N / 2^256) + (2^81 + Q)² / 2^508`.
+`5 · openingBoundAt 10122 N + N · (9952² e + (2^128 + 8 N) / 2^256) + (2^81 + Q)² / 2^508`.
 
-The constants are generous so that the statement holds of the port (`ListChainK`'s `5 N` becomes
-`8 N` for the univariate root's fourth reading in `Refers` and the seed's prefix as a bad answer;
-`QVπ ≤ 2^80` the verifier's calls of `π`).
+The port (`FsProof.lean`'s `fsLayer_of_game`, through `Compose.ListChainU`) separates the seed
+`name ‖ iv ‖ input` from a step's input by its 16-byte tag `name`: a fresh answer starting with it is
+a bad event, `2^-128` a query (the `2^128 / 2^256` term, `≈ 2^-64` at `Q = 2^64`); an input refers
+to at most five digests (`Refers`' three, and a root after a state or after the row counts), so
+`ListChainK`'s `5 N` becomes `(5 + 2) N ≤ 8 N`; `QVπ ≤ 2^80` the verifier's calls of `π`.
 -/
 
 namespace UniSound
@@ -165,7 +167,7 @@ def uniN (Q : ℕ) : ℕ := 2 ^ 33 + Q
 /-- **The univariate verifier's bound** at `Q` adversary calls, rounds' errors at most `e`. -/
 noncomputable def uniBound (e : ℝ≥0∞) (Q : ℕ) : ℝ≥0∞ :=
   5 * openingBoundAt 10122 (uniN Q) +
-    (uniN Q : ℝ≥0∞) * (((9952 ^ 2 : ℕ) : ℝ≥0∞) * e + 8 * (uniN Q : ℝ≥0∞) / 2 ^ 256) +
+    (uniN Q : ℝ≥0∞) * (((9952 ^ 2 : ℕ) : ℝ≥0∞) * e + ((2 ^ 128 + 8 * uniN Q : ℕ) : ℝ≥0∞) / 2 ^ 256) +
       ((2 ^ 81 + Q : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508
 
 /-- **The Fiat–Shamir layer** (the port of `knowledgeSoundness_listChainK_closed_rpm` to the
@@ -193,7 +195,17 @@ Its proof also needs, of the deployment: the five stacks at `2^24 … 2^28` word
 setup, `A0`, `B0`: `WhirShape.large`, lists at most `largeList ≤ 9952`, `QO ≤ 10122`), the setup's
 Keccak-256 calls below `2^26`, the verifier's calls of `π` below `2^80` (`hVπ`), and `uniExtractor`'s
 decoders listing the chain's candidates (`fastStacks`, `uniqueStacks`, `decodeStacks` at `C1`'s
-`2^μ`, against `Compose`'s `tableCode`). -/
+`2^μ`, against `Compose`'s `tableCode`).
+
+**Proved** (`FsProof.lean`'s `fsLayer_of_game`, `FsCost.lean`'s `fsLayer_of_game'`) for a deployment
+whose five layout words name `24 … 28` variables (`UniShapes`; the reference shape's
+`27, 27, 24, 28, 28`), from the chain's `< 2^10` queries, every round's `≤ 2^30` scalars, and one
+hypothesis, the coupling `UniGameLe`: the univariate experiment is dominated by the composed game
+(`Compose.rpmGameS` of the setup's three trees, `Compose.ListChainU`'s chain over the univariate
+encoding, the five openings), the event read through `uniExtractor`'s candidates. That form, the IV
+in the adversary, is superseded by `FsGame.lean`'s `fsLayer_of_gameV` (the IV in the verifier,
+`UniGameLeV`), and `UniGameLeV` is proved from bridge facts in `FsCouple.lean`, `FsSetup.lean`,
+`FsExtract.lean`, `FsVerifier.lean`. -/
 def FsLayer (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (nV V : ℕ) (C : UniCode D Fl nV V) :
     Prop :=
   ∀ (R : RbrPiop (uniRounds Fl.prog.rounds nV V) USt Stk) (e : ℝ≥0∞), (∀ j, R.err j ≤ e) →

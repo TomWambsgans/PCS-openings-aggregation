@@ -9,6 +9,7 @@ import FlockSoundUni.Prefix
 import FlockSoundUni.Catch
 import FlockSoundUni.Transcription
 import FlockSoundUni.Instance
+import FlockSoundUni.GameNumbers
 
 /-- info: 'FlockSound.Uni.card_hit_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

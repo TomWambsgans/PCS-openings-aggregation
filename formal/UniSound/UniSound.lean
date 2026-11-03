@@ -9,6 +9,18 @@ import UniSound.Fs
 import UniSound.Bus
 import UniSound.Final
 import UniSound.Mle
+import UniSound.FsChain
+import UniSound.FsOps
+import UniSound.FsProof
+import UniSound.FinalFs
+import UniSound.FsCost
+import UniSound.FsGame
+import UniSound.FsCouple
+import UniSound.FsWalk
+import UniSound.FsExtract
+import UniSound.FsVerifier
+import UniSound.FsWalkProof
+import UniSound.FsFinal
 import UniSound.PendingLink
 import UniSound.CodeBase
 import UniSound.CodeTables
@@ -16,6 +28,7 @@ import UniSound.CodeBatch
 import UniSound.CodeShape
 import UniSound.CodeLink
 import UniSound.FinalLink
+import UniSound.FsSetup
 import UniSound.Ids.Assembly
 
 /-!
@@ -42,6 +55,19 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `FinalLink.lean` | **`uniFinal`**: `UniFinal` for the identity model whose batch is the verifier's (`batchProd`, `batchTargetOf`), under `WeightMle`, `LayoutVarsSmall`, `FlockPendingShaped`; the batch's algebra `terminal_sumState`; **`uniKnowledgeSoundness_code`**, the end theorem with both links in place. |
 | `PendingLink.lean` | **`pendingTerminalLink`**: the batch's `λ³` product at its point is the pending reduction's terminal times the zero extension (`multilinear_eval` as the extension, substitution into `Â0`, `B̂0`). |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
+| `FsChain.lean` | The univariate transcript as `Compose.ChainSpecU` (`uniSpec`: 24-byte scalars, the root's reversed halves, the seed's 16-byte tag, the row counts before `C1`'s root), the PIOP lifted to the chain's statement (`liftPiop`), the proof the chain reads (`UPf`, `uView`). |
+| `FsOps.lean` | The five `PCS_OPEN` calls as `WhirOp`s on plain layouts (`uniOps`: `C1`, `C2` by `tableCode`; the setup's stack, `A0`, `B0` at the setup's roots), the check (`uniCheck`), `good` (`uniGood`, `uniGoodS`). |
+| `FsCost.lean` | `uniNumbers_of`: the composed verifier's calls of `π` below `2^80` (every query short), from the chain's `< 2^10` queries and every round's `≤ 2^30` scalars; `fsLayer_of_game'`. |
+| `FinalFs.lean` | **`uniKnowledgeSoundness_game`**: the end theorem with `FsLayer` replaced by `UniShapes`, `UniNumbers`, `UniGameLe`. |
+| `FsProof.lean` | **`fsLayer_of_game`**: `FsLayer` from the game bridge (`UniGameLe`) and the numbers (`UniNumbers`), through `Compose.knowledgeSoundness_listChainU_closed_rpm`: the setup's three trees, the openings' matches, the last link, the bound. |
+| `FsGame.lean` | **`fsLayer_of_gameV`**: `FsLayer` from the coupling **`UniGameLeV`** (the contract's IV computed by the verifier, `uVerIv`, as the univariate experiment computes it; `FsProof.lean`'s `UniGameLe`, the IV in the adversary, is not provable outcome by outcome), `UniNumbers` and `UniIv`: `rpm_le_kcS` with that verifier, the IV moved into the two-oracle adversary (`expU_ivAdv`; its log entry of `programIv.length + 280` bytes leaves `C1`'s word, `extractorK_append`), the two-oracle theorem, the bound (`le_uniBoundV`). |
+| `FsCouple.lean` | **`uniGameLeV_of`**: `UniGameLeV` from three bridge facts, `UniSetupBridge`, `UniVerifierBridge`, `UniExtractBridge` (the common prefix, the IV, `step_le`), as `formal/EndToEnd/Soundness/Final.lean`; **`fsLayer_of_bridges`**. |
+| `FsWalk.lean` | The verifier bridge's interface: `uLen`, `uAccB`, **`UniWalk`** (on a stream of the main line's length the walk is the chain), **`UniWalkReject`**, `UniOutRoots` (proved for `uniCodeAt`). |
+| `FsSetup.lean` | **`uniSetupBridge_of_small`**: `UniSetupBridge` under `LayoutVarsSmall` (false without: a layout word's byte reads the setup's variables mod `256`). |
+| `FsExtract.lean` | **`uniExtractBridge`**: `UniExtractBridge` under `LayoutVarsSmall` (the Statement's word is mumbai's committed leaves, the two Merkle words agree, the list decoder's list holds the candidate), as `Soundness/Extract.lean`. |
+| `FsVerifier.lean` | **`uniVerifierBridge_of_walk`**: the verifier bridge `UniVerifierBridge` (`FsCouple.lean`) from the walk's two halves (`UniWalk`, `UniWalkReject`, `FsWalk.lean`) and `UniOutRoots`: the same chain on both sides, then the Statement's five `PCS_OPEN` calls as F2's early-stop openings (`Bridge.openingWith_eq_ourVerifier'`) below the composed ones, acceptance giving `uniCheck`. |
+| `FsFinal.lean` | **`uniGameLeV_holds`**, **`fsLayer_holds`**: the coupling and the Fiat–Shamir layer proved, from `LayoutVarsSmall`, `UniShapes`, `UniIv` and the chain's numbers. |
+| `FsWalkProof.lean` | **`uniWalk`**, **`uniWalkReject`**: the verifier bridge's walk (`FsWalk.lean`'s `UniWalk`, `UniWalkReject`) for every code-level link: on a stream of the main line's length the walk is the chain (`progRun`: any chain program on a stream holding its bytes is the chain's steps; the row counts, the seed, `finish`), on another length every outcome rejects (`Consumes`). |
 
 ## What is proved, what is assumed
 
@@ -81,8 +107,21 @@ the bound in bits (`uniBound_le_bits`).
    `flockSoundInstance`: `FlockSoundUni/PendingShape.lean`'s `flockPendingShaped`). The `λ³` term
    is `pendingTerminalLink` (`PendingLink.lean`). `uniKnowledgeSoundness_code` (and, with Flock's
    instance, `FlockSound.Uni.uniKnowledgeSoundness_flock`) is the end theorem with both in place.
-6. `hFs : FsLayer …` — the Fiat–Shamir layer: `ListChainK`'s closed random-permutation theorem
-   ported to the univariate transcript, its five openings, its setup and `uniExtractor`.
+6. `hFs : FsLayer …` — the Fiat–Shamir layer, **proved** (`fsLayer_of_gameV`, `FsGame.lean`):
+   `Compose.ListChainU`'s chain over the univariate encoding, the random-permutation transfer for a
+   setup of three trees (`Compose.rpm_le_kcS`) with the contract's IV in the verifier, the five
+   openings' doom terms by F2, the decoders, the last link; from the numbers (`UniNumbers`, from the
+   chain's `< 2^10` queries and rounds of `≤ 2^30` scalars), the program IV's length (`UniIv`) and
+   the coupling `UniGameLeV`, itself **proved** from three bridge facts (`uniGameLeV_of`,
+   `FsCouple.lean`): the setup's (`uniSetupBridge_of_small`) and the extractor's
+   (`uniExtractBridge`), both under `LayoutVarsSmall`, and the verifier's (`uniVerifierBridge_of_walk`
+   with the walk's `uniWalk`, `uniWalkReject`, `FsWalkProof.lean`): **`fsLayer_holds`**
+   (`FsFinal.lean`), `FsLayer` at `uniCodeAt` from the deployment's numbers alone. The reference
+   deployment's numbers (`UniShapes`, `LayoutVarsSmall`, `UniIv`, `κ = 18`, the chain's `86`
+   queries) are `formal/FlockSound/FlockSoundUni/GameNumbers.lean`'s; `FlockSoundUni/Game.lean`
+   gives the end theorems with the layer in place: **`uniKnowledgeSoundness_fs`** (every deployment,
+   its numbers as hypotheses) and **`uniKnowledgeSoundness_reference_fs`** (the reference deployment,
+   no Fiat–Shamir hypothesis left).
 7. Numbers: `4 N + ncv ≤ 2^32`, Flock's rounds' errors at most `2^32 / |E|`, `degSum ≤ 2^32`,
    `nRel + 2 ≤ 2^32`.
 
@@ -121,6 +160,17 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 #guard_msgs in
 #print axioms UniSound.prEvent_twoLevel_le
 
+/-- info: 'UniSound.fsLayer_of_game' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.fsLayer_of_game
+
+/-- info: 'UniSound.hlink_uni' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.hlink_uni
+
+/-- info: 'UniSound.hok_uni' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.hok_uni
 /-- info: 'UniSound.pendingTerminalLink' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.pendingTerminalLink
@@ -144,3 +194,15 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.uniKnowledgeSoundness_code' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.uniKnowledgeSoundness_code
+
+/-- info: 'UniSound.uniVerifierBridge_of_walk' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniVerifierBridge_of_walk
+
+/-- info: 'UniSound.uniWalk' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniWalk
+
+/-- info: 'UniSound.uniWalkReject' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniWalkReject

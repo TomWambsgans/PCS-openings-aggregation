@@ -26,7 +26,8 @@ verifier's checks with true claims (`hlink_uniPiop`, from `hFin`), its first is 
 (`hpre_uniPiop`), and every round's error is at most `e₃₂` (`uniErr_le`).
 
 **`uniBound_le_bits`**: at most `2^-61` for an adversary of at most `2^64` calls of `π` and `π⁻¹`
-(the five openings' doom terms, `≈ 5 · 2^-64`, dominate; the list term is `≈ 2^-69.4`).
+(the five openings' doom terms, `≈ 5 · 2^-64`, dominate; the tag's `N · 2^-128 ≈ 2^-64`; the list term
+is `≈ 2^-69.4`).
 -/
 
 namespace UniSound
@@ -222,14 +223,16 @@ theorem uniBound_le_bits (Q : ℕ) (hQ : Q ≤ 2 ^ 64) :
   -- The list term.
   have hN : 2 ^ 33 + Q ≤ 18446744082299496586 := by omega
   have b2 : ((2 ^ 33 + Q : ℕ) : ℝ≥0∞) * (((9952 ^ 2 : ℕ) : ℝ≥0∞) *
-      (((2 ^ 32 * 2 ^ 64 : ℕ) : ℝ≥0∞) / 2 ^ 256) + 8 * ((2 ^ 33 + Q : ℕ) : ℝ≥0∞) / 2 ^ 256) ≤
+      (((2 ^ 32 * 2 ^ 64 : ℕ) : ℝ≥0∞) / 2 ^ 256) + ((2 ^ 128 + 8 * (2 ^ 33 + Q) : ℕ) : ℝ≥0∞) /
+        2 ^ 256) ≤
       ((18446744082299496586 * (9952 ^ 2 * (2 ^ 32 * 2 ^ 64)) +
-        8 * 18446744082299496586 * 18446744082299496586 : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
-    rw [← mul_div_assoc, ← Nat.cast_mul, show (8 : ℝ≥0∞) = ((8 : ℕ) : ℝ≥0∞) from rfl,
-      ← Nat.cast_mul, ENNReal.div_add_div_same, ← Nat.cast_add, ← mul_div_assoc, ← Nat.cast_mul]
+        18446744082299496586 * (2 ^ 128 + 8 * 18446744082299496586) : ℕ) : ℝ≥0∞) / 2 ^ 256 := by
+    rw [← mul_div_assoc, ← Nat.cast_mul, ENNReal.div_add_div_same, ← Nat.cast_add,
+      ← mul_div_assoc, ← Nat.cast_mul]
     refine cast_div_le_256 ?_
-    calc (2 ^ 33 + Q) * (9952 ^ 2 * (2 ^ 32 * 2 ^ 64) + 8 * (2 ^ 33 + Q))
-        ≤ 18446744082299496586 * (9952 ^ 2 * (2 ^ 32 * 2 ^ 64) + 8 * 18446744082299496586) :=
+    calc (2 ^ 33 + Q) * (9952 ^ 2 * (2 ^ 32 * 2 ^ 64) + (2 ^ 128 + 8 * (2 ^ 33 + Q)))
+        ≤ 18446744082299496586 * (9952 ^ 2 * (2 ^ 32 * 2 ^ 64) +
+            (2 ^ 128 + 8 * 18446744082299496586)) :=
           Nat.mul_le_mul hN (by omega)
       _ = _ := by ring
   -- The random-permutation term.
