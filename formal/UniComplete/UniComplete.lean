@@ -3,3 +3,4 @@ import UniComplete.Basic
 import UniComplete.VerifierH
 import UniComplete.VerifierHSim
 import UniComplete.VerifierHDuplex
+import UniComplete.VerifierHCost
