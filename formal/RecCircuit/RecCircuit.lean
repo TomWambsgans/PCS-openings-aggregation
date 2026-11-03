@@ -20,6 +20,11 @@ import RecCircuit.Piop
 import RecCircuit.Sound
 import RecCircuit.Agree
 import RecCircuit.SoundRG
+import RecCircuit.WeightSim
+import RecCircuit.ExpandProof
+import RecCircuit.Calls
+import RecCircuit.End
+import RecCircuit.Pi1Rec3
 
 /-!
 # π2's circuit, formally (`crates/leanvm_rec/src/circuit`)
@@ -103,3 +108,47 @@ ones.
 /-- info: 'RecCircuit.Compiled.compile_sound_zero_rg' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCircuit.Compiled.compile_sound_zero_rg
+
+/-- info: 'RecCircuit.weightAt_eq_tower' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.weightAt_eq_tower
+
+/-- info: 'RecCircuit.weightSym_sim' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.weightSym_sim
+
+/-- info: 'RecCircuit.expandSound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.expandSound
+
+/-- info: 'RecCircuit.Compiled.pair_val' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.pair_val
+
+/-- info: 'RecCircuit.Compiled.compile_sound_calls' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_calls
+
+/-- info: 'RecCircuit.Compiled.compile_sound_callInputs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_callInputs
+
+/-- info: 'RecCircuit.Compiled.compile_sound_element_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_element_end
+
+/-- info: 'RecCircuit.Compiled.compile_sound_zero_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_zero_end
+
+/-- info: 'RecCircuit.Compiled.compile_sound_zero_const' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_zero_const
+
+/-- info: 'RecCircuit.Compiled.compile_sound_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.compile_sound_end
+
+/-- info: 'RecCircuit.pi1rec3_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.pi1rec3_end

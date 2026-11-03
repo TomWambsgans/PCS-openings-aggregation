@@ -13,11 +13,10 @@ expanded graph, zero pads, on the public input and the stream the witness's free
 
 **Against `RecGraph`'s semantics** (`compile_sound_zero`): with the compiler's input `ofRG g` for a `RecGraph.Graph`
 `g` (π1-rec3's is `RecGraph.Emitted.graph`), the zero ports carry `RecGraph.evalNodes`'s values of `g`'s non-constant
-zero checks, over Keccak-f[1600]. One obligation is named, not proved: **`ExpandFaithful`**, that the expanded graph
-(`Expand.lean`, `compile.rs`'s `expand`: the recorder's hash-consing, constant folding and `x + 0`, `x · 1`, `x + x`
-simplifications, the ring-switch weight `ring_tower::weight_at` replayed on symbols), evaluated by this library's
-transcription of `eval.rs` (`Graph.eval`), agrees at every node's image with `RecGraph.evalNodes` on the original
-graph.
+zero checks, over Keccak-f[1600], given **`ExpandFaithful`**: that the expanded graph (`Expand.lean`, `compile.rs`'s
+`expand`), evaluated by this library's transcription of `eval.rs` (`Graph.eval`), agrees at every node's image with
+`RecGraph.evalNodes` on the original graph. This is the earlier form; the end theorems need no such hypothesis
+(`End.lean`: `agree` and `expandSound` prove the narrower `ExpandSound` they use).
 -/
 
 namespace RecCircuit

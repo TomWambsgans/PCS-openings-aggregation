@@ -485,6 +485,12 @@ def wordOk (r : Recorded) (k : ℕ) : CallWord → Word → Bool
       (c.circuit.portOf (.element e)).isSome
   | _, _ => false
 
+/-- **π1's zero checks that fold to constants are zero** (`compile.rs` rejects a zero check on a nonzero constant). -/
+def zeroConstOk (r : Recorded) : Bool :=
+  r.graph.zero.all fun id => match c.nodes.getD (c.map.getD id 0) default with
+    | .const c0 c1 c2 => decide (UniStatement.eNew c0 c1 c2 = 0) && decide (c.map.getD id 0 < c.nodes.size)
+    | _ => true
+
 /-- **π2's calls are π1's**, word by word (`wordOk`). -/
 def callsOk (r : Recorded) : Bool :=
   c.circuit.calls.length == r.graph.calls.length &&
@@ -510,6 +516,7 @@ def checks (r : Recorded) : List (String × Bool) :=
    ("ports", c.portsOk X),
    ("sources", c.sourcesOk),
    ("calls", c.callsOk r),
+   ("zero constants", c.zeroConstOk r),
    ("sizes", c.live.size == c.nodes.size && c.limbs.size == c.nodes.size && c.digests.size == c.nodes.size &&
       c.bitSelf.size == 8 * r.graph.streamLen && c.circuit.logWidth == 4 && c.circuit.logWidth ≤ c.circuit.logN)]
 
