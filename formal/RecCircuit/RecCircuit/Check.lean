@@ -208,34 +208,41 @@ def spongeOk (keccaks : Array KeccakT) (s : SpongeT) : Bool :=
 
 /-! ## Packings -/
 
-/-- **A packing's windows**, from the top: each a `pack-top4` (no accumulator) or a `pack` slot of the accumulator
-before (a fresh zero for a wide top window), its cells the bits at its exponents or a zero constant. -/
-def packOk (pk : PackT) : Bool :=
-  let at_ := fun (e : ℕ) => pk.bits.lookup e
-  let topE := pk.bits.foldl (fun m t => max m t.1) 0
-  let tTop := topE / 15
-  let topK := topE - 15 * tTop + 1
-  let kOf := fun (t : ℕ) => if t == tTop && topK ≤ 4 then 4 else 15
-  !pk.bits.isEmpty && pk.bits.all (fun t => t.1 < 64 && t.2 != NONE) && (pk.bits.map (·.1)).Nodup &&
-  pk.windows.size == tTop + 1 &&
-  allBelow (tTop + 1) (fun t' =>
-    let t := tTop - t'
-    let (cells, acc, out) := pk.windows.getD t' default
-    let k := kOf t
-    cells.size == k &&
-    allBelow k (fun i => match at_ (15 * t + i) with
-      | some u => cells.getD i NONE == u
-      | none => X.constOk (cells.getD i NONE) 0) &&
+/-- The packing's top exponent, its window, and how many bits it reads there. -/
+def packTopE (pk : PackT) : ℕ := pk.bits.foldl (fun m t => max m t.1) 0
+
+/-- A window's width: the top window is `pack-top4`'s 4 bits when they hold its exponents, else 15. -/
+def packKOf (topE t : ℕ) : ℕ := if t == topE / 15 && topE - 15 * (topE / 15) + 1 ≤ 4 then 4 else 15
+
+/-- A window's cells, as its slot's gate reads them. -/
+def windowCells (base : ℕ) (cells : Array ℕ) (n : ℕ) : List (ℕ × ℕ) :=
+  (List.range n).map fun i => (base + i, cells.getD i NONE)
+
+/-- **A packing's window `t'` from the top** (`t = tTop − t'`): its cells the bits at its exponents or a zero constant;
+a `pack-top4` slot (no accumulator) or a `pack` slot of the accumulator before (a fresh zero for a wide top window). -/
+def windowOk (pk : PackT) (t' : ℕ) : Bool :=
+  let topE := packTopE pk
+  let t := topE / 15 - t'
+  let wd := pk.windows.getD t' default
+  let k := packKOf topE t
+  wd.1.size == k &&
+    allBelow k (fun i => match pk.bits.lookup (15 * t + i) with
+      | some u => wd.1.getD i NONE == u
+      | none => X.constOk (wd.1.getD i NONE) 0) &&
     (if t' == 0 && k == 4 then
-      acc.isNone && 4 ≤ X.role out &&
-        X.gate out (topPolyL (X.role out - 4)) 0 ((List.range 4).map fun i => (X.role out - 4 + i, cells.getD i NONE))
-     else match acc with
+      wd.2.1.isNone && 4 ≤ X.role wd.2.2 && X.gate wd.2.2 (topPolyL (X.role wd.2.2 - 4)) 0 (windowCells (X.role wd.2.2 - 4) wd.1 4)
+     else match wd.2.1 with
       | none => false
       | some a =>
-        (if t' == 0 then X.constOk a 0 else a == (pk.windows.getD (t' - 1) default).2.2) && 15 ≤ X.role out &&
-          X.gate out (packPolyL (X.role out - 15)) 0
-            ((List.range 15).map (fun i => (X.role out - 15 + i, cells.getD i NONE)) ++ [(X.role out, a)]))) &&
-  pk.out == (pk.windows.getD tTop default).2.2
+        (if t' == 0 then X.constOk a 0 else a == (pk.windows.getD (t' - 1) default).2.2) && 15 ≤ X.role wd.2.2 &&
+          X.gate wd.2.2 (packPolyL (X.role wd.2.2 - 15)) 0 (windowCells (X.role wd.2.2 - 15) wd.1 15 ++ [(X.role wd.2.2, a)]))
+
+/-- **A packing's windows**, from the top (`windowOk`), and its output the last window's. -/
+def packOk (pk : PackT) : Bool :=
+  !pk.bits.isEmpty && pk.bits.all (fun t => t.1 < 64 && t.2 != NONE) && (pk.bits.map (·.1)).Nodup &&
+  pk.windows.size == packTopE pk / 15 + 1 &&
+  allBelow (packTopE pk / 15 + 1) (X.windowOk pk) &&
+  pk.out == (pk.windows.getD (packTopE pk / 15) default).2.2
 
 end Ctx
 
