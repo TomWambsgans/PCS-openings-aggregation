@@ -155,6 +155,68 @@ theorem PH.forIn_rel {α β γ : Type} (l : List α) (init : β) (f : α → β 
     rw [hu']
     exact hrest
 
+/-- **A loop against `UniStatement`'s loop over another list of the same length**, step for step. -/
+theorem PH.forIn_rel2 {α α' β γ : Type} (l : List α) (lU : List α') (hlen : l.length = lU.length) (init : β)
+    (f : α → β → Prog (ForInStep β)) (u0 : γ) (fU : α' → γ → Id (ForInStep γ)) {U : Id γ}
+    (hU : forIn (m := Id) lU u0 fU = U) (st : RecState) (R : RecState → β → γ → Prop) (hg : Good st)
+    (h0 : R st init u0)
+    (hs : ∀ (j : ℕ) (hj : j < l.length) (hj' : j < lU.length) (st' : RecState) (b : β) (u : γ), PStep st st' →
+      R st' b u →
+      PH (f l[j] b) st' (fun st'' r ↦ ∃ b' u', r = .yield b' ∧ fU lU[j] u = .yield u' ∧ R st'' b' u')) :
+    PH (forIn l init f) st (fun st' b ↦ R st' b U) := by
+  subst hU
+  suffices H : ∀ (rest : List α) (restU : List α') (k : ℕ) (hk : k + rest.length = l.length)
+      (hkU : rest.length = restU.length),
+      (∀ j (h : j < rest.length), rest[j] = l[k + j]'(by omega)) →
+      (∀ j (h : j < restU.length), restU[j] = lU[k + j]'(by omega)) →
+      ∀ st' b u, PStep st st' → R st' b u →
+        PH (forIn rest b f) st' (fun st'' b ↦ R st'' b (forIn (m := Id) restU u fU)) by
+    exact H l lU 0 (by simp) hlen (fun j h ↦ by simp) (fun j h ↦ by simp) st init u0 (PStep.refl st hg) h0
+  intro rest
+  induction rest with
+  | nil =>
+    intro restU k hk hkU _ _ st' b u hs' hR
+    cases restU with
+    | cons _ _ => simp at hkU
+    | nil =>
+      rw [List.forIn_nil]
+      exact PH.ret hs'.good (by rw [List.forIn_nil]; exact hR)
+  | cons a as ih =>
+    intro restU k hk hkU hr hrU st' b u hs' hR
+    cases restU with
+    | nil => simp at hkU
+    | cons aU asU =>
+      simp only [List.length_cons] at hk hkU
+      rw [List.forIn_cons]
+      have ha : a = l[k]'(by omega) := by
+        have h0 := hr 0 (by simp)
+        simp only [List.getElem_cons_zero, Nat.add_zero] at h0
+        exact h0
+      have haU : aU = lU[k]'(by omega) := by
+        have h0 := hrU 0 (by simp)
+        simp only [List.getElem_cons_zero, Nat.add_zero] at h0
+        exact h0
+      subst ha haU
+      refine PH.bind' (hs k (by omega) (by omega) st' b u hs' hR) ?_
+      rintro st'' r hs'' ⟨b', u', rfl, hu, hR'⟩
+      have hrest := ih asU (k + 1) (by omega) (by omega) (fun j h ↦ by
+        have := hr (j + 1) (by simp; omega)
+        simp only [List.getElem_cons_succ] at this
+        rw [this]; congr 1; omega) (fun j h ↦ by
+        have := hrU (j + 1) (by simp; omega)
+        simp only [List.getElem_cons_succ] at this
+        rw [this]; congr 1; omega) st'' b' u' (hs'.trans hs'') hR'
+      have hu' : forIn (m := Id) (lU[k] :: asU) u fU = forIn (m := Id) asU u' fU := by
+        rw [List.forIn_cons, hu]; rfl
+      rw [hu']
+      exact hrest
+
+/-- A range's loop as the loop over its list (for `PH.forIn_rel2`). -/
+theorem forIn_range_list {m : Type → Type} [Monad m] {β : Type} (s e : ℕ) (init : β) (f : ℕ → β → m (ForInStep β)) :
+    forIn ({ start := s, stop := e, step := 1, step_pos := Nat.one_pos } : Std.Legacy.Range) init f =
+      forIn (List.range' s (e - s)) init f := by
+  rw [Std.Legacy.Range.forIn_eq_forIn_range', range_size_one]
+
 /-- **A loop over a range against `UniStatement`'s loop over a range.** -/
 theorem PH.forIn_rel_range {β γ : Type} (s e : ℕ) (init : β) (f : ℕ → β → Prog (ForInStep β)) (u0 : γ)
     (fU : ℕ → γ → Id (ForInStep γ)) {U : Id γ}
@@ -316,43 +378,61 @@ syntax "phg " term " as " ident ident ident ident : tactic
 
 open Lean Elab Tactic Meta in
 /-- `grow_all hg hs` (`hg : Good st`, `hs : PStep st st'`): every hypothesis `Rp … st …`, `RpL … st …`, `RpA … st …`,
-`RW … st …`, `RpS … st …` is replaced by its transport to `st'` (`*.pgrow`), every `PStep a st` by `PStep a st'`,
-then `hg` by `Good st'`. -/
+`RW … st …`, `RpS … st …` (or `∀ …, ` one of them) is replaced by its transport to `st'` (`*.pgrow`), every
+`PStep a st` by `PStep a st'`, then `hg` by `Good st'`. -/
 elab "grow_all " hg:ident hs:ident : tactic => do
-  let todo ← withMainContext do
-    let hsType ← instantiateMVars (← inferType (← getLocalDeclFromUserName hs.getId).toExpr)
+  let g0 ← getMainGoal
+  let (hgF, hsF, todo) ← g0.withContext do
+    let hgD ← getLocalDeclFromUserName hg.getId
+    let hsD ← getLocalDeclFromUserName hs.getId
+    let hsType ← instantiateMVars hsD.type
     let src := hsType.getAppArgs[0]!
     let lctx ← getLCtx
-    let mut out : Array (Name × Name) := #[]
+    let mut out : Array (FVarId × Name × Name) := #[]
     for ldecl in lctx do
       if ldecl.isImplementationDetail then continue
-      if ldecl.userName.hasMacroScopes then continue
-      if ldecl.userName == hg.getId || ldecl.userName == hs.getId then continue
+      if ldecl.fvarId == hgD.fvarId || ldecl.fvarId == hsD.fvarId then continue
       let t ← instantiateMVars ldecl.type
-      let args := t.getAppArgs
-      match t.getAppFn.constName? with
-      | some n =>
-        let lem? : Option (Name × Nat) :=
-          if n == ``Rp then some (``Rp.pgrow, 4)
-          else if n == ``RpL then some (``RpL.pgrow, 4)
-          else if n == ``RpA then some (``RpA.pgrow, 4)
-          else if n == `RecGraph.Sim.RW then some (`RecGraph.Sim.RW.pgrow, 4)
-          else if n == `RecGraph.Sim.RpS then some (`RecGraph.Sim.RpS.pgrow, 4)
-          else if n == ``PStep then some (``PStep.trans, 1)
-          else none
-        match lem? with
-        | some (lem, k) =>
-          if h : k < args.size then
-            if args[k] == src then out := out.push (ldecl.userName, lem)
-        | none => pure ()
-      | none => pure ()
-    return out
-  for (n, lem) in todo do
-    if lem == ``PStep.trans then
-      evalTactic (← `(tactic| replace $(mkIdent n):ident := PStep.trans $(mkIdent n) $hs))
-    else
-      evalTactic (← `(tactic| replace $(mkIdent n):ident := $(mkIdent lem) $hg $hs $(mkIdent n)))
-  evalTactic (← `(tactic| replace $hg:ident := ($hs).good))
+      let lem? ← forallTelescope t fun _ body ↦ do
+        let args := body.getAppArgs
+        match body.getAppFn.constName? with
+        | some n =>
+          let lem? : Option (Name × Nat) :=
+            if n == ``Rp then some (``Rp.pgrow, 4)
+            else if n == ``RpL then some (``RpL.pgrow, 4)
+            else if n == ``RpA then some (``RpA.pgrow, 4)
+            else if n == `RecGraph.Sim.RW then some (`RecGraph.Sim.RW.pgrow, 4)
+            else if n == `RecGraph.Sim.RpS then some (`RecGraph.Sim.RpS.pgrow, 4)
+            else if n == ``PStep then some (``PStep.trans, 1)
+            else none
+          match lem? with
+          | some (lem, k) =>
+            if h : k < args.size then
+              if args[k] == src then return some lem else return none
+            else return none
+          | none => return none
+        | none => return none
+      if let some lem := lem? then out := out.push (ldecl.fvarId, ldecl.userName, lem)
+    return (hgD.fvarId, hsD.fvarId, out)
+  let mut g := g0
+  for (fv, n, lem) in todo do
+    g ← g.withContext do
+      let h := mkFVar fv
+      let ty ← instantiateMVars (← inferType h)
+      let prf ← forallTelescope ty fun xs _ ↦ do
+        let inner ← if lem == ``PStep.trans then mkAppM lem #[mkAppN h xs, mkFVar hsF]
+          else mkAppM lem #[mkFVar hgF, mkFVar hsF, mkAppN h xs]
+        mkLambdaFVars xs inner
+      let pty ← inferType prf
+      let g1 ← g.assert n pty prf
+      let (_, g2) ← g1.intro1P
+      try g2.clear fv catch _ => pure g2
+  g ← g.withContext do
+    let prf ← mkAppM ``PStep.good #[mkFVar hsF]
+    let g1 ← g.assert hg.getId (← inferType prf) prf
+    let (_, g2) ← g1.intro1P
+    try g2.clear hgF catch _ => pure g2
+  replaceMainGoal [g]
 
 macro_rules
   | `(tactic| phg $t as $st $x $hs $hx) =>
