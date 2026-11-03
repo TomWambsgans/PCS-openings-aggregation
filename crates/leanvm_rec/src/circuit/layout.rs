@@ -356,7 +356,10 @@ impl Builder {
             match self.formula(row, role) {
                 Formula::Forward => forwards[v as usize].push(p as u32),
                 Formula::Expr(_) => {
-                    assert_ne!(self.producer[v as usize], FREE, "free value {v} placed at slot ({row}, {role})");
+                    assert_ne!(
+                        self.producer[v as usize], FREE,
+                        "free value {v} placed at slot ({row}, {role})"
+                    );
                     assert_eq!(
                         slot_end[v as usize], NONE,
                         "value {v} placed at two slots (the second at ({row}, {role}))"
@@ -514,8 +517,7 @@ impl Builder {
         let mut free_ends: Vec<u32> = Vec::new();
         for p in 0..rows * w {
             let (row, role) = ((p / w) as u32, p % w);
-            if matches!(self.formula(row, role), Formula::Expr(_)) && self.cell[p] == NONE && self.produced[p] != NONE
-            {
+            if matches!(self.formula(row, role), Formula::Expr(_)) && self.cell[p] == NONE && self.produced[p] != NONE {
                 free_ends.push(p as u32);
             }
         }
@@ -663,7 +665,13 @@ pub fn pad_counts(count: &[usize], regions: &[Region], _log_width: u8) -> Vec<us
     let mut k: Vec<u32> = count
         .iter()
         .enumerate()
-        .map(|(r, &c)| if port(r) || roles[r] == 0 { c.count_ones() } else { c.count_ones().min(1) })
+        .map(|(r, &c)| {
+            if port(r) || roles[r] == 0 {
+                c.count_ones()
+            } else {
+                c.count_ones().min(1)
+            }
+        })
         .collect();
     let rows = |k: &[u32]| -> usize { count.iter().zip(k).map(|(&c, &k)| pad(c, k)).sum() };
     while rows(&k) > budget {

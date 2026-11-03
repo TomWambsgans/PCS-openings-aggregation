@@ -127,7 +127,13 @@ impl Packer {
             let lo = WINDOW * t;
             let k = k_of(t);
             let cells: Vec<Value> = (0..k)
-                .map(|i| at.get(lo + i).copied().flatten().or(self.zero).expect("a zero when a bit is absent"))
+                .map(|i| {
+                    at.get(lo + i)
+                        .copied()
+                        .flatten()
+                        .or(self.zero)
+                        .expect("a zero when a bit is absent")
+                })
                 .collect();
             let (row, base, acc_role) = match acc {
                 None if k == TOP => {
@@ -264,7 +270,11 @@ impl Arith {
             Op::Square => (0, a),
             Op::Add => (1, b),
         };
-        let (units, slots) = if end_a { (&mut self.ended[k], 0) } else { (&mut self.forwarded[k], 6) };
+        let (units, slots) = if end_a {
+            (&mut self.ended[k], 0)
+        } else {
+            (&mut self.forwarded[k], 6)
+        };
         let (row, base) = units.next(bld);
         for l in 0..3 {
             bld.place(row, base + l, a[l]);

@@ -18,9 +18,7 @@ use leanvm_flock_gas::evm::record::Node;
 use leanvm_flock_gas::field::K;
 use leanvm_flock_gas::shapes::PROGRAM_IV;
 use leanvm_flock_gas::transcript::keccak_seed;
-use leanvm_rec::circuit::compile::{Compiled, Inputs, compile};
-use leanvm_rec::circuit::keccak::D32;
-use leanvm_rec::circuit::keccak16::D16;
+use leanvm_rec::circuit::compile::{Compiled, Inputs, Layout, pi2};
 use leanvm_rec::circuit::spec::Failure;
 use leanvm_rec::eval::{Value, evaluate};
 use leanvm_univariate::Claims;
@@ -45,12 +43,16 @@ fn vector(name: &str) -> vectors::Vector {
     vectors::read(&std::fs::read_to_string(&path).expect("a committed vector"))
 }
 
-fn compiled(recorded: &Recorded, log_width: u8, iv: [u8; 32], public: [u8; 32], stream: &[u8]) -> Compiled {
-    let inputs = Inputs { iv, public, stream };
-    match log_width {
-        4 => compile(recorded, 4, D16::new, &inputs),
-        5 => compile(recorded, 5, D32::new, &inputs),
-        _ => unreachable!(),
+fn compiled(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 32], stream: &[u8]) -> Compiled {
+    pi2(recorded, layout, &Inputs { iv, public, stream })
+}
+
+/// Keccak-f's positions a permutation, by layout (SPEC-REC.md §2.4.1, §2.6; D16v's `kd` rows as measured by
+/// `circuit::tests::d16_rows_a_permutation`).
+fn keccak_positions(layout: Layout) -> usize {
+    match layout {
+        Layout::D16v => 16 * (1536 + 6144 + 160 + 344),
+        Layout::D32v => 32 * 25 * 64,
     }
 }
 
@@ -95,22 +97,54 @@ fn report(name: &str, layout: &str, c: &Compiled) {
     }
 }
 
-fn run(name: &str, log_width: u8) {
+/// `(log N, the fill's bounds)` expected (SPEC-REC.md §2.4.5, §2.6: D16v × π1-rec `2^24` at 86%, D32v × π1 `2^23`
+/// at 84%).
+fn run(name: &str, layout: Layout, log_n: u8, fill: (f64, f64)) {
     let v = vector(name);
     let blake2s = vectors::blake2s_of(&v.config);
     let recorded = record_verifier(&v.shape, blake2s, Claims::Point);
     let stream = v.calldata[STREAM_AT..].to_vec();
     let iv = contract_iv(&v.shape, &PROGRAM_IV, &SetupRoots::REFERENCE);
-    let c = compiled(&recorded, log_width, iv, v.public, &stream);
-    let layout = if log_width == 4 { "D16v" } else { "D32v" };
-    report(name, layout, &c);
+    let c = compiled(&recorded, layout, iv, v.public, &stream);
+    let s = &c.finished.stats;
+    report(name, &format!("{layout:?}"), &c);
+    // The counts: N, the fill, Keccak-f's positions, a block or two a region.
+    assert_eq!(s.log_n, log_n, "{name} {layout:?}: N");
+    assert!(
+        fill.0 <= s.fill() && s.fill() <= fill.1,
+        "{name} {layout:?}: the fill {}",
+        s.fill()
+    );
+    let keccak: usize = s
+        .rows
+        .iter()
+        .filter(|(r, _)| r.starts_with("keccak"))
+        .map(|(_, &n)| n)
+        .sum();
+    assert_eq!(
+        keccak << s.log_width,
+        c.permutations * keccak_positions(layout),
+        "{name}: Keccak-f's positions"
+    );
+    assert!(
+        s.blocks <= 2 * s.rows.len(),
+        "{name}: at most two blocks a region on average"
+    );
     let circuit = &c.finished.circuit;
     let w = &c.finished.witness;
 
     // Every pull equals its push, and the public side holds.
-    assert_eq!(circuit.check(w, &c.public), Ok(()), "{name} {layout}: the circuit holds");
+    assert_eq!(
+        circuit.check(w, &c.public),
+        Ok(()),
+        "{name} {layout:?}: the circuit holds"
+    );
     // The calls on the public inputs are the vector's PCS_OPEN inputs.
-    assert_eq!(circuit.call_inputs(&c.public), v.calls, "{name}: the calls are the vector's");
+    assert_eq!(
+        circuit.call_inputs(&c.public),
+        v.calls,
+        "{name}: the calls are the vector's"
+    );
     assert_eq!(
         circuit.public_from_calls(v.public, &v.calls).as_ref(),
         Some(&c.public),
@@ -129,20 +163,34 @@ fn run(name: &str, log_width: u8) {
     for (&id, limbs) in &c.limbs {
         let x = values[id as usize].e();
         let words = limbs.map(|l| c.finished.words[l as usize]);
-        assert_eq!(words, [K(x.c0), K(x.c1), K(x.c2)], "{name}: the limbs of node {id} ({:?})", c.expanded.nodes[id as usize]);
+        assert_eq!(
+            words,
+            [K(x.c0), K(x.c1), K(x.c2)],
+            "{name}: the limbs of node {id} ({:?})",
+            c.expanded.nodes[id as usize]
+        );
     }
     println!("  checked: {} digests, {} elements", c.digests.len(), c.limbs.len());
 
     // A changed public input is caught.
     let mut other = c.public.clone();
     other.statement[5] ^= 1;
-    assert!(matches!(circuit.check(w, &other), Err(Failure::Public { .. })), "{name}: the statement");
+    assert!(
+        matches!(circuit.check(w, &other), Err(Failure::Public { .. })),
+        "{name}: the statement"
+    );
     let mut other = c.public.clone();
     other.elements[3].c1 ^= 1 << 7;
-    assert!(matches!(circuit.check(w, &other), Err(Failure::Public { .. })), "{name}: an element");
+    assert!(
+        matches!(circuit.check(w, &other), Err(Failure::Public { .. })),
+        "{name}: an element"
+    );
     let mut other = c.public.clone();
     other.roots[1][9] ^= 1;
-    assert!(matches!(circuit.check(w, &other), Err(Failure::Public { .. })), "{name}: a root");
+    assert!(
+        matches!(circuit.check(w, &other), Err(Failure::Public { .. })),
+        "{name}: a root"
+    );
     // A changed witness word at wired positions is caught.
     let mut seed = 0x2545_f491_4f6c_dd1du64;
     let wired: Vec<usize> = (0..circuit.n()).filter(|&i| circuit.sigma[i] as usize != i).collect();
@@ -153,16 +201,28 @@ fn run(name: &str, log_width: u8) {
         let i = wired[seed as usize % wired.len()];
         let mut bad = w.clone();
         bad[i] = bad[i] + K(1 << (seed % 64));
-        assert!(circuit.check(&bad, &c.public).is_err(), "{name}: a change at {i} is caught");
+        assert!(
+            circuit.check(&bad, &c.public).is_err(),
+            "{name}: a change at {i} is caught"
+        );
     }
     // A flipped stream byte (hashed, and in the middle) gives another witness the public side rejects.
     let mut mutated = stream.clone();
     mutated[stream.len() / 2] ^= 1;
-    let m = compiled(&recorded, log_width, iv, v.public, &mutated);
-    assert_eq!(m.finished.circuit.sigma, circuit.sigma, "the circuit does not depend on the proof");
-    assert_eq!(m.finished.circuit.kappa, circuit.kappa, "the circuit does not depend on the proof");
+    let m = compiled(&recorded, layout, iv, v.public, &mutated);
+    assert_eq!(
+        m.finished.circuit.sigma, circuit.sigma,
+        "the circuit does not depend on the proof"
+    );
+    assert_eq!(
+        m.finished.circuit.kappa, circuit.kappa,
+        "the circuit does not depend on the proof"
+    );
     assert!(
-        matches!(circuit.check(&m.finished.witness, &c.public), Err(Failure::Public { .. })),
+        matches!(
+            circuit.check(&m.finished.witness, &c.public),
+            Err(Failure::Public { .. })
+        ),
         "{name}: a flipped stream byte is caught"
     );
     let zero_checks = recorded.graph.zero.len();
@@ -170,22 +230,25 @@ fn run(name: &str, log_width: u8) {
     println!("  mutations caught; {zero_checks} zero checks, {nodes} products in the expanded graph");
 }
 
+/// The recommendation: D16v on π1-rec, `2^24` positions, the quotient `15N = 2^27.91` words, under `2^28`.
 #[test]
 fn pi1_rec_d16v() {
-    deep(|| run("main_line_rec", 4));
+    deep(|| run("main_line_rec", Layout::D16v, 24, (0.80, 0.90)));
 }
 
 #[test]
 fn pi1_rec_d32v() {
-    deep(|| run("main_line_rec", 5));
+    deep(|| run("main_line_rec", Layout::D32v, 23, (0.60, 0.75)));
 }
 
+/// D16v on the main line does not fit `2^24` (131 permutations): `2^25`, a quotient of `2^28.91` words.
 #[test]
 fn main_line_d16v() {
-    deep(|| run("main_line", 4));
+    deep(|| run("main_line", Layout::D16v, 25, (0.45, 0.60)));
 }
 
+/// The fallback: D32v on the main line, `2^23` positions, `Q` `2^26.91`.
 #[test]
 fn main_line_d32v() {
-    deep(|| run("main_line", 5));
+    deep(|| run("main_line", Layout::D32v, 23, (0.80, 0.90)));
 }

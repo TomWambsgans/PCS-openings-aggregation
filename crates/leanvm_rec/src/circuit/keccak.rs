@@ -218,7 +218,11 @@ impl Permutation for D32 {
         // Every round's rows first, their spare roles offered to the constants (the input's among them).
         let rows: Vec<u32> = (0..64).map(|_| b.row(region)).collect();
         let mut rounds: Vec<Vec<u32>> = (0..24)
-            .map(|j| (0..64).map(|_| b.row(if j == 23 { self.last } else { self.round })).collect())
+            .map(|j| {
+                (0..64)
+                    .map(|_| b.row(if j == 23 { self.last } else { self.round }))
+                    .collect()
+            })
             .collect();
         for &row in &rows {
             constants.offer(row, 30);

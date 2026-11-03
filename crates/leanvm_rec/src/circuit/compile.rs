@@ -90,6 +90,33 @@ fn be_bits(bit: &dyn Fn(usize) -> Value, first: usize, nbytes: usize) -> Vec<(us
         .collect()
 }
 
+/// `π2`'s two layouts (SPEC-REC.md §2.4, §2.6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Layout {
+    /// Rows of 16, Keccak-f in 130,944 positions ([`super::keccak16::D16`]).
+    D16v,
+    /// Rows of 32, Keccak-f in 51,200 positions ([`super::keccak::D32`]).
+    D32v,
+}
+
+impl Layout {
+    pub fn log_width(self) -> u8 {
+        match self {
+            Layout::D16v => 4,
+            Layout::D32v => 5,
+        }
+    }
+}
+
+/// `π2`'s circuit for `recorded` in `layout`, with the witness of a real proof's inputs. The circuit (`σ`, `κ`, the
+/// regions and blocks, the ports and calls) depends on `recorded` only.
+pub fn pi2(recorded: &Recorded, layout: Layout, inputs: &Inputs) -> Compiled {
+    match layout {
+        Layout::D16v => compile(recorded, 4, super::keccak16::D16::new, inputs),
+        Layout::D32v => compile(recorded, 5, super::keccak::D32::new, inputs),
+    }
+}
+
 /// Compile `recorded` with the permutation template `make` (rows of `2^log_width`), on a real proof's inputs.
 pub fn compile<P: Permutation>(
     recorded: &Recorded,
@@ -107,7 +134,10 @@ pub fn compile<P: Permutation>(
     };
     let call_words: Vec<Vec<Word>> = call_words.iter().map(|c| c.iter().map(mapped).collect()).collect();
     let zero: Vec<u32> = recorded.graph.zero.iter().map(|&(id, _)| map[id as usize]).collect();
-    assert!(recorded.graph.nonzero.is_empty(), "π1's verifier checks nothing nonzero");
+    assert!(
+        recorded.graph.nonzero.is_empty(),
+        "π1's verifier checks nothing nonzero"
+    );
     let outputs = call_words
         .iter()
         .flatten()
@@ -234,10 +264,7 @@ pub fn compile<P: Permutation>(
         let id = id as u32;
         let zero_pair = |b: &mut Builder, consts: &mut Constants| [consts.fresh(b, K(0)), consts.fresh(b, K(0))];
         let (l, can_end): (Limbs, bool) = match *node {
-            Node::Const([c0, c1, c2]) => (
-                [c0, c1, c2].map(|c| sponge.constants.fresh(&mut b, K(c))),
-                true,
-            ),
+            Node::Const([c0, c1, c2]) => ([c0, c1, c2].map(|c| sponge.constants.fresh(&mut b, K(c))), true),
             Node::Statement(k) => {
                 let [z1, z2] = zero_pair(&mut b, &mut sponge.constants);
                 ([statement_limb[k as usize], z1, z2], true)
