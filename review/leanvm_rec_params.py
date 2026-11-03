@@ -168,10 +168,10 @@ def pi2_rounds(s, split=False, design="D16v"):
         # the four-limb ones (the statement, pi1's two roots) are (L0 + Y L1) + γ (L2 + Y L3), degree 1 in γ.
         ("γ: the four-limb ports' fingerprints (L0 + Y L1) + γ (L2 + Y L3), degree 1 (3 ports)", 3 / q, lw),
         (t[0], t[1] / q, lw * lq),
-        # ρ's claims are on three commitments, each its own polynomial in ρ (REVIEW-REC.md N4): W's fold of degree
-        # 15 over W's list, Q's combination of degree 1 over Q's, the setup's of degree 1 (L = 1): the errors add.
-        ("ρ: W's fold (degree 15), Q's combination and the setup's (degree 1), on 3 commitments", 1 / q,
-         15 * lw + lq + 1),
+        # Since PI2.md §9 (lever 2), ρ is W's fold only (degree 15 over W's list): Q's claim is the identity's own
+        # combination of h(t) and q(t) (t's row), the setup's is at β and binds ξ = κ(t) + β σ(t) exactly (L = 1).
+        # Before: ρ's claims on three commitments, the errors adding, (15 L_W + L_Q + 1)/2^192 (REVIEW-REC.md N4).
+        ("ρ: W's fold (degree 15)", 15 / q, lw),
     ]
 
 

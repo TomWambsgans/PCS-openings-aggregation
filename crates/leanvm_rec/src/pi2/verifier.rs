@@ -7,22 +7,28 @@
 //! (`pi2::contract`). See `PI2.md` §2 for the protocol.
 //!
 //! The stream: the public data ([`Read`]s), `W`'s root, then `α, β, γ`; `Q`'s root, then `t`; the row's `2^r` fold
-//! values `a_k`, `σ(t)`, `κ(t)`, `h(t)`, then `ρ`. At `t` the verifier computes:
+//! values `a_k` and `ξ = κ(t) + β σ(t)`, then `ρ` (`PI2.md` §9: `h(t)` is not sent, nor `σ(t)` and `κ(t)` apart). At
+//! `t` the verifier computes, as fractions with one inversion at the end:
 //!
 //! 1. the digits `w_l = w_l(t)`, `w_{l+1} = w_l^2 + w_l`;
 //! 2. the row's cells `v_c = w(t + ω_c) = Σ_k a_k eq(k, (w_l + ω_{c >> l})_{l<r})`;
-//! 3. every pair's indicator `I_p(t) = w_m · Π e / (Z_{U_s}(t) + Z_{U_s}(c_p))`, by one batched inversion with the
-//!    public side's denominators, the `1 + w_l` and `w_m`;
-//! 4. `P(t) = v_0 (1 + Σ_p I_p) + Σ_g (Σ_{p∈g} I_p) E_g(v_{c ⊕ k_g}) + κ(t)`, `d_pull = α + v_0 + β t`,
-//!    `d_push = α + P(t) + β σ(t)`, `1_S(t) = Σ` of the pull-less pairs' indicators;
-//! 5. the public target `T = Σ_J 1/(α + F_J + β τ_J)`;
-//! 6. `q(t) = ((1 + 1_S) d_push + d_pull + h(t) d_pull d_push) / w_m`, from the identity
-//!    `h d_pull d_push + (1 + 1_S) d_push + d_pull = q Z_V`;
+//! 3. every pair's indicator `I_p(t) = w_m / (Ẑ_s(t) + Ẑ_s(c_p))`, the indicators of a group (pairs of one role and
+//!    formula) summed as one fraction `N_g / D_g`;
+//! 4. `P(t) = v_0 + w_m A / B + κ(t)`, `A / B = Σ_g (N_g / D_g)(E_g(v_{c ⊕ k_g}) + v_0)` accumulated as one fraction,
+//!    so `d_push = α + P(t) + β σ(t) = D_n / B` with `D_n = (α + v_0 + ξ) B + w_m A`; `d_pull = α + v_0 + β t`;
+//!    `1_S = w_m S_n / S_d` over the pull-less groups;
+//! 5. the public target `T = N / D = Σ_J 1/(α + F_J + β τ_J)`;
+//! 6. the identity `h d_pull d_push + q w_m = (1 + 1_S) d_push + d_pull` at `t` is one combination of `h(t)` and
+//!    `q(t)`, `c_h = d_pull d_push`, `c_q = w_m`: with `Y = d_pull D_n + w_m B` (`B (c_h + c_q)`) and
+//!    `X = (S_d + w_m S_n) D_n + d_pull B S_d` (`B S_d` times the right side), the claim `(1 + ρ') h + ρ' q = X / (S_d Y)`
+//!    at `ρ' = w_m B / Y`;
+//! 7. one inversion of `S_d Y · w_{m+2} · D` (nonzero required), and the digits' inverses down from `1/w_{m+2}`:
+//!    `1/w_l = (1 + w_l) / w_{l+1}`;
 //!
 //! and leaves four claims: `W` at `(ρ, ρ², …, ρ^{2^{r-1}}, w_r, …, w_{m-1})`, value `Σ_k eq(ρ⃗, k) a_k`; `Q` at
-//! `(u_0, …, u_{m+1}, ρ, y_0, y_1)`, `u_l = w_l / (1 + w_l)`, value `s Π (1 + w_l)^{-1} ((1 + ρ) h(t) + ρ q(t))`, and
-//! at `(1^m, 0, 0, 0, y_0, y_1)` (the top coefficient of `h`: `Σ_V h`), value `s T`; the setup at
-//! `(w_0, …, w_{m-1}, ρ)`, value `(1 + ρ) σ(t) + ρ κ(t)`.
+//! `(u_0, …, u_{m+1}, ρ', y_0, y_1)`, `u_l = w_l / (1 + w_l)`, value `s Π (1 + w_l)^{-1} X / (S_d Y)`, and at
+//! `(1^m, 0, 0, 0, y_0, y_1)` (the top coefficient of `h`: `Σ_V h`), value `s T`; the setup (its halves `κ` and
+//! `κ + σ`) at `(w_0, …, w_{m-1}, β)`, value `ξ`.
 
 use leanvm_flock_gas::VerifierError;
 use leanvm_flock_gas::field::E;
@@ -131,9 +137,9 @@ impl Spec {
         }
     }
 
-    /// Scalars the proof sends after the roots: the `2^r` fold values, `σ(t)`, `κ(t)`, `h(t)`.
+    /// Scalars the proof sends after the roots: the `2^r` fold values and `ξ = κ(t) + β σ(t)`.
     pub fn values(&self) -> usize {
-        (1 << self.log_row) + 3
+        (1 << self.log_row) + 1
     }
 
     /// The largest block size.
@@ -305,9 +311,7 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
     let quotient_root = channel.next_root()?;
     let t = channel.sample();
     let a = channel.next_scalars(1 << r)?;
-    let sigma_t = channel.next_scalar()?;
-    let kappa_t = channel.next_scalar()?;
-    let h_t = channel.next_scalar()?;
+    let xi = channel.next_scalar()?;
     let rho = channel.sample();
 
     let w = {
@@ -397,44 +401,72 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
         (!spec.public.is_empty()).then(|| fraction(&mut terms))
     };
 
-    // One inversion: of every group's denominator, the public side's, and the digits `w_0 … w_{m+2}`.
-    let mut dens: Vec<S> = groups.iter().map(|&(_, d)| d).collect();
-    dens.extend(public_side.map(|(_, d)| d));
-    dens.extend(w.iter().copied());
-    let invs = {
-        let _phase = enter("pi2: batched inversion");
-        batch_inverse(channel, &dens)?
-    };
-    let (group_invs, rest) = invs.split_at(spec.groups.len());
-    let (public_inv, w_invs) = rest.split_at(public_side.is_some() as usize);
-
-    let (p_t, one_s) = {
+    // The pushes' sum `A / B = Σ_g (N_g / D_g)(E_g + v_0)`, one fraction: a group of one pair adds `X / d` (3 products),
+    // a larger one its `N_g X / D_g` (4); the pull-less groups' indicators likewise, `S_n / S_d`.
+    let (num, den, s_num, s_den) = {
         let _phase = enter("pi2: push formulas");
-        let (mut pushed, mut pull_less) = (S::zero(), S::zero());
-        for ((group, &(numerator, _)), &inv) in spec.groups.iter().zip(&groups).zip(group_invs) {
-            let sum = numerator * inv;
-            let value = formula(&group.formula, &|c| cells[c ^ group.role], &gammas);
-            pushed += sum * (value + v0);
+        let (mut num, mut den): (Option<S>, Option<S>) = (None, None);
+        let (mut s_num, mut s_den): (Option<S>, Option<S>) = (None, None);
+        for (group, &(numerator, denominator)) in spec.groups.iter().zip(&groups) {
+            let value = formula(&group.formula, &|c| cells[c ^ group.role], &gammas) + v0;
+            let single = group.pairs.len() == 1;
+            let term = if single { value } else { numerator * value };
+            (num, den) = match (num, den) {
+                (Some(a), Some(b)) => (Some(a * denominator + b * term), Some(b * denominator)),
+                _ => (Some(term), Some(denominator)),
+            };
             if !group.pulls {
-                pull_less += sum;
+                (s_num, s_den) = match (s_num, s_den) {
+                    (Some(a), Some(b)) if single => (Some(a * denominator + b), Some(b * denominator)),
+                    (Some(a), Some(b)) => (Some(a * denominator + b * numerator), Some(b * denominator)),
+                    _ => (Some(numerator), Some(denominator)),
+                };
             }
         }
-        (v0 + w[m] * pushed + kappa_t, w[m] * pull_less)
+        (
+            num.unwrap_or(S::zero()),
+            den.unwrap_or(one),
+            s_num.unwrap_or(S::zero()),
+            s_den.unwrap_or(one),
+        )
     };
 
     let _phase = enter("pi2: identity and claims");
     let d_pull = alpha + v0 + beta * t;
-    let d_push = alpha + p_t + beta * sigma_t;
-    let target = public_side.map_or(S::zero(), |(numerator, _)| numerator * public_inv[0]);
-    let q_t = ((one + one_s) * d_push + d_pull + h_t * d_pull * d_push) * w_invs[m];
+    // d_push = α + P(t) + β σ(t) = D_n / B; the identity's combination as `X / (S_d Y)` at `ρ' = w_m B / Y`.
+    let d_num = (alpha + v0 + xi) * den + w[m] * num;
+    let y = d_pull * d_num + w[m] * den;
+    let x = (s_den + w[m] * s_num) * d_num + d_pull * den * s_den;
+    let (public_num, public_den) = public_side.unwrap_or((S::zero(), one));
+    // One inversion: of `S_d Y`, `w_{m+2}` and the public side's denominator.
+    let p1 = s_den * y;
+    let p2 = p1 * w[m + 2];
+    let all = p2 * public_den;
+    channel.require_nonzero(all, VerifierError::RecDegenerate)?;
+    let inv_all = {
+        let _phase = enter("pi2: the inversion");
+        inverse(all)
+    };
+    let inv_p2 = inv_all * public_den;
+    let target = public_num * inv_all * p2;
+    let inv_p1 = inv_p2 * w[m + 2];
+    let inv_top = inv_p2 * p1;
+    // `1/w_l = (1 + w_l) / w_{l+1}` (as `w_{l+1} = w_l (1 + w_l)`), down from `1/w_{m+2}`.
+    let mut w_invs = vec![S::zero(); m + 3];
+    w_invs[m + 2] = inv_top;
+    for l in (0..m + 2).rev() {
+        w_invs[l] = (one + w[l]) * w_invs[l + 1];
+    }
+    let rho_q = w[m] * den * s_den * inv_p1;
+    let combination = x * inv_p1;
 
-    // `1/(1 + w_l) = 1/w_l + 1/w_{l+1}` (as `w_{l+1} = w_l (1 + w_l)`); their product telescopes to `t / w_{m+2}`.
+    // `1/(1 + w_l) = 1/w_l + 1/w_{l+1}`; their product telescopes to `t / w_{m+2}`.
     let ([y0, y1], scale) = extension();
     let (y0, y1, scale) = (ext::<S>(y0), ext::<S>(y1), ext::<S>(scale));
     let u: Vec<S> = (0..m + 2).map(|l| one + w_invs[l] + w_invs[l + 1]).collect();
     let digits_scale = t * w_invs[m + 2];
-    let quotient_value = scale * digits_scale * (h_t + rho * (h_t + q_t));
-    let quotient_point = [&u[..], &[rho, y0, y1]].concat();
+    let quotient_value = scale * digits_scale * combination;
+    let quotient_point = [&u[..], &[rho_q, y0, y1]].concat();
     let sum_point = [vec![one; m], vec![S::zero(); 3], vec![y0, y1]].concat();
 
     let mut rhos = vec![rho];
@@ -451,14 +483,14 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
         fold.truncate(half);
     }
     let witness_point = [&rhos[..], &w[r..m]].concat();
-    let setup_point = [&w[..m], &[rho]].concat();
+    let setup_point = [&w[..m], &[beta]].concat();
     Ok(Reduced {
         public,
         roots: [witness_root, quotient_root],
         witness: (witness_point, fold[0]),
         quotient: (quotient_point, quotient_value),
         sum: (sum_point, scale * target),
-        setup: (setup_point, sigma_t + rho * (sigma_t + kappa_t)),
+        setup: (setup_point, xi),
     })
 }
 

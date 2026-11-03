@@ -144,9 +144,8 @@ fn regions(spec: &Spec) -> Vec<(String, usize, usize)> {
     for k in 0..spec.values() {
         let name = match k {
             k if k < (1 << spec.log_row) => format!("a_{k}"),
-            k if k == (1 << spec.log_row) => "σ(t)".into(),
-            k if k == (1 << spec.log_row) + 1 => "κ(t)".into(),
-            _ => "h(t)".into(),
+            // Since PI2.md §9: the fold values and ξ = κ(t) + β σ(t) (h(t), σ(t), κ(t) not sent).
+            _ => "ξ(t)".into(),
         };
         out.push((name, at, 24));
         at += 24;

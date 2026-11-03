@@ -14,7 +14,7 @@
 //!    point), `P`, `d_pull`, `d_push`, and `q = (h d_pull d_push + (1 + 1_S) d_push + d_pull) / Z_V`; `q`'s novel
 //!    coefficients (degree below `4N`);
 //! 4. the table `Q`: `h` (degree below `N`) and `q`'s four chunks, each of three limbs, `15 N` words, committed;
-//! 5. `t`; the fold values, `σ(t)`, `κ(t)`, `h(t)`; `ρ`; the claims (the verifier's), opened: one opening per
+//! 5. `t`; the fold values and `ξ = κ(t) + β σ(t)` (PI2.md §9); `ρ`; the claims (the verifier's), opened: one opening per
 //!    commitment, `Q`'s two claims together.
 
 use std::time::Instant;
@@ -109,12 +109,16 @@ impl Setup {
         ntt::coefficients(&mut sigma, F64::ZERO);
         let mut kappa = circuit.kappa.clone();
         ntt::coefficients(&mut kappa, F64::ZERO);
+        // The halves `κ` and `κ + σ` (PI2.md §9): the claim at the last coordinate `β` is `κ(t) + β σ(t)`, the one value
+        // `d_push` needs.
         let (sb, kb) = (b_coefficients(&sigma), b_coefficients(&kappa));
+        let skb: Vec<F64> = sb.iter().zip(&kb).map(|(&a, &b)| a + b).collect();
+        drop(sb);
         let layout = layouts(m).setup;
         let lane = 1usize << layout.log_lane();
         let table = Table::new(layout, |_, block, out| {
             let start = block * lane;
-            let src = if start >> m == 0 { &sb } else { &kb };
+            let src = if start >> m == 0 { &kb } else { &skb };
             out.copy_from_slice(&src[start & (n - 1)..(start & (n - 1)) + lane]);
         });
         let committed = opening::commit(&table);
@@ -612,16 +616,12 @@ pub fn prove_with(
             a
         },
     );
+    // ξ = κ(t) + β σ(t), from the setup's halves `κ` and `κ + σ`; `h(t)` is not sent (PI2.md §9).
     let setup_stack = &setup.table.stack;
-    let sigma_t = primitives::multilinear::mle_eval_par(&setup_stack[..n], &digits[..m]);
-    let kappa_t = primitives::multilinear::mle_eval_par(&setup_stack[n..2 * n], &digits[..m]);
-    let h_t = (0..3).rev().fold(F192::ZERO, |acc, limb| {
-        acc * F192::Y + quotient::domain::evaluate(&h_novel[limb], 0, 1, &digits[..m])
-    });
-    folds
-        .iter()
-        .chain([&sigma_t, &kappa_t, &h_t])
-        .for_each(|&x| writer.send(to_e(x)));
+    let kappa_t = primitives::multilinear::mle_eval_par(&setup_stack[..n], &digits[..m]);
+    let sum_t = primitives::multilinear::mle_eval_par(&setup_stack[n..2 * n], &digits[..m]);
+    let xi = kappa_t + beta_ * (kappa_t + sum_t);
+    folds.iter().chain([&xi]).for_each(|&x| writer.send(to_e(x)));
     let _rho = writer.sample();
     lap("t: the values", &mut timings);
 

@@ -846,3 +846,15 @@ Branch `leanvm-rec-piop`, `crates/leanvm_rec/src/pi2/`; the protocol, the decisi
   basis, `Q` in the novel one; the extension coset is `4N`; the public data is absorbed by the first challenge; the
   target shapes' stacks are at least `2^24` words (leanerVM's certified range: D32v's `W` sits on a `2^24` stack).
 - **What remains:** R3 step 4, a review, then Lean.
+
+## 12. Optimisation toward 50K (branch `leanvm-rec-opt`): the change list
+
+Each change says whether it touches π1's Fiat–Shamir shape or claims, π2's, or only the contract. Measured numbers are
+in `PI2.md` §9.
+
+1. **The review's fixes** (REVIEW-REC.md M1, L1, L2, N2, N4, N5; `PI2.md` §8). π1's FS: its contract IV now binds the
+   variant (`contract_iv_for`: π1-rec's seed changes, not its shape); the vector is regenerated. The claims: one
+   `PCS_OPEN` ABI (π1's roots as `machine.rs`'s root words, π2's layout words structured). No gas change.
+2. **π2's values 19 → 17** (π2's claims change; π1 unchanged). `ξ = κ(t) + βσ(t)` replaces `σ(t)`, `κ(t)` (the setup
+   committed as `κ`, `κ + σ`, its claim at `β`); `h(t)` is no longer sent, `Q`'s claim being the identity's combination
+   of `h(t)` and `q(t)`, with one inversion at the end. 1,844 → 1,796 B; execution 39,674 → 35,787; 73,550 → 71,630.

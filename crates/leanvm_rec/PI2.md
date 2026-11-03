@@ -102,15 +102,16 @@ the pushes' are `σ`'s values (injective), the public tags are outside `V_m`.
 **Transcript** (`KeccakChannel`): the seed `keccak(NAME ‖ IV ‖ public input)`, `NAME = "leanvm-rec-pi2v1"`, then the
 stream:
 
-1. the public data: π1's roots `C1`, `C2` (32 bytes each, as π1's calls take them), π1's claims' 51 distinct elements
-   (24 bytes each);
+1. the public data: π1's roots `C1`, `C2` (32 bytes each, as π1's calls take them: `PCS_OPEN`'s root words, §8), π1's
+   claims' 51 distinct elements (24 bytes each);
 2. `W`'s root; `α, β, γ`;
 3. `Q`'s root; `t`;
-4. the `2^r` fold values `a_k`, `σ(t)`, `κ(t)`, `h(t)` (19 values for D16v, 35 for D32v); `ρ`.
+4. the `2^r` fold values `a_k` and `ξ = κ(t) + β σ(t)` (17 values for D16v, 33 for D32v; §9 lever 2: until then also
+   `σ(t)`, `κ(t)` apart and `h(t)`, 19 and 35); `ρ`.
 
 The first challenge hashes the state and everything before it: the public data is bound there, not by a separate
-`keccak(public data)`. The **IV** is `keccak("leanvm-rec-iv-v1" ‖ π1's contract IV ‖ the setup root ‖ the circuit's
-digest ‖ the three layouts' ids)` (`prover::iv`), a constant of the code.
+`keccak(public data)`. The **IV** is `keccak("leanvm-rec-iv-v2" ‖ π1's contract IV ‖ the setup root ‖ the circuit's
+digest ‖ the three layout words)` (`prover::iv`), a constant of the code.
 
 **The tables.**
 
@@ -118,7 +119,7 @@ digest ‖ the three layouts' ids)` (`prover::iv`), a constant of the code.
 |---|---|---:|---:|---|
 | `W` | `w` | `m` | `max(m, 24)` | `B` (`B_k = Π_l (w_l or 1 + w_l)`) |
 | `Q` | `h` (degree `< N`) and `q`'s four chunks, three limbs each: 15 chunks of `N` | `m + 5` (position, 2 digits, `h` or `q`, 2 limbs) | `m + 4`: 60 lanes of `2^(m-2)` | novel |
-| setup | `σ` then `κ` | `m + 1` | `max(m + 1, 24)` | `B` |
+| setup | `κ` then `κ + σ` (§9; until then `σ` then `κ`) | `m + 1` | `max(m + 1, 24)` | `B` |
 
 The stacks are at least `2^24` words, the smallest leanerVM's certified parameters cover; the query ladders of every
 stack are pinned to `review/whir_params.py --large`'s (`stacks_take_the_certified_queries`). D32v's `W` (`2^23` words)
@@ -132,24 +133,29 @@ sits on a `2^24` stack, half its lanes absent. Small test circuits take `2^15` s
 3. the normalised block polynomials `Ẑ_s(t)`, `Ẑ_s = Ẑ_{s-1} + c_s Ẑ_{s-1}²`, so that
    `I_p(t) = w_m / (Ẑ_s(t) + Ẑ_s(c_p))`: `w_m` factors out of every indicator;
 4. each group's indicators (pairs of one role, one formula) summed as one fraction `N_g / D_g`; the public side as one
-   fraction, its `β ω_τ` along a walk of the tags' bits;
-5. one inversion of every `D_g`, the public side's denominator and the digits, by the norm (two Frobenius maps from the
-   limbs' shifts, 76 products);
-6. `P(t) = v_0 + w_m Σ_g (N_g/D_g)(E_g(v_{c⊕k_g}) + v_0) + κ(t)`, `d_pull = α + v_0 + βt`,
-   `d_push = α + P(t) + βσ(t)`, `1_S = w_m Σ_{port groups} N_g/D_g`, `q(t) = ((1 + 1_S) d_push + d_pull + h(t) d_pull d_push) / w_m`.
+   fraction `N / D`, its `β ω_τ` along a walk of the tags' bits;
+5. (§9) the pushes' sum `A / B = Σ_g (N_g/D_g)(E_g(v_{c⊕k_g}) + v_0)` accumulated as one fraction (a one-pair group
+   adds `X/d`, three products; a larger one `N_g X / D_g`, four), the pull-less groups' `S_n / S_d` likewise; then
+   `P(t) = v_0 + w_m A/B + κ(t)`, `d_push = α + P(t) + βσ(t) = D_n / B` with `D_n = (α + v_0 + ξ) B + w_m A`,
+   `d_pull = α + v_0 + βt`, `1_S = w_m S_n / S_d`;
+6. the identity `h d_pull d_push + q w_m = (1 + 1_S) d_push + d_pull` at `t`, one combination of `h(t)` and `q(t)`:
+   `Y = d_pull D_n + w_m B = B (d_pull d_push + w_m)`, `X = (S_d + w_m S_n) D_n + d_pull B S_d`;
+7. one inversion, of `S_d Y · w_{m+2} · D` (required nonzero: it covers `t ∈ V_{m+2}`, every group denominator and the
+   public side's), by the norm (two Frobenius maps from the limbs' shifts, 76 products); `1/w_{m+2}` from it, and
+   `1/w_l = (1 + w_l)/w_{l+1}` down to `l = 0`.
 
 **The claims** (4 in 3 calls, after π1's 5):
 
 - `W` at `(ρ, ρ², …, ρ^{2^{r-1}}, w_r, …, w_{m-1})`, value `Σ_k eq(ρ⃗, k) a_k`;
-- `Q` at `(u_0, …, u_{m+1}, ρ, y_0, y_1)`, `u_l = w_l/(1 + w_l) = 1 + 1/w_l + 1/w_{l+1}`, value
-  `s (t / w_{m+2}) ((1 + ρ) h(t) + ρ q(t))` (`(y_0, y_1)` and `s` the limbs' coordinates and scale, as `crates/quotient`;
-  `Π (1 + w_l)^{-1}` telescopes to `t / w_{m+2}`); and at `(1^m, 0, 0, 0, y_0, y_1)`, `h`'s top coefficient `Σ_V h`,
-  value `s T`;
-- the setup at `(w_0, …, w_{m-1}, ρ)`, value `(1 + ρ) σ(t) + ρ κ(t)`.
+- `Q` at `(u_0, …, u_{m+1}, ρ', y_0, y_1)`, `u_l = w_l/(1 + w_l) = 1 + 1/w_l + 1/w_{l+1}`, `ρ' = w_m B / Y` (the
+  identity's `c_q/(c_h + c_q)`), value `s (t / w_{m+2}) X / (S_d Y)`, that is `(1 + ρ') h(t) + ρ' q(t)` (`(y_0, y_1)`
+  and `s` the limbs' coordinates and scale, as `crates/quotient`; `Π (1 + w_l)^{-1}` telescopes to `t / w_{m+2}`); and
+  at `(1^m, 0, 0, 0, y_0, y_1)`, `h`'s top coefficient `Σ_V h`, value `s T`;
+- the setup at `(w_0, …, w_{m-1}, β)`, value `ξ` (its halves `κ`, `κ + σ`: `(1 + β) κ + β (κ + σ) = κ + βσ`).
 
 **The contract** (`contract`): reads the stream, runs the verifier, then calls `PCS_OPEN` 8 times: π1's five (their words
 `circuit::spec::Circuit::calls`: constants, the stream's roots, the elements read), then `W`'s (one claim), `Q`'s (two)
-and the setup's (one; its root a constant). Layout words: π1's as the vector's; π2's `quotient::opening::layout_id`.
+and the setup's (one; its root a constant). Layout words: π1's as the vector's; π2's `prover::layout_word` (§8).
 
 ## 3. The prover (`prover`)
 
@@ -261,3 +267,38 @@ argument and the composition.
 - **N4, N5, text.** `review/leanvm_rec_params.py`: γ is the four-limb ports' fingerprint, degree 1 (177.1 bits after
   the union); ρ's errors add over the three commitments, `(15 L_W + L_Q + 1)/2^192`, 174.8 bits. SPEC-REC §2.4.6, §4,
   §5 and §10.4.2 and `circuit/spec.rs` say what is built; the commands take `RUSTFLAGS="-C target-cpu=native"`.
+
+## 9. Optimisation levers (branch `leanvm-rec-opt`, toward 50K)
+
+Measured on h1 by `tests/pi2_real.rs` (`real_gas`, `real_end_to_end`), the real circuit of π1-rec's 1,000-signature
+proof; transaction gas without the 21,000 base, `c = 0`. Each row is one commit.
+
+| lever | calldata | execution (D16v) | EIP-7623 `c = 0` | D32v execution | what |
+|---|---:|---:|---:|---:|---|
+| before (9d1bf46, and the review's fixes) | 1,844 B | 39,674 | 73,550 | 71,097 | |
+| **2: π2's values 19 → 17**, one final inversion | 1,796 B | 35,787 | 71,630 | 61,659 | `ξ = κ(t) + βσ(t)` sent for `σ(t)`, `κ(t)`; `h(t)` not sent |
+
+**Lever 2.**
+
+- **`σ(t)` and `κ(t)` as one value.** The verifier uses them only in `d_push = α + P(t) + βσ(t)`, `P` holding `κ(t)`:
+  as `ξ = κ(t) + βσ(t)`. The setup's halves are now `κ` and `κ + σ`, so its one claim at `(w_0, …, w_{m-1}, β)` is
+  `(1 + β)κ(t) + β(κ + σ)(t) = ξ`, with no inversion. The setup is honest (`L = 1`) and fixed before `β`: the claim
+  binds `ξ` exactly. `ρ` no longer enters the setup's claim.
+- **`h(t)` not sent.** §4.3 sent it to spare a second inversion. Now the verifier keeps every quotient as a fraction
+  and inverts once at the end (§2, steps 5–7): the pushes' sum `A/B`, `d_push = D_n/B`, and the identity at `t` as the
+  one combination of `h(t)` and `q(t)` it is, `c_h h + c_q q = (1 + 1_S) d_push + d_pull` (`c_h = d_pull d_push`,
+  `c_q = w_m`). `Q`'s claim is that combination, normalised: `(1 + ρ')h(t) + ρ'q(t)` at `ρ' = c_q/(c_h + c_q)`. This is
+  exactly the identity at `t`, so `t`'s error is unchanged (`5N` over `L_W L_Q`, 140.6 bits); `ρ` no longer enters
+  `Q`'s claim either, and is only `W`'s fold (degree 15 over `L_W`: 174.8 bits). The one inversion is of
+  `S_d Y · w_{m+2} · D`, required nonzero (it covers `t ∈ V_{m+2}`, hence every pair's denominator, and the public
+  side's); the digits' inverses follow from `1/w_{m+2}` by `1/w_l = (1 + w_l)/w_{l+1}` (26 products instead of 81 in a
+  batched inversion).
+- **Measured:** the batched inversion (6,997 gas, 94 elements) is gone; the accumulation costs about as many products
+  as the batch's prefix products did, and the digits' inverses a third. D32v, whose 228 groups dominated its inversion,
+  falls by 9.4K. The prover: the same tables but the setup's halves; prove 10.8 s, open 2.0 s, 11.8 GB (the end-to-end
+  run on the real witness, `real_end_to_end`).
+- **D8v (rows of 8, 8 fold values: −192 B) is dropped.** With `Q = 15N` words, `N` must stay `2^24` (`2^25` gives
+  `2^28.9`). At 107 permutations and π1's 0.36M other positions, a Keccak-f must fit in 153K positions, 17% more than
+  D16v's 130,944. A χ output reads three `b = A + D` of its plane, so a row of 8 holds the inputs of at most two
+  outputs, or must materialise `b` (one more position a state bit, and its forwards): about 2× D16v's positions a
+  round, well past 153K.
