@@ -4,6 +4,10 @@ import RecCompose.Part1
 import RecCompose.Part2
 import RecCompose.Complete
 import RecCompose.Numbers
+import RecCompose.Holds
+import RecCompose.Chan
+import RecCompose.Pi2Run
+import RecCompose.CallsPure
 
 /-!
 # RecCompose: the recursive verifier's end theorems
