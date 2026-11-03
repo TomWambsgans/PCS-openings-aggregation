@@ -121,7 +121,10 @@ unchanged would cost the contract a byte swap of the four words, about 110 gas (
 So the convention is kept, and documented here and in `contract.rs`.
 
 The transcript is a Keccak-256 chain (`leanvm_flock_gas::transcript::KeccakChannel`). A challenge is one Keccak-256
-of the state and the calldata bytes read since the last one. A scalar is 24 bytes, a root half 16. The seed is the
+of the state and the calldata bytes read since the last one. A scalar is 24 bytes, a root half 16: one of the root's
+two WHIR scalars (`hash_to_scalars`, the opening's first two), big-endian, so that a root's 32 bytes are its `PCS_OPEN`
+root word `s_0 · 2^128 + s_1` (`crates/evm/src/machine.rs`), which the contract passes as it is
+(`crates/leanvm_rec/REVIEW-REC.md`, R1; the prover sent the hash's bytes before). The seed is the
 Keccak-256 of the name `leanVM-univar-v1`, the program's IV (which must bind the setup and the shape) and the public
 input. There are no announced sizes: one shape per contract. The order:
 

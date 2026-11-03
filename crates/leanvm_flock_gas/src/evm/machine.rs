@@ -192,6 +192,11 @@ impl PcsOpen {
         decode(input, |w| self.layouts.get(w).copied())
     }
 
+    /// Whether a call with `input` attests (the word 1), as a contract's call would find.
+    pub fn attests(&self, input: &[u8]) -> bool {
+        self.run(input).1
+    }
+
     /// What a call with `input` costs, and whether it attests.
     fn run(&self, input: &[u8]) -> (u64, bool) {
         let claims = input

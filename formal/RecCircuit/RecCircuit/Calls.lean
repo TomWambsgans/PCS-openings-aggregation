@@ -10,8 +10,9 @@ port's `element_word`; a pair's coordinate (π1-rec3's paired batch) `element_wo
 port (`Circuit.callWordBytes`, `Circuit.callInputs`).
 
 On a satisfied circuit the compiler accepted, each of these words is π1's graph's word in `RecGraph`'s semantics over
-Keccak-f[1600] (`compile_sound_calls`), word 0 (a call's root, a stream root or a setup root) as `PCS_OPEN`'s root
-word (`machine::root_word`, each 16-byte half reversed: `pcsWord`), all other words byte for byte. The calls check
+Keccak-f[1600] (`compile_sound_calls`) as `PCS_OPEN` takes it (`pcsWord`): a setup root (a constant word 0) as its
+root word (`machine::root_word`, each 16-byte half of the hash reversed), all other words byte for byte, a stream root
+included (π1's stream carries a root as its root word, its two WHIR scalars: REVIEW-REC.md R1). The calls check
 (`callsOk`) ties π2's call words to π1's; the pair's semantics (`pair_val`) is `pair_point`'s on the expanded graph's
 values (`y_1 = z·z + z`, `y_0 = z + β_1 y_1`, `β_1 = UniStatement.cantorBeta1`); `expandSound` takes a node's
 image's value back to the original graph.
@@ -50,9 +51,12 @@ def callInputs (w : ℕ → K) : List (List UInt8) := C.calls.map (·.flatMap (C
 
 end Circuit
 
-/-- **The word of a `PCS_OPEN` call at position `k`**, of the graph's word bytes: word 0 (the call's root) as
-`PCS_OPEN`'s root word (`machine::root_word`). -/
-def pcsWord (k : ℕ) (bytes : List UInt8) : List UInt8 := if k = 0 then rootWordBytes bytes else bytes
+/-- **The word of a `PCS_OPEN` call at position `k`**, of the graph's word `w` and its bytes: a setup root (a constant
+word 0, the hash as π1's contract holds it) as `PCS_OPEN`'s root word (`machine::root_word`); every other word as it
+is, a stream root included (the stream's 32 bytes are the root's root word, REVIEW-REC.md R1). -/
+def pcsWord (k : ℕ) : RecGraph.Word → List UInt8 → List UInt8
+  | .const _, bytes => if k = 0 then rootWordBytes bytes else bytes
+  | _, bytes => bytes
 
 /-! ## Bytes -/
 
@@ -97,16 +101,28 @@ theorem be64_leNat (s : List UInt8) (hs : s.length = 8) : be64 (UInt64.ofNat (le
 theorem lane_ofNat (n : ℕ) : K.lane (F64.ofNat n) = UInt64.ofNat n := by
   rw [← ofLane_ofNat, lane_ofLane]
 
-/-- **A root port's word is the root's `PCS_OPEN` word** (the stream's 32 bytes, each half reversed). -/
+/-- A big-endian number is the little-endian number of the bytes reversed. -/
+theorem beNat_eq_leNat_reverse (s : List UInt8) : beNat s = leNat s.reverse := by
+  induction s using List.reverseRecOn with
+  | nil => rfl
+  | append_singleton bs b ih =>
+    rw [beNat_append, ih, List.reverse_append, List.reverse_singleton, List.singleton_append, leNat_cons]
+    ring
+
+/-- `be64` of a big-endian word is its bytes. -/
+theorem be64_beNat (s : List UInt8) (hs : s.length = 8) : be64 (UInt64.ofNat (beNat s)) = s := by
+  rw [beNat_eq_leNat_reverse, be64_leNat _ (by simpa using hs), List.reverse_reverse]
+
+/-- **A root port's word is the root's `PCS_OPEN` word**: the stream's 32 bytes as they are (REVIEW-REC.md R1). -/
 theorem root_bytes (raw : List UInt8) (hr : raw.length = 32) :
-    Circuit.limbsBytes ((List.range 4).map fun l => F64.ofNat (leNat (slice raw ([16, 24, 0, 8].getD l 0) 8))) =
-      rootWordBytes raw := by
+    Circuit.limbsBytes ((List.range 4).map fun l => F64.ofNat (beNat (slice raw ([24, 16, 8, 0].getD l 0) 8))) =
+      raw := by
   have hs : ∀ a, a + 8 ≤ 32 → (slice raw a 8).length = 8 := fun a ha => slice_length raw a 8 (by omega)
-  show Circuit.limbsBytes [F64.ofNat (leNat (slice raw 16 8)), F64.ofNat (leNat (slice raw 24 8)),
-    F64.ofNat (leNat (slice raw 0 8)), F64.ofNat (leNat (slice raw 8 8))] = _
+  show Circuit.limbsBytes [F64.ofNat (beNat (slice raw 24 8)), F64.ofNat (beNat (slice raw 16 8)),
+    F64.ofNat (beNat (slice raw 8 8)), F64.ofNat (beNat (slice raw 0 8))] = _
   simp only [Circuit.limbsBytes, List.getD_cons_succ, List.getD_cons_zero, lane_ofNat]
-  rw [be64_leNat _ (hs 8 (by norm_num)), be64_leNat _ (hs 0 (by norm_num)), be64_leNat _ (hs 24 (by norm_num)),
-    be64_leNat _ (hs 16 (by norm_num))]
+  rw [be64_beNat _ (hs 0 (by norm_num)), be64_beNat _ (hs 8 (by norm_num)), be64_beNat _ (hs 16 (by norm_num)),
+    be64_beNat _ (hs 24 (by norm_num))]
   have ht : raw.take 16 = slice raw 0 8 ++ slice raw 8 8 := by
     rw [show (16 : ℕ) = 8 + 8 from rfl, List.take_add]
     simp [slice]
@@ -114,7 +130,7 @@ theorem root_bytes (raw : List UInt8) (hr : raw.length = 32) :
     have hl : (raw.drop 16).length = 8 + 8 := by simp [hr]
     rw [← List.take_length (l := raw.drop 16), hl, List.take_add]
     simp [slice, List.drop_drop]
-  rw [rootWordBytes, ht, hd, List.reverse_append, List.reverse_append]
+  conv_rhs => rw [← List.take_append_drop 16 raw, ht, hd]
   simp only [List.append_assoc]
 
 /-- `limbsL`'s limbs rebuild the element. -/
@@ -346,14 +362,14 @@ theorem call_node_lt (hc : compile (ofRG g rootsAt iv) = .ok c) {ci k id : ℕ} 
 
 /-- **π2's `PCS_OPEN` inputs, rebuilt from its ports, are π1's graph's call words**, in `RecGraph`'s semantics over
 Keccak-f[1600], on the public input and the stream the witness encodes: word by word, word 0 (each call's root) as
-`PCS_OPEN`'s root word (`pcsWord`), pairs' coordinates included. -/
+`PCS_OPEN` takes it (`pcsWord`: a setup root as its root word), pairs' coordinates included. -/
 theorem compile_sound_calls (hc : compile (ofRG g rootsAt iv) = .ok c) {pub : ℕ → List F192} {w : ℕ → K}
     (hw : c.circuit.toPiop.Satisfies pub (emb w)) :
     c.circuit.calls.length = g.calls.length ∧
     ∀ ci < g.calls.length, (c.circuit.calls.getD ci []).length = (g.calls.getD ci []).length ∧
       ∀ k < (g.calls.getD ci []).length,
         c.circuit.callWordBytes w ((c.circuit.calls.getD ci []).getD k default) =
-          pcsWord k (RecGraph.wordBytes (c.streamW (ofRG g rootsAt iv) w).toArray
+          pcsWord k ((g.calls.getD ci []).getD k default) (RecGraph.wordBytes (c.streamW (ofRG g rootsAt iv) w).toArray
             (rgVals g iv (c.pubW w) (c.streamW (ofRG g rootsAt iv) w)) ((g.calls.getD ci []).getD k default)) := by
   have hchk := checked_of_compile hc
   have hcalls := hchk.calls
@@ -377,27 +393,26 @@ theorem compile_sound_calls (hc : compile (ofRG g rootsAt iv) = .ok c) {pub : �
     simp only [ofRGWord, wordOk, Bool.false_eq_true] at hword
   · -- a constant element
     simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at hword
-    obtain ⟨⟨hk0, hlive⟩, hm⟩ := hword
+    obtain ⟨⟨-, hlive⟩, hm⟩ := hword
     split at hm
     · rename_i c0 c1 c2 hn
       rw [beq_iff_eq] at hm
       have hid := call_node_lt hc hci hk hgw
-      show wordBytes32 x = pcsWord k (UniStatement.elementWord _)
-      rw [hm, pcsWord, ite_eq_right_of_eq_false _ _ (eq_false hk0), ← hE id hid, rgX_const hchk iv P S hlive hn]
+      show wordBytes32 x = UniStatement.elementWord _
+      rw [hm, ← hE id hid, rgX_const hchk iv P S hlive hn]
     · cases hm
   · -- an element port
     simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, beq_iff_eq, decide_eq_true_eq] at hword
-    obtain ⟨⟨⟨⟨hk0, _⟩, _⟩, hmap⟩, hsome⟩ := hword
+    obtain ⟨⟨⟨⟨-, _⟩, _⟩, hmap⟩, hsome⟩ := hword
     obtain ⟨J, hJs⟩ := Option.isSome_iff_exists.mp hsome
     obtain ⟨hJ, hs⟩ := portOf_spec hJs
     have hid := call_node_lt hc hci hk hgw
     show UniStatement.elementWord (Circuit.limbsE (c.circuit.portLimbs w ((c.circuit.portOf (.element e)).getD 0))) =
-      pcsWord k (UniStatement.elementWord _)
-    rw [hJs, Option.getD_some, compile_sound_element hc hw (expandSound hc) hJ hs hid hmap.symm, limbsE_limbsL,
-      pcsWord, ite_eq_right_of_eq_false _ _ (eq_false hk0)]
+      UniStatement.elementWord _
+    rw [hJs, Option.getD_some, compile_sound_element hc hw (expandSound hc) hJ hs hid hmap.symm, limbsE_limbsL]
   · -- a pair's coordinate
     simp only [Bool.and_eq_true, bne_iff_ne, ne_eq, beq_iff_eq, decide_eq_true_eq] at hword
-    obtain ⟨⟨⟨⟨⟨hk0, hlive⟩, hesz⟩, _⟩, hpc⟩, hsome⟩ := hword
+    obtain ⟨⟨⟨⟨⟨-, hlive⟩, hesz⟩, _⟩, hpc⟩, hsome⟩ := hword
     obtain ⟨J, hJs⟩ := Option.isSome_iff_exists.mp hsome
     obtain ⟨hJ, hs⟩ := portOf_spec hJs
     have hid := call_node_lt hc hci hk hgw
@@ -411,17 +426,16 @@ theorem compile_sound_calls (hc : compile (ofRG g rootsAt iv) = .ok c) {pub : �
       rw [compile_sound hc hw J hJ, portMeaning, hs]
       exact congrArg limbsL hz
     show UniStatement.elementWord ((pairPoint (Circuit.limbsE (c.circuit.portLimbs w
-      ((c.circuit.portOf (.element e)).getD 0)))).getD co 0) = pcsWord k (UniStatement.elementWord _)
-    rw [hJs, Option.getD_some, hport, limbsE_limbsL, pcsWord, ite_eq_right_of_eq_false _ _ (eq_false hk0), ← hE id hid,
-      pair_val hchk iv P S hlive hpc]
+      ((c.circuit.portOf (.element e)).getD 0)))).getD co 0) = UniStatement.elementWord _
+    rw [hJs, Option.getD_some, hport, limbsE_limbsL, ← hE id hid, pair_val hchk iv P S hlive hpc]
   · -- a constant word
     rw [beq_iff_eq] at hword
-    show wordBytes32 x = pcsWord k (RecGraph.beBytes32 v)
+    show wordBytes32 x = pcsWord k (.const v) (RecGraph.beBytes32 v)
     rw [hword]
     rfl
   · -- a stream root
     simp only [Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at hword
-    obtain ⟨⟨⟨hk0, hi⟩, hat⟩, hsome⟩ := hword
+    obtain ⟨⟨⟨-, hi⟩, hat⟩, hsome⟩ := hword
     obtain ⟨J, hJs⟩ := Option.isSome_iff_exists.mp hsome
     obtain ⟨hJ, hs⟩ := portOf_spec hJs
     have hin := root_in hchk hi
@@ -431,8 +445,8 @@ theorem compile_sound_calls (hc : compile (ofRG g rootsAt iv) = .ok c) {pub : �
       rw [hat] at hin
       omega
     show Circuit.limbsBytes (c.circuit.portLimbs w ((c.circuit.portOf (.root i)).getD 0)) =
-      pcsWord k ((S.toArray.extract at_ (at_ + 32)).toList)
-    rw [hJs, Option.getD_some, compile_sound_root hc hw hJ hs, pcsWord, ite_eq_left_of_eq_true _ _ (eq_true hk0)]
+      (S.toArray.extract at_ (at_ + 32)).toList
+    rw [hJs, Option.getD_some, compile_sound_root hc hw hJ hs]
     have hat' : rootsAt.getD i 0 = at_ := hat
     rw [hat']
     exact root_bytes _ hraw
@@ -445,12 +459,12 @@ theorem flatMap_range {α β : Type} (l : List α) (d : α) (f : α → List β)
     rw [List.flatMap_cons, List.length_cons, List.range_succ_eq_map, List.flatMap_cons, List.flatMap_map, ih]
     rfl
 
-/-- **π2's `PCS_OPEN` inputs, rebuilt from its ports, call by call**: each call's bytes are π1's graph's, word 0 as
-`PCS_OPEN`'s root word. -/
+/-- **π2's `PCS_OPEN` inputs, rebuilt from its ports, call by call**: each call's bytes are π1's graph's as `PCS_OPEN`
+takes them (a setup root as its root word). -/
 theorem compile_sound_callInputs (hc : compile (ofRG g rootsAt iv) = .ok c) {pub : ℕ → List F192} {w : ℕ → K}
     (hw : c.circuit.toPiop.Satisfies pub (emb w)) :
     c.circuit.callInputs w = g.calls.map fun ws => (List.range ws.length).flatMap fun k =>
-      pcsWord k (RecGraph.wordBytes (c.streamW (ofRG g rootsAt iv) w).toArray
+      pcsWord k (ws.getD k default) (RecGraph.wordBytes (c.streamW (ofRG g rootsAt iv) w).toArray
         (rgVals g iv (c.pubW w) (c.streamW (ofRG g rootsAt iv) w)) (ws.getD k default)) := by
   obtain ⟨hlen, hcall⟩ := compile_sound_calls hc hw
   unfold Circuit.callInputs

@@ -21,7 +21,7 @@ attack found).
 
 | | calldata | execution | EIP-7623 | + 21K base | EIP-7976 (64/byte) | claims / calls |
 |---|---:|---:|---:|---:|---:|---:|
-| **recursive verifier (D16v × π1-rec3)** | 980 B | 29,832 | **44,792** | 65,792 | 62,720 | 7 / 6 |
+| **recursive verifier (D16v × π1-rec3)** | 980 B | 29,832 | **44,804** | 65,804 | 62,720 | 7 / 6 |
 | `leanvm_univariate`, no recursion | 7,108 B | 192,392 | 305,808 | 326,808 | 454,912 | 5 / 5 |
 | leanVM's own verifier (baseline) | 27,068 B | 334,216 | 1,074,620 | 1,095,620 | 1,732,352 | — |
 
@@ -72,14 +72,17 @@ REC_STATEMENT_OUT=$PWD/v.txt cargo test --release -p leanvm_rec --test lean_stat
 `formal/RecStatement` transcribes π2's verifier in Lean (`src/lean_statement.rs` writes its data and vectors;
 `pi2::verifier::reduce_traced` hands every intermediate value to the vectors).
 
-Note on the two gas figures: 44,792 is measured by `real_end_to_end` on the real proof's calldata (980 B, 60 zero
-bytes, 56 of them the 14 narrow challenges' high bytes). `real_gas` reports 45,464 for the same configuration: the
-gap, 672 = 56 × (16 − 4), is EIP-7623's price of those 56 bytes as nonzero, so `real_gas` does not see the narrow
-challenges' zero bytes. The execution (29,832) is the same in both.
+Note on the two gas figures: 44,804 is measured by `real_end_to_end` on the real proof's calldata (980 B, 59 zero
+bytes, 56 of them the 14 narrow challenges' high bytes). `real_gas` reports 45,464 for the same configuration, on a
+sample stream of 4 zero bytes: the gap, 660 = 55 × (16 − 4), is EIP-7623's price of the 55 more zero bytes, so
+`real_gas` does not see the narrow challenges' zero bytes. The execution (29,832) is the same in both. (Before R1,
+`REVIEW-REC.md`, the real proof had 60 zero bytes and 44,792: π1's proof was regenerated, its execution unchanged.)
 
 What the tests check:
 - **End to end.** π1-rec3's real proof, then π2's proof, then the contract accepts, with `PCS_OPEN` (a decoding
-  mock with a registry of layout words) attesting all 7 claims. 18 flipped calldata bytes are each rejected.
-- **The circuit.** Every pull equals its push on the real streams and on mutated and random ones. π1's five calls
-  rebuilt from π2's ports equal the vector's.
+  mock with a registry of layout words) attesting all 7 claims, π1's on the roots π1's prover committed (the
+  vector's `whir_root`s, not any contract's words: `REVIEW-REC.md` R1). 18 flipped calldata bytes are each rejected,
+  and so are π1's openings held on other roots.
+- **The circuit.** Every pull equals its push on the real streams and on mutated and random ones. π1's calls
+  rebuilt from π2's ports equal the vector's, and decode to the committed roots; the word before R1 does not.
 - **The contract.** It equals the Rust verifier word for word.

@@ -98,16 +98,14 @@ impl Clock {
     }
 }
 
-/// The root's two 128-bit halves as the stream carries them: the 32 bytes as they are.
-fn halves(root: &Hash) -> [E; 2] {
-    let half = |b: &[u8]| {
-        E::new(
-            u64::from_be_bytes(b[8..16].try_into().unwrap()),
-            u64::from_be_bytes(b[0..8].try_into().unwrap()),
-            0,
-        )
-    };
-    [half(&root[..16]), half(&root[16..])]
+/// The root's two 128-bit halves as the stream carries them: its two scalars as WHIR's transcript has them
+/// (`fiat_shamir::merkle::hash_to_scalars`, each the little-endian number of 16 of the hash's bytes, the opening's
+/// first two scalars), each sent big-endian. The stream's 32 bytes are then the root's `PCS_OPEN` root word
+/// (`leanvm_flock_gas::evm::machine::root_word`, each 16-byte half of the hash reversed), the word the contract
+/// passes as it is; before, they were the hash's bytes as they are, a word a decoding `PCS_OPEN` reads as another
+/// root (`crates/leanvm_rec/REVIEW-REC.md`, R1).
+pub fn halves(root: &Hash) -> [E; 2] {
+    fiat_shamir::merkle::hash_to_scalars(root).map(|s| E::new(s.c0, s.c1, s.c2))
 }
 
 /// `tuple`'s fingerprint needs a sent value: one of its monomials reads an unsent column (`verifier::linearise`).

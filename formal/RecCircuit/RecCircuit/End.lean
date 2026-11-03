@@ -74,22 +74,23 @@ theorem compile_sound_zero_const (hc : compile (ofRG g rootsAt iv) = .ok c) (iv'
 
 /-- **What the end theorem states** of a compiled circuit `c` for `g` and a witness `w`: π2's ports and the
 `PCS_OPEN` inputs its verifier rebuilds from them are π1's graph's outputs in `RecGraph`'s semantics over
-Keccak-f[1600], on the public input and the stream the witness encodes: the statement's words, the roots' words, the
-zero checks' values (the constant ones `0`), the calls' bytes (word 0 as `PCS_OPEN`'s root word). -/
+Keccak-f[1600], on the public input and the stream the witness encodes: the statement's words, the roots' words (the
+stream's bytes), the zero checks' values (the constant ones `0`), the calls' bytes as `PCS_OPEN` takes them (`pcsWord`:
+a setup root as its root word). -/
 def EndStatement (g : RecGraph.Graph) (rootsAt : List ℕ) (iv : List UInt8) (c : Compiled) (w : ℕ → K) : Prop :=
     (∀ J < c.circuit.ports.size, (c.circuit.ports.getD J default).source = .statement →
       c.circuit.portLimbs w J = (List.range 4).map fun k => K.ofLane (beWordAt (c.pubW w).toArray (8 * k))) ∧
     (∀ J < c.circuit.ports.size, ∀ i, (c.circuit.ports.getD J default).source = .root i →
       c.circuit.portLimbs w J = (List.range 4).map fun l =>
-        F64.ofNat (leNat (slice ((c.streamW (ofRG g rootsAt iv) w).toArray.extract (rootsAt.getD i 0)
-          (rootsAt.getD i 0 + 32)).toList ([16, 24, 0, 8].getD l 0) 8))) ∧
+        F64.ofNat (beNat (slice ((c.streamW (ofRG g rootsAt iv) w).toArray.extract (rootsAt.getD i 0)
+          (rootsAt.getD i 0 + 32)).toList ([24, 16, 8, 0].getD l 0) 8))) ∧
     (∀ J < c.circuit.ports.size, (c.circuit.ports.getD J default).source = .zero →
       c.circuit.portLimbs w J = limbsL (RecGraph.valE
         (rgVals g iv (c.pubW w) (c.streamW (ofRG g rootsAt iv) w)) (zeroOrig c (ofRG g rootsAt iv) (c.zeroIndex J)))) ∧
     (∀ id ∈ g.zero, notConst (c.nodes.getD (c.map.getD id 0) default) = false →
       RecGraph.valE (rgVals g iv (c.pubW w) (c.streamW (ofRG g rootsAt iv) w)) id = 0) ∧
     c.circuit.callInputs w = g.calls.map fun ws => (List.range ws.length).flatMap fun k =>
-      pcsWord k (RecGraph.wordBytes (c.streamW (ofRG g rootsAt iv) w).toArray
+      pcsWord k (ws.getD k default) (RecGraph.wordBytes (c.streamW (ofRG g rootsAt iv) w).toArray
         (rgVals g iv (c.pubW w) (c.streamW (ofRG g rootsAt iv) w)) (ws.getD k default))
 
 /-- **The end theorem**: on a satisfied circuit the compiler accepted, `EndStatement`. -/
