@@ -142,6 +142,18 @@ def zHat (c : List F) : ℕ → F → F
   | 0, x => x
   | s + 1, x => zHat c s x + c.getD s 0 * (zHat c s x * zHat c s x)
 
+/-- **`vanishing(x, e, s)`**: `Z_{U_s}(x)` by `z ↦ z² + e_j z` for `j < s` (`pi2::circuit::vanishing`). -/
+def vanishingF (x : F) (e : List F) (s : ℕ) : F :=
+  (List.range s).foldl (fun z j ↦ z * z + e.getD j 0 * z) x
+
+/-- **`coset_constants`**: `e_s = Z_{U_s}(b_s)` for `s < count`, `b` the subspace's basis (`β_{r+s}`). -/
+def cosetConstantsF (b : ℕ → F) (count : ℕ) : List F :=
+  (List.range count).foldl (fun e s ↦ e ++ [vanishingF (b s) e s]) []
+
+/-- **`normalised_constants(e)`**: `c_s = Π_{j < s} e_j / e_s`. -/
+def normalisedConstantsF (e : List F) : List F :=
+  (e.foldl (fun (acc : List F × F) x ↦ (acc.1 ++ [acc.2 * x⁻¹], acc.2 * x)) ([], 1)).1
+
 /-- **A sum of inverses as one fraction**: `Σ 1/x_i = N/D` by `N ← N x + D`, `D ← D x`, from `(1, x_0)`. -/
 def fraction : List F → F × F
   | [] => (0, 1)

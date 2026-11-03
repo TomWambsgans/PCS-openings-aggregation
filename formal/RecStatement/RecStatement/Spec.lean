@@ -29,20 +29,17 @@ namespace RecStatement
 open LeanVM.Parameters UniStatement
 
 /-- `vanishing(x, e, s)`: `Z_{U_s}(x)`, by `z ↦ z² + e_j z` for `j < s`. -/
-def vanishing (x : K) (e : List K) (s : ℕ) : K :=
-  (List.range s).foldl (fun z j ↦ z * z + e.getD j 0 * z) x
+def vanishing (x : K) (e : List K) (s : ℕ) : K := vanishingF x e s
 
 /-- **`coset_constants(r, count)`**: `e_1 … e_count`, `e_s = Z_{U_{s−1}}(β_{r+s−1})`. -/
-def cosetConstants (r count : ℕ) : List K :=
-  (List.range count).foldl (fun e s ↦ e ++ [vanishing (beta.getD (r + s) 0) e s]) []
+def cosetConstants (r count : ℕ) : List K := cosetConstantsF (fun s ↦ beta.getD (r + s) 0) count
 
 /-- **`pair_constants(pair, r, e)`**: `Z_{U_s}(c_p)` and `Π_{j < s} e_j`, `c_p = ω_{first_row · 2^r + role}`. -/
 def pairConstants (p : Pair) (r : ℕ) (e : List K) : K × K :=
   (vanishing (point (p.firstRow * 2 ^ r + p.role)) e p.logRows, (e.take p.logRows).foldl (· * ·) 1)
 
 /-- **`normalised_constants(e)`**: `c_s = Π_{j < s} e_j / e_s`. -/
-def normalisedConstants (e : List K) : List K :=
-  (e.foldl (fun (acc : List K × K) x ↦ (acc.1 ++ [acc.2 * x⁻¹], acc.2 * x)) ([], 1)).1
+def normalisedConstants (e : List K) : List K := normalisedConstantsF e
 
 /-- **`subspace_coefficients(k)`** in `K` (`subspaceCoeffsF`). -/
 def subspaceCoefficients (k : ℕ) : List K := subspaceCoeffsF k

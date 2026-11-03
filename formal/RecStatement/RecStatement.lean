@@ -7,6 +7,7 @@ import RecStatement.Verifier
 import RecStatement.Calls
 import RecStatement.Security
 import RecStatement.Lemmas.Main
+import RecStatement.Lemmas.SpecLink
 
 /-!
 # RecStatement: π2's verifier, transcribed, and the recursive verifier's statements
@@ -102,3 +103,11 @@ The build fails if a headline definition or theorem uses an axiom beyond Lean's 
 /-- info: 'RecStatement.run_digitsScale' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecStatement.run_digitsScale
+
+/-- info: 'RecStatement.pairZ_eq_zHat' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.pairZ_eq_zHat
+
+/-- info: 'RecStatement.normConsts_of_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.normConsts_of_spec
