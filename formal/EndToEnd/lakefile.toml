@@ -218,3 +218,13 @@ name = "RecStatement"
 srcDir = "../RecStatement"
 globs = ["RecStatement", "RecStatement.+"]
 leanOptions = { warningAsError = true }
+
+# The recursive verifier's end theorems (`formal/RecCompose`): π2's part `RecStatement.RecKnowledgeSoundness2` from
+# π2's layers (the Fiat–Shamir layer, the openings, `RecPiop`'s rounds, `RecCircuit`'s corollary), its bound in bits,
+# and Part 1 ⇒ Part 2 (`RecKnowledgeSoundness`, `RecCompleteness` against `Lv42`'s relation, under the named
+# hypotheses about π1-rec3 at Keccak-f[1600]).
+[[lean_lib]]
+name = "RecCompose"
+srcDir = "../RecCompose"
+globs = ["RecCompose", "RecCompose.+"]
+leanOptions = { warningAsError = true }
