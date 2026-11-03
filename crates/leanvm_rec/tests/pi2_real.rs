@@ -213,6 +213,18 @@ fn real_end_to_end() {
             );
         }
         contract::parity(&inst, &recorded, &public_input, &stream);
+        // The transaction on the real calldata (its zero bytes are the proof's: π1-rec2's narrow coordinates).
+        let (ok, execution) = contract::verifying_execution(&inst, &recorded, &data, &block);
+        assert!(ok);
+        let zero = data.iter().filter(|&&b| b == 0).count();
+        println!(
+            "the real calldata: {} B ({zero} zero); execution {execution} (the verifying build); EIP-7623 c = 0 {} (floor {}, standard {}); EIP-7976 {}",
+            data.len(),
+            contract::transaction_of(&data, execution, 40),
+            40 * (data.len() - zero) + 10 * zero,
+            16 * (data.len() - zero) + 4 * zero + execution as usize,
+            contract::transaction_of(&data, execution, 64)
+        );
         println!(
             "end to end: π1's real proof → π2's proof ({} B of calldata) → the contract accepts, PCS_OPEN attesting its {} claims in {} calls; {} flipped bytes rejected",
             data.len(),

@@ -273,7 +273,7 @@ argument and the composition.
 Measured on h1 by `tests/pi2_real.rs` (`real_gas`, `real_end_to_end`), the real circuit of π1-rec's 1,000-signature
 proof; transaction gas without the 21,000 base, `c = 0`. Each row is one commit.
 
-| lever | calldata | execution (D16v) | EIP-7623 `c = 0` | D32v execution | what |
+| lever | calldata | execution (D16v) | EIP-7623 `c = 0` | D32v / π1-rec execution | what |
 |---|---:|---:|---:|---:|---|
 | before (9d1bf46, and the review's fixes) | 1,844 B | 39,674 | 73,550 | 71,097 | |
 | **2: π2's values 19 → 17**, one final inversion | 1,796 B | 35,787 | 71,630 | 61,659 | `ξ = κ(t) + βσ(t)` sent for `σ(t)`, `κ(t)`; `h(t)` not sent |
@@ -281,6 +281,24 @@ proof; transaction gas without the 21,000 base, `c = 0`. Each row is one commit.
 | **1a′: π1-rec2, the BLAKE2s circuit walked inside π2** | 1,292 B | 32,646 | **53,270** | | no claims on `A0`, `B0`: 51 → 30 elements, 5 → 3 calls |
 | **3b: `PCS_OPEN`'s inputs reuse the region** | 1,292 B | 31,103 | **51,727** | 58,014 (π1-rec) | π1-rec: 35,212 → 32,916 |
 | **3c: the zero checks' coset in closed form** | 1,292 B | 30,182 | **51,560** (floor) | 57,266 (π1-rec) | π1-rec: 32,916 → 32,174 |
+| **1c: π1-rec2's batch challenges narrow (160 bits)** | 1,292 B, 110 zero | 30,182 | **49,534** | | the real calldata; floor 48,380 |
+
+**Lever 1c: narrow batch challenges** (`FsShape::Rec2`, `Channel::sample_narrow`, `transcript::NARROW_BITS`; **π1's
+Fiat–Shamir shape changes**). The batching sumcheck's 27 challenges, the claims' point `r` that the contract passes to
+`PCS_OPEN` and so carries in calldata, are the hash's low 160 bits instead of 192 (limb 2 below `2^32`): each coordinate's
+24 calldata bytes start with four zeros, which EIP-7623 prices at 4 (standard) and 10 (floor) instead of 16 and 40. π1's
+verifier draws them with `sumcheck_drawn(.., narrow)`, its prover likewise (`prover::batch::prove`), the recorder as
+`record::Node::Narrow` (an `AND` with 20 bytes of ones in the contract), π2's circuit packs limb 2 from 32 digest bits.
+- **Soundness** (`review/leanvm_rec_params.py`, `pi1_rec2_rounds`): a round of degree 2 errs with probability
+  `2/2^160`; the 27 rounds, drawn after `C2`, over `C1`'s and `C2`'s lists (`2^24.3`): **130.0 bits**, now π1-rec2's
+  weakest round (`t`: 142.3). π1-rec2's PIOP: 130.0 bits after the union bounds; the openings 126.4 by a plain union.
+  Fewer bits would not hold 128: 152 bits give 122.
+- **Measured**: π1-rec2's real proof regenerated (4.84 s, 10.4 GB; stream keccak `f47eae2621c18da2…`); π2's circuit
+  15,879,232 positions (the packings slightly smaller); the real calldata has 110 zero bytes (108 of them the narrow
+  coordinates'), so EIP-7623 at `c = 0` is **49,534** (standard `16 B + execution` binds; the floor is 48,380). The
+  `real_gas` report prices a pseudo-random stream (4 zero bytes): 51,560.
+- **Not taken**: reading the coordinates as 20 bytes (432 gas at the standard price, a new read width in π2's verifier
+  and stream).
 
 **Lever 3c: the zero checks as one closed-form term.** π1's zero checks are ports of value 0 (13 on π1-rec, 14 on
 π1-rec2), each a fraction `1/(α + βτ_J)` of the public side. The circuit compiler now makes them the first ports,

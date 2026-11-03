@@ -420,6 +420,23 @@ pub fn run(inst: &Instance, recorded: &Recorded, calldata: &[u8], openings: &[Op
     )
 }
 
+/// The verifying contract's execution gas on `calldata` (at a claim price of 0), and whether it accepted.
+pub fn verifying_execution(inst: &Instance, recorded: &Recorded, calldata: &[u8], openings: &[Opening]) -> (bool, u64) {
+    let contract = compile_verifier(inst, recorded, false);
+    let outcome = call(&contract.code, &[], calldata, &block(inst, openings));
+    (outcome.output.as_deref() == Some(&word([1, 0, 0])[..]), outcome.execution)
+}
+
+/// Transaction gas without the 21,000 base for `calldata` and `execution` (claims at 0): EIP-7623 (`floor` 40, 10 a
+/// zero byte) or EIP-7976 (`floor` 64, 64 a zero byte), against the standard `16` a byte (`4` a zero byte).
+pub fn transaction_of(calldata: &[u8], execution: u64, floor: u64) -> u64 {
+    let zero = calldata.iter().filter(|&&b| b == 0).count() as u64;
+    let nonzero = calldata.len() as u64 - zero;
+    let standard = 16 * nonzero + 4 * zero + execution;
+    let floor_gas = floor * nonzero + if floor == 64 { 64 } else { floor / 4 } * zero;
+    standard.max(floor_gas)
+}
+
 /// One phase's share of a call.
 #[derive(Clone, Debug)]
 pub struct PhaseGas {

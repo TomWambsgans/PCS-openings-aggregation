@@ -342,7 +342,7 @@ pub const FLOCK_REC: Variant = Variant {
 pub const FLOCK_REC2: Variant = Variant {
     skip: 3,
     slices: Slices::TowerWalk,
-    fs: FsShape::Rec,
+    fs: FsShape::Rec2,
 };
 
 /// The twist field of the term that stands for the whole ring-switch weight `Φ(eq(p, ·))` on the main line: the

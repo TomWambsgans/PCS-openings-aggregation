@@ -873,3 +873,7 @@ in `PI2.md` §9.
    verifier). Execution 31,103 → 30,182; EIP-7623 `c = 0` 51,727 → 51,560 (the floor binds). The same commit adds the
    narrow-challenge plumbing (`Channel::sample_narrow`, `record::Node::Narrow`, `FsShape::Rec2`, the prover's batch),
    inert until item 7.
+7. **π1-rec2's batch challenges narrow** (**π1's Fiat–Shamir shape changes**: `FLOCK_REC2` takes `FsShape::Rec2`).
+   The batching sumcheck's challenges are the hash's low 160 bits, so the claims' 27 coordinates have four zero bytes
+   each in calldata. 130.0 bits after the lists (`review/leanvm_rec_params.py`). The vector regenerated. On the real
+   calldata (110 zero bytes): EIP-7623 `c = 0` 51,560 → **49,534** (the standard price binds; the floor is 48,380).
