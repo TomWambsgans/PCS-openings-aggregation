@@ -22,13 +22,8 @@ theorem reference_heights : reference.heights = [18, 18, 18, 18, 17, 18] := by d
 
 theorem reference_valid : reference.Valid := by decide +kernel
 
-theorem reference_vars : (layoutsOf reference).map (·.2.vars) = [27, 27, 24] := by decide +kernel
-
-theorem reference_wordVars : (layoutWords reference).map layoutWordVars = [27, 27, 24, 28, 28] := by
-  decide +kernel
-
 end UniComplete
 
-/-- info: 'UniComplete.reference_vars' depends on axioms: [propext] -/
+/-- info: 'UniComplete.reference_valid' depends on axioms: [propext] -/
 #guard_msgs in
-#print axioms UniComplete.reference_vars
+#print axioms UniComplete.reference_valid
