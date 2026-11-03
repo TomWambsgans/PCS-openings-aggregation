@@ -6,6 +6,7 @@
 
 use leanvm_flock_gas::evm::contract::measure_fragment;
 use leanvm_flock_gas::flock_min::{End, Slices, Variant, verify};
+use leanvm_flock_gas::transcript::FsShape;
 
 fn deep<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
     std::thread::Builder::new()
@@ -41,6 +42,7 @@ fn flock_levers() {
                 Variant {
                     skip: 6,
                     slices: Slices::Weighted,
+                    fs: FsShape::Main,
                 },
                 "(a') slices sent, target only; weight to a weighted claim",
             ),
@@ -48,6 +50,7 @@ fn flock_levers() {
                 Variant {
                     skip: 6,
                     slices: Slices::Claim,
+                    fs: FsShape::Main,
                 },
                 "(a) no slices: one bit-slice combination claim",
             ),
@@ -55,6 +58,7 @@ fn flock_levers() {
                 Variant {
                     skip: 5,
                     slices: Slices::Claim,
+                    fs: FsShape::Main,
                 },
                 "(a) + (c) skip 5",
             ),
@@ -62,6 +66,7 @@ fn flock_levers() {
                 Variant {
                     skip: 4,
                     slices: Slices::Claim,
+                    fs: FsShape::Main,
                 },
                 "(a) + (c) skip 4",
             ),
@@ -69,6 +74,7 @@ fn flock_levers() {
                 Variant {
                     skip: 3,
                     slices: Slices::Claim,
+                    fs: FsShape::Main,
                 },
                 "(a) + (c) skip 3",
             ),
@@ -76,6 +82,7 @@ fn flock_levers() {
                 Variant {
                     skip: 1,
                     slices: Slices::Claim,
+                    fs: FsShape::Main,
                 },
                 "(a) + (c) skip 1",
             ),
@@ -83,6 +90,7 @@ fn flock_levers() {
                 Variant {
                     skip: 0,
                     slices: Slices::Claim,
+                    fs: FsShape::Main,
                 },
                 "(a) + (c) no skip",
             ),
@@ -90,6 +98,7 @@ fn flock_levers() {
                 Variant {
                     skip: 3,
                     slices: Slices::Weighted,
+                    fs: FsShape::Main,
                 },
                 "(a') + (c) skip 3",
             ),
@@ -97,6 +106,7 @@ fn flock_levers() {
                 Variant {
                     skip: 0,
                     slices: Slices::Weighted,
+                    fs: FsShape::Main,
                 },
                 "(a') + (c) no skip",
             ),

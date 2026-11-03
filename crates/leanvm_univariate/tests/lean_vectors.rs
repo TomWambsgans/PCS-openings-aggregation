@@ -244,6 +244,8 @@ fn lean_real_vectors() {
                 "ext_b" => ("bitslice", Blake2s::Flock(FLOCK_BIT_SLICE)),
                 "leanvm_skip" => ("leanvm", Blake2s::Flock(FLOCK_LEANVM_SKIP)),
                 "omitted" => ("omitted", Blake2s::Omitted),
+                // π1-rec (SPEC-REC.md §1.4) has no Lean transcription: the Statement is the main line's shape.
+                "main_line_rec" => continue,
                 other => panic!("no configuration {other}"),
             };
             let shape = Shape {

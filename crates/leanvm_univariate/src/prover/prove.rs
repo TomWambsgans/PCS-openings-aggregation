@@ -11,7 +11,7 @@ use std::time::Instant;
 use fiat_shamir::merkle::Hash;
 use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::layout::{Form, OP_BLAKE2S, OP_JUMP, SEP_MEM, tables};
-use leanvm_flock_gas::transcript::{KeccakWriter, keccak_seed};
+use leanvm_flock_gas::transcript::{FsShape, KeccakWriter, keccak_seed, squares};
 use primitives::field::{F64, F192};
 
 use super::bus::{Bus, all_leaves, expected_root, heap};
@@ -243,8 +243,12 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     }
     writer.send_root(config.stand_in_roots.map_or_else(|| halves(&committed1.root), |r| r[0]));
 
-    // 2. The bus's and the constraints' challenges.
-    let alphas: Vec<F192> = (0..4).map(|_| from_v(writer.sample())).collect();
+    // 2. The bus's and the constraints' challenges; with π1-rec (`FsShape::Rec`, SPEC-REC.md §1.4) α is (c, c², c⁴,
+    // c⁸) of one challenge c, squared in E as the verifier squares it.
+    let alphas: Vec<F192> = match config.blake2s.fs() {
+        FsShape::Main => (0..4).map(|_| from_v(writer.sample())).collect(),
+        FsShape::Rec => squares(writer.sample(), 4).into_iter().map(from_v).collect(),
+    };
     let beta = from_v(writer.sample());
     let gamma = from_v(writer.sample());
 

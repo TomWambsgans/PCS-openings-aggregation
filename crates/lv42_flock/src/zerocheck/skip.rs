@@ -2,13 +2,16 @@
 // 42422001): the driver, its bit and table rounds and `send_round` are crates/flock/src/zerocheck.rs's (the table
 // rounds copied, the rest called), and the round-1 kernel follows crates/flock/src/zerocheck/
 // univariate_skip_optimized.rs (the fixed small and medium eq coordinates, the shift-reduce, the C part on S lifted
-// to Λ). New here: a univariate skip of any `k` in 3..=6, the round-1 kernel for it, and the bit passes' schedule.
+// to Λ). New here: a univariate skip of any `k` in 3..=6, the round-1 kernel for it, the bit passes' schedule, and the
+// eq point's sampled coordinates as successive squares of one (`EqPoint::Squares`, the univariate PIOP's π1-rec).
 // CREDIT: https://github.com/succinctlabs/flock (flock-core), MIT OR Apache-2.0. MIT OR Apache-2.0; see NOTICE.md.
 //! The zerocheck with a univariate skip of `k` variables, `3 ≤ k ≤ 6`: leanVM's protocol with `k` for its fixed 6
 //! (`leanvm_flock_gas::flock_min`'s `zerocheck` verifies it).
 //!
 //! - The eq point `r` on the `m - k` variables after the skip: leanVM's seven fixed coordinates (three small, four
-//!   medium), then `m - k - 7` sampled.
+//!   medium), then `m - k - 7` sampled ([`EqPoint::Sampled`], leanVM's), or the first of them sampled and each next
+//!   the square of the one before ([`EqPoint::Squares`]: π1-rec, `crates/leanvm_rec/SPEC-REC.md` §1.4, which
+//!   `leanvm_flock_gas::flock_min`'s `FsShape::Rec` verifies). The kernels take any point.
 //! - Round 1: `P(λ) = Σ_x eq(r, x) (â(λ, x) b̂(λ, x) + ĉ(λ, x))` on the coset `Λ = φ_8(2^k + i)`, `i < 2^k`, where
 //!   `â(·, x)` extends the `2^k` bits of group `x` from `S = φ_8(i)`; `P` vanishes on `S`.
 //! - Then `z`, `m - k` rounds of degree 3 (the low variable first, `G(0)` left to the verifier), `â`, `b̂`.
@@ -42,34 +45,67 @@ use super::{K_SKIP, N_INNER, PaddingSpec, ZerocheckClaim, send_round};
 /// The smallest skip this module proves: a group is a whole byte.
 pub const MIN_SKIP: usize = 3;
 
-/// The zerocheck with a skip of `k`: leanVM's own prover ([`super::prove_packed_padded`]) at `k = 6`, this module's
-/// otherwise.
+/// How the eq point's coordinates after the seven fixed ones are drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EqPoint {
+    /// One challenge each: leanVM's.
+    #[default]
+    Sampled,
+    /// The first a challenge `c`, the others `c², c⁴, …`, each the square of the one before (π1-rec).
+    Squares,
+}
+
+impl EqPoint {
+    /// The `count` coordinates, drawn from `ps` as `self` has it.
+    pub fn draw(self, ps: &mut ProverState, count: usize) -> Vec<F192> {
+        match self {
+            EqPoint::Sampled => ps.sample_vec(count),
+            EqPoint::Squares => {
+                let mut out: Vec<F192> = Vec::with_capacity(count);
+                if count > 0 {
+                    out.push(ps.sample());
+                }
+                while out.len() < count {
+                    let next = out[out.len() - 1].square();
+                    out.push(next);
+                }
+                out
+            }
+        }
+    }
+}
+
+/// The zerocheck with a skip of `k`: leanVM's own prover ([`super::prove_packed_padded`]) at `k = 6` with leanVM's
+/// point, this module's otherwise.
 pub fn prove_packed_padded_skip(
     a_packed: &[u8],
     b_packed: &[u8],
     c_packed: &[u8],
     m: usize,
     k: usize,
+    eq: EqPoint,
     padding: &PaddingSpec,
     ps: &mut ProverState,
 ) -> ZerocheckClaim {
-    if k == K_SKIP {
+    if k == K_SKIP && eq == EqPoint::Sampled {
         return super::prove_packed_padded(a_packed, b_packed, c_packed, m, padding, ps);
     }
-    prove_skip(a_packed, b_packed, c_packed, m, k, padding, ps)
+    prove_skip(a_packed, b_packed, c_packed, m, k, eq, padding, ps)
 }
 
 /// The last [`prove_skip`]'s stages and their seconds (round 1, each bit pass, the storing pass, the table rounds),
 /// for profiling.
 pub static STAGES: std::sync::Mutex<Vec<(String, f64)>> = std::sync::Mutex::new(Vec::new());
 
-/// This module's zerocheck with a skip of `k` (at `k = 6` too, where it writes what leanVM's does: a test of it).
+/// This module's zerocheck with a skip of `k` (at `k = 6` too, where with [`EqPoint::Sampled`] it writes what leanVM's
+/// does: a test of it), its eq point drawn as `eq` has it.
 pub fn prove_skip(
     a_packed: &[u8],
     b_packed: &[u8],
     c_packed: &[u8],
     m: usize,
     k: usize,
+    eq: EqPoint,
     padding: &PaddingSpec,
     ps: &mut ProverState,
 ) -> ZerocheckClaim {
@@ -79,11 +115,11 @@ pub fn prove_skip(
     assert!(a_packed.len() == bytes && b_packed.len() == bytes && c_packed.len() == bytes);
     let n_mlv = m - k;
 
-    // The eq point after the skip: the fixed coordinates, then the sampled ones.
+    // The eq point after the skip: the fixed coordinates, then the drawn ones.
     let r_rest: Vec<F192> = small_challenges()
         .into_iter()
         .chain(medium_challenges())
-        .chain(ps.sample_vec(m - k - N_INNER))
+        .chain(eq.draw(ps, m - k - N_INNER))
         .collect();
 
     let mut stages: Vec<(String, f64)> = Vec::new();

@@ -2,7 +2,8 @@
 // (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/verifier/src/flock.rs, whose zerocheck,
 // lincheck and ring switch this module re-states with the univariate skip's size and the slices' fate as
 // parameters. New here: the skip of any size `k ≤ 6`, the matrices' reduction over the skip's `k` row bits, and the
-// lincheck's slices left to one claim of their combination. MIT OR Apache-2.0; see NOTICE.md.
+// lincheck's slices left to one claim of their combination, and π1-rec's zerocheck point (`FsShape::Rec`: its
+// sampled coordinates successive squares of one). MIT OR Apache-2.0; see NOTICE.md.
 //! Flock's verifier, lever by lever (`crates/leanvm_univariate/SPEC.md`, the Flock section).
 //!
 //! **What the verifier needs of the 64 slices.** The lincheck ends on `s_i = ẑ(i, p)`, `i < 64` the packing bits
@@ -29,7 +30,7 @@ use crate::layout::{BLAKE2S_CONSTANT_COLUMN, BLAKE2S_R1CS_LOG_SIZE, FLOCK_NUM_LI
 use crate::matrices::MatrixClaim;
 use crate::multilinear::{dot, eq_eval, eq_kernel, multilinear_eval, poly_eval};
 use crate::scalar::{Scalar, enter};
-use crate::transcript::{Channel, sumcheck};
+use crate::transcript::{Channel, FsShape, sumcheck};
 
 /// The packing bits of `q_flock`: 64 bits a word.
 pub const PACKING: usize = 6;
@@ -54,12 +55,17 @@ pub struct Variant {
     /// The univariate skip's variables, `0..=6` (leanVM: 6). `0` is no skip: every round multilinear.
     pub skip: usize,
     pub slices: Slices,
+    /// The verifier's Fiat–Shamir shape: with [`FsShape::Rec`] (π1-rec, `crates/leanvm_rec/SPEC-REC.md` §1.4) the
+    /// zerocheck's eq point after its seven fixed coordinates is `c, c², c⁴, …` of one challenge `c`. It is also the
+    /// shape of the verifier Flock is part of (`crates/leanvm_univariate`'s `reduce`: the bus's `α`).
+    pub fs: FsShape,
 }
 
 impl Variant {
     pub const LEANVM: Self = Self {
         skip: PACKING,
         slices: Slices::InContract,
+        fs: FsShape::Main,
     };
 
     /// The scalars Flock reads at `log_n` variables: the skip's `2^k` values, the zerocheck's rounds and its two
@@ -97,15 +103,17 @@ pub enum End<S> {
 type Zerocheck<S> = (Option<S>, Vec<S>, [S; 3]);
 
 /// The zerocheck with a skip over `k` variables: `2^k` values on the skip's coset (none for `k = 0`), then
-/// `log_n - k` rounds; seven fixed coordinates first, as leanVM's.
+/// `log_n - k` rounds; seven fixed coordinates first, as leanVM's, then the others drawn as `fs` has it (one by one,
+/// or with [`FsShape::Rec`] the first drawn and each next the square of the one before).
 fn zerocheck<S: Scalar>(
     log_n: usize,
     k: usize,
+    fs: FsShape,
     transcript: &mut impl Channel<S>,
 ) -> Result<Zerocheck<S>, VerifierError> {
     let _phase = enter("flock zerocheck: skip round");
     let mut r: Vec<Option<S>> = fixed_challenges().map(|c| Some(S::constant(c))).into();
-    r.extend(transcript.samples(log_n - k - N_FIXED_CHALLENGES).into_iter().map(Some));
+    r.extend(fs.draw(transcript, log_n - k - N_FIXED_CHALLENGES).into_iter().map(Some));
     let (z_skip, claim) = if k > 0 {
         let coset = transcript.next_scalars(1 << k)?;
         let z = transcript.sample();
@@ -317,7 +325,7 @@ struct Front<S> {
 fn front<S: Scalar>(log_n: usize, variant: Variant, transcript: &mut impl Channel<S>) -> Result<Front<S>, VerifierError> {
     let k = variant.skip;
     assert!(k <= PACKING && log_n >= BLAKE2S_R1CS_LOG_SIZE + N_FIXED_CHALLENGES);
-    let (z_skip, chi, [v_a, v_b, v_c]) = zerocheck(log_n, k, transcript)?;
+    let (z_skip, chi, [v_a, v_b, v_c]) = zerocheck(log_n, k, variant.fs, transcript)?;
     // The row point: the skip, the packing bits left to rounds, the 8 slot bits, the instance bits.
     let (row_low, rest) = chi.split_at(PACKING - k);
     let (chi_in, chi_rest) = rest.split_at(FLOCK_NUM_LINCHECK_ROUNDS);
@@ -697,12 +705,12 @@ mod tests {
         }
     }
 
-    /// The stream lengths `Variant::scalars` states are what `verify` reads.
+    /// The stream lengths `Variant::scalars` states are what `verify` reads, in both Fiat–Shamir shapes.
     #[test]
     fn scalars_are_what_verify_reads() {
-        for skip in [0, 1, 3, 4, 5, 6] {
+        for (skip, fs) in [0, 1, 3, 4, 5, 6].into_iter().flat_map(|k| [(k, FsShape::Main), (k, FsShape::Rec)]) {
             for slices in [Slices::InContract, Slices::Weighted, Slices::Claim, Slices::Tower] {
-                let variant = Variant { skip, slices };
+                let variant = Variant { skip, slices, fs };
                 let log_n = 14 + 18;
                 let stream = vec![0x5au8; 24 * variant.scalars(log_n)];
                 let mut channel = KeccakChannel::new(

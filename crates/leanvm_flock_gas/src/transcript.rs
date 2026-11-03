@@ -1,7 +1,7 @@
 // Adapted from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, file crates/verifier/src/transcript.rs:
 // its `Proof`, `Transcript` (the BLAKE2s chain, used by the reference verifier) and `sumcheck`, the latter two behind a
-// `Channel` trait; new here: that trait, and the Keccak-256 chain the contract runs, adapted from this repository's
-// `crates/quotient/src/transcript.rs`. MIT OR Apache-2.0; see NOTICE.md.
+// `Channel` trait; new here: that trait, the Keccak-256 chain the contract runs, adapted from this repository's
+// `crates/quotient/src/transcript.rs`, and the Fiat–Shamir shapes (`FsShape`, π1-rec). MIT OR Apache-2.0; see NOTICE.md.
 //! Proof transport and Fiat-Shamir.
 //!
 //! Two chains, one protocol: the walk reads its scalars and draws its challenges through a [`Channel`].
@@ -48,6 +48,48 @@ pub trait Channel<S: Scalar> {
     fn next_integer(&mut self, _bytes: usize) -> Result<S, VerifierError> {
         unimplemented!("this channel reads no packed integers")
     }
+}
+
+/// The verifier's Fiat–Shamir shape: which runs of challenges are drawn one by one, and which derived
+/// (`crates/leanvm_rec/SPEC-REC.md` §1.4).
+///
+/// Two runs may be derived: Flock's zerocheck eq point after its seven fixed coordinates (`flock_min`), and the bus's
+/// tuple weights `α` (`crates/leanvm_univariate`'s `reduce`). Every other challenge is drawn in both shapes, and the
+/// stream, the claims and their points' structure are the same; only the challenges' values differ.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FsShape {
+    /// Every challenge drawn, one Keccak-256 each: leanVM's shape, the main line's.
+    #[default]
+    Main,
+    /// `π1-rec`: in each of the two runs, the first challenge `c` is drawn and the others are `c², c⁴, …`, each the
+    /// square of the one before (no hash). 24 fewer Keccak-256 calls on the main line (131 → 107 Keccak-f).
+    Rec,
+}
+
+impl FsShape {
+    /// A run of `count` challenges that `π1-rec` derives: drawn one by one ([`FsShape::Main`]), or the first drawn and
+    /// each next the square of the one before ([`FsShape::Rec`]).
+    pub fn draw<S: Scalar, C: Channel<S> + ?Sized>(self, channel: &mut C, count: usize) -> Vec<S> {
+        match self {
+            FsShape::Main => channel.samples(count),
+            FsShape::Rec if count == 0 => Vec::new(),
+            FsShape::Rec => squares(channel.sample(), count),
+        }
+    }
+}
+
+/// `first, first², first⁴, …`: `count` terms, each the square of the one before (no square past the last, so that a
+/// recorded graph holds exactly the `count - 1` squarings).
+pub fn squares<S: Scalar>(first: S, count: usize) -> Vec<S> {
+    let mut out = Vec::with_capacity(count);
+    if count > 0 {
+        out.push(first);
+    }
+    while out.len() < count {
+        let next = out[out.len() - 1].square();
+        out.push(next);
+    }
+    out
 }
 
 /// The scalar stream, and the Merkle openings.

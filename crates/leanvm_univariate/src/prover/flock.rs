@@ -1,7 +1,8 @@
 // Part of this repository. The zerocheck, lincheck and slices are leanVM 42422001's Flock prover (`crates/lv42_flock`,
 // its `Blake2sSetup::prove_reduction_precomputed`, unchanged, at leanVM's skip of 6; `prove_reduction_skip`, this
 // repository's, below), on its own witness buffers (dumped by `dump/trace_dump.rs`); the matrices' reduction follows
-// `leanvm_flock_gas::flock_min`'s verifier (its `sliced` is that module's test's). MIT OR Apache-2.0; see NOTICE.md.
+// `leanvm_flock_gas::flock_min`'s verifier (its `sliced` is that module's test's). With π1-rec (`FsShape::Rec`) the
+// zerocheck's eq point is the skip module's, as squares. MIT OR Apache-2.0; see NOTICE.md.
 //! Flock's prover (SPEC.md §7), behind one call ([`prove`]): the zerocheck (a skip of 3 to 6), lincheck and 64
 //! slices, written to the contract's Keccak-256 chain through [`Chain`]; then the matrices' reduction to `A0`, `B0`
 //! claims (`k + 6` rounds and `a`, `b`) and the ring map's challenges, as `flock_min::verify` reads them; or, on the
@@ -10,7 +11,9 @@
 //!
 //! At a skip of 6 (`FLOCK_LEANVM_SKIP`) the zerocheck is leanVM's own; below (the main line's 3, `FLOCK_MAIN`), it is
 //! `lv42_flock::zerocheck::skip`'s. The ring map's order (`Slices::Tower` or leanVM's) is the verifier's business:
-//! the prover only draws its six challenges.
+//! the prover only draws its six challenges. With π1-rec (`FLOCK_REC`, the variant's `FsShape::Rec`) the zerocheck's
+//! eq coordinates after the seven fixed ones are `c, c², c⁴, …` of one challenge (`EqPoint::Squares`), at any skip
+//! the skip module's.
 
 use std::path::Path;
 
@@ -20,7 +23,8 @@ use leanvm_flock_gas::flock_min::{PACKING, Slices, Variant};
 use leanvm_flock_gas::layout::{BLAKE2S_R1CS_LOG_SIZE, FLOCK_NUM_LINCHECK_ROUNDS, K_BITS};
 use leanvm_flock_gas::matrices::matrix_values;
 use leanvm_flock_gas::multilinear::eq_kernel;
-use leanvm_flock_gas::transcript::KeccakWriter;
+use leanvm_flock_gas::transcript::{FsShape, KeccakWriter};
+use lv42_flock::zerocheck::skip::EqPoint;
 
 /// The ring map's challenges (leanVM's `RING_MAP_SHIFTS`, six).
 const RING_MAP_CHALLENGES: usize = 6;
@@ -286,13 +290,21 @@ pub fn prove(
         writer: &mut *writer,
         samples: Vec::new(),
     };
-    // leanVM's own prover at a skip of 6; the skip module's zerocheck and the lincheck at its row weights below.
+    // leanVM's own prover at a skip of 6 (with leanVM's eq point); the skip module's zerocheck and the lincheck at its
+    // row weights otherwise.
+    let eq = match variant.fs {
+        FsShape::Main => EqPoint::Sampled,
+        FsShape::Rec => EqPoint::Squares,
+    };
     let started = std::time::Instant::now();
-    let claim = setup.prove_reduction_skip(k, &witness.z, &witness.a, &witness.b, &witness.z_lincheck, &mut chain);
+    let claim = setup.prove_reduction_skip(k, eq, &witness.z, &witness.a, &witness.b, &witness.z_lincheck, &mut chain);
     let samples = chain.samples;
-    // The challenges, as the verifier draws them: the zerocheck's sampled eq coordinates, the skip's point, its
-    // rounds', the lincheck's batching and rounds'.
-    let n_r = log_n - k - FIXED;
+    // The challenges, as the verifier draws them: the zerocheck's sampled eq coordinates (with π1-rec only the first,
+    // the others its squares), the skip's point, its rounds', the lincheck's batching and rounds'.
+    let n_r = match eq {
+        EqPoint::Sampled => log_n - k - FIXED,
+        EqPoint::Squares => usize::from(log_n > k + FIXED),
+    };
     let rounds = log_n - k;
     if samples.len() != n_r + 1 + rounds + 1 + FLOCK_NUM_LINCHECK_ROUNDS {
         return Err(format!("Flock's prover drew {} challenges", samples.len()));
