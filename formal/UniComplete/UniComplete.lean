@@ -24,3 +24,4 @@ import UniComplete.FlockProverTower
 import UniComplete.FlockProverRing
 import UniComplete.FlockProverMain
 import UniComplete.FlockProverRounds
+import UniComplete.FlockProverSumBasic
