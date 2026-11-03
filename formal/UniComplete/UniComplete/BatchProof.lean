@@ -296,6 +296,15 @@ theorem claimsOf_values (combined : List (Commitment × Combined)) (stackLayouts
   unfold claimsOf tableEval
   simp [List.map_map, Function.comp_def, Array.toList_map]
 
+/-- **A commitment's layout is aligned** when every listed layout is (`StackLayout.new`'s are, `aligned_new`; the
+default, for an unlisted commitment, has no block). -/
+theorem aligned_layoutIn (stackLayouts : List (Commitment × StackLayout)) (h : ∀ x ∈ stackLayouts, Aligned x.2)
+    (c : Commitment) : Aligned (layoutIn stackLayouts c) := by
+  unfold layoutIn
+  cases hf : stackLayouts.find? (·.1 == c) with
+  | none => intro _ _ _ _ hb; exact absurd hb (List.not_mem_nil)
+  | some x => exact h x (List.mem_of_find?_eq_some hf)
+
 /-! ## The collected value is zero -/
 
 /-- **The honest batch's hypotheses**: every combined claim holds of its stack, is well formed for its aligned
@@ -391,4 +400,195 @@ theorem collectedAt_eq_zero (combined : List (Commitment × Combined))
     ring_nf
     simp [two_eq_zero_E']
 
+/-! ## The synchronisation -/
+
+/-- **Two scalars read against two sent.** -/
+theorem syncs_two_scalars {γ δ : Type} (x y : E) (f : E → E → ChanM Id γ) (g : WrM Id δ) (w : Wr) (c : γ)
+    (zs : List E) (h : Syncs (f x y) g (w.append ([x, y].flatMap scalarWire)) c zs) :
+    Syncs (nextScalar (m := Id) >>= fun a ↦ nextScalar (m := Id) >>= fun b ↦ f a b)
+      (sendScalars (m := Id) [x, y] >>= fun _ ↦ g) w c zs := by
+  have hR : Reads (nextScalar (m := Id) >>= fun a ↦ nextScalar (m := Id) >>= fun b ↦ Pure.pure (a, b))
+      ([x, y].flatMap scalarWire) (x, y) [] :=
+    Reads.congr ((nextScalar_reads x).bind ((nextScalar_reads y).bind_pure (f := fun b ↦ (x, b)))) (by simp) rfl
+      (by simp)
+  have hab := (Steps.readWrite hR (sendScalars_writes [x, y] w)).syncs
+  have := Syncs.bind (f := fun ab ↦ f ab.1 ab.2) (g := fun _ ↦ g) hab h
+  refine Syncs.congr_v (Syncs.congr this rfl (by simp)) ?_
+  simp [bind_assoc]
+
+/-- **The last step**: the verifier collects `x` and returns, the prover returns. -/
+theorem syncs_requireZero_last {α β : Type} (x : E) (a : α) (b : β) (w : Wr) :
+    Syncs (requireZero (m := Id) x >>= fun _ ↦ Pure.pure a) (Pure.pure b : WrM Id β) w a [x] := by
+  have h := Syncs.bind (f := fun _ ↦ Pure.pure a) (g := fun _ ↦ (Pure.pure b : WrM Id β))
+    (syncs_requireZero x w) (syncs_pure a b _)
+  refine Syncs.congr_p (Syncs.congr h rfl (by simp)) ?_
+  rw [pure_bind]
+
+/-- **The prover's output** with Flock's matrices pending: its point claims at its challenges, and the matrices'
+claim at `a`, `b` the extensions of `A0`, `B0` at the claim's point. -/
+theorem batchProver_run_some (H : List UInt8 → Digest) (combined : List (Commitment × Combined))
+    (stackLayouts : List (Commitment × StackLayout)) (stackOf : Commitment → Array K) (ringMap : Option (List E))
+    (tables : Option PendingTables) (p : Flock.Pending) (fp : List E) (w : Wr) :
+    ((batchProver (m := Id) (Pure.pure ∘ H) combined stackLayouts stackOf ringMap tables (some (p, fp))).run w).1 =
+      (claimsOf combined stackLayouts stackOf (loopChallenges H (Wr.sampled H w).1 (batchVars stackLayouts) 0
+          (batchInit combined stackLayouts stackOf ringMap tables) (Wr.sampled H w).2),
+        some (p.matrixClaim (loopChallenges H (Wr.sampled H w).1 (batchVars stackLayouts) 0
+            (batchInit combined stackLayouts stackOf ringMap tables) (Wr.sampled H w).2)
+          (stackEval (flockMatrixStack true) (p.matrixClaim (loopChallenges H (Wr.sampled H w).1
+            (batchVars stackLayouts) 0 (batchInit combined stackLayouts stackOf ringMap tables)
+              (Wr.sampled H w).2) 0 0).point)
+          (stackEval (flockMatrixStack false) (p.matrixClaim (loopChallenges H (Wr.sampled H w).1
+            (batchVars stackLayouts) 0 (batchInit combined stackLayouts stackOf ringMap tables)
+              (Wr.sampled H w).2) 0 0).point))) := by
+  unfold batchProver
+  rw [wr_run_bind, sampleW_run]
+  dsimp only
+  rw [wr_run_bind, batchRounds_run H _ _ _ rfl]
+  rfl
+
+/-- **The prover's output** without Flock's matrices: its point claims at its challenges. -/
+theorem batchProver_run_none (H : List UInt8 → Digest) (combined : List (Commitment × Combined))
+    (stackLayouts : List (Commitment × StackLayout)) (stackOf : Commitment → Array K) (ringMap : Option (List E))
+    (tables : Option PendingTables) (w : Wr) :
+    ((batchProver (m := Id) (Pure.pure ∘ H) combined stackLayouts stackOf ringMap tables none).run w).1 =
+      (claimsOf combined stackLayouts stackOf (loopChallenges H (Wr.sampled H w).1 (batchVars stackLayouts) 0
+          (batchInit combined stackLayouts stackOf ringMap tables) (Wr.sampled H w).2), none) := by
+  unfold batchProver
+  rw [wr_run_bind, sampleW_run]
+  dsimp only
+  rw [wr_run_bind, batchRounds_run H _ _ _ rfl]
+  rfl
+
+/-- The verifier's openings are the prover's point claims. -/
+theorem sumFold_openings (combined : List (Commitment × Combined)) (stackLayouts : List (Commitment × StackLayout))
+    (stackOf : Commitment → Array K) (ringMap : Option (List E)) (lambda : E) (vars : ℕ) (rs : List E) :
+    (sumFold combined stackLayouts ringMap lambda vars rs
+        ((claimsOf combined stackLayouts stackOf rs).map (·.2.2))).2.2.1.toList =
+      (claimsOf combined stackLayouts stackOf rs).map pointOpening := by
+  rw [sumFold_eq]
+  dsimp only
+  rw [claimsOf_values, zip_map_self, List.map_map]
+  simp only [claimsOf, List.map_map]
+  refine List.map_congr_left fun x _ ↦ ?_
+  simp [pointOpening, tableEval, Array.toList_map]
+
+theorem batchSyncs_some (H : List UInt8 → Digest) (combined : List (Commitment × Combined))
+    (stackLayouts : List (Commitment × StackLayout)) (stackOf : Commitment → Array K) (ringMap : Option (List E))
+    (tables : Option PendingTables) (p : Flock.Pending) (fp : List E) (hp : p.hasSlices = true) :
+    BatchSyncs H combined stackLayouts stackOf ringMap tables (some (p, fp))
+      (batchTerminal H combined stackLayouts stackOf ringMap tables (some (p, fp))) := by
+  intro w
+  rw [batchProver_run_some]
+  unfold batchH batchProver
+  refine Syncs.bind (syncs_sample H w) ?_
+  rw [sampleW_run]
+  generalize hlam : (Wr.sampled H w).1 = lam
+  generalize hw1 : (Wr.sampled H w).2 = w1
+  dsimp only
+  refine Syncs.bind (syncs_sumcheck H lam _ (batchVars stackLayouts)
+    (batchInit combined stackLayouts stackOf ringMap tables) w1) ?_
+  rw [batchRounds_run H _ _ _ rfl]
+  generalize hrs : loopChallenges H lam (batchVars stackLayouts) 0
+    (batchInit combined stackLayouts stackOf ringMap tables) w1 = rs
+  generalize hw2 : ((batchRounds (m := Id) (Pure.pure ∘ H) lam (batchVars stackLayouts)
+    (batchInit combined stackLayouts stackOf ringMap tables)).run w1).2 = w2
+  dsimp only
+  refine Syncs.bind (Syncs.congr_v (syncs_scalars _ _) (by simp)) ?_
+  simp only [pure_bind]
+  refine syncs_two_scalars _ _ _ _ _ _ _ ?_
+  simp only [hp, ite_true]
+  refine Syncs.congr (syncs_requireZero_last _ _ _ _) ?_ ?_
+  · refine Prod.ext ?_ rfl
+    exact sumFold_openings combined stackLayouts stackOf ringMap lam (batchVars stackLayouts) rs
+  · unfold batchTerminal
+    rw [hlam, hw1, hrs]
+    rfl
+
+theorem batchSyncs_none (H : List UInt8 → Digest) (combined : List (Commitment × Combined))
+    (stackLayouts : List (Commitment × StackLayout)) (stackOf : Commitment → Array K) (ringMap : Option (List E))
+    (tables : Option PendingTables) :
+    BatchSyncs H combined stackLayouts stackOf ringMap tables none
+      (batchTerminal H combined stackLayouts stackOf ringMap tables none) := by
+  intro w
+  rw [batchProver_run_none]
+  unfold batchH batchProver
+  refine Syncs.bind (syncs_sample H w) ?_
+  rw [sampleW_run]
+  generalize hlam : (Wr.sampled H w).1 = lam
+  generalize hw1 : (Wr.sampled H w).2 = w1
+  dsimp only
+  refine Syncs.bind (syncs_sumcheck H lam _ (batchVars stackLayouts)
+    (batchInit combined stackLayouts stackOf ringMap tables) w1) ?_
+  rw [batchRounds_run H _ _ _ rfl]
+  generalize hrs : loopChallenges H lam (batchVars stackLayouts) 0
+    (batchInit combined stackLayouts stackOf ringMap tables) w1 = rs
+  generalize hw2 : ((batchRounds (m := Id) (Pure.pure ∘ H) lam (batchVars stackLayouts)
+    (batchInit combined stackLayouts stackOf ringMap tables)).run w1).2 = w2
+  dsimp only
+  refine Syncs.bind (Syncs.congr_v (syncs_scalars _ _) (by simp)) ?_
+  simp only [pure_bind]
+  refine Syncs.congr (syncs_requireZero_last _ _ _ _) ?_ ?_
+  · refine Prod.ext ?_ rfl
+    exact sumFold_openings combined stackLayouts stackOf ringMap lam (batchVars stackLayouts) rs
+  · unfold batchTerminal
+    rw [hlam, hw1, hrs]
+    rfl
+
+/-- **`batch` reads the honest batching sumcheck** (`BatchSyncs`): with Flock's matrices pending (their slices sent)
+or not, from any writer, the verifier returns the prover's point claims and matrices' claim and collects
+`batchTerminal` at that writer. -/
+theorem batchSyncs (H : List UInt8 → Digest) (combined : List (Commitment × Combined))
+    (stackLayouts : List (Commitment × StackLayout)) (stackOf : Commitment → Array K) (ringMap : Option (List E))
+    (tables : Option PendingTables) (pending : Option (Flock.Pending × List E))
+    (hslices : ∀ p fp, pending = some (p, fp) → p.hasSlices = true) :
+    BatchSyncs H combined stackLayouts stackOf ringMap tables pending
+      (batchTerminal H combined stackLayouts stackOf ringMap tables pending) := by
+  rcases pending with _ | ⟨p, fp⟩
+  · exact batchSyncs_none H combined stackLayouts stackOf ringMap tables
+  · exact batchSyncs_some H combined stackLayouts stackOf ringMap tables p fp (hslices p fp rfl)
+
+/-- **The collected value is zero** at every writer, for the honest batch. -/
+theorem batchTerminal_eq_zero (H : List UInt8 → Digest) (combined : List (Commitment × Combined))
+    (stackLayouts : List (Commitment × StackLayout)) (stackOf : Commitment → Array K) (ringMap : Option (List E))
+    (tables : Option PendingTables) (pending : Option (Flock.Pending × List E))
+    (h : BatchHolds combined stackLayouts stackOf ringMap tables pending) (w : Wr) :
+    batchTerminal H combined stackLayouts stackOf ringMap tables pending w = 0 :=
+  collectedAt_eq_zero combined stackLayouts stackOf ringMap tables pending h _ _ (loopChallenges_length H _ _ _ _ _)
+
+/-- **`batch` accepts the honest batching sumcheck**: the verifier returns the prover's point claims and matrices'
+claim, and collects zero (`BatchSyncs` at the zero terminal), for the honest batch (`BatchHolds`: every combined
+claim holds and is well formed on its aligned layout; Flock's matrices pending with their slices, their shape,
+`PendingSumHolds`, `PendingTerminalHolds`; or neither pending nor tables). -/
+theorem batchSyncs_honest (H : List UInt8 → Digest) (combined : List (Commitment × Combined))
+    (stackLayouts : List (Commitment × StackLayout)) (stackOf : Commitment → Array K) (ringMap : Option (List E))
+    (tables : Option PendingTables) (pending : Option (Flock.Pending × List E))
+    (h : BatchHolds combined stackLayouts stackOf ringMap tables pending) :
+    BatchSyncs H combined stackLayouts stackOf ringMap tables pending (fun _ ↦ 0) := by
+  intro w
+  have hslices : ∀ p fp, pending = some (p, fp) → p.hasSlices = true := by
+    intro p fp hpend
+    rcases h.flock with ⟨h1, -⟩ | ⟨p', fp', t, h1, -, hs, -⟩
+    · rw [h1] at hpend; exact absurd hpend (by simp)
+    · rw [h1] at hpend
+      obtain ⟨rfl, -⟩ := Prod.mk.inj (Option.some.inj hpend)
+      exact hs
+  have := batchSyncs H combined stackLayouts stackOf ringMap tables pending hslices w
+  rwa [batchTerminal_eq_zero H combined stackLayouts stackOf ringMap tables pending h w] at this
+
 end UniComplete
+
+/-- info: 'UniComplete.batchSyncs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.batchSyncs
+
+/-- info: 'UniComplete.batchTerminal_eq_zero' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.batchTerminal_eq_zero
+
+/-- info: 'UniComplete.batchSyncs_honest' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.batchSyncs_honest
+
+/-- info: 'UniComplete.collectedAt_eq_zero' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.collectedAt_eq_zero

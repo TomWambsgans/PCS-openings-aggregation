@@ -162,3 +162,7 @@ theorem syncs_sumcheck (lambda target : E) (vars : ℕ) (st : BatchState) (w : W
   exact Syncs.congr (Syncs.bind (syncs_loop H lambda vars 0 #[] target st w) (syncs_pure _ _ _)) (by simp) rfl
 
 end UniComplete
+
+/-- info: 'UniComplete.syncs_sumcheck' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.syncs_sumcheck
