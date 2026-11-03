@@ -15,7 +15,8 @@ import UniComplete.DomainBasis
 `Pi2Layers.extraction` (`Pi2Extraction`: if the contract accepts, a candidate of `W`'s committed word satisfies the
 compiled circuit's relation, but with probability `ε2 Q`) refined into the layers that give it:
 
-* **`Pi2FsLayer D`** (the Fiat–Shamir layer and the openings; **open, `lean-rec-compose`**): for every round-by-round
+* **`Pi2FsLayer D`** (the Fiat–Shamir layer and the openings; **proved at the real deployment**, `pi2FsLayer_real`,
+  `FsClosed.lean`): for every round-by-round
   sound protocol on π2's rounds (`RecPiop.pi2Rounds 4`: `W`'s root then `α, β, γ`; `Q`'s root then `t`; the fold values
   and `ξ` then `ρ`), its errors times the lists of the roots before them at most `e`, whose state before round `0` is a
   property `P` of `W`'s candidate and whose last state follows from π2's checks (`all ≠ 0`) with the four claims true on
@@ -149,13 +150,13 @@ noncomputable def pi2BoundE (e : ℝ≥0∞) (Q : ℕ) : ℝ≥0∞ :=
 
 theorem pi2BoundE_roundErr (Q : ℕ) : pi2BoundE pi2RoundErr Q = pi2Bound Q := rfl
 
-/-- **The Fiat–Shamir layer for π2** (open, `lean-rec-compose`): for every family, over the setup's roots, of
+/-- **The Fiat–Shamir layer for π2** (proved at the real deployment: `pi2FsLayer_real`, `FsClosed.lean`): for every family, over the setup's roots, of
 round-by-round sound protocols on π2's rounds, their errors times the lists of the roots before them at most `e`, whose
 state before round `0` is a property `P` of `W`'s candidate and whose state after `ρ` follows from π2's check
 (`all ≠ 0`, the contract's one) with the four claims true on the candidates, the contract accepts while no candidate of
 `W`'s committed word (π2's extractor's list) has `P` with probability at most `pi2BoundE e Q`.
 
-Its proof (to do, on this branch) is `UniSound.fsLayer128_holds`'s for π2's transcript: the chain
+Its proof (`FsDefs.lean` … `FsClosed.lean`) is `UniSound.fsLayer128_holds`'s for π2's transcript: the chain
 `Compose.ChainSpecU` over π2's encoding (the 24-byte scalars, the roots' reversed halves, the public data as round
 `0`'s bytes before `W`'s root), `Compose.knowledgeSoundness_listChainU_closed128`, π2's three openings as `WhirOp`s on
 π2's public layouts (`W` `2^24`, the setup `2^25`, `Q` `2^28`) bounded once (`Compose.prEvent_doomF_le_large`), the
