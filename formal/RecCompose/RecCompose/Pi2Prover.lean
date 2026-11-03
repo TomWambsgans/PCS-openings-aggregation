@@ -186,15 +186,15 @@ def qValues (α β γ : E) : Array E :=
 def qNovel (α β γ : E) : Array E :=
   PcsQuotient.Domain.coefficients (G.logN + 2) (cosetOffset G.logN) (qValues G w α β γ)
 
+/-- Limb `l` of an element of `E` (`0` past the third). -/
+def limbN (x : E) (l : ℕ) : K := if h : l < 3 then x.limb ⟨l, h⟩ else 0
+
 /-- **`Q`'s table**: entry `pd + 2^(m+2)(kind + 2 limb)` is limb `limb` of `h`'s (kind `0`, `pd < N`) or `q`'s (kind `1`)
 novel coefficient `pd` (`chunk = 8 limb + 4 kind + digit`). -/
 def qEntry (m : ℕ) (hN qN : Array E) (i : ℕ) : K :=
   let pd := i % 2 ^ (m + 2)
   let kl := i / 2 ^ (m + 2)
-  if h : kl / 2 < 3 then
-    if kl % 2 = 0 then (if pd < 2 ^ m then (hN.getD pd 0).limb ⟨kl / 2, h⟩ else 0)
-    else (qN.getD pd 0).limb ⟨kl / 2, h⟩
-  else 0
+  if kl % 2 = 0 then (if pd < 2 ^ m then limbN (hN.getD pd 0) (kl / 2) else 0) else limbN (qN.getD pd 0) (kl / 2)
 
 /-- **The fold values at `t`** (`folds`): `a_k = Σ_j eq(j; w_r(t), …, w_{m−1}(t)) T_{k + 2^r j}`, `k < 2^r`. -/
 def foldValues (m r : ℕ) (T : Array K) (t : E) : List E :=
