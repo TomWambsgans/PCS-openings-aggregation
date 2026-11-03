@@ -13,3 +13,4 @@ import UniComplete.Setup
 import UniComplete.Whir
 import UniComplete.Domain
 import UniComplete.AlgCBasis
+import UniComplete.AlgCChunks
