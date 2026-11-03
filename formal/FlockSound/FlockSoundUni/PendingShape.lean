@@ -62,7 +62,7 @@ theorem uniKnowledgeSoundness_flock {D : Deployment} (κ : ℕ) (hκ : D.shape.h
     (B : BusModel D κ) (J : UniIdsRest D (flockSoundInstance κ) B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
     (hbatch : BatchIsVerifiers D (flockSoundInstance κ) (UniIds.ofBus (flockSoundInstance κ) B J))
-    (hW : WeightMle D (flockSoundInstance κ) J.zb) (hcount : CountsZero D (flockSoundInstance κ))
+    (hW : WeightMle D (flockSoundInstance κ) J.zb)
     (hsmall : LayoutVarsSmall D)
     (hFs : FsLayer D (flockSoundInstance κ) J.nV J.V (uniCodeAt D (flockSoundInstance κ) hκ J.nV J.V hnV hV))
     (hB : 4 * B.N + B.ncv ≤ 2 ^ 32)
@@ -72,7 +72,7 @@ theorem uniKnowledgeSoundness_flock {D : Deployment} (κ : ℕ) (hκ : D.shape.h
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
   uniKnowledgeSoundness_code (flockSoundInstance κ) hκ B J hnV hV hbatch hW hsmall
-    (flockPendingShaped κ) hcount hFs hB hFl hdeg hrel
+    (flockPendingShaped κ) hFs hB hFl hdeg hrel
 
 end FlockSound.Uni
 

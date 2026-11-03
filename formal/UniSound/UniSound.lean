@@ -26,6 +26,7 @@ import UniSound.CodeBase
 import UniSound.CodeTables
 import UniSound.CodeBatch
 import UniSound.CodeShape
+import UniSound.CodeZeros
 import UniSound.CodeLink
 import UniSound.FinalLink
 import UniSound.FsSetup
@@ -51,8 +52,9 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `Bus.lean` | Round `0` from `formal/Heap`: the bus model (`BusModel`), **`BusModel.mainSound`** (`4N/|E|` and the constraints' batching), `UniIds.ofBus`. |
 | `Mle.lean` | The sumcheck's folds are the claims' multilinear extensions (`foldAll_eq_sum`, `mleStk_eq_foldAll`): glue for `UniFinal`; the pending term's target `PendingTerminalLink`. |
 | `CodeBase.lean`, `CodeTables.lean`, `CodeBatch.lean`, `CodeShape.lean` | The code-level link's layers: fixed reads, loops of fixed reads, observational equivalence (`obsOf`), the row counts, `tablePart` as `tableReads` reads, `batch` as its rounds (`batch_eq`), `C2`'s columns the shape's (`c2Columns_run`). |
-| `CodeLink.lean` | **`uniCode`**: `UniCode D hFlock valsCount (varsOf (layoutsOf D.shape))`, `reduceWith` on the main line as the chain program `mainProg` (`link_obs`), Flock's segment by `hFlock.link`. |
-| `FinalLink.lean` | **`uniFinal`**: `UniFinal` for the identity model whose batch is the verifier's (`batchProd`, `batchTargetOf`), under `WeightMle`, `LayoutVarsSmall`, `FlockPendingShaped`; the batch's algebra `terminal_sumState`; **`uniKnowledgeSoundness_code`**, the end theorem with both links in place. |
+| `CodeZeros.lean` | The zeros a run collects are seen only by their verdict (`Obl`, `obl_run`: no chain program reads them; `obsOf_requireZeros_of`: a zero that vanishes where the zeros before do is invisible); a zero in round `0` moved before the root (`ChainProg.withHead`, `obsEq_withHead`); the row counts' checks (`readCounts_spec`: a function of the channel, its zeros vanishing only for counts at most `2^r`). |
+| `CodeLink.lean` | **`uniCode`**: `UniCode D hFlock valsCount (varsOf (layoutsOf D.shape))`, `reduceWith` on the main line as the chain program `mainProg` (`link_obs`), Flock's segment by `hFlock.link`; `mainProg` repeats `readCounts`' range checks as round `0`'s zero (`countsZeroOf`), invisible to the verdict (`link_counts`). |
+| `FinalLink.lean` | **`uniFinal`**: `UniFinal` for the identity model whose batch is the verifier's (`BatchIsVerifiers`), under `WeightMle`, `LayoutVarsSmall`, `FlockPendingShaped`; the counts in range from round `0`'s zero (`countsZero`); the batch's algebra `terminal_sumState`; **`uniKnowledgeSoundness_code`**, the end theorem with both links in place. |
 | `PendingLink.lean` | **`pendingTerminalLink`**: the batch's `λ³` product at its point is the pending reduction's terminal times the zero extension (`multilinear_eval` as the extension, substitution into `Â0`, `B̂0`). |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
 | `FsChain.lean` | The univariate transcript as `Compose.ChainSpecU` (`uniSpec`: 24-byte scalars, the root's reversed halves, the seed's 16-byte tag, the row counts before `C1`'s root), the PIOP lifted to the chain's statement (`liftPiop`), the proof the chain reads (`UPf`, `uView`). |
@@ -104,7 +106,10 @@ the bound in bits (`uniBound_le_bits`).
    coincidence in `t`: `combine` then lengthens the point and `weightAt` reads the slot's row on
    `8 + |point|` coordinates, overlapping the selector's), `LayoutVarsSmall` (fewer than `256`
    variables per stack, the layout word's byte), `FlockPendingShaped` (discharged for
-   `flockSoundInstance`: `FlockSoundUni/PendingShape.lean`'s `flockPendingShaped`). The `λ³` term
+   `flockSoundInstance`: `FlockSoundUni/PendingShape.lean`'s `flockPendingShaped`). The row counts
+   are in range on every transcript the chain program accepts (`countsZero`: `mainProg` repeats
+   `readCounts`' range checks as round `0`'s zero, which `link_counts` shows changes no verdict, so the
+   identity model, degenerate out of range, is never read there). The `λ³` term
    is `pendingTerminalLink` (`PendingLink.lean`). `uniKnowledgeSoundness_code` (and, with Flock's
    instance, `FlockSound.Uni.uniKnowledgeSoundness_flock`) is the end theorem with both in place.
 6. `hFs : FsLayer …` — the Fiat–Shamir layer, **proved** (`fsLayer_of_gameV`, `FsGame.lean`):
@@ -178,6 +183,26 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.link_obs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.link_obs
+
+/-- info: 'UniSound.link_counts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.link_counts
+
+/-- info: 'UniSound.countsZero' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.countsZero
+
+/-- info: 'UniSound.readCounts_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.readCounts_spec
+
+/-- info: 'UniSound.obsEq_withHead' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.obsEq_withHead
+
+/-- info: 'UniSound.obl_run' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.obl_run
 
 /-- info: 'UniSound.uniCode' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

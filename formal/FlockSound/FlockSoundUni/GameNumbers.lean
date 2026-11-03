@@ -808,7 +808,7 @@ theorem uniKnowledgeSoundness_reference {D : Deployment} (hD : D.shape = referen
     (hIv : D.programIv = programIv) (B : BusModel D 18) (J : UniIdsRest D (flockSoundInstance 18) B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
     (hbatch : BatchIsVerifiers D (flockSoundInstance 18) (UniIds.ofBus (flockSoundInstance 18) B J))
-    (hW : WeightMle D (flockSoundInstance 18) J.zb) (hcount : CountsZero D (flockSoundInstance 18))
+    (hW : WeightMle D (flockSoundInstance 18) J.zb)
     (hS : UniSetupBridge D (uniShapes_reference D hD))
     (hVb : UniVerifierBridge D (flockSoundInstance 18) J.nV J.V
       (uniCodeAt D (flockSoundInstance 18) (hκ_reference D hD) J.nV J.V hnV hV) (uniShapes_reference D hD))
@@ -817,7 +817,7 @@ theorem uniKnowledgeSoundness_reference {D : Deployment} (hD : D.shape = referen
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
-  uniKnowledgeSoundness_flock 18 (hκ_reference D hD) B J hnV hV hbatch hW hcount
+  uniKnowledgeSoundness_flock 18 (hκ_reference D hD) B J hnV hV hbatch hW
     (layoutVarsSmall_reference D hD)
     (fsLayer_of_bridges D _ J.nV J.V _ (uniShapes_reference D hD)
       (hnQ_flock' 18 J.nV J.V (by decide) (by rw [hV, hD, varsOf_reference]; decide))

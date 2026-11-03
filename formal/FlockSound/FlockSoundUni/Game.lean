@@ -37,7 +37,7 @@ theorem uniKnowledgeSoundness_bridges {D : Deployment} (κ : ℕ)
     (J : UniIdsRest D (flockSoundInstance κ) B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
     (hbatch : BatchIsVerifiers D (flockSoundInstance κ) (UniIds.ofBus (flockSoundInstance κ) B J))
-    (hW : WeightMle D (flockSoundInstance κ) J.zb) (hcount : CountsZero D (flockSoundInstance κ)) (hsmall : LayoutVarsSmall D) (hs : UniShapes D)
+    (hW : WeightMle D (flockSoundInstance κ) J.zb) (hsmall : LayoutVarsSmall D) (hs : UniShapes D)
     (hI : UniIv D)
     (hnQ : (uSpec (flockSoundInstance κ) valsCount (varsOf (layoutsOf D.shape))).K.nQ ≤ 2 ^ 10)
     (hnv : ∀ r ∈ uRounds (flockSoundInstance κ) valsCount (varsOf (layoutsOf D.shape)), r.nv ≤ 2 ^ 30)
@@ -55,7 +55,7 @@ theorem uniKnowledgeSoundness_bridges {D : Deployment} (κ : ℕ)
   have hnv' : ∀ r ∈ uRounds (flockSoundInstance κ) J.nV J.V, r.nv ≤ 2 ^ 30 := by
     rw [hnV, hV]
     exact hnv
-  exact uniKnowledgeSoundness_flock κ hκ B J hnV hV hbatch hW hcount hsmall
+  exact uniKnowledgeSoundness_flock κ hκ B J hnV hV hbatch hW hsmall
     (fsLayer_of_bridges D (flockSoundInstance κ) J.nV J.V _ hs hnQ' hnv' hI (uniSetupBridge_of_small D hs hsmall) hVer
       (uniExtractBridge D (flockSoundInstance κ) J.nV J.V hs hsmall)) hB hFl hdeg
     hrel
@@ -70,7 +70,7 @@ theorem uniKnowledgeSoundness_reference_game {D : Deployment} (hD : D.shape = re
     (hIv : D.programIv = programIv) (B : BusModel D 18) (J : UniIdsRest D (flockSoundInstance 18) B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
     (hbatch : BatchIsVerifiers D (flockSoundInstance 18) (UniIds.ofBus (flockSoundInstance 18) B J))
-    (hW : WeightMle D (flockSoundInstance 18) J.zb) (hcount : CountsZero D (flockSoundInstance 18))
+    (hW : WeightMle D (flockSoundInstance 18) J.zb)
     (hVer : UniVerifierBridge D (flockSoundInstance 18) J.nV J.V
       (uniCodeAt D (flockSoundInstance 18) (hκ_reference D hD) J.nV J.V hnV hV)
       (uniShapes_reference D hD))
@@ -78,7 +78,7 @@ theorem uniKnowledgeSoundness_reference_game {D : Deployment} (hD : D.shape = re
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
-  uniKnowledgeSoundness_reference hD hIv B J hnV hV hbatch hW hcount
+  uniKnowledgeSoundness_reference hD hIv B J hnV hV hbatch hW
     (uniSetupBridge_of_small D _ (layoutVarsSmall_reference D hD)) hVer
     (uniExtractBridge D _ J.nV J.V _ (layoutVarsSmall_reference D hD)) hB hdeg hrel
 
@@ -90,7 +90,7 @@ theorem uniKnowledgeSoundness_reference_walk {D : Deployment} (hD : D.shape = re
     (hIv : D.programIv = programIv) (B : BusModel D 18) (J : UniIdsRest D (flockSoundInstance 18) B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
     (hbatch : BatchIsVerifiers D (flockSoundInstance 18) (UniIds.ofBus (flockSoundInstance 18) B J))
-    (hW : WeightMle D (flockSoundInstance 18) J.zb) (hcount : CountsZero D (flockSoundInstance 18))
+    (hW : WeightMle D (flockSoundInstance 18) J.zb)
     (hWalk : UniWalk D (flockSoundInstance 18) J.nV J.V
       (uniCodeAt D (flockSoundInstance 18) (hκ_reference D hD) J.nV J.V hnV hV))
     (hRej : UniWalkReject D (flockSoundInstance 18) J.nV J.V)
@@ -98,7 +98,7 @@ theorem uniKnowledgeSoundness_reference_walk {D : Deployment} (hD : D.shape = re
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
-  uniKnowledgeSoundness_reference_game hD hIv B J hnV hV hbatch hW hcount
+  uniKnowledgeSoundness_reference_game hD hIv B J hnV hV hbatch hW
     (uniVerifierBridge_of_walk D _ J.nV J.V _ _ hWalk hRej
       (uniOutRoots_uniCodeAt D _ (hκ_reference D hD) J.nV J.V hnV hV)) hB hdeg hrel
 
@@ -110,7 +110,7 @@ theorem uniKnowledgeSoundness_fs {D : Deployment} (κ : ℕ)
     (J : UniIdsRest D (flockSoundInstance κ) B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
     (hbatch : BatchIsVerifiers D (flockSoundInstance κ) (UniIds.ofBus (flockSoundInstance κ) B J))
-    (hW : WeightMle D (flockSoundInstance κ) J.zb) (hcount : CountsZero D (flockSoundInstance κ)) (hsmall : LayoutVarsSmall D) (hs : UniShapes D)
+    (hW : WeightMle D (flockSoundInstance κ) J.zb) (hsmall : LayoutVarsSmall D) (hs : UniShapes D)
     (hI : UniIv D)
     (hnQ : (uSpec (flockSoundInstance κ) valsCount (varsOf (layoutsOf D.shape))).K.nQ ≤ 2 ^ 10)
     (hnv : ∀ r ∈ uRounds (flockSoundInstance κ) valsCount (varsOf (layoutsOf D.shape)), r.nv ≤ 2 ^ 30)
@@ -126,7 +126,7 @@ theorem uniKnowledgeSoundness_fs {D : Deployment} (κ : ℕ)
   have hnv' : ∀ r ∈ uRounds (flockSoundInstance κ) J.nV J.V, r.nv ≤ 2 ^ 30 := by
     rw [hnV, hV]
     exact hnv
-  exact uniKnowledgeSoundness_flock κ hκ B J hnV hV hbatch hW hcount hsmall
+  exact uniKnowledgeSoundness_flock κ hκ B J hnV hV hbatch hW hsmall
     (fsLayer_holds D (flockSoundInstance κ) hκ J.nV J.V hnV hV hs hsmall hI hnQ' hnv') hB hFl hdeg
     hrel
 
@@ -137,12 +137,12 @@ theorem uniKnowledgeSoundness_reference_fs {D : Deployment} (hD : D.shape = refe
     (hIv : D.programIv = programIv) (B : BusModel D 18) (J : UniIdsRest D (flockSoundInstance 18) B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
     (hbatch : BatchIsVerifiers D (flockSoundInstance 18) (UniIds.ofBus (flockSoundInstance 18) B J))
-    (hW : WeightMle D (flockSoundInstance 18) J.zb) (hcount : CountsZero D (flockSoundInstance 18))
+    (hW : WeightMle D (flockSoundInstance 18) J.zb)
     (hB : 4 * B.N + B.ncv ≤ 2 ^ 32) (hdeg : J.degSum + J.degBad ≤ 2 ^ 32) (hrel : J.nRel + 2 ≤ 2 ^ 32) :
     UniKnowledgeSoundness D (uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
-  uniKnowledgeSoundness_reference_walk hD hIv B J hnV hV hbatch hW hcount
+  uniKnowledgeSoundness_reference_walk hD hIv B J hnV hV hbatch hW
     (uniWalk D _ J.nV J.V _) (uniWalkReject D _ J.nV J.V
       (uniCodeAt D (flockSoundInstance 18) (hκ_reference D hD) J.nV J.V hnV hV)) hB hdeg hrel
 

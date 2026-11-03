@@ -299,6 +299,19 @@ def CountsZero : Prop :=
     DoneFits (uniRounds Fl.prog.rounds valsCount (varsOf (layoutsOf D.shape))) done →
       (mainProg D Fl input rows).ZerosVanish done tl → CountsInRange D.shape.heights rows
 
+/-- **The chain program's checks give the counts in range** (`CountsZero`): round `0`'s zero is the
+counts' (`countsZeroOf`, `1` out of range). -/
+theorem countsZero : CountsZero D Fl := by
+  intro input rows done tl hd hz
+  have hlen : 0 < done.length := by
+    rw [hd.length_eq, length_uniRounds]
+    omega
+  have h0 := hz.1 0 hlen
+  rw [List.take_zero, mainProg_zeros_nil] at h0
+  have h1 := h0 _ (List.mem_singleton_self _)
+  by_contra hc
+  simp [countsZeroOf, hc] at h1
+
 /-- **Flock's pending reduction has its shape** on every completed Flock transcript: the skip's
 `2^k` weights, the 64 slices sent, its points inside `A0`'s variables, at most `15` rounds. -/
 def FlockPendingShaped : Prop :=
@@ -345,13 +358,13 @@ def BatchIsVerifiers (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (I : UniId
 theorem uniFinal (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hκ : D.shape.heights.getD opBlake2s 0 = κ)
     (I : UniIds D Fl) (hnV : I.nV = valsCount) (hV : I.V = varsOf (layoutsOf D.shape))
     (hbatch : BatchIsVerifiers D Fl I) (hW : WeightMle D Fl I.zb) (hsmall : LayoutVarsSmall D)
-    (hpend : FlockPendingShaped Fl) (hcount : CountsZero D Fl) :
+    (hpend : FlockPendingShaped Fl) :
     UniFinal D Fl I (uniCodeAt D Fl hκ I.nV I.V hnV hV) := by
   intro s done tl c1 c2 hd htl hz hc
   change (mainProg D Fl s.1 s.2).ZerosVanish done tl at hz
   change ClaimsHold D ((mainProg D Fl s.1 s.2).out done tl) c1 c2 at hc
   rw [hnV, hV] at hd
-  have hcf : CountsInRange D.shape.heights s.2 := hcount s.1 s.2 done tl hd hz
+  have hcf : CountsInRange D.shape.heights s.2 := countsZero D Fl s.1 s.2 done tl hd hz
   simp only [uniRounds] at hd
   obtain ⟨d012, brs, rfl, h012, hbr⟩ := doneFits_append_split _ _ _ hd
   obtain ⟨d01, d23, rfl, h01, h23⟩ := doneFits_append_split _ _ _ h012
@@ -392,8 +405,8 @@ theorem uniFinal (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hκ : D.shape
   have e : [x0] ++ G ++ [x2, x3] ++ brs = [x0] ++ G ++ [x2] ++ [x3] ++ brs := by simp
   rw [e] at hz hc
   have hz' := hz.2
-  simp only [mainProg, decode_r0, decode_fd _ _ _ _ _ _ hGl, decode_r2 _ _ _ _ _ _ hGl,
-    decode_r3 _ _ _ _ _ _ hGl, decode_brs _ _ _ _ _ _ hGl] at hz' hc
+  simp only [mainProg, ChainProg.withHead, mainProg0, decode_r0, decode_fd _ _ _ _ _ _ hGl,
+    decode_r2 _ _ _ _ _ _ hGl, decode_r3 _ _ _ _ _ _ hGl, decode_brs _ _ _ _ _ _ hGl] at hz' hc
   simp only [mainOut, mainRels_c2] at hz' hc
   change ∀ z ∈ (batchPure (runClaims D Fl s x0.2 G (x2.2.headD 0) x3.1.2 (x3.2.headD 0)).1
     (layoutsOf D.shape) _ (runClaims D Fl s x0.2 G (x2.2.headD 0) x3.1.2 (x3.2.headD 0)).2
@@ -429,7 +442,6 @@ theorem uniKnowledgeSoundness_code {D : Deployment} {κ : ℕ} (hFlock : FlockSo
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))
     (hbatch : BatchIsVerifiers D hFlock (UniIds.ofBus hFlock B J))
     (hW : WeightMle D hFlock J.zb) (hsmall : LayoutVarsSmall D) (hpend : FlockPendingShaped hFlock)
-    (hcount : CountsZero D hFlock)
     (hFs : FsLayer D hFlock J.nV J.V (uniCodeAt D hFlock hκ J.nV J.V hnV hV))
     (hB : 4 * B.N + B.ncv ≤ 2 ^ 32)
     (hFl : ∀ j, hFlock.err j ≤ ((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))
@@ -438,7 +450,7 @@ theorem uniKnowledgeSoundness_code {D : Deployment} {κ : ℕ} (hFlock : FlockSo
       ∀ Q ≤ 2 ^ 64,
         uniBound (((2 ^ 32 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 61 :=
   uniKnowledgeSoundness_bus hFlock B J (uniCodeAt D hFlock hκ J.nV J.V hnV hV)
-    (uniFinal D hFlock hκ (UniIds.ofBus hFlock B J) hnV hV hbatch hW hsmall hpend hcount) hFs hB hFl
+    (uniFinal D hFlock hκ (UniIds.ofBus hFlock B J) hnV hV hbatch hW hsmall hpend) hFs hB hFl
     hdeg hrel
 
 end UniSound
