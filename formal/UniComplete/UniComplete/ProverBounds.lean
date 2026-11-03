@@ -4,22 +4,30 @@ import UniComplete.Witness
 /-!
 # The honest prover's sizes, from the shape
 
-The prover's stream and its openings' claims have sizes that the shape bounds:
+The prover's stream and its openings' claims have sizes that the shape bounds (`atT_facts`, `batchVars_atT`):
 
-* **the values at `t`** (`atTOf`'s `values`): at most `valuesBound` scalars (`length_atT_values`): each table's
-  sent columns and at most two fingerprints per flush (`length_tableValues`), the memory's three, the bytecode's
-  two, `T(t)`, `Q_W(t)`;
-* **the batching sumcheck's variables** (the largest of the stacks' layouts the verifier states,
-  `layouts shape a.c2Columns`): at most the shape's own (`layoutsOf shape`, `batchVars_le`). `C2`'s columns from
-  the walk are the shape's (`Shape.c2Columns`) but for a table's leaf quotient, whose degree comes from the
-  table's part as the verifier's code computes it on the values sent (`runReader (tablePart …)`): its degrees
-  are the table's (`tableDegrees`) when the read succeeds, `0` when it does not (`partDegrees_cases`), so its
-  chunks fill at most the shape's words (`colWords_le`); a layout's variables depend on its words only
-  (`StackLayout.vars_new`);
-* **Flock's pending claim** at `t` is Flock's prover's (`atT_pending`).
+* **the values at `t`** (`atTOf`'s `values`): at most `valuesBound` scalars (`AtTFacts.values`; `122`): each
+  table's sent columns and at most two fingerprints per flush (`length_tableValues`, `tvBound`), the memory's three,
+  the bytecode's two, `T(t)`, `Q_W(t)`;
+* **the batching sumcheck's variables** (the largest of the stacks' layouts the walk states,
+  `layouts shape a.c2Columns`): at most the shape's own (`layoutsOf shape`, `batchVarsBound`; `batchVars_atT`).
+  `C2`'s columns from the walk are the shape's (`Shape.c2Columns`) but for a table's leaf quotient, whose degree
+  comes from the table's part as the verifier's own code computes it on the values sent
+  (`runReader (tablePart …)`): its degrees are the table's (`tableDegrees`) when the read succeeds, `0` when it
+  does not (`DegOK`, `degOK_runReader`, from `okP_tablePart`): at `0`, one chunk of one word, at most the shape's
+  chunks (`colWords_c2ColumnsWith_le`). The constraint quotient's degree is the shape's whatever the parts
+  (`constraintRelation_snd`), the leaf columns the blocks' (`heapRelations_snd`). A layout's variables depend on
+  its words only (`vars_new`: the blocks are sorted, their words are not);
+* **Flock's pending claim** at `t` is Flock's prover's (`AtTFacts.pending`).
 
-The loops (`forIn` in `Id` and in the channel's `ChanM Id`) are read by their projections (`id_forIn_foldl`,
-`okP_forIn_foldl`): a body that always yields and moves a projection of its state by a fixed step.
+The loops (`forIn` in `Id` and in the channel's `ChanM Id`) are read by their projections or invariants
+(`id_forIn_foldl`, `id_forIn_prefix`, `okP_forIn_foldl`; `id_bind_…` for a loop followed by the rest).
+
+**Without sorting** (for the kernel, which evaluates neither `mergeSort` nor `Nat.log2`, both well-founded): `C2`'s
+words are at most `c2WordsBound`, a sum over the heap's used blocks (`heap_blocks_sum`: the sorted blocks are a
+permutation of the used ones, the unused carry no quotient; `heap_h`), each chunk list at most twice its count
+(`chunks_sum_le`); a bound `2^k` on a layout's words bounds its variables by `max k 15` (`vars_le_of_words`,
+`batchVarsBound_le`).
 -/
 
 namespace UniComplete
