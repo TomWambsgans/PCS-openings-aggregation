@@ -437,8 +437,9 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     }
     clock.lap(&mut report, "values at t");
 
-    // Past the values at t, the proof reads the stacks and their commitments alone.
-    drop((c1, setup, leaves, heap_values, heap_novel, heap_b, tree, tree_chunks, constraint, constraint_chunks));
+    // Past the values at t, the proof reads the stacks and their commitments alone (the heap and the quotients are
+    // in C2's stack since step 6).
+    drop((c1, setup, leaves));
 
     // 8. ρ, and the combined claims: the verifier's own, on the stream so far, in weighted mode (which reads nothing
     // after ρ). With the matrices' reduction pending, weighted mode reads it after the slices: `Replay` serves it there,
