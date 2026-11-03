@@ -1,5 +1,5 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
-import RecGraph.Sim.Arith
+import RecGraph.Sim.Chan
 
 /-!
 # The simulation: pure programs, and the tables' `linearise`
@@ -46,15 +46,6 @@ section Ops
 
 variable (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8)
 
-/-- A representation held at `st` holds after a pure step. -/
-theorem Rp.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {i : Nat} {x : E}
-    (h : Rp π iv publicInput stream st i x) : Rp π iv publicInput stream st' i x :=
-  Rp.grow π iv publicInput stream hg.inv.kinv hs.grows h
-
-theorem RpL.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {is : List Nat} {xs : List E}
-    (h : RpL π iv publicInput stream st is xs) : RpL π iv publicInput stream st' is xs :=
-  RpL.grow π iv publicInput stream hg.inv.kinv hs.grows h
-
 theorem phc_op (st : RecState) (hg : Good st) (o : Op) (ho : Op.Arith o) (hok : OpOK st o) :
     PHc st (Pi1.op o) fun i st' ↦
       Rp π iv publicInput stream st' i (Op.value π publicInput stream st (evalAll π iv publicInput stream st) o) :=
@@ -90,11 +81,11 @@ theorem phc_one {st : RecState} (hg : Good st) : PHc st Pi1.one fun i st' ↦ Rp
 theorem phc_zero {st : RecState} (hg : Good st) : PHc st Pi1.zero fun i st' ↦ Rp π iv publicInput stream st' i 0 :=
   phc_const π iv publicInput stream hg 0
 
-theorem RpL.length {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) :
+theorem RpL.lengthC {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) :
     is.length = xs.length :=
   List.Forall₂.length_eq h
 
-theorem RpL.map_val {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) :
+theorem RpL.map_valC {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) :
     is.map (valE (evalAll π iv publicInput stream st)) = xs := by
   induction h with
   | nil => rfl
@@ -103,7 +94,7 @@ theorem RpL.map_val {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv
     congr 1
     exact hr.2
 
-theorem RpL.lt {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) :
+theorem RpL.ltC {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) :
     ∀ a ∈ is, a < st.nodes.size := by
   induction h with
   | nil => simp
@@ -113,11 +104,11 @@ theorem RpL.lt {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publ
     · exact hr.1
     · exact ih a ha
 
-theorem RpL.append {st : RecState} {is js : List Nat} {xs ys : List E} (h1 : RpL π iv publicInput stream st is xs)
+theorem RpL.appendC {st : RecState} {is js : List Nat} {xs ys : List E} (h1 : RpL π iv publicInput stream st is xs)
     (h2 : RpL π iv publicInput stream st js ys) : RpL π iv publicInput stream st (is ++ js) (xs ++ ys) :=
   List.rel_append h1 h2
 
-theorem RpL.take {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) (n : Nat) :
+theorem RpL.takeC {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) (n : Nat) :
     RpL π iv publicInput stream st (is.take n) (xs.take n) := by
   induction h generalizing n with
   | nil => cases n <;> exact List.Forall₂.nil
@@ -126,7 +117,7 @@ theorem RpL.take {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv pu
     | zero => exact List.Forall₂.nil
     | succ n => exact List.Forall₂.cons hr (ih n)
 
-theorem RpL.drop {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) (n : Nat) :
+theorem RpL.dropC {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) (n : Nat) :
     RpL π iv publicInput stream st (is.drop n) (xs.drop n) := by
   induction h generalizing n with
   | nil => cases n <;> exact List.Forall₂.nil
@@ -135,7 +126,7 @@ theorem RpL.drop {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv pu
     | zero => exact List.Forall₂.cons hr hl
     | succ n => exact ih n
 
-theorem RpL.getD {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) {k : Nat}
+theorem RpL.getDC {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv publicInput stream st is xs) {k : Nat}
     (hk : k < is.length) : Rp π iv publicInput stream st (is.getD k 0) (xs.getD k 0) := by
   induction h generalizing k with
   | nil => simp at hk
@@ -145,7 +136,7 @@ theorem RpL.getD {st : RecState} {is : List Nat} {xs : List E} (h : RpL π iv pu
     | succ k => simpa using ih (by simpa using hk)
 
 /-- An array's entry, represented. -/
-theorem RpL.arrGetD {st : RecState} {a : Array Nat} {b : Array E}
+theorem RpL.arrGetDC {st : RecState} {a : Array Nat} {b : Array E}
     (h : RpL π iv publicInput stream st a.toList b.toList) {k : Nat} (hk : k < a.size) :
     Rp π iv publicInput stream st (a.getD k 0) (b.getD k 0) := by
   have e1 : a.getD k 0 = a.toList.getD k 0 := by
@@ -153,19 +144,19 @@ theorem RpL.arrGetD {st : RecState} {a : Array Nat} {b : Array E}
   have e2 : b.getD k 0 = b.toList.getD k 0 := by
     rw [Array.getD_eq_getD_getElem?, ← Array.getElem?_toList, List.getD_eq_getElem?_getD]
   rw [e1, e2]
-  exact RpL.getD π iv publicInput stream h (by simpa using hk)
+  exact RpL.getDC π iv publicInput stream h (by simpa using hk)
 
 theorem phc_ringWeight {st : RecState} (hg : Good st) {p o m : List Nat} {pv ov mv : List E}
     (hp : RpL π iv publicInput stream st p pv) (ho : RpL π iv publicInput stream st o ov)
     (hm : RpL π iv publicInput stream st m mv) :
     PHc st (Pi1.ringWeight p o m) fun i st' ↦
       Rp π iv publicInput stream st' i (ringWeightValue (pv ++ ov ++ mv) p.length) := by
-  have hall := RpL.append π iv publicInput stream (RpL.append π iv publicInput stream hp ho) hm
-  have h := phc_op π iv publicInput stream st hg (.ringWeight p o m) trivial (RpL.lt π iv publicInput stream hall)
+  have hall := RpL.appendC π iv publicInput stream (RpL.appendC π iv publicInput stream hp ho) hm
+  have h := phc_op π iv publicInput stream st hg (.ringWeight p o m) trivial (RpL.ltC π iv publicInput stream hall)
   have e : Op.value π publicInput stream st (evalAll π iv publicInput stream st) (.ringWeight p o m) =
       ringWeightValue (pv ++ ov ++ mv) p.length := by
     show ringWeightValue ((p ++ o ++ m).map (valE (evalAll π iv publicInput stream st))) p.length = _
-    rw [RpL.map_val π iv publicInput stream hall]
+    rw [RpL.map_valC π iv publicInput stream hall]
   rw [e] at h
   exact h
 
@@ -182,8 +173,8 @@ set_option hygiene false in
 macro_rules
   | `(tactic| grow1 $h:ident with $hg $hs') =>
     `(tactic| first
-        | replace $h:ident := Rp.pgrow _ _ _ _ $hg $hs' $h
-        | replace $h:ident := RpL.pgrow _ _ _ _ $hg $hs' $h
+        | replace $h:ident := Rp.pgrow $hg $hs' $h
+        | replace $h:ident := RpL.pgrow $hg $hs' $h
         | replace $h:ident := RpO.pgrow _ _ _ _ $hg $hs' $h
         | replace $h:ident := RpSent.pgrow _ _ _ _ $hg $hs' $h
         | replace $h:ident := RpPairs.pgrow _ _ _ _ $hg $hs' $h
@@ -255,7 +246,7 @@ def RpO (st : RecState) : Option Nat → Option E → Prop
 theorem RpO.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {o : Option Nat} {x : Option E}
     (h : RpO π iv publicInput stream st o x) : RpO π iv publicInput stream st' o x := by
   cases o <;> cases x <;> simp only [RpO] at h ⊢
-  exact Rp.pgrow π iv publicInput stream hg hs h
+  exact Rp.pgrow hg hs h
 
 /-- **A table's sent values**: an array of options, entry by entry. -/
 def RpSent (st : RecState) (a : Array (Option Nat)) (b : Array (Option E)) : Prop :=
@@ -271,13 +262,13 @@ def RpPairs (st : RecState) (a : List (Nat × Nat)) (b : List (Nat × E)) : Prop
 
 theorem RpPairs.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {a : List (Nat × Nat)}
     {b : List (Nat × E)} (h : RpPairs π iv publicInput stream st a b) : RpPairs π iv publicInput stream st' a b :=
-  List.Forall₂.imp (fun _ _ h ↦ ⟨h.1, Rp.pgrow π iv publicInput stream hg hs h.2⟩) h
+  List.Forall₂.imp (fun _ _ h ↦ ⟨h.1, Rp.pgrow hg hs h.2⟩) h
 
 end Reps
 
 /-! ## Lists -/
 
-theorem forall₂_getElem?_getD {α β : Type} {R : α → β → Prop} {l : List α} {m : List β} (h : List.Forall₂ R l m)
+theorem forall₂_getElem?_getDC {α β : Type} {R : α → β → Prop} {l : List α} {m : List β} (h : List.Forall₂ R l m)
     (d : α) (d' : β) (hd : R d d') (i : Nat) : R (l[i]?.getD d) (m[i]?.getD d') := by
   induction h generalizing i with
   | nil => simpa using hd
@@ -286,7 +277,7 @@ theorem forall₂_getElem?_getD {α β : Type} {R : α → β → Prop} {l : Lis
     | zero => simpa using hr
     | succ i => simpa using ih i
 
-theorem forall₂_getElem {α β : Type} {R : α → β → Prop} {l : List α} {m : List β} (h : List.Forall₂ R l m)
+theorem forall₂_getElemC {α β : Type} {R : α → β → Prop} {l : List α} {m : List β} (h : List.Forall₂ R l m)
     (i : Nat) (hi : i < l.length) (hj : i < m.length) : R l[i] m[i] := by
   induction h generalizing i with
   | nil => simp at hi
@@ -295,7 +286,7 @@ theorem forall₂_getElem {α β : Type} {R : α → β → Prop} {l : List α} 
     | zero => exact hr
     | succ i => exact ih i (by simpa using hi) (by simpa using hj)
 
-theorem forall₂_set_modify {α β : Type} {R : α → β → Prop} {l : List α} {m : List β} (h : List.Forall₂ R l m)
+theorem forall₂_set_modifyC {α β : Type} {R : α → β → Prop} {l : List α} {m : List β} (h : List.Forall₂ R l m)
     (i : Nat) (x : α) (f : β → β) (hx : ∀ hi : i < m.length, R x (f m[i])) :
     List.Forall₂ R (l.set i x) (m.modify i f) := by
   induction h generalizing i with
@@ -305,7 +296,7 @@ theorem forall₂_set_modify {α β : Type} {R : α → β → Prop} {l : List �
     | zero => exact List.Forall₂.cons (hx (by simp)) hl
     | succ i => exact List.Forall₂.cons hr (ih i fun hi ↦ hx (by simpa using hi))
 
-theorem arr_findIdx?_toList {α : Type} (a : Array α) (p : α → Bool) : a.findIdx? p = a.toList.findIdx? p := by
+theorem arr_findIdx?_toListC {α : Type} (a : Array α) (p : α → Bool) : a.findIdx? p = a.toList.findIdx? p := by
   cases a
   exact List.findIdx?_toArray p _
 
@@ -319,7 +310,7 @@ theorem RpSent.getD {st : RecState} {a : Array (Option Nat)} {b : Array (Option 
     (h : RpSent π iv publicInput stream st a b) (i : Nat) :
     RpO π iv publicInput stream st (a.getD i none) (b.getD i none) := by
   rw [Array.getD_eq_getD_getElem?, Array.getD_eq_getD_getElem?, ← Array.getElem?_toList, ← Array.getElem?_toList]
-  exact forall₂_getElem?_getD h none none trivial i
+  exact forall₂_getElem?_getDC h none none trivial i
 
 theorem RpPairs.map_fst {st : RecState} {a : List (Nat × Nat)} {b : List (Nat × E)}
     (h : RpPairs π iv publicInput stream st a b) : a.map (·.1) = b.map (·.1) := by
@@ -335,7 +326,7 @@ theorem addTermS_phc {st : RecState} (hg : Good st) {termsS : Array (Nat × Nat)
       RpPairs π iv publicInput stream st' r.toList (UniStatement.addTerm terms column c) := by
   have hfind : termsS.findIdx? (fun x : Nat × Nat ↦ x.1 == column) =
       terms.findIdx? (fun x : Nat × E ↦ x.1 == column) := by
-    rw [arr_findIdx?_toList]
+    rw [arr_findIdx?_toListC]
     have h2 : termsS.toList.findIdx? (fun x : Nat × Nat ↦ x.1 == column) =
         (termsS.toList.map (·.1)).findIdx? (· == column) := by
       rw [List.findIdx?_map]
@@ -358,12 +349,12 @@ theorem addTermS_phc {st : RecState} (hg : Good st) {termsS : Array (Nat × Nat)
     have hlt' : i < termsS.toList.length := by omega
     have hget : termsS.getD i (0, 0) = termsS.toList[i]'hlt' := by
       rw [Array.getD_eq_getD_getElem?, ← Array.getElem?_toList, List.getElem?_eq_getElem hlt', Option.getD_some]
-    have he := forall₂_getElem ht i hlt' hlt
+    have he := forall₂_getElemC ht i hlt' hlt
     dsimp only
     rw [hget]
     refine phc_bind (phc_add π iv publicInput stream hg he.2 hc) fun v st' hs hv ↦ phc_pure _ hs.good ?_
     rw [Array.set!_eq_setIfInBounds, Array.toList_setIfInBounds]
-    refine forall₂_set_modify (RpPairs.pgrow π iv publicInput stream hg hs ht) i _ _ fun _ ↦ ?_
+    refine forall₂_set_modifyC (RpPairs.pgrow π iv publicInput stream hg hs ht) i _ _ fun _ ↦ ?_
     show column = terms[i].1 ∧ Rp π iv publicInput stream st' v (terms[i].2 + c)
     simp only [beq_iff_eq] at hp
     exact ⟨hp.symm, hv⟩
@@ -378,7 +369,7 @@ theorem linearise_phc {st : RecState} (hg : Good st) (tuple : List Form) {weight
       Rp π iv publicInput stream st' res.1 (UniStatement.linearise tuple weights sent).1 ∧
         RpPairs π iv publicInput stream st' res.2 (UniStatement.linearise tuple weights sent).2 := by
   have hsize : weightsS.size = weights.size := by
-    have := RpL.length π iv publicInput stream hw
+    have := RpL.lengthC π iv publicInput stream hw
     simpa using this
   unfold Pi1.linearise UniStatement.linearise
   refine phc_bind (phc_zero π iv publicInput stream hg) fun known st1 hs1 hk ↦ ?_
@@ -386,7 +377,7 @@ theorem linearise_phc {st : RecState} (hg : Good st) (tuple : List Form) {weight
   refine phc_bind (phc_forIn_same (fun x : Form × Nat ↦ x.2 < tuple.length)
     (fun st ↦ RpL π iv publicInput stream st weightsS.toList weights.toList ∧
       RpSent π iv publicInput stream st sentS sent)
-    (fun _ _ hg hs h ↦ ⟨RpL.pgrow π iv publicInput stream hg hs h.1, RpSent.pgrow π iv publicInput stream hg hs h.2⟩)
+    (fun _ _ hg hs h ↦ ⟨RpL.pgrow hg hs h.1, RpSent.pgrow π iv publicInput stream hg hs h.2⟩)
     _ _ (fun (b : Nat × Array (Nat × Nat)) (c : E × List (Nat × E)) st ↦
       Rp π iv publicInput stream st b.1 c.1 ∧ RpPairs π iv publicInput stream st b.2.toList c.2)
     ?_ _ ?_ st1 _ _ hs1.good ⟨hw, hs⟩ ⟨hk, List.Forall₂.nil⟩) fun r st2 hs2 hr ↦ phc_pure _ hs2.good hr
@@ -394,13 +385,13 @@ theorem linearise_phc {st : RecState} (hg : Good st) (tuple : List Form) {weight
     have hs' : s < weightsS.size := by
       have : s < tuple.length := hP
       omega
-    have hwt := RpL.arrGetD π iv publicInput stream hw hs'
+    have hwt := RpL.arrGetDC π iv publicInput stream hw hs'
     dsimp only
     rw [ite_eq_left hs']
     refine phc_bind (phc_forIn_same (fun _ ↦ True)
       (fun st ↦ Rp π iv publicInput stream st (weightsS.getD s 0) (weights.getD s 0) ∧
         RpSent π iv publicInput stream st sentS sent)
-      (fun _ _ hg hs h ↦ ⟨Rp.pgrow π iv publicInput stream hg hs h.1, RpSent.pgrow π iv publicInput stream hg hs h.2⟩)
+      (fun _ _ hg hs h ↦ ⟨Rp.pgrow hg hs h.1, RpSent.pgrow π iv publicInput stream hg hs h.2⟩)
       _ _ (fun (b : Nat × Array (Nat × Nat)) (c : E × List (Nat × E)) st ↦
         Rp π iv publicInput stream st b.1 c.1 ∧ RpPairs π iv publicInput stream st b.2.toList c.2)
       ?_ form (fun _ _ ↦ trivial) st _ _ hg ⟨hwt, hsent⟩ hR) fun r st' hs hr ↦
@@ -424,10 +415,10 @@ theorem linearise_phc {st : RecState} (hg : Good st) (tuple : List Form) {weight
         revert ho
         cases sentS.getD i none <;> cases sent.getD i none <;> intro ho <;> simp only [RpO] at ho
         · exact phc_bind (addTermS_phc π iv publicInput stream hg2 htm i hcS) fun _ st3 hs3 ht ↦
-            phc_pure _ hs3.good ⟨_, rfl, Rp.pgrow π iv publicInput stream hg2 hs3 hkn, ht⟩
+            phc_pure _ hs3.good ⟨_, rfl, Rp.pgrow hg2 hs3 hkn, ht⟩
         · refine phc_bind (phc_mul π iv publicInput stream hg2 hcS ho) fun _ st3 hs3 hcv ↦ ?_
           exact phc_bind (phc_add π iv publicInput stream hs3.good
-            (Rp.pgrow π iv publicInput stream hg2 hs3 hkn) hcv) fun _ st4 hs4 hk ↦
+            (Rp.pgrow hg2 hs3 hkn) hcv) fun _ st4 hs4 hk ↦
             phc_pure _ hs4.good ⟨_, rfl, hk, RpPairs.pgrow π iv publicInput stream hs3.good hs4
               (RpPairs.pgrow π iv publicInput stream hg2 hs3 htm)⟩
       · dsimp only
@@ -440,17 +431,17 @@ theorem linearise_phc {st : RecState} (hg : Good st) (tuple : List Form) {weight
         · refine phc_bind (phc_mul π iv publicInput stream hg2 hcS hoj) fun _ st3 hs3 hcb ↦ ?_
           exact phc_bind (addTermS_phc π iv publicInput stream hs3.good
             (RpPairs.pgrow π iv publicInput stream hg2 hs3 htm) i hcb) fun _ st4 hs4 ht ↦
-            phc_pure _ hs4.good ⟨_, rfl, Rp.pgrow π iv publicInput stream hs3.good hs4
-              (Rp.pgrow π iv publicInput stream hg2 hs3 hkn), ht⟩
+            phc_pure _ hs4.good ⟨_, rfl, Rp.pgrow hs3.good hs4
+              (Rp.pgrow hg2 hs3 hkn), ht⟩
         · refine phc_bind (phc_mul π iv publicInput stream hg2 hcS hoi) fun _ st3 hs3 hca ↦ ?_
           exact phc_bind (addTermS_phc π iv publicInput stream hs3.good
             (RpPairs.pgrow π iv publicInput stream hg2 hs3 htm) j hca) fun _ st4 hs4 ht ↦
-            phc_pure _ hs4.good ⟨_, rfl, Rp.pgrow π iv publicInput stream hs3.good hs4
-              (Rp.pgrow π iv publicInput stream hg2 hs3 hkn), ht⟩
+            phc_pure _ hs4.good ⟨_, rfl, Rp.pgrow hs3.good hs4
+              (Rp.pgrow hg2 hs3 hkn), ht⟩
         · refine phc_bind (phc_mul π iv publicInput stream hg2 hcS hoi) fun _ st3 hs3 hca ↦ ?_
           refine phc_bind (phc_mul π iv publicInput stream hs3.good hca
-            (Rp.pgrow π iv publicInput stream hg2 hs3 hoj)) fun _ st4 hs4 hcab ↦ ?_
-          have hkn4 := Rp.pgrow π iv publicInput stream hs3.good hs4 (Rp.pgrow π iv publicInput stream hg2 hs3 hkn)
+            (Rp.pgrow hg2 hs3 hoj)) fun _ st4 hs4 hcab ↦ ?_
+          have hkn4 := Rp.pgrow hs3.good hs4 (Rp.pgrow hg2 hs3 hkn)
           have htm4 := RpPairs.pgrow π iv publicInput stream hs3.good hs4
             (RpPairs.pgrow π iv publicInput stream hg2 hs3 htm)
           exact phc_bind (phc_add π iv publicInput stream hs4.good hkn4 hcab) fun _ st5 hs5 hk ↦
