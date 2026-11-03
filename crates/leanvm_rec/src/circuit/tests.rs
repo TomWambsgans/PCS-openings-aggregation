@@ -5,6 +5,7 @@ use leanvm_flock_gas::field::K;
 use leanvm_flock_gas::transcript::keccak256;
 
 use super::keccak::{Bit, D32, Permutation, Sponge, keccak_f};
+use super::keccak16::D16;
 use super::layout::{Builder, Finished, Value};
 use super::spec::PublicInputs;
 use super::units::{Bools, Packer};
@@ -121,4 +122,29 @@ fn packings_are_the_words() {
             assert_eq!(f.words[v as usize], K(e));
         }
     }
+}
+
+#[test]
+fn d16_keccak256_on_random_inputs() {
+    check_keccak(4, D16::new);
+}
+
+/// D16v's rows a permutation (SPEC-REC.md §2.4.1): 1,536 `k0`, 6,144 `k1`, 160 `kprep`, and `kd` for the D units the
+/// `k0` and `kprep` rows lack: 368 for the first permutation (round 23's 192 `k0` units are left over), 344 in the
+/// steady state. So 8,184 rows, 130,944 positions.
+#[test]
+fn d16_rows_a_permutation() {
+    let perms = 4;
+    let messages: Vec<Vec<u8>> = (0..perms).map(|k| vec![k as u8; 100]).collect();
+    let (f, _) = hash_all(4, D16::new, &messages);
+    let rows = |name: &str| f.stats.rows.get(name).copied().unwrap_or(0);
+    assert_eq!(rows("keccak16/k0"), 1536 * perms);
+    assert_eq!(rows("keccak16/k1"), 6144 * perms);
+    assert_eq!(rows("keccak16/kprep"), 160 * perms);
+    assert_eq!(rows("keccak16/kd"), 368 + 344 * (perms - 1));
+    let steady = 1536 + 6144 + 160 + 344;
+    assert_eq!((steady, 16 * steady), (8184, 130_944));
+    // The first block's capacity: 512 known zeros a permutation, one fresh constant each (32 rows of 16).
+    assert!(rows("const") >= 32 * perms);
+    println!("{:?}", f.stats);
 }
