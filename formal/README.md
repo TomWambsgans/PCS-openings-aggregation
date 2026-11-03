@@ -26,9 +26,11 @@ its knowledge soundness is proved, with no hypothesis, in `UniSound/` and `Flock
 
 **The recursion's inner verifier as a graph** (`crates/leanvm_rec`, π1-rec3): [`RecGraph/`](RecGraph/README.md), a
 library of `EndToEnd/`: π1-rec3's recorded verifier graph (written by the Rust, data only), its semantics over any
-permutation, the Lean recorder with "recording commutes with evaluation" (proved), and graph = `UniStatement`'s
-verifier at π1-rec3 (`UniStatement/UniStatement/Rec.lean`) by differential tests, with an oracle under which they
-differ (the verifier merges points by value, the graph by symbol).
+permutation, the Lean recorder with "recording commutes with evaluation", and **graph = `UniStatement`'s verifier at
+π1-rec3** (`UniStatement/UniStatement/Rec.lean`), proved off the merge hazard (`RecGraph.Pi1.pi1GraphIsVerifier`, no
+other hypothesis; the hazard, `y(t)` starting like `w` or Flock's point, has probability at most `2^19/|E|`:
+`hazard_prob`). The recorded graph is the Rust's node for node (`RecGraphTest/Pi1Check.lean`, by computation), and
+an oracle under which the graph and the verifier differ on the hazard is exhibited (`RecGraphTest/Runner.lean`).
 
 ## End-to-end theorems
 
