@@ -88,7 +88,8 @@ not tell: the vector's `pcs_open` lines were π1's contract's words (byte-string
 
 - `leanvm_univariate::prover::prove::halves` sends a root as its two WHIR scalars (`hash_to_scalars`), as π2's prover
   sends `W` and `Q`: the stream's 32 bytes are the root word, `root_word(h)`. π1's contract's `C1`, `C2` words then
-  decode to the commitments, and `UniStatement.rootOf (halves raw)` is the commitment, unchanged.
+  decode to the commitments, and `UniStatement.rootOf (halves raw)` is the commitment, unchanged. It is also what
+  `formal/UniComplete`'s honest prover sends (`sendRoot (digestScalars d)`), which the Rust prover did not before.
 - π2's circuit packs a root's limbs from the stream's bytes as they are (`circuit::compile`, big-endian words of bytes
   `24 − 8l`), and its calls pass π1's stream root words as π1's contract does; a setup root's word stays
   `root_word` of the hash π1's contract holds. π2's calldata carries the same words as before.
