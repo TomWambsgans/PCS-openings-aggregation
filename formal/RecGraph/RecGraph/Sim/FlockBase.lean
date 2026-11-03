@@ -211,6 +211,64 @@ theorem PH.forIn_rel2 {α α' β γ : Type} (l : List α) (lU : List α') (hlen 
       rw [hu']
       exact hrest
 
+/-- **`PH.forIn_rel2` with a relation indexed by the step.** -/
+theorem PH.forIn_rel2i {α α' β γ : Type} (l : List α) (lU : List α') (hlen : l.length = lU.length) (init : β)
+    (f : α → β → Prog (ForInStep β)) (u0 : γ) (fU : α' → γ → Id (ForInStep γ)) {U : Id γ}
+    (hU : forIn (m := Id) lU u0 fU = U) (st : RecState) (R : ℕ → RecState → β → γ → Prop) (hg : Good st)
+    (h0 : R 0 st init u0)
+    (hs : ∀ (j : ℕ) (hj : j < l.length) (hj' : j < lU.length) (st' : RecState) (b : β) (u : γ), PStep st st' →
+      R j st' b u →
+      PH (f l[j] b) st' (fun st'' r ↦ ∃ b' u', r = .yield b' ∧ fU lU[j] u = .yield u' ∧ R (j + 1) st'' b' u')) :
+    PH (forIn l init f) st (fun st' b ↦ R l.length st' b U) := by
+  subst hU
+  suffices H : ∀ (rest : List α) (restU : List α') (k : ℕ) (hk : k + rest.length = l.length)
+      (hkU : rest.length = restU.length),
+      (∀ j (h : j < rest.length), rest[j] = l[k + j]'(by omega)) →
+      (∀ j (h : j < restU.length), restU[j] = lU[k + j]'(by omega)) →
+      ∀ st' b u, PStep st st' → R k st' b u →
+        PH (forIn rest b f) st' (fun st'' b ↦ R l.length st'' b (forIn (m := Id) restU u fU)) by
+    exact H l lU 0 (by simp) hlen (fun j h ↦ by simp) (fun j h ↦ by simp) st init u0 (PStep.refl st hg) h0
+  intro rest
+  induction rest with
+  | nil =>
+    intro restU k hk hkU _ _ st' b u hs' hR
+    cases restU with
+    | cons _ _ => simp at hkU
+    | nil =>
+      simp only [List.length_nil, Nat.add_zero] at hk
+      subst hk
+      rw [List.forIn_nil]
+      exact PH.ret hs'.good (by rw [List.forIn_nil]; exact hR)
+  | cons a t ih =>
+    intro restU k hk hkU hr hrU st' b u hs' hR
+    cases restU with
+    | nil => simp at hkU
+    | cons aU tU =>
+      simp only [List.length_cons] at hk hkU
+      rw [List.forIn_cons]
+      have ha : a = l[k]'(by omega) := by
+        have h0 := hr 0 (by simp)
+        simp only [List.getElem_cons_zero, Nat.add_zero] at h0
+        exact h0
+      have haU : aU = lU[k]'(by omega) := by
+        have h0 := hrU 0 (by simp)
+        simp only [List.getElem_cons_zero, Nat.add_zero] at h0
+        exact h0
+      subst ha haU
+      refine PH.bind' (hs k (by omega) (by omega) st' b u hs' hR) ?_
+      rintro st'' r hs'' ⟨b', u', rfl, hu, hR'⟩
+      have hrest := ih tU (k + 1) (by omega) (by omega) (fun j h ↦ by
+        have := hr (j + 1) (by simp; omega)
+        simp only [List.getElem_cons_succ] at this
+        rw [this]; congr 1; omega) (fun j h ↦ by
+        have := hrU (j + 1) (by simp; omega)
+        simp only [List.getElem_cons_succ] at this
+        rw [this]; congr 1; omega) st'' b' u' (hs'.trans hs'') hR'
+      have hu' : forIn (m := Id) (lU[k] :: tU) u fU = forIn (m := Id) tU u' fU := by
+        rw [List.forIn_cons, hu]; rfl
+      rw [hu']
+      exact hrest
+
 /-- A range's loop as the loop over its list (for `PH.forIn_rel2`). -/
 theorem forIn_range_list {m : Type → Type} [Monad m] {β : Type} (s e : ℕ) (init : β) (f : ℕ → β → m (ForInStep β)) :
     forIn ({ start := s, stop := e, step := 1, step_pos := Nat.one_pos } : Std.Legacy.Range) init f =
