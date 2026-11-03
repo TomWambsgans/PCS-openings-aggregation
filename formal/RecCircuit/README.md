@@ -25,15 +25,17 @@ theorem pi1rec3_end {iv : List UInt8} {c : Compiled}
 - **`EndStatement`.** On the public input `pubW w` and the stream `streamW r w` that the witness's free bits encode,
   with `V = rgVals g iv (pubW w) (streamW r w)` (`RecGraph.evalNodes` of `g` over Keccak-f[1600]):
   - the statement port carries the public input's four words as RecGraph reads them (`beWordAt`);
-  - root `i`'s port carries the little-endian words of the stream's bytes `at + 16, at + 24, at, at + 8`, which are
-    `PCS_OPEN`'s root word's limbs;
+  - root `i`'s port carries the big-endian words of the stream's bytes `at + 24, at + 16, at + 8, at`, which are
+    `PCS_OPEN`'s root word's limbs: π1's stream carries a root as its root word, its two WHIR scalars
+    (`crates/leanvm_rec/REVIEW-REC.md`, R1);
   - the `m`-th zero port carries `V`'s value of the `m`-th zero check whose image is not a constant, and every other
     zero check is 0 (`compile_sound_zero_end`, `compile_sound_zero_const`);
   - **the `PCS_OPEN` inputs π2's verifier rebuilds from the ports** (`Circuit.callInputs`, `spec.rs`'s
-    `Circuit::call_inputs`) are `g`'s call words in RecGraph's semantics, call by call and word by word. Word 0 (each
-    call's root, a stream root or a setup root) is `PCS_OPEN`'s root word (`machine::root_word`: each 16-byte half
-    reversed, `pcsWord`). Every other word is byte for byte the same, pairs' coordinates included
-    (`compile_sound_callInputs`, `compile_sound_calls`).
+    `Circuit::call_inputs`) are `g`'s call words in RecGraph's semantics, call by call and word by word, as
+    `PCS_OPEN` takes them (`pcsWord`): a setup root (a constant word 0, the hash as π1's contract holds it) as its root
+    word (`machine::root_word`: each 16-byte half reversed). Every other word is byte for byte the same, a stream root
+    (already its root word) and pairs' coordinates included (`compile_sound_callInputs`, `compile_sound_calls`).
+    Before R1 a stream root's word was reversed too, which named a root other than the one π1's prover commits.
 - **Element ports.** `compile_sound_element_end`: element `e`'s port carries `V`'s value of any original node the
   expansion maps to the calls' `e`-th element node.
 - **π1-rec3.** `pi1rec3_end` is the end theorem at `RecGraph.Emitted.graph`. That the compiler accepts this graph is
@@ -77,7 +79,7 @@ theorem pi1rec3_end {iv : List UInt8} {c : Compiled}
 
   Without the state typing, a dropped `x + 0` could hand a hash a state where the graph has an element.
 - **`callsOk`:** π2's call words against π1's, word by word:
-  - a constant's bytes, with word 0 a root word;
+  - a constant's bytes, with word 0 the root word of the graph's constant (a setup root's hash);
   - a stream word (word 0 only) is a root port at its offset;
   - a node word (never word 0) is a live constant, an element port's node, or a pair's coordinate of an element
     port's challenge.

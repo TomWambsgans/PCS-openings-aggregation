@@ -137,11 +137,6 @@ fn be_bits(bit: &dyn Fn(usize) -> Value, first: usize, nbytes: usize) -> Vec<(us
         .collect()
 }
 
-/// The values of a little-endian integer of `nbytes` bytes starting at byte `first`, as `(exponent, bit)`.
-fn le_bits(bit: &dyn Fn(usize) -> Value, first: usize, nbytes: usize) -> Vec<(usize, Value)> {
-    (0..8 * nbytes).map(|e| (e, bit(8 * (first + e / 8) + e % 8))).collect()
-}
-
 /// A call word's node as π1-rec3's paired batch makes it (`transcript::pair_point`): `y_1(z) = z·z + z` or
 /// `y_0(z) = z + β_1 · y_1(z)` of a challenge `z`: `(z, the coordinate)`. Then `z` is the port, not the coordinate.
 fn pair_coordinate(g: &Graph, id: u32) -> Option<(u32, u8)> {
@@ -486,19 +481,19 @@ pub fn compile<P: Permutation>(
     ports.port(&mut b, &statement_limb, Source::Statement);
     let mut roots: Vec<[u8; 32]> = Vec::new();
     let mut root_of: BTreeMap<usize, u32> = BTreeMap::new();
-    // A root is public as `PCS_OPEN`'s root word (REVIEW-REC.md M1: one ABI for the eight calls), each 16-byte half
-    // of the stream's bytes reversed: its limbs `L_l` (the word's big-endian 8-byte words, the lowest first) are the
-    // little-endian words of the stream's bytes 16..24, 24..32, 0..8, 8..16.
+    // A root is public as `PCS_OPEN`'s root word (REVIEW-REC.md M1: one ABI for the eight calls), which is the
+    // stream's 32 bytes as they are: π1's prover sends a root as its two WHIR scalars, big-endian
+    // (`leanvm_univariate::prover::prove::halves`; REVIEW-REC.md R1), and π1's own contract passes them so. Its
+    // limbs `L_l` are the big-endian words of the stream's bytes `24 − 8l .. 32 − 8l` (`spec::word_limbs`).
     for &at in &recorded.roots_at {
         assert!(hashed[at..at + 32].iter().all(|&h| h), "a root is hashed");
-        let root_limbs: Vec<Value> = [16, 24, 0, 8]
-            .into_iter()
-            .map(|first| packer.pack(&mut b, &mut sponge.constants, &le_bits(&stream_bit, at + first, 8)))
+        let root_limbs: Vec<Value> = (0..4)
+            .map(|l| packer.pack(&mut b, &mut sponge.constants, &be_bits(&stream_bit, at + 24 - 8 * l, 8)))
             .collect();
         packings += 1;
         root_of.insert(at, roots.len() as u32);
         ports.port(&mut b, &root_limbs, Source::Root(roots.len() as u32));
-        roots.push(root_word(&stream[at..at + 32].try_into().expect("32 bytes")));
+        roots.push(stream[at..at + 32].try_into().expect("32 bytes"));
     }
     let mut element_of: BTreeMap<u32, u32> = BTreeMap::new();
     let mut element_nodes: Vec<u32> = Vec::new();
@@ -507,7 +502,7 @@ pub fn compile<P: Permutation>(
         let mut words = Vec::new();
         for (k, w) in call.iter().enumerate() {
             words.push(match *w {
-                // A setup root (word 0): `PCS_OPEN`'s root word (M1).
+                // A setup root (word 0): `PCS_OPEN`'s root word (M1) of the hash π1's contract holds as it is.
                 Word::Const(bytes) if k == 0 => CallWord::Const(root_word(&bytes)),
                 Word::Const(bytes) => CallWord::Const(bytes),
                 Word::Stream(at) => CallWord::Root(root_of[&at]),

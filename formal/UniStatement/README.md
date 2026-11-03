@@ -329,7 +329,10 @@ Props; `verifyWith`'s run and calls are the tested `run` and `pcsCalls`'s claims
    size the call's layout word's `vars` (byte 24). The word's `placed` (the words the blocks fill) and code are
    bound by the contract's IV, not read by this opening (the Rust's precompile reads `placed` to know the
    committed lanes). The root word's reading (here: the two halves as `digestOfScalars` for the stream's roots,
-   the bytes as `digestOfBytes32` for the reference setup roots) is not specified by the Rust. The extensions
+   the bytes as `digestOfBytes32` for the reference setup roots) is the Rust's: its prover sends a root as its two
+   WHIR scalars (`prove::halves`, `hash_to_scalars`; `crates/leanvm_rec/REVIEW-REC.md`, R1: before, it sent the
+   hash's bytes, which this reading names as another root), and the setup roots are the commitments' hashes
+   (`prover::setup::roots`). The extensions
    (weighted claims, the bit-slice claim) have no opening here; `verifyWith` is the main line's.
 3. **The row counts and the shape class** (F1): the verifier accepts any count `c ≤ 2^h`, `0` included; the
    quotients are sized for `leastRows h = 2^(h−1) + 1`, so an honest prover needs `c ≥ leastRows h`

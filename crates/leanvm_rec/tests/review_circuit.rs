@@ -504,16 +504,10 @@ fn differential(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 
     // The reference: π1's graph evaluated on this stream.
     let seed = keccak_seed(&NAME, &iv, &public);
     let values = evaluate(&recorded.graph, seed, &public, stream);
-    // π1's own contract's call inputs, in PCS_OPEN's ABI (REVIEW-REC.md M1's fix: the root word
-    // `machine::root_word` of the hash, which π1's own contract passes as it is).
-    let expected_calls: Vec<Vec<u8>> = call_inputs(recorded, &values, stream)
-        .into_iter()
-        .map(|mut x| {
-            let raw: [u8; 32] = x[..32].try_into().expect("a root");
-            x[..32].copy_from_slice(&leanvm_flock_gas::evm::machine::root_word(&raw));
-            x
-        })
-        .collect();
+    // π1's own contract's call inputs, in PCS_OPEN's ABI (REVIEW-REC.md M1's and R1's fixes: the stream's root words
+    // as they are, a setup root's word `machine::root_word` of the hash π1's own contract holds as it is).
+    let expected_calls: Vec<Vec<u8>> =
+        call_inputs(recorded, &values, stream).into_iter().map(|x| vectors::pi1_abi(&x)).collect();
     let (zero_values, _) = checks(&recorded.graph, &values);
     // Elements by index, from the reference's call bytes.
     let mut elements: std::collections::BTreeMap<u32, E> = Default::default();
@@ -556,9 +550,9 @@ fn differential(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 
             }
             Source::Root(i) => {
                 seen[1] += 1;
+                // The root word: the stream's 32 bytes as they are (REVIEW-REC.md R1).
                 let at = recorded.roots_at[i as usize];
-                word_limbs(&leanvm_flock_gas::evm::machine::root_word(&stream[at..at + 32].try_into().unwrap()))
-                    .to_vec()
+                word_limbs(&stream[at..at + 32].try_into().unwrap()).to_vec()
             }
             Source::Element(e) => {
                 seen[2] += 1;

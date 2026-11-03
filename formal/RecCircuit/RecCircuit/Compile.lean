@@ -325,9 +325,10 @@ def compileM (r : Recorded) (g : Array Node) (map : Array ℕ) : BM Compiled := 
   let mut rootLimbs : Array (Array Val) := #[]
   for at_ in r.rootsAt do
     need ((List.range 32).all fun i => hashed.getD (at_ + i) false) "a root is hashed"
+    -- The root word is the stream's 32 bytes (REVIEW-REC.md R1): limb `l` the big-endian word of bytes `24 − 8l`.
     let mut rl : Array Val := #[]
-    for first in [16, 24, 0, 8] do
-      rl := rl.push (← pack (leBits streamBit (at_ + first) 8))
+    for first in [24, 16, 8, 0] do
+      rl := rl.push (← pack (beBits streamBit (at_ + first) 8))
     rootOf := rootOf ++ [(at_, nRoots)]
     rootLimbs := rootLimbs.push rl
     portOf rl (.root nRoots)

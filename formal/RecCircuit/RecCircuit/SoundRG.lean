@@ -12,8 +12,9 @@ node (`ExpandProof.lean` proves it for every accepted graph, `expandSound`).
 
 * `compile_sound_statement`: the statement port carries the public input's four words as `RecGraph` reads them
   (`beWordAt`, the `statement` nodes' values);
-* `compile_sound_root`: root `i`'s port carries the little-endian words of the 32 bytes `RecGraph`'s call word
-  `Word.stream at` outputs, bytes `16, 24, 0, 8` (the `PCS_OPEN` root word's limbs);
+* `compile_sound_root`: root `i`'s port carries the big-endian words of the 32 bytes `RecGraph`'s call word
+  `Word.stream at` outputs, bytes `24, 16, 8, 0` (the `PCS_OPEN` root word's limbs: π1's stream carries a root as its
+  root word, REVIEW-REC.md R1);
 * `compile_sound_element`: element `e`'s port carries `RecGraph`'s value of any original node the expansion maps to the
   calls' `e`-th element node;
 * `compile_sound_zero_rg`: the `m`-th zero port carries `RecGraph`'s value of the `m`-th non-constant zero check.
@@ -62,8 +63,8 @@ theorem compile_sound_root (hc : compile (ofRG g rootsAt iv) = .ok c) {pub : ℕ
     (hw : c.circuit.toPiop.Satisfies pub (emb w)) {J i : ℕ} (hJ : J < c.circuit.ports.size)
     (hs : (c.circuit.ports.getD J default).source = .root i) :
     c.circuit.portLimbs w J = (List.range 4).map fun l =>
-      F64.ofNat (leNat (slice ((c.streamW (ofRG g rootsAt iv) w).toArray.extract (rootsAt.getD i 0)
-        (rootsAt.getD i 0 + 32)).toList ([16, 24, 0, 8].getD l 0) 8)) := by
+      F64.ofNat (beNat (slice ((c.streamW (ofRG g rootsAt iv) w).toArray.extract (rootsAt.getD i 0)
+        (rootsAt.getD i 0 + 32)).toList ([24, 16, 8, 0].getD l 0) 8)) := by
   rw [compile_sound hc hw J hJ, portMeaning, hs]
   apply List.map_congr_left
   intro l hl

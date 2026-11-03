@@ -4,8 +4,10 @@
 //! `tests/prove_real.rs` (`WRITE_VECTORS=<dir>`), replayed by `tests/evm_vectors.rs` with no prover and no trace.
 //!
 //! The format is lines of `key value`, the bytes in lowercase hex: `config`, `shape` (`log_memory log_bytecode` and
-//! the six row counts), `public`, `calldata`, one `pcs_open` line per call in call order, `accepts`, `gas_straight`,
-//! `gas_deployed`, `contracts`; `#` starts a comment.
+//! the six row counts), `public`, `calldata`, one `pcs_open` line per call in call order, one `whir_root` line per
+//! call in call order (the root of the commitment the call opens, as the prover committed it: the hash whose two
+//! scalars, `hash_to_scalars`, are its WHIR opening's first two; written by the prover's run, not read off the
+//! contract's calls), `accepts`, `gas_straight`, `gas_deployed`, `contracts`; `#` starts a comment.
 
 #![allow(dead_code)]
 
@@ -23,6 +25,9 @@ pub struct Vector {
     pub public: [u8; 32],
     pub calldata: Vec<u8>,
     pub calls: Vec<Vec<u8>>,
+    /// The roots of the commitments the calls open, in call order, from the prover's output (its commitments' and
+    /// the setup's): what a real `PCS_OPEN` opens, whatever the contract encodes.
+    pub whir_roots: Vec<[u8; 32]>,
     pub accepts: bool,
     pub gas_straight: u64,
     pub gas_deployed: u64,
@@ -78,6 +83,9 @@ pub fn write(v: &Vector) -> String {
     for call in &v.calls {
         out.push_str(&format!("pcs_open {}\n", hex(call)));
     }
+    for root in &v.whir_roots {
+        out.push_str(&format!("whir_root {}\n", hex(root)));
+    }
     out.push_str(&format!("accepts {}\n", v.accepts));
     out.push_str(&format!("gas_straight {}\n", v.gas_straight));
     out.push_str(&format!("gas_deployed {}\n", v.gas_deployed));
@@ -96,6 +104,7 @@ pub fn read(text: &str) -> Vector {
         public: [0; 32],
         calldata: Vec::new(),
         calls: Vec::new(),
+        whir_roots: Vec::new(),
         accepts: false,
         gas_straight: 0,
         gas_deployed: 0,
@@ -116,6 +125,7 @@ pub fn read(text: &str) -> Vector {
             "public" => v.public = unhex(value).try_into().expect("32 bytes"),
             "calldata" => v.calldata = unhex(value),
             "pcs_open" => v.calls.push(unhex(value)),
+            "whir_root" => v.whir_roots.push(unhex(value).try_into().expect("32 bytes")),
             "accepts" => v.accepts = value == "true",
             "gas_straight" => v.gas_straight = value.parse().expect("a number"),
             "gas_deployed" => v.gas_deployed = value.parse().expect("a number"),
@@ -124,6 +134,20 @@ pub fn read(text: &str) -> Vector {
         }
     }
     v
+}
+
+/// A call of π1's own contract in `PCS_OPEN`'s ABI (`crates/evm/src/machine.rs`; `crates/leanvm_rec/REVIEW-REC.md`
+/// M1, R1), as π2's contract makes it: `C1`'s and `C2`'s root words are the stream's bytes, the ABI's already; a
+/// setup root's (`F`, `A0`, `B0`: layout codes `0x5503..=0x5505`, the layout word's bytes 22..24) is the hash as it
+/// is, its word `root_word` of it.
+pub fn pi1_abi(input: &[u8]) -> Vec<u8> {
+    let mut x = input.to_vec();
+    let code = u16::from_be_bytes([x[32 + 22], x[32 + 23]]);
+    if (0x5503..=0x5505).contains(&code) {
+        let raw: [u8; 32] = x[..32].try_into().expect("a root");
+        x[..32].copy_from_slice(&leanvm_flock_gas::evm::machine::root_word(&raw));
+    }
+    x
 }
 
 /// The deployable verifying build of `recorded` (`crates/evm_link`: contracts of at most 24,576 bytes), deployed.
