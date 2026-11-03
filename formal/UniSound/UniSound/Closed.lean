@@ -40,6 +40,10 @@ namespace UniSound.Closed
 open UniStatement LeanVM.Parameters FlockSound.Uni UniSound.Ids
 open scoped ENNReal
 
+-- A combined claim and the ring map are matched, never computed: unfolding them reaches `relsOf` on
+-- the tables (the elaborator's lazy unfolding otherwise picks them before a pair's projection).
+attribute [local irreducible] UniSound.Ids.combAt UniSound.Ids.ringMapAt
+
 section Ref
 
 variable (D : Deployment) (hD : D.shape = reference)
