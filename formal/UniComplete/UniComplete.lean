@@ -12,3 +12,4 @@ import UniComplete.Whir
 import UniComplete.VerifierH
 import UniComplete.VerifierHSim
 import UniComplete.BatchProofWeight
+import UniComplete.BatchProofSumcheck
