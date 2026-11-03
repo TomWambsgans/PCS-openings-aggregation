@@ -6,9 +6,48 @@ import Bridge.Chain
 
 /-!
 # The walk is the chain (`UniWalk`, `UniWalkReject`)
--/
 
-set_option linter.unusedSectionVars false
+The two halves of the verifier bridge's walk (`FsWalk.lean`), proved for **every** deployment,
+Flock phase, `nV`, `V` and code-level link `C` (no hypothesis):
+
+* **`uniWalk : UniWalk D Fl nV V C`**: on a stream of `uLen` bytes, in every lawful monad and over
+  every permutation, the walk's verdict and result are `uAccB` and `uOut` at the chain's challenges;
+* **`uniWalkReject : UniWalkReject D Fl nV V`**: on a stream of another length, every outcome of the
+  walk over the random permutation's oracles rejects.
+
+Both statements hold as `FsWalk.lean` states them; no definition there needed a change.
+
+## The route
+
+* **The walk's wrapper** (`runWith_pair`): `runWith` is the seed, `reduceWith`, then `finish`; its
+  verdict and result are `walkOf` of what `obsOf` keeps of `reduceWith`'s run, so the code-level link
+  `C.link` replaces `reduceWith` by `readCounts` then the chain program `C.prog` (in every lawful
+  monad, from every channel).
+* **The row counts** (`readCounts_ok`): `readCounts` reads `4` bytes a height, collects `countZeros`,
+  and its counts are the statement's (`countsAt_rows`: `rowsOf` of the stream's first `24` bytes).
+* **A chain program on a stream holding its bytes** (`progRun`, for any `ChainProg`; the generic
+  lemma): from a channel whose cursor has `roundsBytes P.rounds + 24 * P.tail` bytes after it, `P.run`
+  is the chain's answers (`steps`, the hash of each state followed by the bytes `wAbs` lists), mapped by
+  `progOut`: each round's message is the stream's (`msgOf`, `msgsAt`'s head), its zeros collected in
+  order (`zerosFrom`), its samples the hashes of the state and the bytes read since the last sample
+  (`sample_bind`: `digestBytes state = (toB state).toList`, `challengeOf (ofB st) = chalL uLimbs st`;
+  a round's first sample absorbs the bytes not yet absorbed, `preOf`, its others nothing).
+* **The chain absorbs the walk's bytes** (`absorbsI_wAbs`): `uniEnc` of a stream message is the
+  stream's bytes it is read from (`scalar24_scalarAt`, `revRoot_halvesAt`: the reversed halves of
+  `rootOf` of the two halves `nextRoot` reads are the 32 bytes read; `scalars24_scalarsAt`), and round
+  `0`'s first sample absorbs the row counts' `24` bytes (`pre`) before `C1`'s root.
+* **Rejection** (`Consumes`, in `OracleComp RandomPermutationOracles`): every successful outcome of
+  the main line reads exactly `uLen` bytes of a stream that has them (`consumes_main`, compositional
+  over `takeBytes`, `sample`, `requireZero` and binds); the code-level link transfers this to
+  `reduceWith` (its `obsOf` keeps the result, the stream and the cursor), so on a stream of another
+  length either the main line fails (`StreamExhausted`) or `finish` does (`StreamNotConsumed`).
+  `UniWalkReject` does not mention `C`; the proof uses it, hence the argument.
+
+Decisions recorded here: the walk's monadic equalities are proved in continuation form for one sample
+(`sample_bind`, `samples_succ_bind`) and in direct form for the rounds (`runRounds_run`), the answers
+cut to the round's length by `steps_fix` where a round's answers are split off the list; no statement
+reads a stream's bytes by evaluation (every byte lemma is about a variable stream).
+-/
 
 namespace UniSound
 
@@ -253,6 +292,7 @@ theorem run_bind_ok {α β : Type} {x : ChanM m α} {K : α → ChanM m β} {c c
     (h : x.run.run c = pure (.ok a, c')) : (x >>= K).run.run c = (K a).run.run c' := by
   simp only [ExceptT.run_bind, StateT.run_bind, h, pure_bind]
 
+omit [LawfulMonad m] in
 theorem run_pure_chan {α : Type} (a : α) (c : Chan) :
     (pure a : ChanM m α).run.run c = pure (.ok a, c) := rfl
 
