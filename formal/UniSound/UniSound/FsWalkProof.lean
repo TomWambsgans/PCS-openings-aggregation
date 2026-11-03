@@ -209,4 +209,278 @@ theorem rowBytes_toList (b : Array UInt8) (h : 24 ≤ b.size) : (rowBytes b).toL
   · intro i h1 h2
     simp [rowBytes]
 
+/-! ## The channel's reads -/
+
+section Defs
+
+variable {m : Type → Type} [Monad m]
+
+/-- Keccak-256 over `F`, its digests as bytes: the chain's hash. -/
+def kB (F : KeccakState → m KeccakState) (x : List UInt8) : m Bytes32 := toB <$> keccak256With F x
+
+/-- **The chain's answers from a state**: each step's input the state, then the step's bytes. -/
+def steps (H : List UInt8 → m Bytes32) : Bytes32 → List (List UInt8) → m (List Bytes32)
+  | _, [] => pure []
+  | st, e :: es => H (stepIn st e) >>= fun st' => (st' :: ·) <$> steps H st' es
+
+end Defs
+
+/-- The bytes read and not yet absorbed. -/
+def preOf (c : Chan) : List UInt8 := (c.data.extract c.absorbed c.cursor).toList
+
+/-- The channel after one sample answered `st`. -/
+def sampOne (c : Chan) (st : Bytes32) : Chan :=
+  { c with absorbed := c.cursor, state := ofB st, challenges := c.challenges.push (chalL uLimbs st) }
+
+/-- The channel after samples answered `sts`. -/
+def sampChan (c : Chan) (sts : List Bytes32) : Chan :=
+  { c with
+    absorbed := c.cursor
+    state := ofB (sts.getLastD (toB c.state))
+    challenges := (sts.map (chalL uLimbs)).foldl Array.push c.challenges }
+
+/-- A row count as `nextInteger 4` reads it from byte `o`. -/
+def intAt (b : Array UInt8) (o : ℕ) : ℕ := (b.extract o (o + 4)).foldl (fun acc x => acc * 256 + x.toNat) 0
+
+/-- The `n` row counts from byte `o`. -/
+def countsAt (b : Array UInt8) (o n : ℕ) : List ℕ := (List.range n).map fun k => intAt b (o + 4 * k)
+
+section Monad
+
+variable {m : Type → Type} [Monad m] [LawfulMonad m]
+
+theorem run_bind_ok {α β : Type} {x : ChanM m α} {K : α → ChanM m β} {c c' : Chan} {a : α}
+    (h : x.run.run c = pure (.ok a, c')) : (x >>= K).run.run c = (K a).run.run c' := by
+  simp only [ExceptT.run_bind, StateT.run_bind, h, pure_bind]
+
+theorem run_pure_chan {α : Type} (a : α) (c : Chan) :
+    (pure a : ChanM m α).run.run c = pure (.ok a, c) := rfl
+
+theorem toB_ofB (b : Bytes32) : toB (ofB b) = b := LeanVM.Rpm.digestToRpm_ofRpm b
+
+theorem keccak_eq (F : KeccakState → m KeccakState) (x : List UInt8) :
+    keccak256With F x = (fun b => ofB b) <$> kB F x := by
+  simp only [kB, Functor.map_map, Soundness.ofB_toB_root, id_map']
+
+theorem chalL_eq (st : Bytes32) : PcsQuotient.Transcript.challengeOf (ofB st) = chalL uLimbs st := by
+  rw [Bridge.challengeOf_eq, toB_ofB]
+  rfl
+
+theorem lift_run {α : Type} (x : m α) (c : Chan) :
+    (ExceptT.lift (StateT.lift x) : ChanM m α).run.run c = x >>= fun a => pure (.ok a, c) := by
+  simp only [ExceptT.run_lift, StateT.run_map, StateT.run_lift, map_bind, map_pure]
+
+/-- **A sample**: the hash of the state and the bytes not yet absorbed. -/
+theorem sample_bind {β : Type} (F : KeccakState → m KeccakState) (K : E → ChanM m β) (c : Chan) :
+    (sample F >>= K).run.run c = kB F (stepIn (toB c.state) (preOf c)) >>= fun st =>
+      (K (chalL uLimbs st)).run.run (sampOne c st) := by
+  have hin : digestBytes c.state ++ (c.data.extract c.absorbed c.cursor).toList =
+      stepIn (toB c.state) (preOf c) := by
+    rw [stepIn, Bridge.toB_toList]
+    rfl
+  simp only [sample, bind_assoc, ExceptT.run_bind, StateT.run_bind, chan_get_run, pure_bind, liftM,
+    monadLift, MonadLift.monadLift, lift_run, chan_set_run, hin, keccak_eq,
+    bind_map_left, chalL_eq]
+  rfl
+
+theorem sampChan_nil (c : Chan) (h : c.absorbed = c.cursor) : sampChan c [] = c := by
+  rcases c with ⟨d, cu, ab, st, ch, z⟩
+  simp only at h
+  subst h
+  simp only [sampChan, List.getLastD_nil, Soundness.ofB_toB_root, List.map_nil, List.foldl_nil]
+
+theorem sampChan_sampOne (c : Chan) (st : Bytes32) (sts : List Bytes32) :
+    sampChan (sampOne c st) sts = sampChan c (st :: sts) := by
+  simp only [sampChan, sampOne, List.getLastD_cons, toB_ofB, List.map_cons, List.foldl_cons]
+
+theorem preOf_self (c : Chan) (h : c.absorbed = c.cursor) : preOf c = [] := by
+  simp only [preOf, toList_extract_eq, h, Nat.sub_self, bytesAt, List.take_zero]
+
+theorem toB_sampOne (c : Chan) (st : Bytes32) : toB (sampOne c st).state = st := toB_ofB st
+
+/-- **Samples after the bytes are absorbed**: each the hash of the state alone. -/
+theorem repeat_sample_bind {β : Type} (F : KeccakState → m KeccakState) :
+    ∀ (n : ℕ) (K : List E → ChanM m β) (c : Chan), c.absorbed = c.cursor →
+      (FlockSound.Uni.repeatM (sample F) n >>= K).run.run c =
+        steps (kB F) (toB c.state) (List.replicate n []) >>= fun sts =>
+          (K (sts.map (chalL uLimbs))).run.run (sampChan c sts)
+  | 0, K, c, h => by
+    simp only [FlockSound.Uni.repeatM, pure_bind, List.replicate_zero, steps, List.map_nil,
+      sampChan_nil c h]
+  | n + 1, K, c, h => by
+    simp only [FlockSound.Uni.repeatM, bind_assoc, pure_bind]
+    rw [sample_bind]
+    simp only [List.replicate_succ, steps, preOf_self c h, bind_assoc, bind_map_left]
+    congr 1
+    funext st
+    rw [repeat_sample_bind F n (fun l => K (chalL uLimbs st :: l)) (sampOne c st) rfl]
+    simp only [toB_sampOne, sampChan_sampOne, List.map_cons]
+
+/-- **A round's samples**: the first absorbs the bytes not yet absorbed, the others nothing. -/
+theorem samples_succ_bind {β : Type} (F : KeccakState → m KeccakState) (n : ℕ)
+    (K : List E → ChanM m β) (c : Chan) :
+    (samples F (n + 1) >>= K).run.run c =
+      steps (kB F) (toB c.state) (preOf c :: List.replicate n []) >>= fun sts =>
+        (K (sts.map (chalL uLimbs))).run.run (sampChan c sts) := by
+  rw [FlockSound.Uni.samples_eq]
+  simp only [FlockSound.Uni.repeatM, bind_assoc, pure_bind]
+  rw [sample_bind]
+  simp only [steps, bind_assoc, bind_map_left]
+  congr 1
+  funext st
+  rw [repeat_sample_bind F n (fun l => K (chalL uLimbs st :: l)) (sampOne c st) rfl]
+  simp only [toB_sampOne, sampChan_sampOne, List.map_cons]
+
+/-! ### Fixed reads -/
+
+theorem takeBytes_ok (n : ℕ) (c : Chan) (h : c.cursor + n ≤ c.data.size) :
+    (takeBytes (m := m) n).run.run c =
+      pure (.ok (c.data.extract c.cursor (c.cursor + n)), { c with cursor := c.cursor + n }) := by
+  rw [takeBytes_run, ite_eq_left h]
+
+theorem nextScalar_ok (c : Chan) (h : c.cursor + 24 ≤ c.data.size) :
+    (nextScalar (m := m)).run.run c =
+      pure (.ok (scalarAt c.data c.cursor), { c with cursor := c.cursor + 24 }) := by
+  simp only [nextScalar, ExceptT.run_bind, StateT.run_bind, takeBytes_ok 24 c h, pure_bind,
+    ExceptT.run_pure, StateT.run_pure]
+  rw [beWordAt_extract c.data c.cursor 24 16 h (by norm_num),
+    beWordAt_extract c.data c.cursor 24 8 h (by norm_num),
+    beWordAt_extract c.data c.cursor 24 0 h (by norm_num)]
+  rfl
+
+theorem nextScalars_ok (n : ℕ) (c : Chan) (h : c.cursor + 24 * n ≤ c.data.size) :
+    (nextScalars (m := m) n).run.run c =
+      pure (.ok (scalarsAt c.data c.cursor n), { c with cursor := c.cursor + 24 * n }) := by
+  rw [FlockSound.Uni.nextScalars_eq]
+  induction n generalizing c with
+  | zero => rfl
+  | succ n ih =>
+    simp only [FlockSound.Uni.repeatM]
+    rw [run_bind_ok (nextScalar_ok c (by omega)),
+      run_bind_ok (ih { c with cursor := c.cursor + 24 } (by dsimp only; omega)), scalarsAt_succ,
+      show c.cursor + 24 * (n + 1) = c.cursor + 24 + 24 * n by ring]
+    rfl
+
+theorem nextRoot_ok (c : Chan) (h : c.cursor + 32 ≤ c.data.size) :
+    (nextRoot (m := m)).run.run c =
+      pure (.ok (halvesAt c.data c.cursor), { c with cursor := c.cursor + 32 }) := by
+  simp only [nextRoot, ExceptT.run_bind, StateT.run_bind, takeBytes_ok 16 c (by omega), pure_bind]
+  rw [takeBytes_ok 16 _ (by dsimp only; omega)]
+  simp only [pure_bind, ExceptT.run_pure, StateT.run_pure]
+  rw [beWordAt_extract c.data c.cursor 16 8 (by omega) (by norm_num),
+    beWordAt_extract c.data c.cursor 16 0 (by omega) (by norm_num),
+    beWordAt_extract c.data (c.cursor + 16) 16 8 (by omega) (by norm_num),
+    beWordAt_extract c.data (c.cursor + 16) 16 0 (by omega) (by norm_num)]
+  rfl
+
+theorem rootRead_ok (r : Bool) (c : Chan) (h : c.cursor + (if r then 32 else 0) ≤ c.data.size) :
+    (rootRead (m := m) r).run.run c =
+      pure (.ok (if r then some (halvesAt c.data c.cursor) else none),
+        { c with cursor := c.cursor + (if r then 32 else 0) }) := by
+  cases r with
+  | false => rfl
+  | true =>
+    simp only [ite_true] at h ⊢
+    simp only [rootRead, ite_true, map_eq_bind_pure_comp]
+    rw [run_bind_ok (nextRoot_ok c h)]
+    rfl
+
+theorem nextInteger_ok (c : Chan) (h : c.cursor + 4 ≤ c.data.size) :
+    (nextInteger (m := m) 4).run.run c = pure (.ok (intAt c.data c.cursor), { c with cursor := c.cursor + 4 }) := by
+  simp only [nextInteger, ExceptT.run_bind, StateT.run_bind, takeBytes_ok 4 c h, pure_bind,
+    ExceptT.run_pure, StateT.run_pure]
+  rfl
+
+theorem requireZero_run (z : E) (c : Chan) :
+    (requireZero (m := m) z).run.run c = pure (.ok (), collectZ c [z]) := chan_modify_run c _
+
+theorem collectZ_collectZ (c : Chan) (zs ws : List E) :
+    collectZ (collectZ c zs) ws = collectZ c (zs ++ ws) := by
+  simp only [collectZ, List.foldl_append]
+
+theorem readCount_ok (r : ℕ) (c : Chan) (h : c.cursor + 4 ≤ c.data.size) :
+    (readCount (m := m) r).run.run c =
+      pure (.ok (intAt c.data c.cursor), collectZ { c with cursor := c.cursor + 4 }
+        [intBits (intAt c.data c.cursor) (r + 1) 32,
+          intBits (intAt c.data c.cursor) r 1 * intBits (intAt c.data c.cursor) 0 r]) := by
+  simp only [readCount]
+  rw [run_bind_ok (nextInteger_ok c h), run_bind_ok (requireZero_run _ _),
+    run_bind_ok (requireZero_run _ _), collectZ_collectZ]
+  rfl
+
+theorem countsAt_succ (b : Array UInt8) (o n : ℕ) :
+    countsAt b o (n + 1) = intAt b o :: countsAt b (o + 4) n := by
+  simp only [countsAt, List.range_succ_eq_map, List.map_cons, List.map_map, Nat.mul_zero,
+    Nat.add_zero, List.cons.injEq, true_and]
+  apply List.map_congr_left
+  intro k _
+  simp only [Function.comp_apply]
+  congr 1
+  omega
+
+/-- **The row counts**: `readCounts` reads `4` bytes a height and collects `countZeros`. -/
+theorem readCounts_ok : ∀ (hs : List ℕ) (c : Chan), c.cursor + 4 * hs.length ≤ c.data.size →
+    (readCounts (m := m) hs).run.run c =
+      pure (.ok (countsAt c.data c.cursor hs.length),
+        collectZ { c with cursor := c.cursor + 4 * hs.length }
+          (countZeros hs (countsAt c.data c.cursor hs.length)))
+  | [], c, _ => by
+    simp only [readCounts, List.mapM_nil, List.length_nil]
+    rfl
+  | r :: hs, c, h => by
+    simp only [List.length_cons] at h ⊢
+    rw [readCounts_eq, List.mapM_cons, run_bind_ok (readCount_ok r c (by omega)), ← readCounts_eq,
+      run_bind_ok (readCounts_ok hs _ (by simp only [collectZ]; omega)), countsAt_succ]
+    simp only [collectZ, countZeros, List.zip_cons_cons, List.flatMap_cons, List.cons_append, List.nil_append, show c.cursor + 4 * (hs.length + 1) =
+        c.cursor + 4 + 4 * hs.length by ring]
+    rfl
+
+end Monad
+
+/-! ## The chain's answers -/
+
+section Steps
+
+variable {m : Type → Type} [Monad m] [LawfulMonad m]
+
+theorem runM_eq_steps (H : List UInt8 → m Bytes32) :
+    ∀ (y : List UInt8) (es : List (List UInt8)),
+      runM H y es = H y >>= fun st => (st :: ·) <$> steps H st es
+  | y, [] => by simp only [runM, steps, map_pure]
+  | y, e :: es => by
+    simp only [runM, steps, runM_eq_steps H _ es, bind_assoc, map_eq_bind_pure_comp,
+      Function.comp_def]
+
+theorem steps_append (H : List UInt8 → m Bytes32) :
+    ∀ (st : Bytes32) (es₁ es₂ : List (List UInt8)),
+      steps H st (es₁ ++ es₂) = steps H st es₁ >>= fun l₁ =>
+        (l₁ ++ ·) <$> steps H (l₁.getLastD st) es₂
+  | st, [], es₂ => by simp [steps]
+  | st, e :: es₁, es₂ => by
+    simp only [List.cons_append, steps, steps_append H _ es₁ es₂, map_bind, bind_assoc,
+      bind_map_left, Functor.map_map, List.getLastD_cons]
+
+/-- A list of answers cut or padded to length `n`. -/
+def fixB (n : ℕ) (l : List Bytes32) : List Bytes32 := (List.range n).map fun i => l.getD i default
+
+@[simp] theorem length_fixB (n : ℕ) (l : List Bytes32) : (fixB n l).length = n := by simp [fixB]
+
+theorem fixB_succ_cons (n : ℕ) (x : Bytes32) (l : List Bytes32) :
+    fixB (n + 1) (x :: l) = x :: fixB n l := by
+  simp [fixB, List.range_succ_eq_map, Function.comp_def]
+
+theorem steps_fix (H : List UInt8 → m Bytes32) :
+    ∀ (st : Bytes32) (es : List (List UInt8)), steps H st es = fixB es.length <$> steps H st es
+  | st, [] => by simp [steps, fixB]
+  | st, e :: es => by
+    conv_lhs => rw [steps]
+    rw [steps]
+    simp only [map_bind, Functor.map_map, List.length_cons, fixB_succ_cons]
+    congr 1
+    funext st'
+    conv_lhs => rw [steps_fix H st' es]
+    rw [Functor.map_map]
+
+end Steps
+
 end UniSound
