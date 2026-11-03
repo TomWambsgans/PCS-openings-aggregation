@@ -69,6 +69,12 @@ theorem samePat_stepC (t : Table) (c : ℕ) (rest : List ℕ) (sentE : Array (Op
     (UniSound.samePat_set (UniSound.samePat_refl sentE) c v 0)
   exact ⟨h1.1.trans h.1, fun i ↦ (h1.2 i).trans (h.2 i)⟩
 
+/-- One flush's step of `tableDegrees`. -/
+def tdStepC (acc : ℕ × ℕ) (x : List Form × List Form) : ℕ × ℕ := (acc.1 + tupleDegree x.1, acc.2 + tupleDegree x.2)
+
+theorem tableDegrees_eqC (t : Table) :
+    tableDegrees t = (t.flushes.pull.zip t.flushes.push).foldl tdStepC (1, 0) := rfl
+
 section TablePart
 
 variable (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8)
@@ -195,7 +201,7 @@ theorem tablePart_sim (st : RecState) (t : Table) (lh : Nat) {weights : Array Na
     Sim π iv publicInput stream st (Pi1.tablePart t lh weights beta w)
       (UniStatement.tablePart (m := Id) t lh weightsE betaE wE) (24 * UniSound.tableReads t) 0
       (fun st' a b ↦ RpPart π iv publicInput stream st' a.1 b.1 ∧ RpRels π iv publicInput stream st' a.2 b.2 ∧
-        TabShape t lh wE b.2) := by
+        TabShape t lh wE b.2 ∧ (b.1.pullDegree, b.1.pushDegree) = tableDegrees t) := by
   refine Sim.of_good fun hg ↦ ?_
   unfold Pi1.tablePart UniStatement.tablePart
   dsimp only
@@ -244,27 +250,35 @@ theorem tablePart_sim (st : RecState) (t : Table) (lh : Nat) {weights : Array Na
   tgrow [hc, hrels, hpullS] with hq2.good hq3
   refine Sim.cast ?_ (by simp) (Sim.bind (Sim.forIn_list (π := π) (iv := iv) (publicInput := publicInput)
     (stream := stream) q3 (t.flushes.pull.zip t.flushes.push) (t.flushes.pull.zip t.flushes.push)
-    (fun _ q (s : Array RelationS × Nat × Nat × Nat × Nat) (u : Array Relation × E × E × Nat × Nat) ↦
+    (fun i q (s : Array RelationS × Nat × Nat × Nat × Nat) (u : Array Relation × E × E × Nat × Nat) ↦
       TpCtx π iv publicInput stream q weights weightsE beta betaE w wE sentS sentE ∧
       RpRels π iv publicInput stream q s.1.toList u.1.toList ∧ TabShape t lh wE u.1.toList ∧
       Rp π iv publicInput stream q s.2.1 u.2.1 ∧ Rp π iv publicInput stream q s.2.2.1 u.2.2.1 ∧
-      s.2.2.2.1 = u.2.2.2.1 ∧ s.2.2.2.2 = u.2.2.2.2)
+      s.2.2.2.1 = u.2.2.2.1 ∧ s.2.2.2.2 = u.2.2.2.2 ∧
+      (u.2.2.2.1, u.2.2.2.2) = ((t.flushes.pull.zip t.flushes.push).take i).foldl tdStepC (1, 0))
     (fun i ↦ 24 * UniSound.flushReads weightsE sentE ((t.flushes.pull.zip t.flushes.push).getD i ([], [])))
     (fun _ ↦ 0) _ _ rfl ?_ q3 _ _ hq3.good (Grows.refl q3)
-    ⟨hc, hrels, hshape, hpullS, hpushS, rfl, rfl⟩)
+    ⟨hc, hrels, hshape, hpullS, hpushS, rfl, rfl, rfl⟩)
     fun q4 s u hq4 _ hJ ↦ Sim.pure_of_pstep (PStep.refl q4 hq4)
-      ⟨⟨hJ.2.2.2.1, hJ.2.2.2.2.1, hJ.2.2.2.2.2.1, hJ.2.2.2.2.2.2, hJ.1.hsent⟩, hJ.2.1, hJ.2.2.1⟩)
+      ⟨⟨hJ.2.2.2.1, hJ.2.2.2.2.1, hJ.2.2.2.2.2.1, hJ.2.2.2.2.2.2.1, hJ.1.hsent⟩, hJ.2.1, hJ.2.2.1, by
+        rw [tableDegrees_eqC, ← List.take_length (l := t.flushes.pull.zip t.flushes.push)]
+        exact hJ.2.2.2.2.2.2.2⟩)
   · rw [Nat.add_zero]
     refine (sum_range_getD (fun x ↦ 24 * UniSound.flushReads weightsE sentE x) ([], []) _).trans ?_
     rw [sum_map_mulC, UniSound.sum_flushReads t weightsE sentE hpat]
   intro i hi _ q0 s u hq0 _ hJ
   obtain ⟨relsS', pullS', pushS', pdS, qdS⟩ := s
   obtain ⟨relsE', pullE', pushE', pdE, qdE⟩ := u
-  obtain ⟨hc0, hr0, hsh0, hpl0, hps0, hpd0, hqd0⟩ := hJ
-  dsimp only at hc0 hr0 hsh0 hpl0 hps0 hpd0 hqd0 ⊢
+  obtain ⟨hc0, hr0, hsh0, hpl0, hps0, hpd0, hqd0, hdeg0⟩ := hJ
+  dsimp only at hc0 hr0 hsh0 hpl0 hps0 hpd0 hqd0 hdeg0 ⊢
   have hmem := List.getElem_mem hi
+  have hfold : ((t.flushes.pull.zip t.flushes.push).take (i + 1)).foldl tdStepC (1, 0) =
+      tdStepC (((t.flushes.pull.zip t.flushes.push).take i).foldl tdStepC (1, 0))
+        (t.flushes.pull.zip t.flushes.push)[i] := by
+    rw [List.take_add_one, List.foldl_append, List.getElem?_eq_getElem hi]
+    rfl
   rw [List.getD_eq_getElem _ _ hi]
-  generalize (t.flushes.pull.zip t.flushes.push)[i] = x at hmem ⊢
+  generalize (t.flushes.pull.zip t.flushes.push)[i] = x at hmem hfold ⊢
   obtain ⟨pulled, pushed⟩ := x
   obtain ⟨hmpl, hmps⟩ := List.of_mem_zip hmem
   have hl1 : pulled.length ≤ weightsE.size := hfl _ (List.mem_append_left _ hmpl)
@@ -315,7 +329,7 @@ theorem tablePart_sim (st : RecState) (t : Table) (lh : Nat) {weights : Array Na
         ⟨rpTerms_tabC π iv publicInput stream hc0.hw hp1 t lh, hvbk⟩)
         ⟨rpTerms_tabC π iv publicInput stream hc0.hw hpp t lh, hvbk1⟩,
       TabShape.push (TabShape.push hsh0 (tabTerm_mapC t lh wE _)) (tabTerm_mapC t lh wE _), hPl, hPs,
-      by rw [hpd0], by rw [hqd0]⟩
+      by rw [hpd0], by rw [hqd0], by rw [hfold, ← hdeg0]; rfl⟩
   · -- the pull's fingerprint sent, not the push's
     refine Sim.cast (n := 24 + 0) (ch := 0 + 0) (by decide) (by decide) ?_
     have hK1 := hq1.good.inv.kinv
@@ -338,7 +352,7 @@ theorem tablePart_sim (st : RecState) (t : Table) (lh : Nat) {weights : Array Na
     tgrow [hc0, hr0, hp1, hvbk, hPl] with hq7.good hq8
     exact Sim.pure_of_pstep (PStep.refl q8 hq8.good) ⟨_, _, rfl, rfl, hc0,
       RpRels.pushC π iv publicInput stream hr0 ⟨rpTerms_tabC π iv publicInput stream hc0.hw hp1 t lh, hvbk⟩,
-      TabShape.push hsh0 (tabTerm_mapC t lh wE _), hPl, hPs, by rw [hpd0], by rw [hqd0]⟩
+      TabShape.push hsh0 (tabTerm_mapC t lh wE _), hPl, hPs, by rw [hpd0], by rw [hqd0], by rw [hfold, ← hdeg0]; rfl⟩
   · -- the push's fingerprint sent, not the pull's
     refine Sim.cast (n := 24 + 0) (ch := 0 + 0) (by decide) (by decide) ?_
     refine Sim.phcC (phc_add π iv publicInput stream hq1.good hc0.hbeta hk1) fun q2 dpl hq2 hdpl ↦ ?_
@@ -364,7 +378,7 @@ theorem tablePart_sim (st : RecState) (t : Table) (lh : Nat) {weights : Array Na
     tgrow [hc0, hr0, hpp, hvbk, hPl] with hq8.good hq9
     exact Sim.pure_of_pstep (PStep.refl q9 hq9.good) ⟨_, _, rfl, rfl, hc0,
       RpRels.pushC π iv publicInput stream hr0 ⟨rpTerms_tabC π iv publicInput stream hc0.hw hpp t lh, hvbk⟩,
-      TabShape.push hsh0 (tabTerm_mapC t lh wE _), hPl, hPs, by rw [hpd0], by rw [hqd0]⟩
+      TabShape.push hsh0 (tabTerm_mapC t lh wE _), hPl, hPs, by rw [hpd0], by rw [hqd0], by rw [hfold, ← hdeg0]; rfl⟩
   · -- neither fingerprint sent
     refine Sim.cast (n := 0) (ch := 0) (by decide) rfl ?_
     refine Sim.phcC (phc_add π iv publicInput stream hq1.good hc0.hbeta hk1) fun q2 dpl hq2 hdpl ↦ ?_
@@ -381,7 +395,7 @@ theorem tablePart_sim (st : RecState) (t : Table) (lh : Nat) {weights : Array Na
     refine Sim.phcC (phc_mul π iv publicInput stream hq5.good hps0 hdps) fun q6 ps hq6 hPs ↦ ?_
     tgrow [hc0, hr0, hPl] with hq5.good hq6
     exact Sim.pure_of_pstep (PStep.refl q6 hq6.good) ⟨_, _, rfl, rfl, hc0, hr0, hsh0, hPl, hPs,
-      by rw [hpd0], by rw [hqd0]⟩
+      by rw [hpd0], by rw [hqd0], by rw [hfold, ← hdeg0]; rfl⟩
 
 /-- **A table's bytes**: `24` a value it reads (`UniSound.tableReads`). -/
 def tableBytes (t : Table) : Nat := 24 * UniSound.tableReads t
@@ -395,8 +409,9 @@ variable {π iv publicInput stream}
 /-- **`TableSpec`**, `Compose`'s interface for a table's part. -/
 theorem tableSpec : TableSpec partR tableShape tableBytes := by
   intro π iv publicInput stream st t ht weights weightsE beta betaE w wE _ hwt hsize hbeta hw _
-  exact tablePart_sim π iv publicInput stream st t _ hwt
-    (fun tup htup ↦ by rw [hsize]; exact ((UniSound.Ids.tablesFacts t ht).2 tup htup).1) hbeta hw
+  refine Sim.mono (tablePart_sim π iv publicInput stream st t _ hwt
+    (fun tup htup ↦ by rw [hsize]; exact ((UniSound.Ids.tablesFacts t ht).2 tup htup).1) hbeta hw)
+    fun _ _ _ _ _ h ↦ ⟨⟨h.1, t, ht, congrArg Prod.fst h.2.2.2, congrArg Prod.snd h.2.2.2⟩, h.2.1, h.2.2.1⟩
 
 /-- info: 'RecGraph.Sim.tableSpec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

@@ -805,17 +805,29 @@ end Rel
 
 /-! ## `Compose`'s interface: the heap -/
 
-/-- **The parts' representation** for `Compose` (`RpPart`). -/
-def partR : PartRep := fun π iv publicInput stream st p u ↦ RpPart π iv publicInput stream st p u
+/-- **A part's degrees are a table's** (`tableDegrees`). -/
+def PartDeg (u : TablePart) : Prop :=
+  ∃ t ∈ tables, u.pullDegree = (tableDegrees t).1 ∧ u.pushDegree = (tableDegrees t).2
+
+/-- **The parts' representation** for `Compose` (`RpPart`), the degrees a table's. -/
+def partR : PartRep := fun π iv publicInput stream st p u ↦ RpPart π iv publicInput stream st p u ∧ PartDeg u
 
 theorem partR_grows : PartRepGrows partR :=
-  fun π iv publicInput stream _ _ _ _ hk hgr h ↦ RpPart.grow π iv publicInput stream hk hgr h
+  fun π iv publicInput stream _ _ _ _ hk hgr h ↦ ⟨RpPart.grow π iv publicInput stream hk hgr h.1, h.2⟩
+
+theorem forall₂_rightC {α β : Type} {R : α → β → Prop} {P : β → Prop} (hR : ∀ a b, R a b → P b) :
+    ∀ {l : List α} {m : List β}, List.Forall₂ R l m → ∀ b ∈ m, P b
+  | _, _, .nil => fun _ hb ↦ absurd hb List.not_mem_nil
+  | _, _, .cons hr hl => fun _ hb ↦ by
+    rcases List.mem_cons.mp hb with rfl | hb
+    · exact hR _ _ hr
+    · exact forall₂_rightC hR hl _ hb
 
 /-- **The heap's output, its shape**: `UniStatement`'s `heapRelations` at π1-rec3's shape, at some inputs (six tables'
 parts and active factors, sixteen weights) and the digits `wE`. -/
 def heapShape (wE : List E) (b : List Relation × List (Column × ℕ × Bool)) : Prop :=
   ∃ (activeE : List E) (partsE : List TablePart) (weightsE : Array E) (betaE hvE cvE mplE mpsE bplE bpsE : E),
-    activeE.length = 6 ∧ partsE.length = 6 ∧ weightsE.size = 16 ∧
+    activeE.length = 6 ∧ partsE.length = 6 ∧ (∀ p ∈ partsE, PartDeg p) ∧ weightsE.size = 16 ∧
       b = UniStatement.heapRelations reference activeE partsE weightsE betaE hvE cvE mplE mpsE bplE bpsE wE
         (chunks (reference.constraintDegree + 1))
 
@@ -824,9 +836,10 @@ theorem heapSpec : HeapSpec partR heapShape := by
   intro π iv publicInput stream st active activeE parts partsE weights weightsE beta hv cv mpl mps bpl bps betaE hvE
     cvE mplE mpsE bplE bpsE w wE hg hseed ha ha6 hp hp6 hw hw16 hbeta hhv hcv hmpl hmps hbpl hbps hwE _
   have h0 := rp_zero_of_seed π iv publicInput stream hg hseed
-  have h := heapRelations_phc π iv publicInput stream hg ⟨h0, ha, hp, hw, hwE⟩ hp6 hbeta hhv hcv hmpl hmps hbpl hbps
-    (chunks (reference.constraintDegree + 1))
-  exact ⟨h.1, h.2.1, h.2.2, activeE, partsE, weightsE, betaE, hvE, cvE, mplE, mpsE, bplE, bpsE, ha6, hp6, hw16, rfl⟩
+  have h := heapRelations_phc π iv publicInput stream hg ⟨h0, ha, hp.imp fun _ _ h ↦ h.1, hw, hwE⟩ hp6 hbeta hhv hcv
+    hmpl hmps hbpl hbps (chunks (reference.constraintDegree + 1))
+  exact ⟨h.1, h.2.1, h.2.2, activeE, partsE, weightsE, betaE, hvE, cvE, mplE, mpsE, bplE, bpsE, ha6, hp6,
+    forall₂_rightC (fun _ _ h ↦ h.2) hp, hw16, rfl⟩
 
 theorem digits_lengthC (t : E) (n : Nat) : (UniStatement.digits t n).length = n := by
   rw [digits_eq]
@@ -846,7 +859,7 @@ theorem constraintSpec : ConstraintSpec partR constraintShape := by
     rw [hwE, digits_lengthC]
     unfold wLen
     omega
-  have h := constraintRelation_phc π iv publicInput stream hg h0 hp hpw hgam ht hcv hw hwlen
+  have h := constraintRelation_phc π iv publicInput stream hg h0 (hp.imp fun _ _ h ↦ h.1) hpw hgam ht hcv hw hwlen
   exact ⟨h.1, h.2, partsE, pwE, gammaE, cvE, rfl⟩
 
 end RecGraph.Sim
