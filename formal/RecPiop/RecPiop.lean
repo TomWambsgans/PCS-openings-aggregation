@@ -10,6 +10,7 @@ import RecPiop.Fold
 import RecPiop.Ports
 import RecPiop.Rounds
 import RecPiop.Numbers
+import RecPiop.Vanishing
 
 /-!
 # RecPiop: the soundness of π2's PIOP, generic over circuits
@@ -48,7 +49,8 @@ move on.
    on `V_m` to the copy argument's (`idPoly_eval_omega`, `copyOK_of_idPoly`); its degrees (`P` at
    most `3(N − 1)`, the identity at most `5N − 1`, `natDegree_pushPoly_le`,
    `natDegree_idPoly_le`) and Schwartz–Zippel in `t` (`card_idPoly_eval_eq_zero_le`); `Σ_V h` is
-   `h`'s top novel coefficient (`sum_tablePoly_omega`).
+   `h`'s top novel coefficient (`sum_tablePoly_omega`); `Z_V` is the digit `w_m`, what the
+   verifier evaluates (`zV_eq_digitPoly`, `zV_eval_eq`, `RecPiop.Vanishing`).
 4. **The dataflow lemma** (`RecPiop.Dataflow`): the copy constraints are the witness being a
    fixed point of the circuit's dataflow (`copy_iff_flow`, `satisfies_iff`): expression slots
    (`expr_slot`), constants (`constant_slot`), forward chains (`forward_slot`,
@@ -64,7 +66,7 @@ move on.
 **Left to the next layers** (named, not assumed here): the tables' layer `Model` (`W`'s candidate's
 polynomial and fold values with `cells_fold`, `Q`'s `h` and `q`, the setup's polynomials), the
 binding hypothesis `hbind` for the candidates (limbs in `K`: `Ports`), the verifier's arithmetic
-(`Z_V(t) = w_m(t)`, the indicators' closed form `w_m/(Ẑ_s(t) + Ẑ_s(c_p))`, the zero coset's
+(the indicators' closed form `w_m/(Ẑ_s(t) + Ẑ_s(c_p))`, the zero coset's
 closed form, the fold's siblings), and the Fiat–Shamir layer and the openings (ListChainU's
 `hlink`: the openings' claims give `Post2`).
 
@@ -266,3 +268,11 @@ The build fails if a headline theorem's axioms grow beyond Lean's three standard
 /-- info: 'RecPiop.bits_rho' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecPiop.bits_rho
+
+/-- info: 'RecPiop.Circuit.zV_eq_digitPoly' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecPiop.Circuit.zV_eq_digitPoly
+
+/-- info: 'RecPiop.Circuit.zV_eval_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecPiop.Circuit.zV_eval_eq
