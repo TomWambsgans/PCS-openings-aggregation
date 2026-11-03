@@ -64,7 +64,7 @@ theorem uniKnowledgeSoundness_bridges {D : Deployment} (κ : ℕ)
 `uniKnowledgeSoundness_bridges` at `κ = 18` with the deployment's numbers (`GameNumbers.lean`:
 `hκ_reference`, `uniShapes_reference`, `layoutVarsSmall_reference`, `uniIv_of`, `hnQ_flock'`,
 `hnv_flock'`, `hFl_flock`) and the setup's and extractor's bridges in place. What is left: the bus
-model and the identity model's rest (`B`, `J`, `hB`, `hdeg`, `hrel`, the batch `hprod`, `htarget`),
+model and the identity model's rest (`B`, `J`, `hB`, `hdeg`, `hrel`, the batch `hbatch`),
 `WeightMle`, and the verifier's bridge `UniVerifierBridge`. -/
 theorem uniKnowledgeSoundness_reference_game {D : Deployment} (hD : D.shape = reference)
     (hIv : D.programIv = programIv) (B : BusModel D 18) (J : UniIdsRest D (flockSoundInstance 18) B)
@@ -132,7 +132,7 @@ theorem uniKnowledgeSoundness_fs {D : Deployment} (κ : ℕ)
 
 /-- **Knowledge soundness at the reference deployment, the Fiat–Shamir layer proved**: no hypothesis
 of the Fiat–Shamir layer is left; what is left is the bus model and the identity model's rest
-(`B`, `J`, `hB`, `hdeg`, `hrel`, the batch `hprod`, `htarget`) and `WeightMle`. -/
+(`B`, `J`, `hB`, `hdeg`, `hrel`, the batch `hbatch`) and `WeightMle`. -/
 theorem uniKnowledgeSoundness_reference_fs {D : Deployment} (hD : D.shape = reference)
     (hIv : D.programIv = programIv) (B : BusModel D 18) (J : UniIdsRest D (flockSoundInstance 18) B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))

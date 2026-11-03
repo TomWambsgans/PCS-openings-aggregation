@@ -803,7 +803,7 @@ open scoped ENNReal in
 (`layoutVarsSmall_reference`), Flock's errors (`hFl_flock`), and the Fiat–Shamir layer from the three
 bridge facts (`fsLayer_of_bridges` with `uniShapes_reference`, `hnQ_flock'`, `hnv_flock'`, `uniIv_of`).
 What is left: the bus model and the identity model's rest (`B`, `J`, their numbers `hB`, `hdeg`,
-`hrel`, the batch `hprod`, `htarget`), `WeightMle`, and the three bridges. -/
+`hrel`, the batch `hbatch`), `WeightMle`, and the three bridges. -/
 theorem uniKnowledgeSoundness_reference {D : Deployment} (hD : D.shape = reference)
     (hIv : D.programIv = programIv) (B : BusModel D 18) (J : UniIdsRest D (flockSoundInstance 18) B)
     (hnV : J.nV = valsCount) (hV : J.V = varsOf (layoutsOf D.shape))

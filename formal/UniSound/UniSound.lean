@@ -44,6 +44,21 @@ import UniSound.Closed
 **`uniKnowledgeSoundness_bits`** (`Final.lean`): `ε Q = uniBound (2^32 / |E|) Q`, at most `2^-61`
 for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hypotheses.
 
+**Closed** (`Closed.lean`): **`UniSound.Closed.uniKnowledgeSoundness_closed`**, the same for every
+deployment at the reference shape with leanVM's program IV (`hD : D.shape = reference`,
+`hIv : D.programIv = programIv`; any program), **no other hypothesis**: every item below is
+discharged there (Flock by `flockSoundInstance`, `B`, `J` by `Ids/`'s `busModelRef`, `idsRestRef`,
+`idsRemainingRef`, the batch by `Ids/Align.lean`, `WeightMle` off the merge polynomial's roots by
+`Ids/WeightMle.lean`, the counts by `countsZero`, the Fiat–Shamir layer by `fsLayer_holds`, the numbers
+by `GameNumbers.lean` and `Closed.lean`). `uniBound (2^-160) (2^64) = 2^-61.41`
+(`EndToEnd/Review/UniSoundnessNumbers.py`, exact rationals).
+
+**The merge polynomial** (`UniIds.zb`, iteration of this proof): `combine` may merge a `q_flock` slot
+term's point `y(t)` into a longer `C1` point, where its weight is not multilinear; the states after `t`
+are `zb(t) = 0 ∨ …` (`Piop.lean`'s `uniS`), `t`'s error counts `zb`'s roots with the identities'
+(`(degSum + degBad) / |E|`), and the last link needs `WeightMle` only off them. For the identity model
+`zb = Z_bad = (y_0 + X)(y_0 + p_0)`, of degree `2^19`.
+
 | File | What |
 |---|---|
 | `Prog.lean` | Chain programs: a verifier phase as rounds of reads, checks and challenges (`ChainProg`, `run`). |
@@ -62,6 +77,7 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `Ids/Align.lean` | **`BatchIsVerifiers` for the identity model**: its relations at `t` are the code-level link's (`relsAt_eq`: `relsOf` = `flockClaim (mainRels …)`, a table's part reading exactly `tableReads` values, `tablePartOf_eq`), its combined claims the run's (`runClaims_eq`), its batch the verifier's (`prodOf_eq_batchProd`, `targetOf_eq_batchTargetOf`, `batchIsVerifiers_of`, `batchIsVerifiers_ids`, under `FlockGood`); `nVOf_eq_of`. |
 | `PendingLink.lean` | **`pendingTerminalLink`**: the batch's `λ³` product at its point is the pending reduction's terminal times the zero extension (`multilinear_eval` as the extension, substitution into `Â0`, `B̂0`). |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
+| `Closed.lean` | **`uniKnowledgeSoundness_closed`**: the end theorem at the reference deployment, no hypothesis (`idsRef`, `batchIsVerifiers_ref`, `weightMle_ref`, `hB_ref`, `hdeg_ref`, `hrel_ref`, into `FlockSound.Uni.uniKnowledgeSoundness_fs`). |
 | `FsChain.lean` | The univariate transcript as `Compose.ChainSpecU` (`uniSpec`: 24-byte scalars, the root's reversed halves, the seed's 16-byte tag, the row counts before `C1`'s root), the PIOP lifted to the chain's statement (`liftPiop`), the proof the chain reads (`UPf`, `uView`). |
 | `FsOps.lean` | The five `PCS_OPEN` calls as `WhirOp`s on plain layouts (`uniOps`: `C1`, `C2` by `tableCode`; the setup's stack, `A0`, `B0` at the setup's roots), the check (`uniCheck`), `good` (`uniGood`, `uniGoodS`). |
 | `FsCost.lean` | `uniNumbers_of`: the composed verifier's calls of `π` below `2^80` (every query short), from the chain's `< 2^10` queries and every round's `≤ 2^30` scalars; `fsLayer_of_game'`. |
@@ -86,7 +102,8 @@ the weights, the pending matrices' sum as one more product); its first state is 
 its last follows from the verifier's checks with true claims (`hpre_uniPiop`, `hlink_uniPiop`);
 the bound in bits (`uniBound_le_bits`).
 
-**Assumed** (the end theorem's hypotheses, each a named Lean object):
+**The general theorems' hypotheses** (each a named Lean object; all discharged at the reference
+deployment by `uniKnowledgeSoundness_closed`):
 
 1. `hFlock : FlockSound κ` — **Flock** (`FlockInterface.lean`; the Flock agent's).
 2. `B : BusModel D κ` — round `0`'s bridges: the verifier's heap `hd` well formed and realizing
@@ -132,8 +149,8 @@ the bound in bits (`uniBound_le_bits`).
    gives the end theorems with the layer in place: **`uniKnowledgeSoundness_fs`** (every deployment,
    its numbers as hypotheses) and **`uniKnowledgeSoundness_reference_fs`** (the reference deployment,
    no Fiat–Shamir hypothesis left).
-7. Numbers: `4 N + ncv ≤ 2^32`, Flock's rounds' errors at most `2^32 / |E|`, `degSum ≤ 2^32`,
-   `nRel + 2 ≤ 2^32`.
+7. Numbers: `4 N + ncv ≤ 2^32`, Flock's rounds' errors at most `2^32 / |E|`,
+   `degSum + degBad ≤ 2^32`, `nRel + 2 ≤ 2^32`.
 
 The build fails if the end theorems' axioms grow beyond Lean's three standard ones.
 -/
@@ -271,3 +288,7 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.Ids.combAt_mle' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.Ids.combAt_mle
+
+/-- info: 'UniSound.Closed.uniKnowledgeSoundness_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.Closed.uniKnowledgeSoundness_closed
