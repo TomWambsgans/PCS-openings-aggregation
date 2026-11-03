@@ -9,7 +9,8 @@ import UniComplete.FlockProverSumZc
 sum `Σ_i G'_i L̂_i ŝ_i` is `pending.claim`, **given, for `k > 0`, the univariate skip's completeness**
 (`SkipComplete k`: the verifier's interpolation of `2^k` zeros and the prover's coset values at `z` is the skip
 polynomial's value `Σ_b eq(r, b) (Â B̂ + Ẑ)(z, b)` whenever `Az ∘ Bz + z` vanishes on every position; a fact about
-`lagrangeWeights` and the PHI nodes alone, not proved here). At `k = 0` there is no skip and nothing is assumed.
+`lagrangeWeights` and the PHI nodes alone, proved for every `k ≤ 6` in `FlockProverSkip.lean`, `Skip.skipComplete`;
+the unconditional form is `FlockProverMain.lean`'s `pendingSumHolds_honest`). At `k = 0` there is no skip.
 
 The chain: the zerocheck's claim is its summand's sum (the R1CS, or `SkipComplete`), its rounds keep it
 (`zcRounds_complete`), so `v_a`, `v_b`, `v_c` are `A z`, `B z`, `z` at the zerocheck's point (`zc_fold_eq`); the

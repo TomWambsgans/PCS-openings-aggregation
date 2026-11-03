@@ -55,10 +55,12 @@ the 8 slot bits (`chi_in`), the `κ` instance bits (`chi_rest`).
 * The variant's skip `k` is the prover's; `assemble` reads it back as `Pending.new` does
   (`packing − row_low.length`), so `tables.rounds = pending.rounds` by definition.
 
-**The relations** the honest output satisfies (stated here, proved in `FlockProver*.lean`): `FlockRingHolds` (the
-ring claim on `q_flock`), `PendingSumHolds` (the product sum of the tables is the pending claim),
-`PendingTerminalHolds` (at every point the tables' extensions multiply to `Pending.terminal` with `A0`, `B0`'s
-values).
+**The relations** the honest output satisfies (stated here, proved in `FlockProver*.lean`, headline theorems and
+axiom guards in `FlockProverMain.lean`), all for every writer, i.e. any challenges (completeness has no bad event
+here): `FlockRingHolds` (the ring claim on `q_flock`; `flockRingHolds`, tower order), `PendingSumHolds` (the product
+sum of the tables is the pending claim; `pendingSumHolds_honest`, given `FlockHolds`), `PendingTerminalHolds` (at
+every point the tables' extensions multiply to `Pending.terminal` with `A0`, `B0`'s values; `pendingTerminalHolds`),
+and `SyncBasic`'s `FlockSyncs` (`flockSyncs`).
 -/
 
 namespace UniComplete.FlockP
