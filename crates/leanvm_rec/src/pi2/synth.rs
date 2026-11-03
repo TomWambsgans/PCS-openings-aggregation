@@ -669,6 +669,20 @@ pub fn target_d16v() -> Design {
     }
 }
 
+/// A target design on `2^log_n` positions: every region's blocks `delta` times smaller (at least one row), the sinks
+/// as they are. The same pairs, formulas and public side: for timings below the target size.
+pub fn scaled(design: &Design, log_n: usize) -> Design {
+    let delta = design.log_n - log_n;
+    let mut out = design.clone();
+    out.log_n = log_n;
+    for region in &mut out.regions {
+        if !design.types[region.row_type].name.starts_with("Sink") {
+            region.blocks.iter_mut().for_each(|s| *s = s.saturating_sub(delta));
+        }
+    }
+    out
+}
+
 /// D32v at its target shape (SPEC-REC.md §2.6, π1's main line): `N = 2^23` positions, 32-cell slice rows (131
 /// permutations of 1,600 slice rows), π1's 69 public terms.
 pub fn target_d32v() -> Design {

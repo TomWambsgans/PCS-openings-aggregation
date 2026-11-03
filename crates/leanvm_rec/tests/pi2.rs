@@ -319,17 +319,36 @@ fn gas_report() {
     target_report("D32v, N = 2^23 (pi1 main line)", synth::target_d32v());
 }
 
-/// The prover at a target shape: `PI2_TARGET=d16v` (default) or `d32v`.
+fn peak_memory() -> String {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| s.lines().find(|l| l.starts_with("VmHWM")).map(|l| l.to_string()))
+        .unwrap_or_default()
+}
+
+/// The prover at a target shape: `PI2_TARGET=d16v` (default) or `d32v`, scaled to `2^PI2_LOG_N` positions if set (the
+/// same pairs, formulas and public side, smaller blocks).
 #[test]
 #[ignore]
 fn prove_target() {
-    let design = match std::env::var("PI2_TARGET").as_deref() {
+    let target = match std::env::var("PI2_TARGET").as_deref() {
         Ok("d32v") => synth::target_d32v(),
         _ => synth::target_d16v(),
     };
+    let design = match std::env::var("PI2_LOG_N").ok().and_then(|v| v.parse().ok()) {
+        Some(log_n) => synth::scaled(&target, log_n),
+        None => target,
+    };
     let start = std::time::Instant::now();
     let f = built(&design);
-    println!("built, checked, setup committed: {:.1} s", start.elapsed().as_secs_f64());
+    println!(
+        "2^{} positions, {} pairs, {} groups: built, checked, setup committed in {:.1} s; {}",
+        f.circuit.log_n,
+        f.circuit.pairs.len(),
+        f.spec.groups.len(),
+        start.elapsed().as_secs_f64(),
+        peak_memory()
+    );
     let start = std::time::Instant::now();
     let proved = prove(&f.circuit, &f.spec, &f.setup, &f.iv, &f.public_input, &f.values, &f.witness);
     let proving = start.elapsed().as_secs_f64();
@@ -339,6 +358,6 @@ fn prove_target() {
     let start = std::time::Instant::now();
     let (reduced, roots, openings) = open(proved, &f.setup);
     let opening = start.elapsed().as_secs_f64();
-    println!("prove {proving:.1} s, open {opening:.1} s");
+    println!("prove {proving:.1} s, open {opening:.1} s; {}", peak_memory());
     assert_eq!(verify_openings(f.circuit.log_n, &reduced, &roots, &f.setup.root(), &openings), Ok(()));
 }

@@ -24,11 +24,11 @@ use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::transcript::{KeccakWriter, keccak_seed};
 use primitives::field::{F64, F192};
 use quotient::domain::{beta, chain, point};
-use quotient::ntt;
+use quotient::ntt::{self, ESplat, Ex8, Kx8, MixedSum};
 use quotient::opening::{self, Committed, Layout, Table};
 use quotient::transcript::root_scalars;
 
-use super::circuit::{Circuit, Formula, Lin, NONE, Read, coset_constants, pair_constants, vanishing};
+use super::circuit::{Circuit, Formula, Lin, Read};
 use super::verifier::{self, NAME, Reduced, Spec, claim, to_e, to_f192};
 
 /// The smallest stack leanVM's WHIR takes.
@@ -180,7 +180,8 @@ fn batch_inverse_e(values: &mut [F192]) {
     }
 }
 
-/// A linear form in `K`, its cells' indices permuted by a role.
+
+/// A linear form in `K` on eight points, its cells' indices permuted by a role.
 struct KLin {
     terms: Vec<(F64, usize)>,
     constant: F64,
@@ -195,18 +196,23 @@ impl KLin {
     }
 
     #[inline(always)]
-    fn eval(&self, cells: &[F64]) -> F64 {
-        self.terms.iter().fold(self.constant, |acc, &(c, i)| {
-            acc + if c == F64::ONE { cells[i] } else { c * cells[i] }
+    fn eval(&self, cells: &[Kx8]) -> Kx8 {
+        self.terms.iter().fold(Kx8::splat(self.constant), |acc, &(c, i)| {
+            acc + if c == F64::ONE { cells[i] } else { Kx8::splat(c) * cells[i] }
         })
     }
 }
 
-/// A group's formula on the extension coset: in `K` (every internal push), or in `E` (a fingerprint).
+/// A group's formula on the extension coset: in `K` (every internal push), linear in `E` (a port's fingerprint, its
+/// powers of `γ` evaluated), or any other formula of `E` (point by point).
 enum Compiled {
     K {
         lin: KLin,
         products: Vec<(F64, KLin, KLin)>,
+    },
+    ELinear {
+        terms: Vec<(ESplat, usize)>,
+        constant: F192,
     },
     E {
         formula: Formula,
@@ -215,7 +221,7 @@ enum Compiled {
 }
 
 impl Compiled {
-    fn new(f: &Formula, role: usize) -> Self {
+    fn new(f: &Formula, role: usize, gammas: &[F192]) -> Self {
         if f.is_base() {
             Compiled::K {
                 lin: KLin::new(&f.lin, role),
@@ -224,6 +230,16 @@ impl Compiled {
                     .iter()
                     .map(|(c, a, b)| (F64(c.value[0]), KLin::new(a, role), KLin::new(b, role)))
                     .collect(),
+            }
+        } else if f.products.is_empty() {
+            Compiled::ELinear {
+                terms: f
+                    .lin
+                    .terms
+                    .iter()
+                    .map(|(c, cell)| (ESplat::new(c.eval(gammas)), *cell as usize ^ role))
+                    .collect(),
+                constant: f.lin.constant.map_or(F192::ZERO, |c| c.eval(gammas)),
             }
         } else {
             Compiled::E {
@@ -234,7 +250,13 @@ impl Compiled {
     }
 }
 
-/// `q`'s values on `D = β_{m+2} + V_{m+2}`, limb by limb.
+/// The lanes of eight elements.
+fn lanes(x: Kx8) -> [F64; 8] {
+    x.to_row().0
+}
+
+/// `q`'s values on `D = β_{m+2} + V_{m+2}`, limb by limb, eight consecutive points at a time (`quotient::ntt`'s
+/// lanes: one AVX-512 carry-less product for eight).
 #[allow(clippy::too_many_arguments)]
 fn quotient_on_extension(
     circuit: &Circuit,
@@ -262,92 +284,101 @@ fn quotient_on_extension(
     let zv: [F64; 4] = std::array::from_fn(|c| zv_off + point(c));
     let zv_inv = zv.map(|z| z.inv());
 
-    // `Z_{U_s}` on `D`, linear: at `β_{m+2}`, and on the low and high bits of the index.
+    // The normalised `Ẑ_s` on `D`, linear: at `β_{m+2}`, and on the low and high bits of the index.
     let s_max = spec.max_log_rows();
-    let e = coset_constants(r, s_max.max(1));
+    let zhat = |x: F64, s: usize| (0..s).fold(x, |z, j| z + spec.c[j] * z.square());
     const LOW: usize = 12;
-    let at_offset: Vec<F64> = (0..=s_max).map(|s| vanishing(offset, &e, s)).collect();
+    let at_offset: Vec<F64> = (0..=s_max).map(|s| zhat(offset, s)).collect();
     let low: Vec<Vec<F64>> = (0..=s_max)
-        .map(|s| (0..1usize << LOW).map(|j| vanishing(point(j), &e, s)).collect())
+        .map(|s| (0..1usize << LOW).map(|j| zhat(point(j), s)).collect())
         .collect();
     let high: Vec<Vec<F64>> = (0..=s_max)
-        .map(|s| (0..(big >> LOW).max(1)).map(|j| vanishing(point(j << LOW), &e, s)).collect())
+        .map(|s| (0..(big >> LOW).max(1)).map(|j| zhat(point(j << LOW), s)).collect())
         .collect();
 
-    let pairs: Vec<(usize, F64, F64)> = circuit
-        .pairs
-        .iter()
-        .map(|p| {
-            let (z, norm) = pair_constants(p, r, &e);
-            (p.log_rows, z, norm)
-        })
-        .collect();
-    let groups: Vec<(Compiled, Vec<usize>)> = spec
+    let pairs: Vec<(usize, Kx8)> = spec.pairs.iter().map(|p| (p.log_rows, Kx8::splat(p.z))).collect();
+    let groups: Vec<(Compiled, &[usize])> = spec
         .groups
         .iter()
-        .map(|g| (Compiled::new(&g.formula, g.role), g.pairs.clone()))
+        .map(|g| (Compiled::new(&g.formula, g.role, &gammas), &g.pairs[..]))
         .collect();
     let pull_less = &spec.pull_less;
     let width = 1usize << r;
+    let points8 = Kx8::new(std::array::from_fn(point));
+    let (alpha8, beta8) = (Ex8::splat(alpha), Ex8::splat(beta_));
+    let one8 = Kx8::splat(F64::ONE);
 
     let mut q = vec![F192::ZERO; big];
-    parallel::chunks_mut(&mut q, 1 << LOW, |chunk, out| {
-        let start = chunk << LOW;
-        let mut dens = vec![F64::ZERO; pairs.len()];
-        let mut prefix = vec![F64::ZERO; pairs.len()];
-        let mut ind = vec![F64::ZERO; pairs.len()];
-        let mut zs = vec![F64::ZERO; s_max + 1];
-        let mut cells = vec![F64::ZERO; width];
-        for (j, out) in out.iter_mut().enumerate() {
-            let i = start + j;
+    let run = big.min(1 << LOW);
+    parallel::chunks_mut(&mut q, run, |chunk, out| {
+        let start = chunk * run;
+        let mut dens = vec![one8; pairs.len()];
+        let mut prefix = vec![one8; pairs.len()];
+        let mut ind = vec![one8; pairs.len()];
+        let mut zs = vec![one8; s_max + 1];
+        let mut cells = vec![one8; width];
+        for block in (0..out.len()).step_by(8) {
+            let i = start + block;
             let coset = i >> m;
             for s in 0..=s_max {
-                zs[s] = at_offset[s] + low[s][j] + high[s][chunk];
+                zs[s] = Kx8::load(&low[s][i & ((1 << LOW) - 1)..]) + Kx8::splat(at_offset[s] + high[s][i >> LOW]);
             }
-            // The indicators: one batched inversion over the pairs.
-            let mut acc = F64::ONE;
-            for (p, &(s, z, _)) in pairs.iter().enumerate() {
+            // The indicators: one batched inversion over the pairs, lane by lane.
+            let mut acc = one8;
+            for (p, &(s, z)) in pairs.iter().enumerate() {
                 dens[p] = zs[s] + z;
                 prefix[p] = acc;
-                acc *= dens[p];
+                acc = acc * dens[p];
             }
-            let mut inv = acc.inv() * zv[coset];
+            let mut inv = Kx8::new(lanes(acc).map(|x| x.inv())) * Kx8::splat(zv[coset]);
             for p in (0..pairs.len()).rev() {
-                ind[p] = inv * prefix[p] * pairs[p].2;
-                inv *= dens[p];
+                ind[p] = inv * prefix[p];
+                inv = inv * dens[p];
             }
+            // Lane `l` is the point `i + l`, its row's cell `c` the point `(i + l) ^ c`.
             for (c, cell) in cells.iter_mut().enumerate() {
-                *cell = wd[i ^ c];
+                let (b, x) = ((i ^ c) & !7, c & 7);
+                *cell = Kx8::new(std::array::from_fn(|l| wd[b + (l ^ x)]));
             }
             let w = cells[0];
-            let mut selected = F64::ZERO;
-            let mut pushed_k = F64::ZERO;
-            let mut pushed_e = F192::ZERO;
+            let mut selected = Kx8::splat(F64::ZERO);
+            let mut pushed_k = Kx8::splat(F64::ZERO);
+            let mut pushed_e = Ex8::splat(F192::ZERO);
             for (compiled, members) in &groups {
-                let sum = members.iter().fold(F64::ZERO, |acc, &p| acc + ind[p]);
-                selected += sum;
+                let sum = members.iter().fold(Kx8::splat(F64::ZERO), |acc, &p| acc + ind[p]);
+                selected = selected + sum;
                 match compiled {
                     Compiled::K { lin, products } => {
                         let v = products.iter().fold(lin.eval(&cells), |acc, (c, a, b)| {
                             let p = a.eval(&cells) * b.eval(&cells);
-                            acc + if *c == F64::ONE { p } else { *c * p }
+                            acc + if *c == F64::ONE { p } else { Kx8::splat(*c) * p }
                         });
-                        pushed_k += sum * v;
+                        pushed_k = pushed_k + sum * v;
+                    }
+                    Compiled::ELinear { terms, constant } => {
+                        let mut v = MixedSum::default();
+                        terms.iter().for_each(|(c, cell)| v.add(c, cells[*cell]));
+                        pushed_e = pushed_e + (v.reduce() + Ex8::splat(*constant)).mul_k(sum);
                     }
                     Compiled::E { formula, role } => {
-                        let v = formula.eval(&|c| F192::from(cells[c ^ role]), &gammas);
-                        pushed_e += v.mul_base(sum);
+                        let rows: Vec<[F64; 8]> = cells.iter().map(|&c| lanes(c)).collect();
+                        let sums = lanes(sum);
+                        let v: [F192; 8] = std::array::from_fn(|l| {
+                            formula.eval(&|c| F192::from(rows[c ^ role][l]), &gammas).mul_base(sums[l])
+                        });
+                        let limb = |k: usize| Kx8::new(v.map(|x| F64([x.c0, x.c1, x.c2][k])));
+                        pushed_e = pushed_e + Ex8::from_limbs([limb(0), limb(1), limb(2)]);
                     }
                 }
             }
-            let one_s = pull_less.iter().fold(F64::ZERO, |acc, &p| acc + ind[p]);
-            let p_t = F192::from(w + w * selected + pushed_k + kd[i]) + pushed_e;
-            let x = offset + point(i);
-            let d_pull = alpha + F192::from(w) + beta_.mul_base(x);
-            let d_push = alpha + p_t + beta_.mul_base(sd[i]);
-            let h = F192::new(hd[0][i].0, hd[1][i].0, hd[2][i].0);
-            let num = h * d_pull * d_push + d_push.mul_base(F64::ONE + one_s) + d_pull;
-            *out = num.mul_base(zv_inv[coset]);
+            let one_s = pull_less.iter().fold(Kx8::splat(F64::ZERO), |acc, &p| acc + ind[p]);
+            let p_t = Ex8::from_k(w + w * selected + pushed_k + Kx8::load(&kd[i..])) + pushed_e;
+            let x = Kx8::splat(offset + point(i)) + points8;
+            let d_pull = alpha8 + Ex8::from_k(w) + beta8.mul_k(x);
+            let d_push = alpha8 + p_t + beta8.mul_k(Kx8::load(&sd[i..]));
+            let h = Ex8::from_limbs([Kx8::load(&hd[0][i..]), Kx8::load(&hd[1][i..]), Kx8::load(&hd[2][i..])]);
+            let num = h * d_pull * d_push + d_push.mul_k(one8 + one_s) + d_pull;
+            out[block..block + 8].copy_from_slice(&num.mul_k(Kx8::splat(zv_inv[coset])).to_array());
         }
     });
     drop((wd, sd, kd, hd));
@@ -591,9 +622,4 @@ pub fn claims_hold(proved: &Proved, setup: &Setup) -> [bool; 4] {
         holds(&proved.quotient.0, &r.sum),
         holds(&setup.table, &r.setup),
     ]
-}
-
-#[allow(dead_code)]
-fn unused() {
-    let _ = NONE;
 }
