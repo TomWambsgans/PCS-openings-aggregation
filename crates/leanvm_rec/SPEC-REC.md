@@ -224,6 +224,15 @@ They cannot be made shorter:
 
 So 1,224 B is this design's calldata floor: 49K gas at 40 a byte, 78K at 64.
 
+*Lever 1(b), [`SPEC-POINTS.md`](SPEC-POINTS.md) (modelled, not built):*
+
+- *The point `r` must stay fresh: `q_flock`'s ring switch needs a sumcheck over its variables. DEEP, Gemini, Zeromorph
+  and a univariate batch save no coordinate.*
+- *Its 27 coordinates can come from 14 challenges if the batch runs two variables a round on `V_2`'s coordinate
+  functionals. That costs no Keccak-f, 56K of π2's positions and −312 B: −6.0K gas on `leanvm-rec-opt` (where the
+  `A0`, `B0` claims are gone), −10.5K on R3.*
+- *Three variables a round would cost 18 Keccak-f.*
+
 ## 2. π2's arithmetization
 
 ### 2.1 The reference: `crates/quotient` (measured, `tests/quotient_reference.rs`)
