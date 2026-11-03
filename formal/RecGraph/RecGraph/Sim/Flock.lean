@@ -115,6 +115,115 @@ theorem sim_sumcheckDrawn_ch (st : RecState) {claim : Nat} {c : E} (count : Nat)
       exact ((hpt.grow π iv publicInput stream hg'.inv.kinv (hgr1.trans hgr2)).snoc hz).pgrow hg2 hst3
     · rw [hst3.chal, hzc, hL1, hch, Array.toList_push, List.append_assoc]
 
+-- BEGIN ZC
+
+theorem squares_length (x : E) (n : ℕ) : (UniStatement.squares x n).length = n := by
+  rw [squares_eq]; simp
+
+theorem forall₂_replicate {st : RecState} {z : Sym} {x : E} (h : Rp' st z x) (n : ℕ) :
+    RpL' st (List.replicate n z) (List.replicate n x) := by
+  induction n with
+  | zero => exact List.Forall₂.nil
+  | succ n ih => rw [List.replicate_succ, List.replicate_succ]; exact List.Forall₂.cons h ih
+
+theorem forall₂_optRp_grow {st st' : RecState} (hg : Good st) (hgr : Grows st st') {l : List (Option Sym)}
+    {L : List (Option E)} (h : List.Forall₂ (OptRp' st) l L) : List.Forall₂ (OptRp' st') l L :=
+  h.imp fun _ _ hr ↦ hr.grow hg.inv.kinv hgr
+
+theorem forall₂_some {st : RecState} {l : List Sym} {L : List E} (h : RpL' st l L) :
+    List.Forall₂ (OptRp' st) (l.map some) (L.map some) := by
+  induction h with
+  | nil => exact List.Forall₂.nil
+  | cons h _ ih => exact List.Forall₂.cons h ih
+
+theorem fixedChallenges_length : Flock.fixedChallenges.length = 7 := rfl
+
+/-- `FsShape::draw` at `.rec3`: one challenge, its squares. -/
+theorem sim_drawRun_rec3 (st : RecState) (count : ℕ) (hc : count ≠ 0) :
+    Sim π iv publicInput stream st (Pi1.drawRun .rec3 count) (UniStatement.drawRun (Fp π) .rec3 count) 0 1
+      (fun st' a b ↦ RpL' st' a b ∧ b.length = count) := by
+  unfold Pi1.drawRun UniStatement.drawRun
+  simp only [hc, ↓reduceIte]
+  refine Sim.cast (n := 0 + 0) (ch := 1 + 0) rfl rfl ?_
+  exact Sim.bind (sim_sample π iv publicInput stream st) fun st1 a x hg1 _ ⟨hx, _⟩ ↦
+    Sim.of_psim ((squares_psim st1 hg1 hx count).mono fun st' a' _ h ↦ ⟨h, squares_length x count⟩)
+
+/-- **`zerocheck(32, 3, rec3)`**, without the challenge nodes. -/
+theorem zerocheck_sim0 (st : RecState) :
+    Sim π iv publicInput stream st (Pi1.zerocheck 32 3 .rec3) (Flock.zerocheckFs (Fp π) 32 3 .rec3) 1632 31
+      (fun st' a b ↦ OptRp' st' a.1 b.1 ∧ RpL' st' a.2.1 b.2.1 ∧ Rp' st' a.2.2.1 b.2.2.1 ∧
+        Rp' st' a.2.2.2.1 b.2.2.2.1 ∧ Rp' st' a.2.2.2.2 b.2.2.2.2 ∧ b.2.1.length = 29) := by
+  refine Sim.of_good fun hg ↦ ?_
+  unfold Pi1.zerocheck Flock.zerocheckFs
+  dsimp only
+  simp only [show (3 : ℕ) > 0 by norm_num, ↓reduceIte]
+  refine Sim.cast (n := 0 + (24 * 2 ^ 3 + (0 + (0 + (1392 + (24 + (24 + 0))))))) (ch := 1 + (0 + (1 + (0 + (29 + (0 + (0 + 0))))))) (by norm_num) (by norm_num) ?_
+  refine Sim.pbind (b := ()) (R := fun st' (acc : Array (Option Sym)) _ ↦
+    List.Forall₂ (OptRp' st') acc.toList (Flock.fixedChallenges.map some)) (by
+      refine PH.psim ((PH.forIn_list _ _ _ st (fun j st' (acc : Array (Option Sym)) ↦
+        List.Forall₂ (OptRp' st') acc.toList ((Flock.fixedChallenges.take j).map some)) hg (by simp) ?_).mono
+        fun st' acc _ h ↦ ?_)
+      · intro j hj st' acc hs' hacc
+        refine PH.bind' (PH.const (π := π) (iv := iv) (publicInput := publicInput) (stream := stream) hs'.good _)
+          fun st'' d hs'' hd ↦ PH.ret hs''.good ⟨_, rfl, ?_⟩
+        rw [Array.toList_push, take_succ_getElem _ _ hj, List.map_append]
+        exact List.rel_append (forall₂_optRp_grow hs'.good hs''.grows hacc) (List.Forall₂.cons hd List.Forall₂.nil)
+      · rwa [List.take_length] at h) fun st1 acc hg1 hgr1 hacc ↦ ?_
+  refine Sim.bind (sim_drawRun_rec3 st1 (32 - 3 - Flock.nFixed) (by decide))
+    fun st2 drawn sampled hg2 hgr2 ⟨hdr, hsl⟩ ↦ ?_
+  refine Sim.bind (sim_nextScalars π iv publicInput stream st2 (2 ^ 3)) fun st3 cs cU hg3 hgr3 hcs ↦ ?_
+  refine Sim.bind (sim_sample π iv publicInput stream st3) fun st4 z zU hg4 hgr4 ⟨hz, _⟩ ↦ ?_
+  refine Sim.pbind (zeroP π iv publicInput stream hg4) fun st5 zz hg5 hgr5 hzz ↦ ?_
+  have hz5 := hz.grow π iv publicInput stream hg4.inv.kinv hgr5
+  have hcs5 := (hcs.grow π iv publicInput stream hg3.inv.kinv hgr4).grow π iv publicInput stream hg4.inv.kinv hgr5
+  refine Sim.pbind (PH.psim (R := Rp π iv publicInput stream)
+    (lagrangeInterpolate_ph hg5 hz5 (2 ^ (3 + 1)) (show RpL' st5 (List.replicate (2 ^ 3) zz ++ cs)
+      (List.replicate (2 ^ 3) 0 ++ cU) from List.rel_append (forall₂_replicate hzz _) hcs5)))
+    fun st6 lg hg6 hgr6 hlg ↦ ?_
+  generalize Flock.lagrangeInterpolate (2 ^ (3 + 1)) (List.replicate (2 ^ 3) 0 ++ cU) zU = LU at hlg ⊢
+  refine Sim.bind (Sim.pure_of_pstep (PStep.refl st6 hg6)
+    (R := fun st' (a : Option Sym × Sym) (b : Option E × E) ↦ OptRp' st' a.1 b.1 ∧ Rp' st' a.2 b.2)
+    ?_) fun st7 x xU hg7 hgr7 ⟨hx1, hx2⟩ ↦ ?_
+  · exact ⟨hz5.grow π iv publicInput stream hg5.inv.kinv hgr6, hlg⟩
+  rw [← UniStatement.sumcheckDrawn_false]
+  have hgr17 := hgr2.trans (hgr3.trans (hgr4.trans (hgr5.trans (hgr6.trans hgr7))))
+  have heqs : List.Forall₂ (OptRp' st7) (acc ++ (List.map some drawn).toArray).toList
+      (List.map some (Flock.fixedChallenges ++ sampled)) := by
+    rw [Array.toList_append, List.map_append]
+    refine List.rel_append (forall₂_optRp_grow hg1 hgr17 hacc) ?_
+    exact forall₂_some (hdr.grow π iv publicInput stream hg2.inv.kinv
+      (hgr3.trans (hgr4.trans (hgr5.trans (hgr6.trans hgr7)))))
+  refine Sim.bind (Sim.cast (n' := 1392) (ch' := 29) (by
+      rw [sumcheckBytes_some, List.length_append, fixedChallenges_length, hsl]; simp [rpBytes, Flock.nFixed])
+    (by simp [fixedChallenges_length, hsl, Flock.nFixed]) (sim_sumcheckDrawn_ch st7 3 false hx2 heqs).chIds_len)
+    fun st8 sc scU hg8 hgr8 ⟨⟨hpt, hcl, hch⟩, L, hL, hLl⟩ ↦ ?_
+  have hptl : scU.1.length = 29 := by
+    rw [hch] at hL
+    rw [← hpt.length, List.append_cancel_left hL, hLl]
+    simp [fixedChallenges_length, hsl, Flock.nFixed]
+  refine Sim.bind (sim_nextScalar π iv publicInput stream st8) fun st9 vA vAU hg9 hgr9 hvA ↦ ?_
+  refine Sim.bind (sim_nextScalar π iv publicInput stream st9) fun st10 vB vBU hg10 hgr10 hvB ↦ ?_
+  have hvA' := hvA.grow π iv publicInput stream hg9.inv.kinv hgr10
+  refine Sim.of_psim (PSim.bind (PSim.mul hg10 hvA' hvB) fun st11 ab hst11 hab ↦ ?_)
+  have hcl' := ((hcl.grow π iv publicInput stream hg8.inv.kinv (hgr9.trans hgr10)).pgrow hg10 hst11)
+  refine PSim.bind (PSim.add hst11.good hcl' hab) fun st12 vC hst12 hvC ↦ PSim.pure hst12.good ?_
+  have hgr812 := (hgr9.trans hgr10).trans (hst11.grows.trans hst12.grows)
+  refine ⟨?_, (hpt.grow π iv publicInput stream hg8.inv.kinv hgr812), ?_, ?_, hvC, hptl⟩
+  · exact hx1.grow hg7.inv.kinv (hgr8.trans hgr812)
+  · exact ((hvA'.pgrow hg10 hst11).pgrow hst11.good hst12)
+  · exact ((hvB.pgrow hg10 hst11).pgrow hst11.good hst12)
+
+/-- **`zerocheck(32, 3, rec3)`**: the skip's point, the rounds' point (29 coordinates), `v_a`, `v_b`, `v_c`; 31
+challenge nodes appended. -/
+theorem zerocheck_sim (st : RecState) :
+    Sim π iv publicInput stream st (Pi1.zerocheck 32 3 .rec3) (Flock.zerocheckFs (Fp π) 32 3 .rec3) 1632 31
+      (fun st' a b ↦ (OptRp' st' a.1 b.1 ∧ RpL' st' a.2.1 b.2.1 ∧ Rp' st' a.2.2.1 b.2.2.1 ∧
+        Rp' st' a.2.2.2.1 b.2.2.2.1 ∧ Rp' st' a.2.2.2.2 b.2.2.2.2 ∧ b.2.1.length = 29) ∧
+        ∃ L, chIds st' = chIds st ++ L ∧ L.length = 31) :=
+  (zerocheck_sim0 st).chIds_len
+
+-- END ZC
+
 end Flock
 
 end RecGraph.Sim
