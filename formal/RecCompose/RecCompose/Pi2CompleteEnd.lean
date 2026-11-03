@@ -4,6 +4,7 @@
 import RecCompose.Pi2Complete
 import RecCompose.Pi2Prob
 import RecCompose.Pi2HonestThm
+import RecCompose.Pi2HonestCount
 import RecCompose.Real
 import RecCompose.End
 
@@ -235,6 +236,34 @@ theorem pi2_accepts (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa : 
 calls, `t`'s cache hit `εt`, the proofs of work `εpow`. -/
 noncomputable def delta2 (N : ℕ) (εt εpow : ℝ≥0∞) : ℝ≥0∞ := deltaStaged (2 ^ 25 + 36) (2 ^ 27) N εt εpow
 
+/-! ## The algebra's counts at π2's numbers -/
+
+set_option exponentiation.threshold 1024 in
+open Classical in
+/-- **The copy argument's bad triples at π2's circuit** (`lean-pi2-alg`'s `card_badCopy_le` at `N = 2^24`): at most
+`(2^25 + 36) |E|²`, `Holds.badCard`'s `M`. -/
+theorem card_badCopy_pi2 {D : RecDeployment} {C : Pi2Circuits D} (Fa : Pi2Facts D C) (roots : RecSetupRoots)
+    (w : ℕ → K) (pub : ℕ → List E) :
+    (Finset.univ.filter fun v : E × E × E ↦ BadCopy (C.G roots) w pub v.1 v.2.1 v.2.2).card ≤
+      (2 ^ 25 + 36) * 2 ^ 384 := by
+  refine (card_badCopy_le _ (Fa.valid roots) w pub).trans ?_
+  rw [RecPiop.Circuit.N, logN_G Fa roots, LeanVM.Protocol.card_E]
+  calc 2 * 2 ^ 24 * (2 ^ 192) ^ 2 = 2 ^ 25 * 2 ^ 384 := by ring
+    _ ≤ (2 ^ 25 + 36) * 2 ^ 384 := Nat.mul_le_mul_right _ (by omega)
+
+open Classical in
+/-- **`t`'s bad points at π2's circuit** (`lean-pi2-alg`'s `card_badT_le` at `N = 2^24`): off `BadCopy`, at most
+`2^27`, `Holds.badTCard`'s `ct`, for `badT` the event `¬ BadCopy ∧ BadT`. -/
+theorem card_badT_pi2 {D : RecDeployment} {C : Pi2Circuits D} (Fa : Pi2Facts D C) (roots : RecSetupRoots)
+    (w : ℕ → K) (pub : ℕ → List E) (α β γ : E) (hnh : ∃ i < (C.G roots).N, ¬ (C.G roots).IsHole i) :
+    ∃ T : Finset E, T.card ≤ 2 ^ 27 ∧
+      ∀ t, (¬ BadCopy (C.G roots) w pub α β γ ∧ BadT (C.G roots) w α β γ t) → t ∈ T := by
+  by_cases hbad : BadCopy (C.G roots) w pub α β γ
+  · exact ⟨∅, by simp, fun t ht ↦ absurd hbad ht.1⟩
+  · refine ⟨_, (card_badT_le _ (Fa.valid roots) (by rw [logN_G Fa roots]; omega) w pub α β γ hbad hnh).trans
+      (by rw [RecPiop.Circuit.N, logN_G Fa roots]; norm_num), fun t ht ↦ ?_⟩
+    exact Finset.mem_filter.mpr ⟨Finset.mem_univ _, ht.2⟩
+
 /-- **Named input: π2's completeness experiment in the two-call model** (`Pi2Staged.Holds` at `α`'s input of `536`
 bytes, the copy argument's bad triples `(2^25 + 36) |E|²`, `t`'s `2^27` per prior, `N` block calls, `εt`, `εpow`), for
 every honest statement: the code-level bridge. Its `rejectGood` is `pi2_accepts` (proved) with the proofs of work's
@@ -313,6 +342,14 @@ end RecCompose.Pi2E
 /-- info: 'RecCompose.Pi2E.recCompleteness2_pi2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.Pi2E.recCompleteness2_pi2
+
+/-- info: 'RecCompose.Pi2E.card_badCopy_pi2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi2E.card_badCopy_pi2
+
+/-- info: 'RecCompose.Pi2E.card_badT_pi2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi2E.card_badT_pi2
 
 /-- info: 'RecCompose.Pi2E.delta2_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

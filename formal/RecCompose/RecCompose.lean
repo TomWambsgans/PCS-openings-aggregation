@@ -26,6 +26,7 @@ import RecCompose.Real
 import RecCompose.FsClosed
 import RecCompose.Pi2Prover
 import RecCompose.Pi2ProverRun
+import RecCompose.Pi2CompleteEnd
 
 /-!
 # RecCompose: the recursive verifier's end theorems
