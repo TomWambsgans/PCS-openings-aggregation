@@ -12,6 +12,7 @@ import UniSound.Mle
 import UniSound.FsChain
 import UniSound.FsOps
 import UniSound.FsProof
+import UniSound.FinalFs
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001
