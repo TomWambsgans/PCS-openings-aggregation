@@ -3,6 +3,9 @@ import RecCompose.Basic
 import RecCompose.Part1
 import RecCompose.Part2
 import RecCompose.Complete
+import RecCompose.RpmC
+import RecCompose.Pi1Decode
+import RecCompose.CompleteCouplings
 import RecCompose.Numbers
 import RecCompose.End
 import RecCompose.Circuit
