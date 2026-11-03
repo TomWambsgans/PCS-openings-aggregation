@@ -1041,4 +1041,248 @@ theorem crOf_holds (S : Shape) (c1 : Stk) (parts : List TablePart) (pw : List E)
   dsimp only at l1
   linear_combination hh - l1
 
+/-! ### The constraint relation's terms -/
+
+/-- A term of the constraint relation: untwisted, on `C1`, at a prefix of the digits or at `y`. -/
+def CrPt (w y : List E) (tm : Term) : Prop :=
+  tm.twist = 0 ∧ tm.column.commitment = .c1 ∧ ((∃ k, tm.point = w.take k) ∨ tm.point = y)
+
+theorem copyFold_terms (o r : ℕ) (columns : List String) (w y : List E) (lift gamma : E) :
+    ∀ (l : List ℕ) (s : Array Term × E), ∃ X,
+      (l.foldl (copyStep o r columns w y lift gamma) s).1.toList = s.1.toList ++ X ∧ ∀ tm ∈ X, CrPt w y tm
+  | [], s => ⟨[], by simp, by simp⟩
+  | c :: l, s => by
+    rw [List.foldl_cons]
+    obtain ⟨X, hX, hP⟩ := copyFold_terms o r columns w y lift gamma l (copyStep o r columns w y lift gamma s c)
+    rw [hX]
+    unfold copyStep
+    split
+    · rename_i _ slot _
+      refine ⟨[term (.table o c) (w.take r) (s.2 * lift), term (.qflockSlot slot) y (s.2 * lift)] ++ X,
+        by simp, fun tm htm ↦ ?_⟩
+      simp only [List.cons_append, List.nil_append, List.mem_cons] at htm
+      rcases htm with rfl | rfl | htm
+      · exact ⟨rfl, rfl, Or.inl ⟨r, rfl⟩⟩
+      · exact ⟨rfl, rfl, Or.inr rfl⟩
+      · exact hP tm htm
+    · exact ⟨X, rfl, hP⟩
+
+theorem copyFold_sub (o r : ℕ) (columns : List String) (w y : List E) (lift gamma : E)
+    (l : List ℕ) (s : Array Term × E) (tm : Term) (h : tm ∈ s.1.toList) :
+    tm ∈ (l.foldl (copyStep o r columns w y lift gamma) s).1.toList := by
+  obtain ⟨X, hX, -⟩ := copyFold_terms o r columns w y lift gamma l s
+  rw [hX]
+  exact List.mem_append_left _ h
+
+theorem copyFold_slot (o r : ℕ) (columns : List String) (w y : List E) (lift gamma : E) :
+    ∀ (l : List ℕ) (s : Array Term × E) (c slot : ℕ), c ∈ l → qflockSlot (columns.getD c "") = some slot →
+      ∃ tm ∈ (l.foldl (copyStep o r columns w y lift gamma) s).1.toList, tm.point = y
+  | [], _, _, _, h, _ => by simp at h
+  | c' :: l, s, c, slot, h, hs => by
+    rw [List.foldl_cons]
+    rcases List.mem_cons.mp h with rfl | h'
+    · refine ⟨term (.qflockSlot slot) y (s.2 * lift), copyFold_sub o r columns w y lift gamma l _ _ ?_, rfl⟩
+      unfold copyStep
+      rw [hs]
+      simp
+    · exact copyFold_slot o r columns w y lift gamma l _ c slot h' hs
+
+theorem crStep_terms (S : Shape) (gamma t : E) (w : List E) (s : E × Array Term × E × ℕ)
+    (x : Table × TablePart) : ∃ X, (crStep S gamma t w s x).2.1.toList = s.2.1.toList ++ X ∧
+      ∀ tm ∈ X, CrPt w (coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0))) tm := by
+  unfold crStep
+  dsimp only
+  by_cases hj : x.1.opcode = opJump
+  · have hb : ¬ x.1.opcode = opBlake2s := by rw [hj]; decide
+    simp only [ite_eq_left hj, ite_eq_right hb, Array.toList_push, List.append_assoc]
+    refine ⟨_, rfl, fun tm htm ↦ ?_⟩
+    simp only [List.singleton_append, List.mem_cons, List.not_mem_nil, or_false] at htm
+    rcases htm with rfl | rfl <;> exact ⟨rfl, rfl, Or.inl ⟨_, rfl⟩⟩
+  · by_cases hb : x.1.opcode = opBlake2s
+    · simp only [ite_eq_right hj, ite_eq_left hb]
+      obtain ⟨X, hX, hP⟩ := copyFold_terms _ _ _ _ _ _ _ _ _
+      rw [hX, Array.toList_push, List.append_assoc]
+      refine ⟨_, rfl, fun tm htm ↦ ?_⟩
+      simp only [List.singleton_append, List.mem_cons] at htm
+      rcases htm with rfl | htm
+      · exact ⟨rfl, rfl, Or.inl ⟨_, rfl⟩⟩
+      · have := hP tm htm
+        rwa [hb] at this
+    · simp only [ite_eq_right hj, ite_eq_right hb, Array.toList_push]
+      refine ⟨_, rfl, fun tm htm ↦ ?_⟩
+      simp only [List.mem_singleton] at htm
+      subst htm
+      exact ⟨rfl, rfl, Or.inl ⟨_, rfl⟩⟩
+
+theorem crStep_sub (S : Shape) (gamma t : E) (w : List E) (s : E × Array Term × E × ℕ)
+    (x : Table × TablePart) (tm : Term) (h : tm ∈ s.2.1.toList) : tm ∈ (crStep S gamma t w s x).2.1.toList := by
+  obtain ⟨X, hX, -⟩ := crStep_terms S gamma t w s x
+  rw [hX]
+  exact List.mem_append_left _ h
+
+theorem crFold_terms (S : Shape) (gamma t : E) (w : List E) : ∀ (L : List (Table × TablePart))
+    (s : E × Array Term × E × ℕ), ∀ tm ∈ (L.foldl (crStep S gamma t w) s).2.1.toList,
+      tm ∈ s.2.1.toList ∨ CrPt w (coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0))) tm
+  | [], _, _, h => Or.inl h
+  | x :: L, s, tm, h => by
+    rw [List.foldl_cons] at h
+    rcases crFold_terms S gamma t w L _ tm h with h1 | h1
+    · obtain ⟨X, hX, hP⟩ := crStep_terms S gamma t w s x
+      rw [hX, List.mem_append] at h1
+      rcases h1 with h1 | h1
+      · exact Or.inl h1
+      · exact Or.inr (hP tm h1)
+    · exact Or.inr h1
+
+theorem crFold_sub (S : Shape) (gamma t : E) (w : List E) : ∀ (L : List (Table × TablePart))
+    (s : E × Array Term × E × ℕ), ∀ tm ∈ s.2.1.toList, tm ∈ (L.foldl (crStep S gamma t w) s).2.1.toList
+  | [], _, _, h => h
+  | x :: L, s, tm, h => by
+    rw [List.foldl_cons]
+    exact crFold_sub S gamma t w L _ tm (crStep_sub S gamma t w s x tm h)
+
+theorem lineFold_terms (S : Shape) (gamma t : E) (w : List E) (y : List E) : ∀ (l : List ((E × E) × ℕ))
+    (s : E × Array Term × E), ∀ tm ∈ (l.foldl (lineStep S gamma t w) s).2.1.toList,
+      tm ∈ s.2.1.toList ∨ CrPt w y tm
+  | [], _, _, h => Or.inl h
+  | x :: l, s, tm, h => by
+    rw [List.foldl_cons] at h
+    rcases lineFold_terms S gamma t w y l _ tm h with h1 | h1
+    · simp only [lineStep, Array.toList_push, List.mem_append, List.mem_singleton] at h1
+      rcases h1 with h1 | rfl
+      · exact Or.inl h1
+      · exact Or.inr ⟨rfl, rfl, Or.inl ⟨_, rfl⟩⟩
+    · exact Or.inr h1
+
+theorem lineFold_sub (S : Shape) (gamma t : E) (w : List E) : ∀ (l : List ((E × E) × ℕ))
+    (s : E × Array Term × E), ∀ tm ∈ s.2.1.toList, tm ∈ (l.foldl (lineStep S gamma t w) s).2.1.toList
+  | [], _, _, h => h
+  | x :: l, s, tm, h => by
+    rw [List.foldl_cons]
+    exact lineFold_sub S gamma t w l _ tm (by simp [lineStep, h])
+
+/-- **The constraint relation's terms**: untwisted, on `C1`, at prefixes of the digits or at `y`. -/
+theorem crOf_terms (S : Shape) (parts : List TablePart) (pw : List E) (gamma t cv : E) (w : List E) :
+    ∀ tm ∈ (crOf S parts pw gamma t cv w).1.terms,
+      CrPt w (coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0))) tm := by
+  intro tm htm
+  unfold crOf at htm
+  dsimp only at htm
+  rcases lineFold_terms S gamma t w _ _ _ tm htm with h | h
+  · rcases crFold_terms S gamma t w _ _ tm h with h' | h'
+    · simp at h'
+    · exact h'
+  · exact h
+
+theorem qflockSlot_m0 : qflockSlot (blake2sColumns.getD 9 "") = some 10 := by decide
+
+theorem tables_getD5 : (tables.getD 5 default).opcode = opBlake2s ∧
+    (tables.getD 5 default).columns = blake2sColumns := ⟨rfl, rfl⟩
+
+/-- **The constraint relation has a term at `y`** (a `BLAKE2S` copy's slot). -/
+theorem crOf_slot (S : Shape) (parts : List TablePart) (pw : List E) (gamma t cv : E) (w : List E)
+    (hlen : tables.length ≤ parts.length) :
+    ∃ tm ∈ (crOf S parts pw gamma t cv w).1.terms,
+      tm.point = coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0)) := by
+  have hx : (tables.getD 5 default, parts.getD 5 default) ∈ tables.zip parts := by
+    have h5 : 5 < (tables.zip parts).length := by
+      rw [List.length_zip]; have : tables.length = 6 := rfl; omega
+    have := List.getElem_mem h5
+    rwa [List.getElem_zip, ← List.getD_eq_getElem _ default, ← List.getD_eq_getElem _ default] at this
+  obtain ⟨L1, L2, hL⟩ := List.append_of_mem hx
+  have key : ∀ s : E × Array Term × E × ℕ, ∃ tm ∈ (crStep S gamma t w s
+      (tables.getD 5 default, parts.getD 5 default)).2.1.toList,
+      tm.point = coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0)) := by
+    intro s
+    have h1 : ¬ (tables.getD 5 default).opcode = opJump := by decide
+    have h2 : (tables.getD 5 default).opcode = opBlake2s := rfl
+    unfold crStep
+    dsimp only
+    simp only [ite_eq_right h1, ite_eq_left h2]
+    exact copyFold_slot _ _ _ _ _ _ _ _ _ 9 10 (List.mem_range.mpr (by decide)) qflockSlot_m0
+  unfold crOf
+  dsimp only
+  rw [hL, List.foldl_append, List.foldl_cons]
+  obtain ⟨tm, htm, hp⟩ := key (L1.foldl (crStep S gamma t w) (0, #[], 1, 0))
+  exact ⟨tm, lineFold_sub S gamma t w _ _ tm (crFold_sub S gamma t w L2 _ tm htm), hp⟩
+
+/-! ## The quotients' terms -/
+
+/-- `quotientTerms`, recursively: chunk `k` at `w[..e]`, scaled by the digits before it. -/
+def qTerms (column : ℕ → Column) (w : List E) : List ℕ → ℕ → E → List Term
+  | [], _, _ => []
+  | e :: rest, k, sc => term (column k) (w.take e) sc :: qTerms column w rest (k + 1) (sc * w.getD e 0)
+
+theorem quotientTerms_eq (column : ℕ → Column) (sizes : List ℕ) (w : List E) (scale : E) :
+    quotientTerms column sizes w scale = qTerms column w sizes 0 scale := by
+  unfold quotientTerms
+  have key : ∀ (sizes : List ℕ) (k : ℕ) (A : Array Term) (sc : E),
+      ((sizes.zip (List.range' k sizes.length)).foldl (fun (acc : Array Term × E) (p : ℕ × ℕ) ↦
+        (acc.1.push (term (column p.2) (w.take p.1) acc.2), acc.2 * w.getD p.1 0)) (A, sc)).1.toList =
+        A.toList ++ qTerms column w sizes k sc := by
+    intro sizes
+    induction sizes with
+    | nil => intro k A sc; simp [qTerms]
+    | cons e rest ih =>
+      intro k A sc
+      rw [List.length_cons, List.range'_succ, List.zip_cons_cons, List.foldl_cons, ih]
+      simp [qTerms]
+  rw [List.range_eq_range', key]
+  simp
+
+theorem qTerms_shift (column : ℕ → Column) (w : List E) : ∀ (l : List ℕ) (k : ℕ) (sc : E),
+    qTerms column w l (k + 1) sc = qTerms (fun c ↦ column (c + 1)) w l k sc
+  | [], _, _ => rfl
+  | e :: rest, k, sc => by
+    simp only [qTerms]
+    rw [qTerms_shift column w rest (k + 1)]
+
+theorem qTerms_mem (column : ℕ → Column) (w : List E) : ∀ (l : List ℕ) (k : ℕ) (sc : E),
+    ∀ tm ∈ qTerms column w l k sc, ∃ c < l.length, tm.column = column (k + c) ∧
+      tm.point = w.take (l.getD c 0) ∧ tm.twist = 0
+  | [], _, _, tm, h => by simp [qTerms] at h
+  | e :: rest, k, sc, tm, h => by
+    simp only [qTerms, List.mem_cons] at h
+    rcases h with rfl | h
+    · exact ⟨0, by simp, by simp [term], by simp [term], rfl⟩
+    · obtain ⟨c, hc, h1, h2, h3⟩ := qTerms_mem column w rest (k + 1) _ tm h
+      exact ⟨c + 1, by simp; omega, by rw [h1]; ring_nf, by simpa using h2, h3⟩
+
+theorem quotP_cons (S : Shape) (c2 : Stk) (column : ℕ → Column) (e : ℕ) (rest : List ℕ) :
+    quotP S c2 column (e :: rest) =
+      c2P S c2 (column 0) digitP + digitP e * quotP S c2 (fun c ↦ column (c + 1)) rest := by
+  unfold quotP
+  rw [List.length_cons, List.range_succ_eq_map, List.map_cons, List.sum_cons, List.map_map,
+    List.range_zero, List.map_nil, List.prod_nil, mul_one, ← List.sum_map_mul_left]
+  refine congrArg (fun z ↦ c2P S c2 (column 0) digitP + z) ?_
+  refine congrArg List.sum (List.map_congr_left fun c _ ↦ ?_)
+  show c2P S c2 (column (c + 1)) digitP *
+      ((List.range (c + 1)).map fun c' ↦ digitP ((e :: rest).getD c' 0)).prod =
+    digitP e * (c2P S c2 (column (c + 1)) digitP * ((List.range c).map fun c' ↦ digitP (rest.getD c' 0)).prod)
+  rw [List.range_succ_eq_map, List.map_cons, List.prod_cons, List.map_map]
+  have h : ((fun c' ↦ digitP ((e :: rest).getD c' 0)) ∘ Nat.succ) = fun c' ↦ digitP (rest.getD c' 0) :=
+    funext fun c' ↦ by simp
+  rw [h, List.getD_cons_zero]
+  ring
+
+/-- **A quotient's terms at `t`**: `scale · Q(t)`, where every chunk reads its polynomial at the digits
+and the chunks' digits are the digit polynomials'. -/
+theorem qTerms_val (S : Shape) (c2 : Stk) (ev : Column → List E → E) (w : List E) (t : E) :
+    ∀ (column : ℕ → Column) (sizes : List ℕ) (sc : E),
+      (∀ c < sizes.length, ev (column c) (w.take (sizes.getD c 0)) = (c2P S c2 (column c) digitP).eval t) →
+      (∀ c < sizes.length, w.getD (sizes.getD c 0) 0 = (digitP (sizes.getD c 0)).eval t) →
+      ((qTerms column w sizes 0 sc).map fun tm ↦ tm.coefficient * ev tm.column tm.point).sum =
+        sc * (quotP S c2 column sizes).eval t
+  | _, [], _, _, _ => by simp [qTerms, quotP]
+  | column, e :: rest, sc, hev, hw => by
+    simp only [qTerms, List.map_cons, List.sum_cons, term]
+    rw [qTerms_shift, qTerms_val S c2 ev w t (fun c ↦ column (c + 1)) rest (sc * w.getD e 0)
+      (fun c hc ↦ by simpa using hev (c + 1) (by simp; omega))
+      (fun c hc ↦ by simpa using hw (c + 1) (by simp; omega)), quotP_cons]
+    have h0 := hev 0 (by simp)
+    have hw0 := hw 0 (by simp)
+    simp only [List.getD_cons_zero] at h0 hw0
+    rw [h0, hw0, Polynomial.eval_add, Polynomial.eval_mul]
+    ring
+
 end UniSound.Ids.Eval
