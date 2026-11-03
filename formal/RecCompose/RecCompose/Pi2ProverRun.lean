@@ -34,8 +34,28 @@ theorem pi2ProveStreamWith_holds (G : RecPiop.Circuit E) (reads : List Read) (se
     | exact holds_pure ⟨by unfold honestW; rw [hl], by unfold honestQ; rw [hl], rfl⟩
     | refine holds_bind (holds_true _) fun _ _ ↦ ?_)
 
+/-- **Every run of the honest prover, at a setup of the deployment, leaves true claims and a passing check** off the
+bad challenges it drew (`pi2_honest` at the run's own stacks and inputs). -/
+theorem pi2ProveStreamWith_claims {D : RecDeployment} {C : Pi2Circuits D} (Fa : Pi2Facts D C)
+    (hcol : Pi2SetupColumns D C) (roots : RecSetupRoots) (reads : List Read) (input : List UInt8)
+    (values : List PublicValue) (w : ℕ → K)
+    (hw : (C.G roots).Satisfies (Fa.pubOf roots (publicScalarsOf input values)) (RecCircuit.emb w))
+    (s : UniComplete.Wr) :
+    Holds ((pi2ProveStreamWith H (C.G roots) reads (D.circuitAt roots.pi1).setupStack input values w).run s)
+      fun r ↦ ¬ BadCopy (C.G roots) w (Fa.pubOf roots (publicScalarsOf input values)) r.1.inputs.α r.1.inputs.β
+          r.1.inputs.γ → ¬ BadT (C.G roots) w r.1.inputs.α r.1.inputs.β r.1.inputs.γ r.1.inputs.t →
+        ((Spec.of (D.circuitAt roots.pi1).circuit).core.run r.1.inputs).all ≠ 0 ∧
+          Pi2ClaimsHold D roots r.1.inputs (fun j ↦ r.1.wStack.getD j 0) (fun j ↦ r.1.qStack.getD j 0) := by
+  refine holds_mono (pi2ProveStreamWith_holds H _ reads _ input values w s) fun r ⟨hW, hQ, hI⟩ hb ht ↦ ?_
+  rw [hW, hQ, hI]
+  exact pi2_honest Fa hcol roots w _ _ _ _ _ _ hw hb ht
+
 end RecCompose
 
 /-- info: 'RecCompose.pi2ProveStreamWith_holds' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.pi2ProveStreamWith_holds
+
+/-- info: 'RecCompose.pi2ProveStreamWith_claims' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.pi2ProveStreamWith_claims
