@@ -1,0 +1,2922 @@
+-- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+import UniSound.Ids.MainOk
+import UniSound.Ids.Weights
+import UniSound.Ids.Deployed
+
+/-!
+# `DiffsEvalP`: the verifier's relations at `t`, all zero, give every identity at `t`
+
+**`diffsEvalP_of_heapGood`**: for a deployment whose heap's blocks fill the leaves (`HeapGood`,
+`heapGood_reference` at the reference shape), where every relation's difference vanishes
+(`diffsOf`), every identity polynomial of `polysOf` vanishes at `t`. No other hypothesis: the code-level
+facts are proved here.
+
+* **The differences read each column at its merged point** (`evOf`); where they vanish, every
+  untwisted relation on one commitment holds under `evOf` (`holds_of_diffs`).
+* **A term's reading is its column's polynomial at `t`** (`ev_colPoly`: `termWExtend` from the merged
+  point back to the term's, `termInner`, `eval_mlP`), the digits being `digitP`'s (`digits_getD`), each
+  column's limbs at its variables (`c1_limbs`, `c2_limbs`, `setup_limbs`, by `StackLayout.new`).
+  `q_flock`'s slot at `y(t)` (`ev_slot`, `slotInner`): off `Z_bad`'s roots no longer `C1` point extends
+  `y(t)` (`y_self`: every `C1` point is a prefix of the digits, `y(t)` or Flock's point, `c1_points`),
+  so `y(t)` is not merged (`mergedSelf`).
+* **The verifier's loops, unfolded**: `heapRelations` (`heapRelations_fst`), `constraintRelation`
+  (`constraintRelation_eq`, its folds `crStep`, `copyStep`, `lineStep`), `chunks` (`chunks_eq`);
+  `tablePartOf` at `t` (`tablePartOf_spec`: the sent values are the columns', the leaf's products the
+  fingerprints, through `linearise_spec`).
+* **Each identity at `t`**: the tree (`treeP_eval`), the root (`rootP_eval`), the constraint quotient's
+  (`wP_eval`, by `crOf_holds`; trivially at `Z_bad`'s roots), each heap block's leaf (`blockP_eval`).
+* **The shape's facts**: the tables' flushes as `linearise` reads them (`tablesLin`, the kernel on their
+  monomials), the bytecode inside the heap (`lbFits`), the quotients' chunks inside the digits
+  (`chunksFit`: `2^e ≤ count` for every chunk, the constraint degree below `2^(r_W + 4)`, a table's
+  leaf degree below `2^(r + 5)` from its `23` fingerprint degrees).
+-/
+
+namespace UniSound.Ids.Eval
+
+open LeanVM.Parameters UniStatement Finset Polynomial
+
+/-! ## A relation under an evaluation of its terms -/
+
+/-- **A relation holds** under `ev` (a column's value at a point): `Σ c · ev(col, pt) + value = 0`. -/
+def RelHolds (ev : Column → List E → E) (r : Relation) : Prop :=
+  (r.terms.map fun tm ↦ tm.coefficient * ev tm.column tm.point).sum + r.value = 0
+
+theorem add_eq_zero_iff' {a b : E} : a + b = 0 ↔ a = b := CharTwo.add_eq_zero
+
+/-- An `equal` relation: the column's value is the relation's. -/
+theorem holds_equal {ev : Column → List E → E} {col : Column} {pt : List E} {v : E}
+    (h : RelHolds ev (Relation.equal col pt v)) : ev col pt = v := by
+  unfold RelHolds Relation.equal term at h
+  simpa [add_eq_zero_iff'] using h
+
+/-! ## A term's inner product on the cube is its column's polynomial at `t` -/
+
+/-- **A column's term at a merged point** (not a slot, untwisted): the weight's inner product with the
+stack is the column's polynomial at `t`, where the polynomial point's values at `t` are the point's. -/
+theorem inner_colPoly (L : StackLayout) (rm : Option (List E)) (V : ℕ) (St : Stk) (col : Column)
+    (p q : List E) (t : E) (P : ℕ → Polynomial E)
+    (hcol : ∀ j, col ≠ .qflockSlot j) (hq : q.take p.length = p)
+    (hb : ∀ b ∈ L.limbs col, b.2.1 ≤ p.length ∧ b.2.1 ≤ V)
+    (hP : ∀ b ∈ L.limbs col, ∀ l < b.2.1, (P l).eval t = p.getD l 0) :
+    ∑ u ∈ range (2 ^ V), termW L rm V col q 0 u * stE St L.vars u = (colPoly L V St col P).eval t := by
+  rw [Finset.sum_congr rfl fun u _ ↦ by
+    rw [termWExtend L rm V col p q 0 u hcol (fun b hb' ↦ (hb b hb').1) hq]]
+  rw [termInner L rm V St col p hcol (fun b hb' ↦ (hb b hb').2)]
+  unfold colPoly
+  rw [eval_listSum, List.map_map]
+  refine congrArg List.sum (List.map_congr_left fun b hbm ↦ ?_)
+  simp only [Function.comp_apply, Polynomial.eval_mul, eval_C]
+  rw [eval_mlP _ _ _ t p (hP b hbm)]
+
+/-- **`q_flock`'s slot `j` at its own point `y`**: the slot's claim at `(bits(j), y)`. -/
+theorem inner_slot (L : StackLayout) (rm : Option (List E)) (V : ℕ) (St : Stk) (j : ℕ) (y : List E)
+    (t : E) (Y : ℕ → Polynomial E)
+    (hb : ∀ b ∈ L.limbs .qflock, b.2.1 = 8 + y.length ∧ b.2.1 ≤ V)
+    (hY : ∀ m < y.length, (Y m).eval t = y.getD m 0) :
+    ∑ u ∈ range (2 ^ V), termW L rm V (.qflockSlot j) y 0 u * stE St L.vars u =
+      (colPoly L V St .qflock fun l ↦ if l < 8 then Polynomial.C (bitE j l) else Y (l - 8)).eval t := by
+  rw [slotInner L rm V St j y hb]
+  unfold colPoly
+  rw [eval_listSum, List.map_map]
+  refine congrArg List.sum (List.map_congr_left fun b hbm ↦ ?_)
+  simp only [Function.comp_apply, Polynomial.eval_mul, eval_C]
+  rw [eval_mlP _ _ _ t ((List.range 8).map (bitE j) ++ y)]
+  intro l hl
+  rw [(hb b hbm).1] at hl
+  by_cases h8 : l < 8
+  · rw [ite_eq_left h8, eval_C, List.getD_append _ _ _ _ (by simpa using h8), getD_map_range _ h8]
+  · rw [ite_eq_right h8, List.getD_append_right _ _ _ _ (by simp; omega), List.length_map, List.length_range,
+      hY _ (by omega)]
+
+/-! ## Forms, tuples and `linearise` at `t` -/
+
+/-- A monomial's value at the columns' values `colv` (degree at most two, as `formP` reads it). -/
+def monoE (m : List ℕ) (colv : ℕ → E) : E :=
+  match m with
+  | [] => 1
+  | [i] => colv i
+  | [i, j] => colv i * colv j
+  | _ => 0
+
+/-- A form's value at the columns' values. -/
+def formE (f : Form) (colv : ℕ → E) : E := (f.map fun mc ↦ mc.2 * monoE mc.1 colv).sum
+
+/-- A tuple's fingerprint without `β` at the columns' values: `Σ_s weights_s · form_s`. -/
+def tupleE (tuple : List Form) (weights : Array E) (colv : ℕ → E) : E :=
+  ((tuple.zip (List.range tuple.length)).map fun p ↦ weights.getD p.2 0 * formE p.1 colv).sum
+
+theorem formP_evalE (f : Form) (cols : ℕ → Polynomial E) (t : E) :
+    (formP f cols).eval t = formE f fun i ↦ (cols i).eval t := by
+  induction f with
+  | nil => simp [formP, formE]
+  | cons mc f ih =>
+    unfold formP formE at *
+    rw [List.map_cons, List.sum_cons, Polynomial.eval_add, ih, List.map_cons, List.sum_cons]
+    congr 1
+    rcases mc with ⟨m, cf⟩
+    rcases m with _ | ⟨i, _ | ⟨j, _ | ⟨_, _⟩⟩⟩ <;> simp [monoE, mul_assoc]
+
+theorem tupleP_evalE (tuple : List Form) (weights : Array E) (cols : ℕ → Polynomial E) (t : E) :
+    (tupleP tuple weights cols).eval t = tupleE tuple weights fun i ↦ (cols i).eval t := by
+  unfold tupleP tupleE
+  rw [eval_listSum, List.map_map]
+  refine congrArg List.sum (List.map_congr_left fun p _ ↦ ?_)
+  simp only [Function.comp_apply, Polynomial.eval_mul, eval_C, formP_evalE]
+
+theorem formE_addAt (colv : ℕ → E) (mono : List ℕ) (c : E) :
+    ∀ f : Form, formE (f.addAt mono c) colv = formE f colv + c * monoE mono colv
+  | [] => by simp [Form.addAt, formE]
+  | (k, v) :: rest => by
+    unfold Form.addAt
+    by_cases hk : (k == mono) = true
+    · rw [ite_eq_left hk]
+      rw [beq_iff_eq] at hk
+      subst hk
+      simp only [formE, List.map_cons, List.sum_cons]
+      ring
+    · rw [ite_eq_right hk]
+      by_cases hl : monoLt mono k = true
+      · rw [ite_eq_left hl]
+        simp only [formE, List.map_cons, List.sum_cons]
+        ring
+      · rw [ite_eq_right hl]
+        have ih := formE_addAt colv mono c rest
+        simp only [formE, List.map_cons, List.sum_cons] at ih ⊢
+        rw [ih]
+        ring
+
+theorem formE_addScaled (colv : ℕ → E) (w : E) :
+    ∀ (other f : Form), formE (f.addScaled other w) colv = formE f colv + w * formE other colv
+  | [], f => by simp [Form.addScaled, formE]
+  | (m, c) :: rest, f => by
+    have h : f.addScaled ((m, c) :: rest) w = (f.addAt m (w * c)).addScaled rest w := rfl
+    rw [h, formE_addScaled colv w rest, formE_addAt]
+    simp only [formE, List.map_cons, List.sum_cons]
+    ring
+
+/-- A monomial of `f + w · other` is one of `f`'s or of `other`'s. -/
+theorem mono_addAt (mono : List ℕ) (c : E) :
+    ∀ (f : Form), ∀ mc ∈ f.addAt mono c, mc.1 = mono ∨ ∃ mc' ∈ f, mc'.1 = mc.1
+  | [] => by simp [Form.addAt]
+  | (k, v) :: rest => by
+    intro mc hmc
+    unfold Form.addAt at hmc
+    by_cases hk : (k == mono) = true
+    · rw [ite_eq_left hk] at hmc
+      rcases List.mem_cons.mp hmc with rfl | h
+      · exact Or.inr ⟨(k, v), List.mem_cons_self .., rfl⟩
+      · exact Or.inr ⟨mc, List.mem_cons_of_mem _ h, rfl⟩
+    · rw [ite_eq_right hk] at hmc
+      by_cases hl : monoLt mono k = true
+      · rw [ite_eq_left hl] at hmc
+        rcases List.mem_cons.mp hmc with rfl | h
+        · exact Or.inl rfl
+        · exact Or.inr ⟨mc, h, rfl⟩
+      · rw [ite_eq_right hl] at hmc
+        rcases List.mem_cons.mp hmc with rfl | h
+        · exact Or.inr ⟨(k, v), List.mem_cons_self .., rfl⟩
+        · rcases mono_addAt mono c rest mc h with h1 | ⟨mc', h2, h3⟩
+          · exact Or.inl h1
+          · exact Or.inr ⟨mc', List.mem_cons_of_mem _ h2, h3⟩
+
+theorem mono_addScaled (w : E) :
+    ∀ (other f : Form), ∀ mc ∈ f.addScaled other w, (∃ mc' ∈ f, mc'.1 = mc.1) ∨ ∃ mc' ∈ other, mc'.1 = mc.1
+  | [], f => fun mc hmc ↦ Or.inl ⟨mc, hmc, rfl⟩
+  | (m, c) :: rest, f => by
+    intro mc hmc
+    have h : f.addScaled ((m, c) :: rest) w = (f.addAt m (w * c)).addScaled rest w := rfl
+    rw [h] at hmc
+    rcases mono_addScaled w rest _ mc hmc with ⟨mc', h1, h2⟩ | ⟨mc', h1, h2⟩
+    · rcases mono_addAt m (w * c) f mc' h1 with h3 | ⟨mc'', h4, h5⟩
+      · exact Or.inr ⟨(m, c), List.mem_cons_self .., h3 ▸ h2⟩
+      · exact Or.inl ⟨mc'', h4, h5.trans h2⟩
+    · exact Or.inr ⟨mc', List.mem_cons_of_mem _ h1, h2⟩
+
+/-- **The difference's fingerprint** is the pull's plus the push's (tuples of one length). -/
+theorem tupleE_difference (pushed pulled : List Form) (weights : Array E) (colv : ℕ → E)
+    (hlen : pushed.length = pulled.length) :
+    tupleE (difference pushed pulled) weights colv =
+      tupleE pushed weights colv + tupleE pulled weights colv := by
+  unfold tupleE difference
+  have key : ∀ (a b : List Form) (n : ℕ), a.length = b.length →
+      ((((a.zip b).map fun p ↦ p.1.addScaled p.2 1).zip (List.range' n (a.zip b).length)).map
+          fun p ↦ weights.getD p.2 0 * formE p.1 colv).sum =
+        ((a.zip (List.range' n a.length)).map fun p ↦ weights.getD p.2 0 * formE p.1 colv).sum +
+          ((b.zip (List.range' n b.length)).map fun p ↦ weights.getD p.2 0 * formE p.1 colv).sum := by
+    intro a b
+    induction a generalizing b with
+    | nil =>
+      intro n h
+      cases b with
+      | nil => simp
+      | cons => simp at h
+    | cons x a ih =>
+      intro n h
+      cases b with
+      | nil => simp at h
+      | cons y b =>
+        simp only [List.zip_cons_cons, List.map_cons, List.length_cons, List.range'_succ, List.sum_cons]
+        rw [ih b (n + 1) (by simpa using h), formE_addScaled]
+        ring
+  rw [List.range_eq_range', List.range_eq_range', List.range_eq_range', List.length_map]
+  exact key pushed pulled 0 hlen
+
+/-- `addTerm` adds its coefficient's term to the terms' value. -/
+theorem sum_addTerm (colv : ℕ → E) (i : ℕ) (c : E) (terms : List (ℕ × E)) :
+    ((addTerm terms i c).map fun ck ↦ ck.2 * colv ck.1).sum =
+      (terms.map fun ck ↦ ck.2 * colv ck.1).sum + c * colv i := by
+  unfold addTerm
+  split
+  next k h =>
+    obtain ⟨hk, hp, -⟩ := List.findIdx?_eq_some_iff_getElem.mp h
+    rw [beq_iff_eq] at hp
+    rw [List.modify_eq_take_cons_drop hk]
+    conv_rhs => rw [← List.take_append_drop k terms, List.drop_eq_getElem_cons hk]
+    generalize terms[k] = x at hp ⊢
+    obtain ⟨a, v⟩ := x
+    simp only at hp
+    subst hp
+    simp only [List.map_append, List.map_cons, List.sum_append, List.sum_cons]
+    ring
+  next h => simp
+
+/-- `linearise`'s inner step, on `(known, terms)`. -/
+def linStep (sent : Array (Option E)) (weight : E) (acc : E × List (ℕ × E)) (mc : List ℕ × E) :
+    E × List (ℕ × E) :=
+  let (known, terms) := acc
+  if mc.2 = 0 then acc else
+  let c := weight * mc.2
+  match mc.1 with
+  | [] => (known + c, terms)
+  | [i] => match sent.getD i none with
+    | some v => (known + c * v, terms)
+    | none => (known, addTerm terms i c)
+  | [i, j] => match sent.getD i none, sent.getD j none with
+    | some a, some b => (known + c * a * b, terms)
+    | some a, none => (known, addTerm terms j (c * a))
+    | none, some b => (known, addTerm terms i (c * b))
+    | none, none => (known, terms)
+  | _ => acc
+
+/-- `linearise`'s accumulator's value: what is known plus the terms at the columns' values. -/
+def linVal (colv : ℕ → E) (acc : E × List (ℕ × E)) : E :=
+  acc.1 + (acc.2.map fun ck ↦ ck.2 * colv ck.1).sum
+
+/-- A degree-two monomial has a sent factor. -/
+def SentFactor (sent : Array (Option E)) (m : List ℕ) : Prop :=
+  ∀ i j, m = [i, j] → (sent.getD i none).isSome ∨ (sent.getD j none).isSome
+
+theorem linVal_step (sent : Array (Option E)) (colv : ℕ → E)
+    (hs : ∀ i v, sent.getD i none = some v → v = colv i) (weight : E) (acc : E × List (ℕ × E))
+    (mc : List ℕ × E) (h2 : SentFactor sent mc.1) :
+    linVal colv (linStep sent weight acc mc) = linVal colv acc + weight * (mc.2 * monoE mc.1 colv) := by
+  obtain ⟨known, terms⟩ := acc
+  obtain ⟨m, co⟩ := mc
+  unfold linStep
+  dsimp only
+  by_cases h0 : co = 0
+  · rw [ite_eq_left h0, h0]
+    ring
+  rw [ite_eq_right h0]
+  rcases m with _ | ⟨i, _ | ⟨j, _ | ⟨k, m⟩⟩⟩
+  · simp only [linVal, monoE]
+    ring
+  · dsimp only
+    rcases hi : sent.getD i none with _ | v
+    · simp only [linVal, monoE, sum_addTerm]
+      ring
+    · simp only [linVal, monoE, hs i v hi]
+      ring
+  · dsimp only
+    rcases hi : sent.getD i none with _ | a <;> rcases hj : sent.getD j none with _ | b
+    · rcases h2 i j rfl with h | h
+      · rw [hi] at h; exact absurd h (by simp)
+      · rw [hj] at h; exact absurd h (by simp)
+    · simp only [linVal, monoE, sum_addTerm, hs j b hj]
+      ring
+    · simp only [linVal, monoE, sum_addTerm, hs i a hi]
+      ring
+    · simp only [linVal, monoE, hs i a hi, hs j b hj]
+      ring
+  · simp only [linVal, monoE]
+    ring
+
+theorem linVal_form (sent : Array (Option E)) (colv : ℕ → E)
+    (hs : ∀ i v, sent.getD i none = some v → v = colv i) (weight : E) :
+    ∀ (f : Form) (acc : E × List (ℕ × E)), (∀ mc ∈ f, SentFactor sent mc.1) →
+      linVal colv (f.foldl (linStep sent weight) acc) = linVal colv acc + weight * formE f colv
+  | [], acc, _ => by simp [formE]
+  | mc :: f, acc, h => by
+    rw [List.foldl_cons, linVal_form sent colv hs weight f _ fun m hm ↦ h m (List.mem_cons_of_mem _ hm),
+      linVal_step sent colv hs weight acc mc (h mc (List.mem_cons_self ..))]
+    simp only [formE, List.map_cons, List.sum_cons]
+    ring
+
+/-- **`linearise` at `t`**: what the sent values give plus its terms at the columns' values is the
+tuple's fingerprint (every degree-two monomial having a sent factor). -/
+theorem linearise_spec (tuple : List Form) (weights : Array E) (sent : Array (Option E)) (colv : ℕ → E)
+    (hs : ∀ i v, sent.getD i none = some v → v = colv i)
+    (h2 : ∀ f ∈ tuple, ∀ mc ∈ f, SentFactor sent mc.1) :
+    linVal colv (linearise tuple weights sent) = tupleE tuple weights colv := by
+  have hlin : linearise tuple weights sent = (tuple.zip (List.range tuple.length)).foldl
+      (fun acc p ↦ p.1.foldl (linStep sent (weights.getD p.2 0)) acc) (0, []) := rfl
+  rw [hlin]
+  unfold tupleE
+  have key : ∀ (l : List (Form × ℕ)) (acc : E × List (ℕ × E)), (∀ p ∈ l, ∀ mc ∈ p.1, SentFactor sent mc.1) →
+      linVal colv (l.foldl (fun acc p ↦ p.1.foldl (linStep sent (weights.getD p.2 0)) acc) acc) =
+        linVal colv acc + (l.map fun p ↦ weights.getD p.2 0 * formE p.1 colv).sum := by
+    intro l
+    induction l with
+    | nil => intro acc _; simp
+    | cons p l ih =>
+      intro acc h
+      rw [List.foldl_cons, ih _ fun q hq ↦ h q (List.mem_cons_of_mem _ hq),
+        linVal_form sent colv hs _ p.1 acc (h p (List.mem_cons_self ..))]
+      simp only [List.map_cons, List.sum_cons]
+      ring
+  rw [key _ _ fun p hp ↦ h2 p.1 (List.of_mem_zip hp).1]
+  simp [linVal]
+
+/-! ## A table's part at `t` (`tablePartOf`) -/
+
+/-- **The tables' flushes, as `linearise` reads them**: every sent column is a column of its table, each
+pull tuple has its push tuple's length, and every degree-two monomial of a flush has a sent factor. -/
+def TablesLin : Prop :=
+  ∀ tab ∈ tables, (∀ c ∈ sentColumns tab, c < tab.width) ∧
+    ∀ fl ∈ tab.flushes.pull.zip tab.flushes.push, fl.2.length = fl.1.length ∧
+      ∀ f ∈ fl.1 ++ fl.2, ∀ mc ∈ f, mc.1.length = 2 →
+        mc.1.getD 0 0 ∈ sentColumns tab ∨ mc.1.getD 1 0 ∈ sentColumns tab
+
+theorem mem_zip_range_iff {α : Type} (l : List α) (d : α) (p : α × ℕ) (hp : p ∈ l.zip (List.range l.length)) :
+    p.2 < l.length ∧ l.getD p.2 d = p.1 := by
+  obtain ⟨k, hk, he⟩ := List.getElem_of_mem hp
+  rw [List.length_zip, List.length_range, min_self] at hk
+  rw [← he, List.getElem_zip, List.getElem_range]
+  exact ⟨hk, List.getD_eq_getElem _ _ hk⟩
+
+theorem getD_set! (A : Array (Option E)) (i c : ℕ) (v : Option E) :
+    (A.set! i v).getD c none = if i = c ∧ i < A.size then v else A.getD c none := by
+  unfold Array.set!
+  rw [Array.getD_eq_getD_getElem?, Array.getElem?_setIfInBounds, Array.getD_eq_getD_getElem?]
+  by_cases h1 : i = c
+  · subst h1
+    by_cases h2 : i < A.size
+    · simp [h2]
+    · rw [Array.getElem?_eq_none (by omega)]
+      simp [h2]
+  · simp [h1]
+
+/-- The step of `sentOf`'s fold. -/
+def sentStep (vals : List E) (sent : Array (Option E)) (p : ℕ × ℕ) : Array (Option E) :=
+  sent.set! p.1 (some (vals.getD p.2 0))
+
+theorem sentOf_eq (tab : Table) (vals : List E) :
+    sentOf tab vals = ((sentColumns tab).zip (List.range (sentColumns tab).length)).foldl (sentStep vals)
+      (Array.replicate tab.width none) := rfl
+
+theorem sentFold_some (vals : List E) : ∀ (l : List (ℕ × ℕ)) (A : Array (Option E)) (c : ℕ) (v : E),
+    (l.foldl (sentStep vals) A).getD c none = some v →
+      A.getD c none = some v ∨ ∃ p ∈ l, p.1 = c ∧ v = vals.getD p.2 0
+  | [], A, c, v, h => Or.inl h
+  | p :: l, A, c, v, h => by
+    rw [List.foldl_cons] at h
+    rcases sentFold_some vals l _ c v h with h1 | ⟨q, hq, h2, h3⟩
+    · rw [sentStep, getD_set!] at h1
+      split_ifs at h1 with h4
+      · simp only [Option.some.injEq] at h1
+        exact Or.inr ⟨p, List.mem_cons_self .., h4.1, h1.symm⟩
+      · exact Or.inl h1
+    · exact Or.inr ⟨q, List.mem_cons_of_mem _ hq, h2, h3⟩
+
+theorem sentFold_size (vals : List E) : ∀ (l : List (ℕ × ℕ)) (A : Array (Option E)),
+    (l.foldl (sentStep vals) A).size = A.size
+  | [], _ => rfl
+  | p :: l, A => by
+    rw [List.foldl_cons, sentFold_size vals l, sentStep, Array.set!, Array.size_setIfInBounds]
+
+theorem sentFold_isSome (vals : List E) : ∀ (l : List (ℕ × ℕ)) (A : Array (Option E)) (c : ℕ),
+    ((A.getD c none).isSome ∨ (∃ p ∈ l, p.1 = c) ∧ c < A.size) →
+      ((l.foldl (sentStep vals) A).getD c none).isSome
+  | [], A, c, h => by
+    rcases h with h | ⟨⟨p, hp, _⟩, _⟩
+    · exact h
+    · simp at hp
+  | p :: l, A, c, h => by
+    rw [List.foldl_cons]
+    refine sentFold_isSome vals l _ c ?_
+    rw [sentStep, getD_set!, Array.set!, Array.size_setIfInBounds]
+    rcases h with h | ⟨⟨q, hq, hqc⟩, hc⟩
+    · left
+      split_ifs <;> simp_all
+    · rcases List.mem_cons.mp hq with rfl | hq'
+      · left
+        rw [ite_eq_left ⟨hqc, hqc ▸ hc⟩]
+        rfl
+      · right
+        exact ⟨⟨q, hq', hqc⟩, hc⟩
+
+/-- **The sent values are the columns' values**, where their `equal` relations hold. -/
+theorem sentOf_spec (tab : Table) (vals : List E) (colv : ℕ → E)
+    (h0 : ∀ p < (sentColumns tab).length, vals.getD p 0 = colv ((sentColumns tab).getD p 0)) :
+    ∀ c v, (sentOf tab vals).getD c none = some v → v = colv c := by
+  intro c v h
+  rw [sentOf_eq] at h
+  rcases sentFold_some vals _ _ c v h with h1 | ⟨p, hp, h2, h3⟩
+  · rw [Array.getD_eq_getD_getElem?, Array.getElem?_replicate] at h1
+    split_ifs at h1 <;> simp at h1
+  · obtain ⟨hlt, hget⟩ := mem_zip_range_iff (sentColumns tab) 0 p hp
+    rw [h3, h0 p.2 hlt, hget, h2]
+
+theorem sentOf_isSome (tab : Table) (vals : List E) (c : ℕ) (hc : c ∈ sentColumns tab)
+    (hw : c < tab.width) : ((sentOf tab vals).getD c none).isSome := by
+  rw [sentOf_eq]
+  refine sentFold_isSome vals _ _ c (Or.inr ⟨?_, by simpa using hw⟩)
+  obtain ⟨k, hk, rfl⟩ := List.getElem_of_mem hc
+  refine ⟨((sentColumns tab)[k], k), ?_, rfl⟩
+  have hz : k < ((sentColumns tab).zip (List.range (sentColumns tab).length)).length := by simp [hk]
+  have := List.getElem_mem hz
+  rwa [List.getElem_zip, List.getElem_range] at this
+
+/-- A relation of `linearise`'s terms on a table's columns, bound to a sent value `v`: `v` is `β` plus
+the tuple's value. -/
+theorem holds_lin {ev : Column → List E → E} {o : ℕ} {pt : List E} {colv : ℕ → E}
+    (hev : ∀ c, ev (.table o c) pt = colv c) (lin : E × List (ℕ × E)) (v beta : E)
+    (h : RelHolds ev ⟨lin.2.map (fun ck ↦ term (.table o ck.1) pt ck.2), v + beta + lin.1⟩) :
+    v = beta + linVal colv lin := by
+  unfold RelHolds at h
+  simp only [List.map_map, Function.comp_def, term, hev] at h
+  rw [← add_eq_zero_iff']
+  unfold linVal
+  linear_combination h
+
+theorem rels_flushStep (at_ : ℕ → Column) (pt : List E) (weights : Array E) (beta : E)
+    (sent : Array (Option E)) (st : TPState) (fl : List Form × List Form) :
+    ∃ X, (flushStep at_ pt weights beta sent st fl).rels = st.rels ++ X := by
+  unfold flushStep
+  dsimp only
+  split_ifs <;> simp
+
+theorem rels_flushFold (at_ : ℕ → Column) (pt : List E) (weights : Array E) (beta : E)
+    (sent : Array (Option E)) : ∀ (l : List (List Form × List Form)) (st : TPState),
+      ∃ X, (l.foldl (flushStep at_ pt weights beta sent) st).rels = st.rels ++ X
+  | [], st => ⟨[], by simp⟩
+  | fl :: l, st => by
+    obtain ⟨X, hX⟩ := rels_flushStep at_ pt weights beta sent st fl
+    obtain ⟨Y, hY⟩ := rels_flushFold at_ pt weights beta sent l (flushStep at_ pt weights beta sent st fl)
+    exact ⟨X ++ Y, by rw [List.foldl_cons, hY, hX, List.append_assoc]⟩
+
+/-- **One flush at `t`**: its pull and push fingerprints, computed or sent and bound. -/
+theorem flushStep_spec (o : ℕ) (pt : List E) (weights : Array E) (beta : E) (sent : Array (Option E))
+    (ev : Column → List E → E) (colv : ℕ → E) (hev : ∀ c, ev (.table o c) pt = colv c)
+    (hs : ∀ i v, sent.getD i none = some v → v = colv i)
+    (fl : List Form × List Form) (hlen : fl.2.length = fl.1.length)
+    (h1 : ∀ f ∈ fl.1, ∀ mc ∈ f, SentFactor sent mc.1) (h2 : ∀ f ∈ fl.2, ∀ mc ∈ f, SentFactor sent mc.1)
+    (st : TPState)
+    (hh : ∀ r ∈ (flushStep (fun c ↦ .table o c) pt weights beta sent st fl).rels, RelHolds ev r) :
+    (flushStep (fun c ↦ .table o c) pt weights beta sent st fl).pull =
+        st.pull * (beta + tupleE fl.1 weights colv) ∧
+      (flushStep (fun c ↦ .table o c) pt weights beta sent st fl).push =
+        st.push * (beta + tupleE fl.2 weights colv) := by
+  have hd : ∀ f ∈ difference fl.2 fl.1, ∀ mc ∈ f, SentFactor sent mc.1 := by
+    intro f hf mc hmc
+    unfold difference at hf
+    obtain ⟨⟨a, b⟩, hab, rfl⟩ := List.mem_map.mp hf
+    obtain ⟨ha, hb⟩ := List.of_mem_zip hab
+    rcases mono_addScaled 1 b a mc hmc with ⟨mc', h3, h4⟩ | ⟨mc', h3, h4⟩
+    · rw [← h4]; exact h2 a ha mc' h3
+    · rw [← h4]; exact h1 b hb mc' h3
+  have lPull := linearise_spec fl.1 weights sent colv hs h1
+  have lPush := linearise_spec fl.2 weights sent colv hs h2
+  have lDiff := linearise_spec _ weights sent colv hs hd
+  rw [tupleE_difference _ _ _ _ hlen] at lDiff
+  have two : (2 : E) = 0 := CharTwo.two_eq_zero
+  unfold flushStep at hh ⊢
+  dsimp only at hh ⊢
+  generalize linearise fl.1 weights sent = lP at hh lPull ⊢
+  generalize linearise fl.2 weights sent = lQ at hh lPush ⊢
+  generalize linearise (difference fl.2 fl.1) weights sent = lD at hh lDiff ⊢
+  by_cases hp : (!lP.2.isEmpty) = true <;> by_cases hq : (!lD.2.isEmpty) = true <;>
+    simp only [hp, hq, ↓reduceIte, Bool.false_eq_true] at hh ⊢
+  · have H1 := hh ⟨lP.2.map (fun ck ↦ term (.table o ck.1) pt ck.2), st.vals.headD 0 + beta + lP.1⟩
+      (by simp)
+    have H2 := hh ⟨lQ.2.map (fun ck ↦ term (.table o ck.1) pt ck.2), st.vals.tail.headD 0 + beta + lQ.1⟩
+      (by simp)
+    rw [holds_lin hev _ _ beta H1, lPull, holds_lin hev _ _ beta H2, lPush]
+    exact ⟨rfl, rfl⟩
+  · have H1 := hh ⟨lP.2.map (fun ck ↦ term (.table o ck.1) pt ck.2), st.vals.headD 0 + beta + lP.1⟩
+      (by simp)
+    have hq' : lD.2 = [] := by simpa using hq
+    have hD : lD.1 = tupleE fl.2 weights colv + tupleE fl.1 weights colv := by
+      rw [← lDiff, linVal, hq']
+      simp
+    rw [holds_lin hev _ _ beta H1, lPull, hD]
+    exact ⟨rfl, by linear_combination st.push * (tupleE fl.1 weights colv) * two⟩
+  · have H2 := hh ⟨lQ.2.map (fun ck ↦ term (.table o ck.1) pt ck.2), st.vals.headD 0 + beta + lQ.1⟩
+      (by simp)
+    have hp' : lP.2 = [] := by simpa using hp
+    have hP : lP.1 = tupleE fl.1 weights colv := by
+      rw [← lPull, linVal, hp']
+      simp
+    rw [hP, holds_lin hev _ _ beta H2, lPush]
+    exact ⟨rfl, rfl⟩
+  · have hp' : lP.2 = [] := by simpa using hp
+    have hq' : lD.2 = [] := by simpa using hq
+    have hD : lD.1 = tupleE fl.2 weights colv + tupleE fl.1 weights colv := by
+      rw [← lDiff, linVal, hq']
+      simp
+    have hP : lP.1 = tupleE fl.1 weights colv := by
+      rw [← lPull, linVal, hp']
+      simp
+    rw [hD, hP]
+    exact ⟨rfl, by linear_combination st.push * (tupleE fl.1 weights colv) * two⟩
+
+theorem flushFold_spec (o : ℕ) (pt : List E) (weights : Array E) (beta : E) (sent : Array (Option E))
+    (ev : Column → List E → E) (colv : ℕ → E) (hev : ∀ c, ev (.table o c) pt = colv c)
+    (hs : ∀ i v, sent.getD i none = some v → v = colv i) :
+    ∀ (l : List (List Form × List Form)) (st : TPState),
+      (∀ fl ∈ l, fl.2.length = fl.1.length ∧ (∀ f ∈ fl.1, ∀ mc ∈ f, SentFactor sent mc.1) ∧
+        ∀ f ∈ fl.2, ∀ mc ∈ f, SentFactor sent mc.1) →
+      (∀ r ∈ (l.foldl (flushStep (fun c ↦ .table o c) pt weights beta sent) st).rels, RelHolds ev r) →
+      (l.foldl (flushStep (fun c ↦ .table o c) pt weights beta sent) st).pull =
+          st.pull * (l.map fun fl ↦ beta + tupleE fl.1 weights colv).prod ∧
+        (l.foldl (flushStep (fun c ↦ .table o c) pt weights beta sent) st).push =
+          st.push * (l.map fun fl ↦ beta + tupleE fl.2 weights colv).prod
+  | [], st, _, _ => by simp
+  | fl :: l, st, hl, hh => by
+    rw [List.foldl_cons] at hh ⊢
+    obtain ⟨ih1, ih2⟩ := flushFold_spec o pt weights beta sent ev colv hev hs l _
+      (fun f hf ↦ hl f (List.mem_cons_of_mem _ hf)) hh
+    obtain ⟨X, hX⟩ := rels_flushFold (fun c ↦ .table o c) pt weights beta sent l
+      (flushStep (fun c ↦ .table o c) pt weights beta sent st fl)
+    obtain ⟨hlen, h1, h2⟩ := hl fl (List.mem_cons_self ..)
+    obtain ⟨s1, s2⟩ := flushStep_spec o pt weights beta sent ev colv hev hs fl hlen h1 h2 st
+      (fun r hr ↦ hh r (by rw [hX]; exact List.mem_append_left _ hr))
+    rw [ih1, ih2, s1, s2]
+    simp only [List.map_cons, List.prod_cons]
+    exact ⟨by ring, by ring⟩
+
+theorem degree_flushFold (at_ : ℕ → Column) (pt : List E) (weights : Array E) (beta : E)
+    (sent : Array (Option E)) : ∀ (l : List (List Form × List Form)) (st : TPState),
+      (l.foldl (flushStep at_ pt weights beta sent) st).pullDegree =
+          st.pullDegree + (l.map fun fl ↦ tupleDegree fl.1).sum ∧
+        (l.foldl (flushStep at_ pt weights beta sent) st).pushDegree =
+          st.pushDegree + (l.map fun fl ↦ tupleDegree fl.2).sum
+  | [], st => by simp
+  | fl :: l, st => by
+    rw [List.foldl_cons, (degree_flushFold at_ pt weights beta sent l _).1,
+      (degree_flushFold at_ pt weights beta sent l _).2]
+    simp only [flushStep, List.map_cons, List.sum_cons]
+    exact ⟨by ring, by ring⟩
+
+theorem tableDegrees_eq (tab : Table) :
+    tableDegrees tab = (1 + ((tab.flushes.pull.zip tab.flushes.push).map fun fl ↦ tupleDegree fl.1).sum,
+      0 + ((tab.flushes.pull.zip tab.flushes.push).map fun fl ↦ tupleDegree fl.2).sum) := by
+  unfold tableDegrees
+  generalize tab.flushes.pull.zip tab.flushes.push = l
+  have key : ∀ (l : List (List Form × List Form)) (a b : ℕ),
+      l.foldl (fun (acc : ℕ × ℕ) (p : List Form × List Form) ↦ (acc.1 + tupleDegree p.1, acc.2 + tupleDegree p.2)) (a, b) =
+        (a + (l.map fun fl ↦ tupleDegree fl.1).sum, b + (l.map fun fl ↦ tupleDegree fl.2).sum) := by
+    intro l
+    induction l with
+    | nil => intro a b; simp
+    | cons p l ih =>
+      intro a b
+      rw [List.foldl_cons, ih]
+      simp only [List.map_cons, List.sum_cons, Prod.mk.injEq]
+      exact ⟨by ring, by ring⟩
+  exact key l 1 0
+
+/-- **A table's part at `t`**: its sent values are its columns' values, its leaf's products are the
+flushes' fingerprints at `t`, its degrees are `tableDegrees`. -/
+theorem tablePartOf_spec (tab : Table) (hT : tab ∈ tables) (hL : TablesLin) (lh : ℕ) (weights : Array E)
+    (beta : E) (w vals : List E) (ev : Column → List E → E) (colv : ℕ → E)
+    (hev : ∀ c, ev (.table tab.opcode c) (w.take lh) = colv c)
+    (hh : ∀ r ∈ (tablePartOf tab lh weights beta w vals).2.1, RelHolds ev r) :
+    (∀ c ∈ sentColumns tab, (tablePartOf tab lh weights beta w vals).1.sent.getD c none = some (colv c)) ∧
+      (tablePartOf tab lh weights beta w vals).1.pull =
+        ((tab.flushes.pull.zip tab.flushes.push).map fun fl ↦ beta + tupleE fl.1 weights colv).prod ∧
+      (tablePartOf tab lh weights beta w vals).1.push =
+        ((tab.flushes.pull.zip tab.flushes.push).map fun fl ↦ beta + tupleE fl.2 weights colv).prod ∧
+      (tablePartOf tab lh weights beta w vals).1.pullDegree = (tableDegrees tab).1 ∧
+      (tablePartOf tab lh weights beta w vals).1.pushDegree = (tableDegrees tab).2 := by
+  obtain ⟨hw, hfl⟩ := hL tab hT
+  -- The `equal` relations of the sent values.
+  have h0 : ∀ p < (sentColumns tab).length, vals.getD p 0 = colv ((sentColumns tab).getD p 0) := by
+    intro p hp
+    have hmem : Relation.equal (.table tab.opcode ((sentColumns tab).getD p 0)) (w.take lh) (vals.getD p 0) ∈
+        (tablePartOf tab lh weights beta w vals).2.1 := by
+      unfold tablePartOf
+      dsimp only
+      obtain ⟨X, hX⟩ := rels_flushFold (fun c ↦ .table tab.opcode c) (w.take lh) weights beta
+        (sentOf tab vals) (tab.flushes.pull.zip tab.flushes.push)
+        ⟨1, 1, 1, 0, ((sentColumns tab).zip (List.range (sentColumns tab).length)).map fun p ↦
+          Relation.equal (.table tab.opcode p.1) (w.take lh) (vals.getD p.2 0), vals.drop (sentColumns tab).length⟩
+      rw [hX]
+      refine List.mem_append_left _ (List.mem_map.mpr ⟨((sentColumns tab).getD p 0, p), ?_, rfl⟩)
+      have hz : p < ((sentColumns tab).zip (List.range (sentColumns tab).length)).length := by simp [hp]
+      have := List.getElem_mem hz
+      rwa [List.getElem_zip, List.getElem_range, ← List.getD_eq_getElem _ 0] at this
+    rw [← holds_equal (hh _ hmem), hev]
+  have hs := sentOf_spec tab vals colv h0
+  have hsome : ∀ c ∈ sentColumns tab, ((sentOf tab vals).getD c none).isSome :=
+    fun c hc ↦ sentOf_isSome tab vals c hc (hw c hc)
+  have hSF : ∀ fl ∈ tab.flushes.pull.zip tab.flushes.push, fl.2.length = fl.1.length ∧
+      (∀ f ∈ fl.1, ∀ mc ∈ f, SentFactor (sentOf tab vals) mc.1) ∧
+      ∀ f ∈ fl.2, ∀ mc ∈ f, SentFactor (sentOf tab vals) mc.1 := by
+    intro fl hf
+    obtain ⟨hlen, hm⟩ := hfl fl hf
+    have key : ∀ f ∈ fl.1 ++ fl.2, ∀ mc ∈ f, SentFactor (sentOf tab vals) mc.1 := by
+      intro f hf' mc hmc i j hij
+      have := hm f hf' mc hmc (by rw [hij]; rfl)
+      rw [hij] at this
+      rcases this with h | h
+      · exact Or.inl (hsome i h)
+      · exact Or.inr (hsome j h)
+    exact ⟨hlen, fun f hf' ↦ key f (List.mem_append_left _ hf'),
+      fun f hf' ↦ key f (List.mem_append_right _ hf')⟩
+  unfold tablePartOf at hh ⊢
+  dsimp only at hh ⊢
+  obtain ⟨hpull, hpush⟩ := flushFold_spec tab.opcode (w.take lh) weights beta (sentOf tab vals) ev colv hev hs
+    _ _ hSF hh
+  obtain ⟨hd1, hd2⟩ := degree_flushFold (fun c ↦ .table tab.opcode c) (w.take lh) weights beta
+    (sentOf tab vals) (tab.flushes.pull.zip tab.flushes.push)
+    ⟨1, 1, 1, 0, ((sentColumns tab).zip (List.range (sentColumns tab).length)).map fun p ↦
+      Relation.equal (.table tab.opcode p.1) (w.take lh) (vals.getD p.2 0), vals.drop (sentColumns tab).length⟩
+  refine ⟨fun c hc ↦ ?_, by rw [hpull, one_mul], by rw [hpush, one_mul], ?_, ?_⟩
+  · obtain ⟨v, hv⟩ := Option.isSome_iff_exists.mp (hsome c hc)
+    rw [hv, hs c v hv]
+  · rw [hd1, tableDegrees_eq]
+  · rw [hd2, tableDegrees_eq]
+
+/-- Every relation of a table's part is on the table's columns at `w[..h]`, untwisted. -/
+theorem tablePartOf_terms (tab : Table) (lh : ℕ) (weights : Array E) (beta : E) (w vals : List E) :
+    ∀ r ∈ (tablePartOf tab lh weights beta w vals).2.1, ∀ tm ∈ r.terms,
+      (∃ c, tm.column = .table tab.opcode c) ∧ tm.point = w.take lh ∧ tm.twist = 0 := by
+  have hstep : ∀ (st : TPState) (fl : List Form × List Form),
+      ∀ r ∈ (flushStep (fun c ↦ .table tab.opcode c) (w.take lh) weights beta (sentOf tab vals) st fl).rels,
+        r ∈ st.rels ∨ ∀ tm ∈ r.terms, (∃ c, tm.column = .table tab.opcode c) ∧ tm.point = w.take lh ∧
+          tm.twist = 0 := by
+    intro st fl r hr
+    unfold flushStep at hr
+    dsimp only at hr
+    have key : ∀ (l : List (ℕ × E)), ∀ tm ∈ l.map (fun ck ↦ term (.table tab.opcode ck.1) (w.take lh) ck.2),
+        (∃ c, tm.column = .table tab.opcode c) ∧ tm.point = w.take lh ∧ tm.twist = 0 := by
+      intro l tm htm
+      obtain ⟨ck, _, rfl⟩ := List.mem_map.mp htm
+      exact ⟨⟨ck.1, rfl⟩, rfl, rfl⟩
+    by_cases hp : (!(linearise fl.1 weights (sentOf tab vals)).2.isEmpty) = true <;>
+    by_cases hq : (!(linearise (difference fl.2 fl.1) weights (sentOf tab vals)).2.isEmpty) = true <;>
+      simp only [hp, hq, ↓reduceIte, Bool.false_eq_true, List.mem_append, List.mem_singleton] at hr
+    · rcases hr with (hr | rfl) | rfl
+      · exact Or.inl hr
+      · exact Or.inr (key _)
+      · exact Or.inr (key _)
+    · rcases hr with hr | rfl
+      · exact Or.inl hr
+      · exact Or.inr (key _)
+    · rcases hr with hr | rfl
+      · exact Or.inl hr
+      · exact Or.inr (key _)
+    · exact Or.inl hr
+  have hfold : ∀ (l : List (List Form × List Form)) (st : TPState),
+      ∀ r ∈ (l.foldl (flushStep (fun c ↦ .table tab.opcode c) (w.take lh) weights beta
+          (sentOf tab vals)) st).rels,
+        r ∈ st.rels ∨ ∀ tm ∈ r.terms, (∃ c, tm.column = .table tab.opcode c) ∧ tm.point = w.take lh ∧
+          tm.twist = 0 := by
+    intro l
+    induction l with
+    | nil => intro st r hr; exact Or.inl hr
+    | cons fl l ih =>
+      intro st r hr
+      rw [List.foldl_cons] at hr
+      rcases ih _ r hr with h | h
+      · exact hstep st fl r h
+      · exact Or.inr h
+  intro r hr
+  unfold tablePartOf at hr
+  dsimp only at hr
+  rcases hfold _ _ r hr with h | h
+  · obtain ⟨p, _, rfl⟩ := List.mem_map.mp h
+    intro tm htm
+    simp only [Relation.equal, term, List.mem_singleton] at htm
+    subst htm
+    exact ⟨⟨p.1, rfl⟩, rfl, rfl⟩
+  · exact h
+
+/-! ## The tables' parts (`tablesPart`) -/
+
+theorem tablesPart_length (S : Shape) (weights : Array E) (beta : E) (w : List E) :
+    ∀ (ts : List Table) (vals : List E), (tablesPart S weights beta w ts vals).1.length = ts.length
+  | [], _ => rfl
+  | t :: ts, vals => by
+    simp only [tablesPart, List.length_cons, tablesPart_length S weights beta w ts]
+
+theorem tablesPart_getD (S : Shape) (weights : Array E) (beta : E) (w : List E) :
+    ∀ (ts : List Table) (vals : List E) (i : ℕ) (hi : i < ts.length), ∃ vals',
+      (tablesPart S weights beta w ts vals).1.getD i default =
+          (tablePartOf ts[i] (S.heights.getD ts[i].opcode 0) weights beta w vals').1 ∧
+        ∀ r ∈ (tablePartOf ts[i] (S.heights.getD ts[i].opcode 0) weights beta w vals').2.1,
+          r ∈ (tablesPart S weights beta w ts vals).2.1
+  | [], _, i, hi => by simp at hi
+  | t :: ts, vals, 0, _ => ⟨vals, rfl, fun r hr ↦ List.mem_append_left _ hr⟩
+  | t :: ts, vals, i + 1, hi => by
+    obtain ⟨v', h1, h2⟩ := tablesPart_getD S weights beta w ts
+      (tablePartOf t (S.heights.getD t.opcode 0) weights beta w vals).2.2 i (by simpa using hi)
+    exact ⟨v', h1, fun r hr ↦ List.mem_append_right _ (h2 r hr)⟩
+
+theorem tablesPart_rels (S : Shape) (weights : Array E) (beta : E) (w : List E) :
+    ∀ (ts : List Table) (vals : List E), ∀ r ∈ (tablesPart S weights beta w ts vals).2.1,
+      ∃ tab ∈ ts, ∃ vals', r ∈ (tablePartOf tab (S.heights.getD tab.opcode 0) weights beta w vals').2.1
+  | [], _, r, hr => by simp [tablesPart] at hr
+  | t :: ts, vals, r, hr => by
+    simp only [tablesPart, List.mem_append] at hr
+    rcases hr with hr | hr
+    · exact ⟨t, List.mem_cons_self .., vals, hr⟩
+    · obtain ⟨tab, htab, v', hv⟩ := tablesPart_rels S weights beta w ts _ r hr
+      exact ⟨tab, List.mem_cons_of_mem _ htab, v', hv⟩
+
+/-! ## The heap's relations (`heapRelations`), stated explicitly -/
+
+theorem forIn_push {α γ : Type} (g : α → Relation) : ∀ (l : List α) (A : Array Relation) (B : γ)
+    (f : α → Array Relation × γ → Id (ForInStep (Array Relation × γ))),
+    (∀ a s, ∃ c, f a s = pure (.yield (s.1.push (g a), c))) →
+    (Id.run (forIn l (A, B) f)).1.toList = A.toList ++ l.map g
+  | [], A, B, f, _ => by simp
+  | a :: l, A, B, f, hf => by
+    obtain ⟨c, hc⟩ := hf a (A, B)
+    rw [List.forIn_cons, hc]
+    have := forIn_push g l (A.push (g a)) c f hf
+    simp only [Id.run, pure_bind] at this ⊢
+    rw [this]
+    simp
+
+/-- **A heap block's leaf relation**, as `heapRelations`' loop states it. -/
+def blockRel (S : Shape) (active : List E) (parts : List TablePart)
+    (memoryPull memoryPush bytecodePull bytecodePush : E) (w : List E) (x : Block × ℕ) : Relation :=
+  let mixed := (List.range S.heap.h).map fun l ↦
+    if l < x.1.r then w.getD l 0 + pointE (x.1.position >>> l) else pointE (x.1.position >>> l)
+  let n := 2 ^ x.1.r
+  let wr := w.getD x.1.r 0
+  match x.1.leaves with
+  | .unused => ⟨[term .heap mixed 1], 1⟩
+  | .memory => ⟨[term .heap mixed memoryPull] ++
+      quotientTerms (Column.leafQuotient x.2) (chunks (degree (2 * (n - 1)) n + 1)) w wr, memoryPush⟩
+  | .bytecode => ⟨[term .heap mixed bytecodePull] ++
+      quotientTerms (Column.leafQuotient x.2) (chunks (degree (2 * (n - 1)) n + 1)) w wr, bytecodePush⟩
+  | .table t =>
+    let part := parts.getD t default
+    let z := active.getD t 0
+    ⟨[term .heap mixed (part.pull * wr + z * z)] ++
+      quotientTerms (Column.leafQuotient x.2) (chunks (degree (max part.pullDegree part.pushDegree * (n - 1) +
+        (n - Shape.leastRows x.1.r)) n + 1)) w (wr * z), part.push * wr + z * z⟩
+
+/-- **`heapRelations`' relations**: `T(t)`, the tree, the root, each block's leaf, the constraint
+quotient's chunks (its `Id.run do` loop, unfolded). -/
+theorem heapRelations_fst (S : Shape) (active : List E) (parts : List TablePart) (weights : Array E)
+    (beta hv cv mpull mpush bpull bpush : E) (w : List E) (cc : List ℕ) :
+    (heapRelations S active parts weights beta hv cv mpull mpush bpull bpush w cc).1 =
+      [Relation.equal .heap (w.take S.heap.h) hv,
+        ⟨[term .heap ((w.drop 1).take S.heap.h) (w.getD 1 0),
+          term .heap ((w.take S.heap.h).modify 0 (· + 1)) (w.getD 1 0 * hv),
+          term (.treeQuotient 0) (w.take S.heap.h) (w.getD S.heap.h 0),
+          term (.treeQuotient 1) [] (w.getD S.heap.h 0 * w.getD S.heap.h 0)], 0⟩,
+        ⟨[term .heap ((List.range S.heap.h).map fun l ↦ if l = 0 then (1 : E) else 0)
+          (rootInit weights beta)], rootFin S weights beta⟩] ++
+      (S.heap.blocks.zip (List.range S.heap.blocks.length)).map
+        (blockRel S active parts mpull mpush bpull bpush w) ++
+      [⟨quotientTerms .constraintQuotient cc w 1, cv⟩] := by
+  unfold heapRelations
+  simp only [Id.run_bind, Id.run_pure]
+  rw [Array.toList_push, forIn_push (blockRel S active parts mpull mpush bpull bpush w)]
+  · simp [Relation.equal, rootInit, rootFin]
+  · intro a s
+    rcases a with ⟨⟨lv, r, pos⟩, i⟩
+    cases lv <;> exact ⟨_, rfl⟩
+
+/-! ## The constraint relation (`constraintRelation`), as folds -/
+
+/-- `BLAKE2S`'s copies (the inner loop of `constraintRelation`), on (terms, power). -/
+def copyStep (o r : ℕ) (columns : List String) (w y : List E) (lift gamma : E) (s : Array Term × E)
+    (c : ℕ) : Array Term × E :=
+  match qflockSlot (columns.getD c "") with
+  | some slot => ((s.1.push (term (.table o c) (w.take r) (s.2 * lift))).push
+      (term (.qflockSlot slot) y (s.2 * lift)), s.2 * gamma)
+  | none => s
+
+/-- One table's step of `constraintRelation`'s loop, on (known, terms, power, degree). -/
+def crStep (shape : Shape) (gamma t : E) (w : List E) (s : E × Array Term × E × ℕ)
+    (x : Table × TablePart) : E × Array Term × E × ℕ :=
+  let r := shape.heights.getD x.1.opcode 0
+  let n := 2 ^ r
+  let lift := vanishingRatio w r shape.constraintVars
+  let s1 : E × Array Term × E × ℕ := if x.1.opcode = opJump then
+      (s.1 + s.2.2.1 * lift * (x.2.sent.getD (colIdx x.1.columns "b") none).getD 0 +
+          s.2.2.1 * gamma * lift * (x.2.sent.getD (colIdx x.1.columns "v_cond") none).getD 0 *
+            ((x.2.sent.getD (colIdx x.1.columns "b") none).getD 0 + 1),
+        s.2.1.push (term (.table x.1.opcode (colIdx x.1.columns "w")) (w.take r)
+          (s.2.2.1 * lift * (x.2.sent.getD (colIdx x.1.columns "v_cond") none).getD 0)),
+        s.2.2.1 * gamma * gamma, max s.2.2.2 (degree n 2))
+    else s
+  let s2 : E × Array Term × E × ℕ := (s1.1 + s1.2.2.1 * lift,
+    s1.2.1.push (term (.inverse x.1.opcode) (w.take r)
+      (s1.2.2.1 * lift * x.1.countColumns.foldl (fun acc c ↦ acc * (x.2.sent.getD c none).getD 0) 1)),
+    s1.2.2.1 * gamma, max s1.2.2.2 (degree ((n - 1) * (1 + x.1.countColumns.length)) n))
+  if x.1.opcode = opBlake2s then
+    let inner := (List.range x.1.width).foldl
+      (copyStep x.1.opcode r x.1.columns w (coordinatesAt t (coordinateFunctionals r)) lift gamma)
+      (s2.2.1, s2.2.2.1)
+    (s2.1, inner.1, inner.2, max s2.2.2.2 (degree (r * (n / 2)) n))
+  else s2
+
+/-- The public lines' step, on (known, terms, power). -/
+def lineStep (shape : Shape) (gamma t : E) (w : List E) (s : E × Array Term × E) (x : (E × E) × ℕ) :
+    E × Array Term × E :=
+  (s.1 + s.2.2 * vanishingRatio w 1 shape.constraintVars * (x.1.1 + t * (x.1.1 + x.1.2)),
+    s.2.1.push (term (.memory x.2) (w.take shape.logMemory) (s.2.2 * vanishingRatio w 1 shape.constraintVars)),
+    s.2.2 * gamma)
+
+/-- **`constraintRelation`, as folds.** -/
+def crOf (shape : Shape) (parts : List TablePart) (publicWords : List E) (gamma t constraintValue : E)
+    (w : List E) : Relation × ℕ :=
+  let s := (tables.zip parts).foldl (crStep shape gamma t w) (0, #[], 1, 0)
+  let s' := ((linesOf publicWords).zip (List.range 3)).foldl (lineStep shape gamma t w) (s.1, s.2.1, s.2.2.1)
+  (⟨s'.2.1.toList, constraintValue * w.getD shape.constraintVars 0 + s'.1⟩,
+    max s.2.2.2 (degree (2 ^ shape.logMemory) 3))
+
+theorem forIn_id_eq_foldl' {α β : Type} (l : List α) (init : β) (f : α → β → Id (ForInStep β))
+    (g : β → α → β) (h : ∀ a b, f a b = pure (.yield (g b a))) :
+    forIn l init f = pure (l.foldl g init) := by
+  rw [show f = fun a b ↦ pure (.yield (g b a)) from funext fun a ↦ funext fun b ↦ h a b]
+  exact List.forIn_pure_yield_eq_foldl _ _
+
+/-- **`constraintRelation` is its folds** (its `Id.run do` loops, unfolded). -/
+theorem constraintRelation_eq (shape : Shape) (parts : List TablePart) (publicWords : List E)
+    (gamma t constraintValue : E) (w : List E) :
+    constraintRelation shape parts publicWords gamma t constraintValue w =
+      crOf shape parts publicWords gamma t constraintValue w := by
+  unfold constraintRelation crOf
+  simp only [Id.run]
+  rw [forIn_id_eq_foldl' _ _ _ (crStep shape gamma t w)]
+  · simp only [pure_bind, List.forIn_pure_yield_eq_foldl]
+    rfl
+  · intro x s
+    by_cases hj : x.1.opcode = opJump
+    · have hb : ¬ x.1.opcode = opBlake2s := by rw [hj]; decide
+      simp only [crStep, ite_eq_left hj, ite_eq_right hb]
+    · by_cases hb : x.1.opcode = opBlake2s
+      · simp only [crStep, ite_eq_right hj, ite_eq_left hb]
+        rw [forIn_id_eq_foldl' _ _ _ (copyStep x.1.opcode (shape.heights.getD x.1.opcode 0) x.1.columns w
+          (coordinatesAt t (coordinateFunctionals (shape.heights.getD x.1.opcode 0)))
+          (vanishingRatio w (shape.heights.getD x.1.opcode 0) shape.constraintVars) gamma)]
+        · rfl
+        · intro c s'
+          unfold copyStep
+          rcases qflockSlot (x.1.columns.getD c "") with _ | slot <;> rfl
+      · simp only [crStep, ite_eq_right hj, ite_eq_right hb]
+
+/-! ## The constraint relation at `t` -/
+
+/-- Terms' value under `ev`. -/
+def termsVal (ev : Column → List E → E) (terms : Array Term) : E :=
+  (terms.toList.map fun tm ↦ tm.coefficient * ev tm.column tm.point).sum
+
+theorem termsVal_empty (ev : Column → List E → E) : termsVal ev #[] = 0 := by simp [termsVal]
+
+theorem termsVal_push (ev : Column → List E → E) (terms : Array Term) (tm : Term) :
+    termsVal ev (terms.push tm) = termsVal ev terms + tm.coefficient * ev tm.column tm.point := by
+  simp [termsVal]
+
+theorem powComb_append (a b : List E) (ρ : E) :
+    powComb (a ++ b) ρ = powComb a ρ + ρ ^ a.length * powComb b ρ := by
+  induction a with
+  | nil => simp [powComb_nil]
+  | cons x a ih =>
+    rw [List.cons_append, powComb_cons, powComb_cons, ih, List.length_cons, pow_succ]
+    ring
+
+theorem copyFold_spec (ev : Column → List E → E) (o r : ℕ) (columns : List String) (w y : List E)
+    (lift gamma : E) : ∀ (l : List ℕ) (s : Array Term × E),
+      termsVal ev (l.foldl (copyStep o r columns w y lift gamma) s).1 = termsVal ev s.1 +
+          s.2 * powComb (l.filterMap fun c ↦ (qflockSlot (columns.getD c "")).map fun slot ↦
+            lift * (ev (.table o c) (w.take r) + ev (.qflockSlot slot) y)) gamma ∧
+        (l.foldl (copyStep o r columns w y lift gamma) s).2 =
+          s.2 * gamma ^ (l.filterMap fun c ↦ qflockSlot (columns.getD c "")).length
+  | [], s => by simp [powComb_nil]
+  | c :: l, s => by
+    rw [List.foldl_cons]
+    obtain ⟨ih1, ih2⟩ := copyFold_spec ev o r columns w y lift gamma l (copyStep o r columns w y lift gamma s c)
+    rw [ih1, ih2]
+    simp only [List.filterMap_cons]
+    unfold copyStep
+    rcases qflockSlot (columns.getD c "") with _ | slot
+    · simp only [Option.map_none]
+      trivial
+    · simp only [Option.map_some, termsVal_push, term, powComb_cons, List.length_cons, pow_succ]
+      exact ⟨by ring, by ring⟩
+
+theorem lineFold_spec (S : Shape) (gamma t : E) (w : List E) (ev : Column → List E → E) :
+    ∀ (l : List ((E × E) × ℕ)) (s : E × Array Term × E),
+      (l.foldl (lineStep S gamma t w) s).1 + termsVal ev (l.foldl (lineStep S gamma t w) s).2.1 =
+          s.1 + termsVal ev s.2.1 + s.2.2 * powComb (l.map fun x ↦ vanishingRatio w 1 S.constraintVars *
+            (ev (.memory x.2) (w.take S.logMemory) + x.1.1 + t * (x.1.1 + x.1.2))) gamma ∧
+        (l.foldl (lineStep S gamma t w) s).2.2 = s.2.2 * gamma ^ l.length
+  | [], s => by simp [powComb_nil]
+  | x :: l, s => by
+    rw [List.foldl_cons]
+    obtain ⟨ih1, ih2⟩ := lineFold_spec S gamma t w ev l (lineStep S gamma t w s x)
+    rw [ih1, ih2]
+    simp only [lineStep, termsVal_push, term, List.map_cons, powComb_cons, List.length_cons, pow_succ]
+    exact ⟨by ring, by ring⟩
+
+/-- What the constraint relation's step needs of the evaluation at a table. -/
+structure CrTableOk (S : Shape) (c1 : Stk) (t : E) (w : List E) (ev : Column → List E → E)
+    (tab : Table) (part : TablePart) : Prop where
+  lift : vanishingRatio w (S.heights.getD tab.opcode 0) S.constraintVars =
+    (liftP (S.heights.getD tab.opcode 0) S.constraintVars).eval t
+  col : ∀ c, ev (.table tab.opcode c) (w.take (S.heights.getD tab.opcode 0)) =
+    (c1P S c1 (.table tab.opcode c)).eval t
+  inv : ev (.inverse tab.opcode) (w.take (S.heights.getD tab.opcode 0)) = (c1P S c1 (.inverse tab.opcode)).eval t
+  slot : tab.opcode = opBlake2s → ∀ slot,
+    ev (.qflockSlot slot) (coordinatesAt t (coordinateFunctionals (S.heights.getD tab.opcode 0))) =
+      (slotP S c1 slot).eval t
+  sent : ∀ c ∈ sentColumns tab, part.sent.getD c none = some ((c1P S c1 (.table tab.opcode c)).eval t)
+  jumpSent : tab.opcode = opJump →
+    colIdx tab.columns "b" ∈ sentColumns tab ∧ colIdx tab.columns "v_cond" ∈ sentColumns tab
+
+theorem countColumns_sent (tab : Table) : ∀ c ∈ tab.countColumns, c ∈ sentColumns tab :=
+  fun _ hc ↦ List.mem_append_left _ hc
+
+theorem foldl_mul_getD (f : ℕ → E) (sent : Array (Option E)) :
+    ∀ (l : List ℕ) (a : E), (∀ c ∈ l, sent.getD c none = some (f c)) →
+      l.foldl (fun acc c ↦ acc * (sent.getD c none).getD 0) a = a * (l.map f).prod
+  | [], a, _ => by simp
+  | c :: l, a, h => by
+    rw [List.foldl_cons, foldl_mul_getD f sent l _ fun c' hc' ↦ h c' (List.mem_cons_of_mem _ hc'),
+      h c (List.mem_cons_self ..), Option.getD_some, List.map_cons, List.prod_cons, mul_assoc]
+
+/-- **One table's step of the constraint relation at `t`**: it adds the table's constraints at `t`,
+batched by the powers of `γ` from the current power. -/
+theorem crStep_spec (S : Shape) (c1 : Stk) (gamma t : E) (w : List E) (ev : Column → List E → E)
+    (tab : Table) (part : TablePart) (h : CrTableOk S c1 t w ev tab part) (s : E × Array Term × E × ℕ) :
+    (crStep S gamma t w s (tab, part)).1 + termsVal ev (crStep S gamma t w s (tab, part)).2.1 =
+        s.1 + termsVal ev s.2.1 +
+          s.2.2.1 * powComb ((tableConstraintsP S c1 tab).map fun mw ↦ (mw.1 * mw.2).eval t) gamma ∧
+      (crStep S gamma t w s (tab, part)).2.2.1 = s.2.2.1 * gamma ^ (tableConstraintsP S c1 tab).length := by
+  have hcnt : tab.countColumns.foldl (fun acc c ↦ acc * (part.sent.getD c none).getD 0) 1 =
+      (tab.countColumns.map fun c ↦ (c1P S c1 (.table tab.opcode c)).eval t).prod := by
+    rw [foldl_mul_getD _ _ _ 1 fun c hc ↦ h.sent c (countColumns_sent tab c hc), one_mul]
+  have hprod : ((tab.countColumns.map fun c ↦ c1P S c1 (.table tab.opcode c)).prod).eval t =
+      (tab.countColumns.map fun c ↦ (c1P S c1 (.table tab.opcode c)).eval t).prod := by
+    rw [eval_list_prod_of, List.map_map]
+    rfl
+  have hcopies := copyFold_spec ev tab.opcode (S.heights.getD tab.opcode 0) tab.columns w
+    (coordinatesAt t (coordinateFunctionals (S.heights.getD tab.opcode 0)))
+    ((liftP (S.heights.getD tab.opcode 0) S.constraintVars).eval t) gamma (List.range tab.width)
+  unfold crStep tableConstraintsP
+  dsimp only
+  rw [h.lift]
+  by_cases hj : tab.opcode = opJump
+  · have hb : ¬ tab.opcode = opBlake2s := by rw [hj]; decide
+    obtain ⟨hsb, hsv⟩ := h.jumpSent hj
+    simp only [ite_eq_left hj, ite_eq_right hb, List.append_nil, List.cons_append, List.nil_append,
+      List.map_cons, List.map_nil, List.length_cons, List.length_nil, powComb_cons, powComb_nil,
+      termsVal_push, term, h.sent _ hsb, h.sent _ hsv, Option.getD_some, h.col, h.inv, hcnt,
+      Polynomial.eval_mul, Polynomial.eval_add, Polynomial.eval_one, hprod]
+    constructor <;> ring
+  · by_cases hb : tab.opcode = opBlake2s
+    · simp only [ite_eq_right hj, ite_eq_left hb, List.nil_append, List.cons_append, List.map_cons,
+        List.length_cons, powComb_cons, term, hcnt, Polynomial.eval_mul,
+        Polynomial.eval_add, Polynomial.eval_one, hprod]
+      obtain ⟨hc1, hc2⟩ := hcopies (s.2.1.push ⟨.inverse tab.opcode, w.take (S.heights.getD tab.opcode 0), 0,
+        s.2.2.1 * (liftP (S.heights.getD tab.opcode 0) S.constraintVars).eval t *
+          (tab.countColumns.map fun c ↦ (c1P S c1 (.table tab.opcode c)).eval t).prod⟩, s.2.2.1 * gamma)
+      rw [hc1, hc2, termsVal_push, List.map_filterMap, length_filterMap_map]
+      simp only [Option.map_map, Function.comp_def, Polynomial.eval_add, h.col, h.slot hb, h.inv]
+      constructor
+      · ring
+      · rw [pow_succ]
+        ring
+    · simp only [ite_eq_right hj, ite_eq_right hb, List.nil_append, List.append_nil, List.map_cons,
+        List.map_nil, List.length_cons, List.length_nil, powComb_cons, powComb_nil, termsVal_push, term,
+        h.inv, hcnt, Polynomial.eval_mul, Polynomial.eval_add, Polynomial.eval_one, hprod]
+      constructor <;> ring
+
+theorem crFold_spec (S : Shape) (c1 : Stk) (gamma t : E) (w : List E) (ev : Column → List E → E) :
+    ∀ (L : List (Table × TablePart)) (s : E × Array Term × E × ℕ), (∀ x ∈ L, CrTableOk S c1 t w ev x.1 x.2) →
+      (L.foldl (crStep S gamma t w) s).1 + termsVal ev (L.foldl (crStep S gamma t w) s).2.1 =
+          s.1 + termsVal ev s.2.1 + s.2.2.1 * powComb (L.flatMap fun x ↦
+            (tableConstraintsP S c1 x.1).map fun mw ↦ (mw.1 * mw.2).eval t) gamma ∧
+        (L.foldl (crStep S gamma t w) s).2.2.1 = s.2.2.1 * gamma ^ (L.flatMap fun x ↦
+            (tableConstraintsP S c1 x.1).map fun mw ↦ (mw.1 * mw.2).eval t).length
+  | [], s, _ => by simp [powComb_nil]
+  | x :: L, s, h => by
+    rw [List.foldl_cons]
+    obtain ⟨ih1, ih2⟩ := crFold_spec S c1 gamma t w ev L (crStep S gamma t w s x)
+      fun y hy ↦ h y (List.mem_cons_of_mem _ hy)
+    obtain ⟨s1, s2⟩ := crStep_spec S c1 gamma t w ev x.1 x.2 (h x (List.mem_cons_self ..)) s
+    rw [ih1, ih2, s1, s2, List.flatMap_cons, powComb_append, List.length_append, pow_add, List.length_map]
+    constructor <;> ring
+
+theorem flatMap_zip_fst {α β γ : Type} (f : α → List γ) :
+    ∀ (l : List α) (m : List β), l.length ≤ m.length → (l.zip m).flatMap (fun x ↦ f x.1) = l.flatMap f
+  | [], _, _ => rfl
+  | _ :: _, [], h => by simp at h
+  | a :: l, b :: m, h => by
+    rw [List.zip_cons_cons, List.flatMap_cons, List.flatMap_cons,
+      flatMap_zip_fst f l m (by simpa using h)]
+
+/-- **The constraint relation at `t`**: where it holds, the batched constraints at `t` plus
+`Q_W(t) w_{r_W}(t)` vanish. -/
+theorem crOf_holds (S : Shape) (c1 : Stk) (parts : List TablePart) (pw : List E) (gamma t cv : E)
+    (w : List E) (ev : Column → List E → E) (hlen : tables.length ≤ parts.length)
+    (hok : ∀ x ∈ tables.zip parts, CrTableOk S c1 t w ev x.1 x.2)
+    (hmem : ∀ k < 3, ev (.memory k) (w.take S.logMemory) = (c1P S c1 (.memory k)).eval t)
+    (hlift : vanishingRatio w 1 S.constraintVars = (liftP 1 S.constraintVars).eval t)
+    (hh : RelHolds ev (crOf S parts pw gamma t cv w).1) :
+    powComb ((constraintsP S c1 pw).map fun mw ↦ (mw.1 * mw.2).eval t) gamma +
+      cv * w.getD S.constraintVars 0 = 0 := by
+  unfold RelHolds crOf at hh
+  dsimp only at hh
+  obtain ⟨f1, f2⟩ := crFold_spec S c1 gamma t w ev (tables.zip parts) (0, #[], 1, 0) hok
+  generalize (tables.zip parts).foldl (crStep S gamma t w) (0, #[], 1, 0) = s at hh f1 f2
+  obtain ⟨l1, -⟩ := lineFold_spec S gamma t w ev ((linesOf pw).zip (List.range 3)) (s.1, s.2.1, s.2.2.1)
+  generalize ((linesOf pw).zip (List.range 3)).foldl (lineStep S gamma t w) (s.1, s.2.1, s.2.2.1) = s'
+    at hh l1
+  change termsVal ev s'.2.1 + _ = 0 at hh
+  have hl : ((linesOf pw).zip (List.range 3)).map (fun x ↦ vanishingRatio w 1 S.constraintVars *
+      (ev (.memory x.2) (w.take S.logMemory) + x.1.1 + t * (x.1.1 + x.1.2))) =
+      (linesP S c1 pw).map fun mw ↦ (mw.1 * mw.2).eval t := by
+    unfold linesP
+    rw [List.map_map]
+    refine List.map_congr_left fun x hx ↦ ?_
+    have hx3 : x.2 < 3 := List.mem_range.mp (List.of_mem_zip hx).2
+    simp only [Function.comp_apply, Polynomial.eval_mul, Polynomial.eval_add, Polynomial.eval_C,
+      Polynomial.eval_X, hlift, hmem x.2 hx3]
+  rw [hl] at l1
+  dsimp only at f1 f2
+  rw [termsVal_empty] at f1
+  simp only [add_zero, zero_add, one_mul] at f1 f2
+  unfold constraintsP
+  rw [List.map_append, powComb_append, List.map_flatMap,
+    ← flatMap_zip_fst (fun tab ↦ (tableConstraintsP S c1 tab).map fun mw ↦ (mw.1 * mw.2).eval t) tables
+      parts hlen]
+  rw [← f1, ← f2]
+  dsimp only at l1
+  linear_combination hh - l1
+
+/-! ### The constraint relation's terms -/
+
+/-- A term of the constraint relation: untwisted, on `C1`, at a prefix of the digits or at `y`. -/
+def CrPt (w y : List E) (tm : Term) : Prop :=
+  tm.twist = 0 ∧ tm.column.commitment = .c1 ∧ ((∃ k, tm.point = w.take k) ∨ tm.point = y)
+
+theorem copyFold_terms (o r : ℕ) (columns : List String) (w y : List E) (lift gamma : E) :
+    ∀ (l : List ℕ) (s : Array Term × E), ∃ X,
+      (l.foldl (copyStep o r columns w y lift gamma) s).1.toList = s.1.toList ++ X ∧ ∀ tm ∈ X, CrPt w y tm
+  | [], s => ⟨[], by simp, by simp⟩
+  | c :: l, s => by
+    rw [List.foldl_cons]
+    obtain ⟨X, hX, hP⟩ := copyFold_terms o r columns w y lift gamma l (copyStep o r columns w y lift gamma s c)
+    rw [hX]
+    unfold copyStep
+    split
+    · rename_i _ slot _
+      refine ⟨[term (.table o c) (w.take r) (s.2 * lift), term (.qflockSlot slot) y (s.2 * lift)] ++ X,
+        by simp, fun tm htm ↦ ?_⟩
+      simp only [List.cons_append, List.nil_append, List.mem_cons] at htm
+      rcases htm with rfl | rfl | htm
+      · exact ⟨rfl, rfl, Or.inl ⟨r, rfl⟩⟩
+      · exact ⟨rfl, rfl, Or.inr rfl⟩
+      · exact hP tm htm
+    · exact ⟨X, rfl, hP⟩
+
+theorem copyFold_sub (o r : ℕ) (columns : List String) (w y : List E) (lift gamma : E)
+    (l : List ℕ) (s : Array Term × E) (tm : Term) (h : tm ∈ s.1.toList) :
+    tm ∈ (l.foldl (copyStep o r columns w y lift gamma) s).1.toList := by
+  obtain ⟨X, hX, -⟩ := copyFold_terms o r columns w y lift gamma l s
+  rw [hX]
+  exact List.mem_append_left _ h
+
+theorem copyFold_slot (o r : ℕ) (columns : List String) (w y : List E) (lift gamma : E) :
+    ∀ (l : List ℕ) (s : Array Term × E) (c slot : ℕ), c ∈ l → qflockSlot (columns.getD c "") = some slot →
+      ∃ tm ∈ (l.foldl (copyStep o r columns w y lift gamma) s).1.toList, tm.point = y
+  | [], _, _, _, h, _ => by simp at h
+  | c' :: l, s, c, slot, h, hs => by
+    rw [List.foldl_cons]
+    rcases List.mem_cons.mp h with rfl | h'
+    · refine ⟨term (.qflockSlot slot) y (s.2 * lift), copyFold_sub o r columns w y lift gamma l _ _ ?_, rfl⟩
+      unfold copyStep
+      rw [hs]
+      simp
+    · exact copyFold_slot o r columns w y lift gamma l _ c slot h' hs
+
+theorem crStep_terms (S : Shape) (gamma t : E) (w : List E) (s : E × Array Term × E × ℕ)
+    (x : Table × TablePart) : ∃ X, (crStep S gamma t w s x).2.1.toList = s.2.1.toList ++ X ∧
+      ∀ tm ∈ X, CrPt w (coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0))) tm := by
+  unfold crStep
+  dsimp only
+  by_cases hj : x.1.opcode = opJump
+  · have hb : ¬ x.1.opcode = opBlake2s := by rw [hj]; decide
+    simp only [ite_eq_left hj, ite_eq_right hb, Array.toList_push, List.append_assoc]
+    refine ⟨_, rfl, fun tm htm ↦ ?_⟩
+    simp only [List.singleton_append, List.mem_cons, List.not_mem_nil, or_false] at htm
+    rcases htm with rfl | rfl <;> exact ⟨rfl, rfl, Or.inl ⟨_, rfl⟩⟩
+  · by_cases hb : x.1.opcode = opBlake2s
+    · simp only [ite_eq_right hj, ite_eq_left hb]
+      obtain ⟨X, hX, hP⟩ := copyFold_terms _ _ _ _ _ _ _ _ _
+      rw [hX, Array.toList_push, List.append_assoc]
+      refine ⟨_, rfl, fun tm htm ↦ ?_⟩
+      simp only [List.singleton_append, List.mem_cons] at htm
+      rcases htm with rfl | htm
+      · exact ⟨rfl, rfl, Or.inl ⟨_, rfl⟩⟩
+      · have := hP tm htm
+        rwa [hb] at this
+    · simp only [ite_eq_right hj, ite_eq_right hb, Array.toList_push]
+      refine ⟨_, rfl, fun tm htm ↦ ?_⟩
+      simp only [List.mem_singleton] at htm
+      subst htm
+      exact ⟨rfl, rfl, Or.inl ⟨_, rfl⟩⟩
+
+theorem crStep_sub (S : Shape) (gamma t : E) (w : List E) (s : E × Array Term × E × ℕ)
+    (x : Table × TablePart) (tm : Term) (h : tm ∈ s.2.1.toList) : tm ∈ (crStep S gamma t w s x).2.1.toList := by
+  obtain ⟨X, hX, -⟩ := crStep_terms S gamma t w s x
+  rw [hX]
+  exact List.mem_append_left _ h
+
+theorem crFold_terms (S : Shape) (gamma t : E) (w : List E) : ∀ (L : List (Table × TablePart))
+    (s : E × Array Term × E × ℕ), ∀ tm ∈ (L.foldl (crStep S gamma t w) s).2.1.toList,
+      tm ∈ s.2.1.toList ∨ CrPt w (coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0))) tm
+  | [], _, _, h => Or.inl h
+  | x :: L, s, tm, h => by
+    rw [List.foldl_cons] at h
+    rcases crFold_terms S gamma t w L _ tm h with h1 | h1
+    · obtain ⟨X, hX, hP⟩ := crStep_terms S gamma t w s x
+      rw [hX, List.mem_append] at h1
+      rcases h1 with h1 | h1
+      · exact Or.inl h1
+      · exact Or.inr (hP tm h1)
+    · exact Or.inr h1
+
+theorem crFold_sub (S : Shape) (gamma t : E) (w : List E) : ∀ (L : List (Table × TablePart))
+    (s : E × Array Term × E × ℕ), ∀ tm ∈ s.2.1.toList, tm ∈ (L.foldl (crStep S gamma t w) s).2.1.toList
+  | [], _, _, h => h
+  | x :: L, s, tm, h => by
+    rw [List.foldl_cons]
+    exact crFold_sub S gamma t w L _ tm (crStep_sub S gamma t w s x tm h)
+
+theorem lineFold_terms (S : Shape) (gamma t : E) (w : List E) (y : List E) : ∀ (l : List ((E × E) × ℕ))
+    (s : E × Array Term × E), ∀ tm ∈ (l.foldl (lineStep S gamma t w) s).2.1.toList,
+      tm ∈ s.2.1.toList ∨ CrPt w y tm
+  | [], _, _, h => Or.inl h
+  | x :: l, s, tm, h => by
+    rw [List.foldl_cons] at h
+    rcases lineFold_terms S gamma t w y l _ tm h with h1 | h1
+    · simp only [lineStep, Array.toList_push, List.mem_append, List.mem_singleton] at h1
+      rcases h1 with h1 | rfl
+      · exact Or.inl h1
+      · exact Or.inr ⟨rfl, rfl, Or.inl ⟨_, rfl⟩⟩
+    · exact Or.inr h1
+
+theorem lineFold_sub (S : Shape) (gamma t : E) (w : List E) : ∀ (l : List ((E × E) × ℕ))
+    (s : E × Array Term × E), ∀ tm ∈ s.2.1.toList, tm ∈ (l.foldl (lineStep S gamma t w) s).2.1.toList
+  | [], _, _, h => h
+  | x :: l, s, tm, h => by
+    rw [List.foldl_cons]
+    exact lineFold_sub S gamma t w l _ tm (by simp [lineStep, h])
+
+/-- **The constraint relation's terms**: untwisted, on `C1`, at prefixes of the digits or at `y`. -/
+theorem crOf_terms (S : Shape) (parts : List TablePart) (pw : List E) (gamma t cv : E) (w : List E) :
+    ∀ tm ∈ (crOf S parts pw gamma t cv w).1.terms,
+      CrPt w (coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0))) tm := by
+  intro tm htm
+  unfold crOf at htm
+  dsimp only at htm
+  rcases lineFold_terms S gamma t w _ _ _ tm htm with h | h
+  · rcases crFold_terms S gamma t w _ _ tm h with h' | h'
+    · simp at h'
+    · exact h'
+  · exact h
+
+theorem qflockSlot_m0 : qflockSlot (blake2sColumns.getD 9 "") = some 10 := by decide
+
+theorem tables_getD5 : (tables.getD 5 default).opcode = opBlake2s ∧
+    (tables.getD 5 default).columns = blake2sColumns := ⟨rfl, rfl⟩
+
+/-- **The constraint relation has a term at `y`** (a `BLAKE2S` copy's slot). -/
+theorem crOf_slot (S : Shape) (parts : List TablePart) (pw : List E) (gamma t cv : E) (w : List E)
+    (hlen : tables.length ≤ parts.length) :
+    ∃ tm ∈ (crOf S parts pw gamma t cv w).1.terms,
+      tm.point = coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0)) := by
+  have hx : (tables.getD 5 default, parts.getD 5 default) ∈ tables.zip parts := by
+    have h5 : 5 < (tables.zip parts).length := by
+      rw [List.length_zip]; have : tables.length = 6 := rfl; omega
+    have := List.getElem_mem h5
+    rwa [List.getElem_zip, ← List.getD_eq_getElem _ default, ← List.getD_eq_getElem _ default] at this
+  obtain ⟨L1, L2, hL⟩ := List.append_of_mem hx
+  have key : ∀ s : E × Array Term × E × ℕ, ∃ tm ∈ (crStep S gamma t w s
+      (tables.getD 5 default, parts.getD 5 default)).2.1.toList,
+      tm.point = coordinatesAt t (coordinateFunctionals (S.heights.getD opBlake2s 0)) := by
+    intro s
+    have h1 : ¬ (tables.getD 5 default).opcode = opJump := by decide
+    have h2 : (tables.getD 5 default).opcode = opBlake2s := rfl
+    unfold crStep
+    dsimp only
+    simp only [ite_eq_right h1, ite_eq_left h2]
+    exact copyFold_slot _ _ _ _ _ _ _ _ _ 9 10 (List.mem_range.mpr (by decide)) qflockSlot_m0
+  unfold crOf
+  dsimp only
+  rw [hL, List.foldl_append, List.foldl_cons]
+  obtain ⟨tm, htm, hp⟩ := key (L1.foldl (crStep S gamma t w) (0, #[], 1, 0))
+  exact ⟨tm, lineFold_sub S gamma t w _ _ tm (crFold_sub S gamma t w L2 _ tm htm), hp⟩
+
+/-! ## The quotients' terms -/
+
+/-- `quotientTerms`, recursively: chunk `k` at `w[..e]`, scaled by the digits before it. -/
+def qTerms (column : ℕ → Column) (w : List E) : List ℕ → ℕ → E → List Term
+  | [], _, _ => []
+  | e :: rest, k, sc => term (column k) (w.take e) sc :: qTerms column w rest (k + 1) (sc * w.getD e 0)
+
+theorem quotientTerms_eq (column : ℕ → Column) (sizes : List ℕ) (w : List E) (scale : E) :
+    quotientTerms column sizes w scale = qTerms column w sizes 0 scale := by
+  unfold quotientTerms
+  have key : ∀ (sizes : List ℕ) (k : ℕ) (A : Array Term) (sc : E),
+      ((sizes.zip (List.range' k sizes.length)).foldl (fun (acc : Array Term × E) (p : ℕ × ℕ) ↦
+        (acc.1.push (term (column p.2) (w.take p.1) acc.2), acc.2 * w.getD p.1 0)) (A, sc)).1.toList =
+        A.toList ++ qTerms column w sizes k sc := by
+    intro sizes
+    induction sizes with
+    | nil => intro k A sc; simp [qTerms]
+    | cons e rest ih =>
+      intro k A sc
+      rw [List.length_cons, List.range'_succ, List.zip_cons_cons, List.foldl_cons, ih]
+      simp [qTerms]
+  rw [List.range_eq_range', key]
+  simp
+
+theorem qTerms_shift (column : ℕ → Column) (w : List E) : ∀ (l : List ℕ) (k : ℕ) (sc : E),
+    qTerms column w l (k + 1) sc = qTerms (fun c ↦ column (c + 1)) w l k sc
+  | [], _, _ => rfl
+  | e :: rest, k, sc => by
+    simp only [qTerms]
+    rw [qTerms_shift column w rest (k + 1)]
+
+theorem qTerms_mem (column : ℕ → Column) (w : List E) : ∀ (l : List ℕ) (k : ℕ) (sc : E),
+    ∀ tm ∈ qTerms column w l k sc, ∃ c < l.length, tm.column = column (k + c) ∧
+      tm.point = w.take (l.getD c 0) ∧ tm.twist = 0
+  | [], _, _, tm, h => by simp [qTerms] at h
+  | e :: rest, k, sc, tm, h => by
+    simp only [qTerms, List.mem_cons] at h
+    rcases h with rfl | h
+    · exact ⟨0, by simp, by simp [term], by simp [term], rfl⟩
+    · obtain ⟨c, hc, h1, h2, h3⟩ := qTerms_mem column w rest (k + 1) _ tm h
+      exact ⟨c + 1, by simp; omega, by rw [h1]; ring_nf, by simpa using h2, h3⟩
+
+theorem quotP_cons (S : Shape) (c2 : Stk) (column : ℕ → Column) (e : ℕ) (rest : List ℕ) :
+    quotP S c2 column (e :: rest) =
+      c2P S c2 (column 0) digitP + digitP e * quotP S c2 (fun c ↦ column (c + 1)) rest := by
+  unfold quotP
+  rw [List.length_cons, List.range_succ_eq_map, List.map_cons, List.sum_cons, List.map_map,
+    List.range_zero, List.map_nil, List.prod_nil, mul_one, ← List.sum_map_mul_left]
+  refine congrArg (fun z ↦ c2P S c2 (column 0) digitP + z) ?_
+  refine congrArg List.sum (List.map_congr_left fun c _ ↦ ?_)
+  show c2P S c2 (column (c + 1)) digitP *
+      ((List.range (c + 1)).map fun c' ↦ digitP ((e :: rest).getD c' 0)).prod =
+    digitP e * (c2P S c2 (column (c + 1)) digitP * ((List.range c).map fun c' ↦ digitP (rest.getD c' 0)).prod)
+  rw [List.range_succ_eq_map, List.map_cons, List.prod_cons, List.map_map]
+  have h : ((fun c' ↦ digitP ((e :: rest).getD c' 0)) ∘ Nat.succ) = fun c' ↦ digitP (rest.getD c' 0) :=
+    funext fun c' ↦ by simp
+  rw [h, List.getD_cons_zero]
+  ring
+
+/-- **A quotient's terms at `t`**: `scale · Q(t)`, where every chunk reads its polynomial at the digits
+and the chunks' digits are the digit polynomials'. -/
+theorem qTerms_val (S : Shape) (c2 : Stk) (ev : Column → List E → E) (w : List E) (t : E) :
+    ∀ (column : ℕ → Column) (sizes : List ℕ) (sc : E),
+      (∀ c < sizes.length, ev (column c) (w.take (sizes.getD c 0)) = (c2P S c2 (column c) digitP).eval t) →
+      (∀ c < sizes.length, w.getD (sizes.getD c 0) 0 = (digitP (sizes.getD c 0)).eval t) →
+      ((qTerms column w sizes 0 sc).map fun tm ↦ tm.coefficient * ev tm.column tm.point).sum =
+        sc * (quotP S c2 column sizes).eval t
+  | _, [], _, _, _ => by simp [qTerms, quotP]
+  | column, e :: rest, sc, hev, hw => by
+    simp only [qTerms, List.map_cons, List.sum_cons, term]
+    rw [qTerms_shift, qTerms_val S c2 ev w t (fun c ↦ column (c + 1)) rest (sc * w.getD e 0)
+      (fun c hc ↦ by simpa using hev (c + 1) (by simp; omega))
+      (fun c hc ↦ by simpa using hw (c + 1) (by simp; omega)), quotP_cons]
+    have h0 := hev 0 (by simp)
+    have hw0 := hw 0 (by simp)
+    simp only [List.getD_cons_zero] at h0 hw0
+    rw [h0, hw0, Polynomial.eval_add, Polynomial.eval_mul]
+    ring
+
+/-! ## The constraint quotient's degree -/
+
+/-- `Shape.constraintDegree`'s step. -/
+def cdStep (S : Shape) (d : ℕ) (table : Table) : ℕ :=
+  let r := S.heights.getD table.opcode 0
+  let n := 2 ^ r
+  let d := if table.opcode = opJump then max d (degree n 2) else d
+  let d := max d (degree ((n - 1) * (1 + table.countColumns.length)) n)
+  if table.opcode = opBlake2s then max d (degree (r * (n / 2)) n) else d
+
+theorem crFold_deg (S : Shape) (gamma t : E) (w : List E) : ∀ (L : List (Table × TablePart))
+    (s : E × Array Term × E × ℕ), (L.foldl (crStep S gamma t w) s).2.2.2 =
+      (L.map Prod.fst).foldl (cdStep S) s.2.2.2
+  | [], _ => rfl
+  | x :: L, s => by
+    rw [List.foldl_cons, crFold_deg S gamma t w L, List.map_cons, List.foldl_cons]
+    congr 1
+    unfold crStep cdStep
+    dsimp only
+    by_cases hj : x.1.opcode = opJump
+    · have hb : ¬ x.1.opcode = opBlake2s := by rw [hj]; decide
+      simp only [ite_eq_left hj, ite_eq_right hb]
+    · by_cases hb : x.1.opcode = opBlake2s
+      · simp only [ite_eq_right hj, ite_eq_left hb]
+      · simp only [ite_eq_right hj, ite_eq_right hb]
+
+/-- **The constraint relation's degree is the shape's** (`constraintDegree`), with a part per table. -/
+theorem crOf_deg (S : Shape) (parts : List TablePart) (pw : List E) (gamma t cv : E) (w : List E)
+    (hlen : tables.length ≤ parts.length) : (crOf S parts pw gamma t cv w).2 = S.constraintDegree := by
+  unfold crOf Shape.constraintDegree
+  dsimp only
+  rw [crFold_deg, List.map_fst_zip hlen]
+  rfl
+
+/-! ## Small facts: digits, coordinates, lifts, `Z_act` -/
+
+theorem digits_length (t : E) (n : ℕ) (hn : 1 ≤ n) : (digits t n).length = n := by
+  unfold digits
+  have key : ∀ m : ℕ, ((List.range m).foldl (fun (ws : Array E) _ ↦
+      let w := ws.back?.getD t
+      ws.push (w * w + w)) #[t]).size = m + 1 := by
+    intro m
+    induction m with
+    | zero => rfl
+    | succ m ih => rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil, Array.size_push, ih]
+  rw [List.length_take, Array.length_toList, key]
+  omega
+
+theorem take_getD (w : List E) {k l : ℕ} (hl : l < k) : (w.take k).getD l 0 = w.getD l 0 := by
+  simp [List.getD_eq_getElem?_getD, hl]
+
+theorem sqn_eq (x : E) : ∀ m, sqn x m = x ^ (2 ^ m)
+  | 0 => by simp [sqn]
+  | m + 1 => by rw [sqn, sqn_eq (x * x) m, ← pow_two, ← pow_mul, pow_succ', mul_comm]
+
+theorem zip_sum_range (g : K × E → E) (hg : ∀ x, g (0, x) = 0) (f : ℕ → E) :
+    ∀ (n : ℕ) (l : List K), ((l.zip ((List.range n).map f)).map g).sum =
+      ((List.range n).map fun m ↦ g (l.getD m 0, f m)).sum
+  | 0, l => by simp
+  | n + 1, [] => by
+    simp only [List.zip_nil_left, List.map_nil, List.sum_nil, List.getD_nil, hg]
+    simp
+  | n + 1, a :: l => by
+    rw [List.range_succ_eq_map, List.map_cons, List.zip_cons_cons, List.map_cons, List.sum_cons,
+      List.map_map, zip_sum_range g hg (f ∘ Nat.succ) n l, List.map_cons, List.sum_cons, List.map_map]
+    congr 1
+
+/-- **`coordinatesAt` is the coordinate functionals' values at `t`.** -/
+theorem coordinatesAt_getD (t : E) (a : Array (Array K)) (l : ℕ) (hl : l < a.size) :
+    (coordinatesAt t a).getD l 0 = (yP a l).eval t := by
+  unfold coordinatesAt yP
+  rw [List.getD_eq_getElem _ _ (by simpa using hl), List.getElem_map, eval_listSum, List.map_map]
+  have hrow : a.toList[l]'(by simpa using hl) = a.getD l #[] := by
+    rw [Array.getElem_toList, Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem hl]
+    rfl
+  rw [hrow]
+  rw [Weights.foldl_eq_sum_of _ (fun p ↦ ofK p.1 * p.2) _ 0 (fun acc p _ ↦ by
+    obtain ⟨a', x⟩ := p
+    by_cases h : a' = 0
+    · simp [h]
+    · simp [h])]
+  rw [zero_add, zip_sum_range (fun p ↦ ofK p.1 * p.2) (fun x ↦ by simp) (sqn t) a.size]
+  refine congrArg List.sum (List.map_congr_left fun m _ ↦ ?_)
+  simp only [Function.comp_apply, Polynomial.eval_mul, eval_C, eval_pow, eval_X, sqn_eq]
+  simp [Array.getD_eq_getD_getElem?, List.getD_eq_getElem?_getD]
+
+theorem coordinatesAt_length (t : E) (a : Array (Array K)) : (coordinatesAt t a).length = a.size := by
+  simp [coordinatesAt]
+
+/-- **`vanishingRatio` is `liftP` at `t`.** -/
+theorem vanishingRatio_eval (w : List E) (t : E) (r m : ℕ) (hw : ∀ j < m, w.getD j 0 = (digitP j).eval t) :
+    vanishingRatio w r m = (liftP r m).eval t := by
+  unfold vanishingRatio liftP
+  rw [Weights.foldl_mul_map (fun j ↦ w.getD j 0 + 1), one_mul, eval_list_prod_of, List.map_map]
+  refine congrArg List.prod (List.map_congr_left fun j hj ↦ ?_)
+  rw [List.mem_range'_1] at hj
+  simp only [Function.comp_apply, Polynomial.eval_add, Polynomial.eval_one, hw j (by omega)]
+
+theorem eval_foldl_mul (f : ℕ → Polynomial E) (g : ℕ → E) (t : E) :
+    ∀ (l : List ℕ) (p : Polynomial E) (a : E), p.eval t = a → (∀ b ∈ l, (f b).eval t = g b) →
+      (l.foldl (fun prod b ↦ prod * f b) p).eval t = l.foldl (fun prod b ↦ prod * g b) a
+  | [], _, _, h, _ => h
+  | b :: l, p, a, h, hf => by
+    rw [List.foldl_cons, List.foldl_cons]
+    exact eval_foldl_mul f g t l _ _ (by rw [Polynomial.eval_mul, h, hf b (List.mem_cons_self ..)])
+      fun b' hb' ↦ hf b' (List.mem_cons_of_mem _ hb')
+
+/-- **`activeVanishingFromBits` is `zActP` at `t`.** -/
+theorem activeVanishing_eval (w bits : List E) (t : E) (r : ℕ)
+    (hw : ∀ j ≤ r, w.getD j 0 = (digitP j).eval t) :
+    activeVanishingFromBits w bits r = (zActP bits r).eval t := by
+  unfold activeVanishingFromBits zActP
+  symm
+  refine eval_foldl_mul _ _ t _ _ _ ?_ fun b hb ↦ ?_
+  · simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_one,
+      hw r le_rfl]
+  · rw [List.mem_range] at hb
+    simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_one,
+      hw b hb.le]
+
+/-! ## The layouts' columns -/
+
+theorem layoutsOf_eq (S : Shape) :
+    layoutsOf S = [(.c1, layoutOf S .c1), (.c2, layoutOf S .c2), (.setup, layoutOf S .setup)] := rfl
+
+theorem layoutOf_c2 (S : Shape) : layoutOf S .c2 = StackLayout.new S.c2Columns := rfl
+
+theorem vars_le_batch (S : Shape) (c : Commitment) : (layoutOf S c).vars ≤ batchVars S := by
+  unfold batchVars
+  rw [layoutsOf_eq]
+  refine le_foldl_max _ 0 _ (Or.inl ?_)
+  cases c <;> simp
+
+theorem limb_le_vars {L : StackLayout} (hL : LayoutAligned L) {col : Column} {b : ℕ × ℕ × ℕ}
+    (hb : b ∈ L.limbs col) : b.2.1 ≤ L.vars := by
+  have h := (hL _ (limbs_mem_blocks hb)).2
+  have h2 : 2 ^ b.2.1 ≤ 2 ^ L.vars := by simp only at h; omega
+  exact (Nat.pow_le_pow_iff_right (by norm_num)).mp h2
+
+theorem limb_le_batch (S : Shape) (c : Commitment) (hL : LayoutAligned (layoutOf S c)) {col : Column}
+    {b : ℕ × ℕ × ℕ} (hb : b ∈ (layoutOf S c).limbs col) : b.2.1 ≤ batchVars S :=
+  (limb_le_vars hL hb).trans (vars_le_batch S c)
+
+/-- A column's blocks in a layout of columns: each at the variables it is listed with. -/
+theorem limbs_new_mem (cols : List (Column × ℕ × Bool)) (col : Column) (b : ℕ × ℕ × ℕ)
+    (hb : b ∈ (StackLayout.new cols).limbs col) : ∃ e, (col, b.2.1, e) ∈ cols := by
+  unfold StackLayout.new at hb
+  dsimp only at hb
+  rw [(foldl_place _ (fun _ _ _ _ ↦ rfl) _ #[] 0).1] at hb
+  rw [limbs_eq] at hb
+  simp only [List.nil_append] at hb
+  have hm := limbs_place col ((cols.flatMap fun x ↦ (List.range (if x.2.2 then 3 else 1)).map fun limb ↦
+    (x.1, limb, x.2.1)).mergeSort fun a b ↦ decide (b.2.2 ≤ a.2.2)) 0
+  have h1 : (col, b.1, b.2.1) ∈ ((cols.flatMap fun x ↦ (List.range (if x.2.2 then 3 else 1)).map fun limb ↦
+      (x.1, limb, x.2.1)).mergeSort fun a b ↦ decide (b.2.2 ≤ a.2.2)).filter (fun x ↦ x.1 == col) := by
+    rw [← hm]
+    exact List.mem_map.mpr ⟨b, hb, rfl⟩
+  obtain ⟨h2, -⟩ := List.mem_filter.mp h1
+  rw [List.mem_mergeSort] at h2
+  obtain ⟨⟨c', v, e⟩, hc, hx⟩ := List.mem_flatMap.mp h2
+  obtain ⟨limb, _, he⟩ := List.mem_map.mp hx
+  simp only [Prod.mk.injEq] at he
+  obtain ⟨rfl, -, rfl⟩ := he
+  exact ⟨e, hc⟩
+
+/-- **`C2`'s columns' variables**: the heap's and the tree quotient's first chunk `h`, its second `0`, each
+quotient's chunk its size. -/
+def c2Vars (S : Shape) : Column → ℕ
+  | .heap => S.heap.h
+  | .treeQuotient 0 => S.heap.h
+  | .treeQuotient _ => 0
+  | .constraintQuotient c => (chunks (S.constraintDegree + 1)).getD c 0
+  | .leafQuotient i c => match Shape.leafDegree (S.heap.blocks.getD i default) with
+    | some d => (chunks (d + 1)).getD c 0
+    | none => 0
+  | _ => 0
+
+theorem c2Columns_vars (S : Shape) (col : Column) (v : ℕ) (e : Bool) (h : (col, v, e) ∈ S.c2Columns) :
+    v = c2Vars S col := by
+  unfold Shape.c2Columns at h
+  dsimp only at h
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false] at h
+  rcases h with ((h | h | h) | h) | h
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, -⟩ := h
+    rfl
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, -⟩ := h
+    rfl
+  · simp only [Prod.mk.injEq] at h
+    obtain ⟨rfl, rfl, -⟩ := h
+    rfl
+  · obtain ⟨p, hp, he⟩ := List.mem_map.mp h
+    obtain ⟨-, hget⟩ := mem_zip_range_iff _ 0 p hp
+    simp only [Prod.mk.injEq] at he
+    obtain ⟨rfl, rfl, -⟩ := he
+    simp only [c2Vars, hget]
+  · obtain ⟨⟨blk, idx⟩, hp, hx⟩ := List.mem_flatMap.mp h
+    obtain ⟨-, hget⟩ := mem_zip_range_iff _ default _ hp
+    dsimp only at hget hx
+    rcases hd : Shape.leafDegree blk with _ | d
+    · rw [hd] at hx
+      simp at hx
+    · rw [hd] at hx
+      obtain ⟨p, hp', he⟩ := List.mem_map.mp hx
+      obtain ⟨-, hget'⟩ := mem_zip_range_iff _ 0 p hp'
+      simp only [Prod.mk.injEq] at he
+      obtain ⟨rfl, rfl, -⟩ := he
+      simp only [c2Vars, hget, hd]
+      exact hget'.symm
+
+/-- **`C2`'s limbs**: each at its column's variables, within the batch's. -/
+theorem c2_limbs (S : Shape) (col : Column) (b : ℕ × ℕ × ℕ) (hb : b ∈ (layoutOf S .c2).limbs col) :
+    b.2.1 = c2Vars S col ∧ b.2.1 ≤ batchVars S := by
+  refine ⟨?_, limb_le_batch S .c2 (by rw [layoutOf_c2]; exact layoutAligned_new _) hb⟩
+  rw [layoutOf_c2] at hb
+  obtain ⟨e, he⟩ := limbs_new_mem _ col b hb
+  exact c2Columns_vars S col _ e he
+
+/-- **`C1`'s limbs**: each at its column's variables (`c1Vars`), within the batch's. -/
+theorem c1_limbs (S : Shape) (col : Column) (b : ℕ × ℕ × ℕ) (hb : b ∈ (layoutOf S .c1).limbs col) :
+    b.2.1 = c1Vars S col ∧ b.2.1 ≤ batchVars S := by
+  refine ⟨?_, limb_le_batch S .c1 (by rw [layoutOf_c1]; exact layoutAligned_new _) hb⟩
+  rw [layoutOf_c1] at hb
+  obtain ⟨e, he⟩ := limbs_new_mem _ col b hb
+  rw [c1Cols_eq] at he
+  obtain ⟨c, _, hc⟩ := List.mem_map.mp he
+  simp only [Prod.mk.injEq] at hc
+  obtain ⟨rfl, h2, -⟩ := hc
+  exact h2.symm
+
+/-- The setup's limbs: the bytecode's tuples at `lb + 4`, the addresses at `lm`. -/
+theorem setup_limbs (S : Shape) (col : Column) (b : ℕ × ℕ × ℕ) (hb : b ∈ (layoutOf S .setup).limbs col) :
+    (col = .bytecodeTuple → b.2.1 = S.logBytecode + 4) ∧ (col = .address → b.2.1 = S.logMemory) ∧
+      b.2.1 ≤ batchVars S := by
+  refine ⟨fun h ↦ ?_, fun h ↦ ?_, limb_le_batch S .setup (by rw [layoutOf_setup]; exact layoutAligned_new _) hb⟩
+  all_goals
+    rw [layoutOf_setup] at hb
+    obtain ⟨e, he⟩ := limbs_new_mem _ col b hb
+    subst h
+    simp [setupCols] at he
+    exact he.1
+
+theorem coordinateFunctionals_size (r : ℕ) : (coordinateFunctionals r).size = r := by
+  rw [cf_eq]
+  simp [cfFinal]
+
+/-! ## The differences' evaluation -/
+
+/-- The digits the verifier reads `t` through. -/
+def nDigits (S : Shape) : ℕ := max S.heap.h (S.constraintVars + 4) + 2
+
+/-- **The quotients' chunks fit the digits**: every chunk size of the constraint quotient and of each
+heap block's leaf quotient is below the number of digits the verifier reads `t` through (so each chunk
+is read at the digits, and the digit `w_e` past it is the digit polynomial's). -/
+def ChunksFit (S : Shape) : Prop :=
+  (∀ e ∈ chunks (S.constraintDegree + 1), e < nDigits S) ∧
+    ∀ b ∈ S.heap.blocks, ∀ d, Shape.leafDegree b = some d → ∀ e ∈ chunks (d + 1), e < nDigits S
+
+/-- **The bytecode's variables fit the heap's** (`HeapLayout.new` lays a block of `2^lb` leaves among
+`2^(h−1)`), so the bytecode's claims read only digits. -/
+def LbFits (S : Shape) : Prop := S.logBytecode ≤ S.heap.h
+
+/-- A heap block's mixed point at `t`, as `heapRelations` states it. -/
+def mixedOf (S : Shape) (w : List E) (b : Block) : List E :=
+  (List.range S.heap.h).map fun l ↦
+    if l < b.r then w.getD l 0 + pointE (b.position >>> l) else pointE (b.position >>> l)
+
+theorem blockRel_commitment (S : Shape) (active : List E) (parts : List TablePart)
+    (mp mq bp bq : E) (w : List E) (x : Block × ℕ) :
+    (blockRel S active parts mp mq bp bq w x).commitment = .c2 := by
+  unfold blockRel
+  dsimp only
+  split <;> rfl
+
+theorem blockRel_heap (S : Shape) (active : List E) (parts : List TablePart)
+    (mp mq bp bq : E) (w : List E) (x : Block × ℕ) :
+    ∃ c, term .heap (mixedOf S w x.1) c ∈ (blockRel S active parts mp mq bp bq w x).terms := by
+  unfold blockRel mixedOf
+  dsimp only
+  split <;> exact ⟨_, List.mem_cons_self ..⟩
+
+theorem block_r_lt (S : Shape) (hH : HeapGood S) (b : Block) (hb : b ∈ S.heap.blocks) : b.r < S.heap.h := by
+  obtain ⟨h1, -, hsum, -⟩ := hH
+  have hle : 2 ^ b.r ≤ 2 ^ (S.heap.h - 1) := by
+    rw [← hsum]
+    exact List.le_sum_of_mem (List.mem_map.mpr ⟨b, hb, rfl⟩)
+  have := (Nat.pow_le_pow_iff_right (by norm_num)).mp hle
+  omega
+
+section Ctx
+
+variable (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (s : USt) (c1 : Stk) (ch : List E) (fd : Done)
+  (c2 : Stk) (t : E) (vals : List E)
+
+/-- **What the differences read a column at a point as**: the term's weight at its merged point on its
+commitment's stack, against the zero-extended stack. -/
+noncomputable def evOf (col : Column) (p : List E) : E :=
+  ∑ u ∈ range (2 ^ batchVars D.shape), termW (layoutOf D.shape col.commitment) (ringMapAt Fl fd)
+    (batchVars D.shape) col (mergedPoint (mine (relsAt D Fl s ch fd t vals) col.commitment) p) 0 u *
+      stE (stackFor D c1 c2 col.commitment) (layoutOf D.shape col.commitment).vars u
+
+/-- **The differences, all zero, make every untwisted relation on one commitment hold** under `evOf`. -/
+theorem holds_of_diffs (hg : CountsFit D.shape s.2 ∧ FlockGood κ (batchVars D.shape) (Fl.prog.out fd []))
+    (hd : ∀ d ∈ diffsOf D Fl s c1 ch fd c2 t vals, ∀ x ∈ d, x = 0) (r : Relation)
+    (hr : r ∈ relsAt D Fl s ch fd t vals) (c : Commitment)
+    (hterms : ∀ tm ∈ r.terms, tm.twist = 0 ∧ tm.column.commitment = c) :
+    RelHolds (evOf D Fl s c1 ch fd c2 t vals) r := by
+  have hc : ∀ tm ∈ r.terms, tm.column.commitment = r.commitment := by
+    intro tm htm
+    unfold Relation.commitment
+    rcases hr' : r.terms with _ | ⟨tm0, rest⟩
+    · rw [hr'] at htm; simp at htm
+    · rw [(hterms tm htm).2]
+      exact (hterms tm0 (by rw [hr']; exact List.mem_cons_self ..)).2.symm
+  unfold diffsOf at hd
+  rw [ite_eq_left hg] at hd
+  have hcm : r.commitment ∈ commitments := by cases r.commitment <;> simp [commitments]
+  have h0 := hd _ (List.mem_append_left _ (List.mem_map.mpr ⟨r.commitment, hcm, rfl⟩)) _
+    (List.mem_map.mpr ⟨r, List.mem_filter.mpr ⟨hr, by simp⟩, rfl⟩)
+  unfold relDiff at h0
+  unfold RelHolds
+  rw [← h0]
+  refine congrArg (· + r.value) (congrArg List.sum (List.map_congr_left fun tm htm ↦ ?_))
+  rw [(hterms tm htm).1]
+  unfold evOf
+  rw [hc tm htm]
+
+/-- **A column's value at a point of its commitment's relations** is its polynomial at `t`. -/
+theorem ev_colPoly (col : Column) (p : List E) (P : ℕ → Polynomial E) (hcol : ∀ j, col ≠ .qflockSlot j)
+    (hp : ∃ r ∈ relsAt D Fl s ch fd t vals, r.commitment = col.commitment ∧ ∃ tm ∈ r.terms, tm.point = p)
+    (hb : ∀ b ∈ (layoutOf D.shape col.commitment).limbs col, b.2.1 ≤ p.length ∧ b.2.1 ≤ batchVars D.shape)
+    (hP : ∀ b ∈ (layoutOf D.shape col.commitment).limbs col, ∀ l < b.2.1, (P l).eval t = p.getD l 0) :
+    evOf D Fl s c1 ch fd c2 t vals col p =
+      (colPoly (layoutOf D.shape col.commitment) (batchVars D.shape) (stackFor D c1 c2 col.commitment) col
+        P).eval t := by
+  obtain ⟨r, hr, hrc, tm, htm, hpt⟩ := hp
+  have hpre := (mergedPrefix (mine (relsAt D Fl s ch fd t vals) col.commitment) p
+    ⟨r, List.mem_filter.mpr ⟨hr, by simp [hrc]⟩, tm, htm, hpt⟩).1
+  exact inner_colPoly _ _ _ _ col p _ t P hcol hpre hb hP
+
+/-- **`q_flock`'s slot at `y`**, where no longer `C1` point extends `y`: the slot's polynomial at `t`. -/
+theorem ev_slot (j : ℕ) (y : List E) (Y : ℕ → Polynomial E)
+    (hp : ∃ r ∈ relsAt D Fl s ch fd t vals, r.commitment = .c1 ∧ ∃ tm ∈ r.terms, tm.point = y)
+    (hself : ∀ r ∈ relsAt D Fl s ch fd t vals, r.commitment = .c1 → ∀ tm ∈ r.terms,
+      y.length < tm.point.length → tm.point.take y.length ≠ y)
+    (hb : ∀ b ∈ (layoutOf D.shape .c1).limbs .qflock, b.2.1 = 8 + y.length ∧ b.2.1 ≤ batchVars D.shape)
+    (hY : ∀ m < y.length, (Y m).eval t = y.getD m 0) :
+    evOf D Fl s c1 ch fd c2 t vals (.qflockSlot j) y =
+      (colPoly (layoutOf D.shape .c1) (batchVars D.shape) c1 .qflock fun l ↦
+        if l < 8 then Polynomial.C (bitE j l) else Y (l - 8)).eval t := by
+  obtain ⟨r, hr, hrc, tm, htm, hpt⟩ := hp
+  have hm := mergedSelf (mine (relsAt D Fl s ch fd t vals) .c1) y
+    ⟨r, List.mem_filter.mpr ⟨hr, by simp [hrc]⟩, tm, htm, hpt⟩
+    (fun r' hr' tm' htm' hlt ↦ hself r' (List.mem_filter.mp hr').1 (by simpa using (List.mem_filter.mp hr').2)
+      tm' htm' hlt)
+  unfold evOf
+  show ∑ u ∈ range _, termW (layoutOf D.shape .c1) _ _ _ (mergedPoint (mine _ .c1) y) 0 u * stE c1 _ u = _
+  rw [hm]
+  exact inner_slot _ _ _ c1 j y t Y hb hY
+
+/-- The relations' input. -/
+abbrev inpOf : RelInput := relInput D s ch (Fl.prog.out fd []) t vals
+
+/-- **Every relation holds** that is untwisted on one commitment. -/
+def HoldAll : Prop :=
+  ∀ r ∈ relsAt D Fl s ch fd t vals, ∀ c, (∀ tm ∈ r.terms, tm.twist = 0 ∧ tm.column.commitment = c) →
+    RelHolds (evOf D Fl s c1 ch fd c2 t vals) r
+
+/-- A point some relation on a commitment reads a term at. -/
+def IsPt (c : Commitment) (p : List E) : Prop :=
+  ∃ r ∈ relsAt D Fl s ch fd t vals, r.commitment = c ∧ ∃ tm ∈ r.terms, tm.point = p
+
+theorem w_length : (inpOf D Fl s ch fd t vals).w.length = nDigits D.shape :=
+  digits_length t _ (by omega)
+
+theorem w_getD (l : ℕ) (hl : l < nDigits D.shape) :
+    (inpOf D Fl s ch fd t vals).w.getD l 0 = (digitP l).eval t :=
+  digits_getD t _ l hl
+
+theorem wtake_length (k : ℕ) (hk : k ≤ nDigits D.shape) :
+    ((inpOf D Fl s ch fd t vals).w.take k).length = k := by
+  rw [List.length_take, w_length]; omega
+
+theorem wtake_getD (k : ℕ) (hk : k ≤ nDigits D.shape) (l : ℕ) (hl : l < k) :
+    ((inpOf D Fl s ch fd t vals).w.take k).getD l 0 = (digitP l).eval t := by
+  rw [take_getD _ hl, w_getD D Fl s ch fd t vals l (by omega)]
+
+/-- **A `C1` column at a prefix of the digits** (not a slot): its polynomial at `t`. -/
+theorem ev_c1 (col : Column) (hcol : col.commitment = .c1) (hns : ∀ j, col ≠ .qflockSlot j) (k : ℕ)
+    (hk : k ≤ nDigits D.shape) (hv : c1Vars D.shape col ≤ k)
+    (hp : IsPt D Fl s ch fd t vals .c1 ((inpOf D Fl s ch fd t vals).w.take k)) :
+    evOf D Fl s c1 ch fd c2 t vals col ((inpOf D Fl s ch fd t vals).w.take k) = (c1P D.shape c1 col).eval t := by
+  have h := ev_colPoly D Fl s c1 ch fd c2 t vals col _ digitP hns (by rw [hcol]; exact hp)
+    (by
+      rw [hcol]
+      intro b hb
+      obtain ⟨h1, h2⟩ := c1_limbs D.shape col b hb
+      rw [wtake_length D Fl s ch fd t vals k hk]
+      omega)
+    (by
+      rw [hcol]
+      intro b hb l hl
+      obtain ⟨h1, -⟩ := c1_limbs D.shape col b hb
+      rw [wtake_getD D Fl s ch fd t vals k hk l (by omega)])
+  rw [h]
+  simp only [hcol]
+  rfl
+
+/-- **A `C2` column at a point** whose values at `t` are a polynomial point's: its polynomial at `t`. -/
+theorem ev_c2 (col : Column) (hcol : col.commitment = .c2) (p : List E) (P : ℕ → Polynomial E)
+    (hp : IsPt D Fl s ch fd t vals .c2 p) (hlen : c2Vars D.shape col ≤ p.length)
+    (hP : ∀ l < c2Vars D.shape col, (P l).eval t = p.getD l 0) :
+    evOf D Fl s c1 ch fd c2 t vals col p = (c2P D.shape c2 col P).eval t := by
+  have hns : ∀ j, col ≠ .qflockSlot j := by
+    intro j hj
+    rw [hj] at hcol
+    simp [Column.commitment] at hcol
+  have h := ev_colPoly D Fl s c1 ch fd c2 t vals col p P hns (by rw [hcol]; exact hp)
+    (by
+      rw [hcol]
+      intro b hb
+      obtain ⟨h1, h2⟩ := c2_limbs D.shape col b hb
+      omega)
+    (by
+      rw [hcol]
+      intro b hb l hl
+      obtain ⟨h1, -⟩ := c2_limbs D.shape col b hb
+      exact hP l (by omega))
+  rw [h]
+  simp only [hcol]
+  rfl
+
+/-- **A setup column at a point** whose values at `t` are a polynomial point's. -/
+theorem ev_setup (col : Column) (hcol : col.commitment = .setup) (p : List E) (P : ℕ → Polynomial E)
+    (hp : IsPt D Fl s ch fd t vals .setup p)
+    (hlen : ∀ b ∈ (layoutOf D.shape .setup).limbs col, b.2.1 ≤ p.length)
+    (hP : ∀ b ∈ (layoutOf D.shape .setup).limbs col, ∀ l < b.2.1, (P l).eval t = p.getD l 0) :
+    evOf D Fl s c1 ch fd c2 t vals col p = (suP D.shape (stackFor D c1 c2 .setup) col P).eval t := by
+  have hns : ∀ j, col ≠ .qflockSlot j := by
+    intro j hj
+    rw [hj] at hcol
+    simp [Column.commitment] at hcol
+  have h := ev_colPoly D Fl s c1 ch fd c2 t vals col p P hns (by rw [hcol]; exact hp)
+    (by
+      rw [hcol]
+      intro b hb
+      exact ⟨hlen b hb, (setup_limbs D.shape col b hb).2.2⟩)
+    (by rw [hcol]; exact hP)
+  rw [h]
+  simp only [hcol]
+  rfl
+
+theorem mem_rels_tp {r : Relation} (h : r ∈ (inpOf D Fl s ch fd t vals).tp.2.1) :
+    r ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp [h]
+
+theorem mem_rels_mem {r : Relation} (h : r ∈ (inpOf D Fl s ch fd t vals).memRels) :
+    r ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp [h]
+
+theorem mem_rels_bc {r : Relation} (h : r ∈ (inpOf D Fl s ch fd t vals).bcRels) :
+    r ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp [h]
+
+theorem mem_rels_constraint : (inpOf D Fl s ch fd t vals).constraint.1 ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp
+
+theorem mem_rels_heap {r : Relation} (h : r ∈ (inpOf D Fl s ch fd t vals).heap.1) :
+    r ∈ relsAt D Fl s ch fd t vals := by
+  unfold relsAt relsOf; simp [h]
+
+theorem heap_fst : (inpOf D Fl s ch fd t vals).heap.1 =
+    [Relation.equal .heap ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h) (inpOf D Fl s ch fd t vals).heapValue,
+      ⟨[term .heap (((inpOf D Fl s ch fd t vals).w.drop 1).take D.shape.heap.h)
+          ((inpOf D Fl s ch fd t vals).w.getD 1 0),
+        term .heap (((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h).modify 0 (· + 1))
+          ((inpOf D Fl s ch fd t vals).w.getD 1 0 * (inpOf D Fl s ch fd t vals).heapValue),
+        term (.treeQuotient 0) ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h)
+          ((inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0),
+        term (.treeQuotient 1) [] ((inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0 *
+          (inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0)], 0⟩,
+      ⟨[term .heap ((List.range D.shape.heap.h).map fun l ↦ if l = 0 then (1 : E) else 0)
+        (rootInit (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta)],
+        rootFin D.shape (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta⟩] ++
+    (D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)).map
+      (blockRel D.shape (inpOf D Fl s ch fd t vals).active (inpOf D Fl s ch fd t vals).tp.1
+        (inpOf D Fl s ch fd t vals).memoryPull (inpOf D Fl s ch fd t vals).memoryPush
+        (inpOf D Fl s ch fd t vals).bytecodePull (inpOf D Fl s ch fd t vals).bytecodePush
+        (inpOf D Fl s ch fd t vals).w) ++
+    [⟨quotientTerms .constraintQuotient (chunks ((inpOf D Fl s ch fd t vals).constraint.2 + 1))
+      (inpOf D Fl s ch fd t vals).w 1, (inpOf D Fl s ch fd t vals).constraintValue⟩] :=
+  heapRelations_fst _ _ _ _ _ _ _ _ _ _ _ _ _
+
+theorem h_lt_nDigits : D.shape.heap.h + 1 < nDigits D.shape := by unfold nDigits; omega
+
+theorem rW_lt_nDigits : D.shape.constraintVars + 4 < nDigits D.shape := by unfold nDigits; omega
+
+/-- **The tree's identity at `t`.** -/
+theorem treeP_eval (hold : HoldAll D Fl s c1 ch fd c2 t vals) : (treeP D.shape c2).eval t = 0 := by
+  have hh := heap_fst D Fl s ch fd t vals
+  have hN := h_lt_nDigits D
+  have mT := mem_rels_heap D Fl s ch fd t vals (by
+    rw [hh]; exact List.mem_append_left _ (List.mem_append_left _ (List.mem_cons_self ..)))
+  have mTree := mem_rels_heap D Fl s ch fd t vals (by
+    rw [hh]; exact List.mem_append_left _ (List.mem_append_left _
+      (List.mem_cons_of_mem _ (List.mem_cons_self ..))))
+  have hRT := hold _ mT .c2 (by simp [Relation.equal, term, Column.commitment])
+  have hRtree := hold _ mTree .c2 (by simp [term, Column.commitment])
+  have hT := holds_equal hRT
+  unfold RelHolds at hRtree
+  simp only [term, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero] at hRtree
+  -- The points read at `t`.
+  have hpT : IsPt D Fl s ch fd t vals .c2 ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h) :=
+    ⟨_, mT, rfl, ⟨term .heap _ 1, List.mem_singleton_self _, rfl⟩⟩
+  have hmemTree : ∀ tm ∈ ([term .heap (((inpOf D Fl s ch fd t vals).w.drop 1).take D.shape.heap.h)
+          ((inpOf D Fl s ch fd t vals).w.getD 1 0),
+        term .heap (((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h).modify 0 (· + 1))
+          ((inpOf D Fl s ch fd t vals).w.getD 1 0 * (inpOf D Fl s ch fd t vals).heapValue),
+        term (.treeQuotient 0) ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h)
+          ((inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0),
+        term (.treeQuotient 1) [] ((inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0 *
+          (inpOf D Fl s ch fd t vals).w.getD D.shape.heap.h 0)] : List Term),
+      IsPt D Fl s ch fd t vals .c2 tm.point := by
+    intro tm htm
+    exact ⟨_, mTree, rfl, tm, htm, rfl⟩
+  have eT := ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl _ digitP hpT
+    (by rw [wtake_length D Fl s ch fd t vals _ (by omega)]; rfl)
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      exact (wtake_getD D Fl s ch fd t vals _ (by omega) l hl).symm)
+  have eS := ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl
+    (((inpOf D Fl s ch fd t vals).w.drop 1).take D.shape.heap.h) (fun l ↦ digitP (l + 1))
+    (hmemTree _ (List.mem_cons_self ..))
+    (by
+      show D.shape.heap.h ≤ _
+      simp only [List.length_take, List.length_drop, w_length]; omega)
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      rw [take_getD _ hl, List.getD_eq_getElem?_getD, List.getElem?_drop, ← List.getD_eq_getElem?_getD,
+        add_comm, w_getD D Fl s ch fd t vals _ (by omega)])
+  have eN := ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl
+    (((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h).modify 0 (· + 1))
+    (fun l ↦ if l = 0 then digitP 0 + 1 else digitP l)
+    (hmemTree _ (List.mem_cons_of_mem _ (List.mem_cons_self ..)))
+    (by
+      show D.shape.heap.h ≤ _
+      rw [List.length_modify, wtake_length D Fl s ch fd t vals _ (by omega)])
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      have hx : ((inpOf D Fl s ch fd t vals).w.take D.shape.heap.h)[l]? = some ((digitP l).eval t) := by
+        rw [List.getElem?_eq_getElem (by rw [wtake_length D Fl s ch fd t vals _ (by omega)]; exact hl),
+          ← List.getD_eq_getElem _ 0, wtake_getD D Fl s ch fd t vals _ (by omega) l hl]
+      rw [List.getD_eq_getElem?_getD, List.getElem?_modify, hx]
+      by_cases h0 : l = 0
+      · subst h0
+        simp
+      · simp [h0, Ne.symm h0])
+  have eQ0 := ev_c2 D Fl s c1 ch fd c2 t vals (.treeQuotient 0) rfl _ digitP hpT
+    (by rw [wtake_length D Fl s ch fd t vals _ (by omega)]; rfl)
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      exact (wtake_getD D Fl s ch fd t vals _ (by omega) l hl).symm)
+  have eQ1 := ev_c2 D Fl s c1 ch fd c2 t vals (.treeQuotient 1) rfl [] digitP
+    (hmemTree _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _
+      (List.mem_cons_self ..))))) (by simp [c2Vars]) (fun l hl ↦ by simp [c2Vars] at hl)
+  have w1 := w_getD D Fl s ch fd t vals 1 (by omega)
+  have wh := w_getD D Fl s ch fd t vals D.shape.heap.h (by omega)
+  rw [eT] at hT
+  rw [eS, eN, eQ0, eQ1, ← hT, w1, wh] at hRtree
+  unfold treeP
+  simp only [Polynomial.eval_add, Polynomial.eval_mul]
+  linear_combination hRtree
+
+/-- **The root's identity at `t`.** -/
+theorem rootP_eval (hold : HoldAll D Fl s c1 ch fd c2 t vals) :
+    (rootP D.shape c2 (eqKernel (alphasOf ch)) (betaOf ch)).eval t = 0 := by
+  have hh := heap_fst D Fl s ch fd t vals
+  have mR := mem_rels_heap D Fl s ch fd t vals (by
+    rw [hh]; exact List.mem_append_left _ (List.mem_append_left _
+      (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_self ..)))))
+  have hR := hold _ mR .c2 (by simp [term, Column.commitment])
+  unfold RelHolds at hR
+  simp only [term, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero] at hR
+  have e1 := ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl
+    ((List.range D.shape.heap.h).map fun l ↦ if l = 0 then (1 : E) else 0)
+    (fun l ↦ if l = 0 then 1 else 0) ⟨_, mR, rfl, _, List.mem_singleton_self _, rfl⟩
+    (by simp [c2Vars])
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      rw [getD_map_range _ hl]
+      split_ifs <;> simp)
+  rw [e1] at hR
+  unfold rootP
+  simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C]
+  exact hR
+
+end Ctx
+
+/-! ## The tables' parts, the `C1` points -/
+
+theorem getD_mem' {α : Type} {l : List α} {c : ℕ} {d : α} (hc : c < l.length) : l.getD c d ∈ l := by
+  rw [List.getD_eq_getElem _ _ hc]
+  exact List.getElem_mem hc
+
+theorem sentColumns_ne_nil (tab : Table) : sentColumns tab ≠ [] := by
+  unfold sentColumns factorColumns
+  split_ifs <;> simp
+
+theorem tablePartOf_equal_mem (tab : Table) (lh : ℕ) (weights : Array E) (beta : E) (w vals : List E)
+    (p : ℕ) (hp : p < (sentColumns tab).length) :
+    Relation.equal (.table tab.opcode ((sentColumns tab).getD p 0)) (w.take lh) (vals.getD p 0) ∈
+      (tablePartOf tab lh weights beta w vals).2.1 := by
+  unfold tablePartOf
+  dsimp only
+  obtain ⟨X, hX⟩ := rels_flushFold (fun c ↦ .table tab.opcode c) (w.take lh) weights beta
+    (sentOf tab vals) (tab.flushes.pull.zip tab.flushes.push)
+    ⟨1, 1, 1, 0, ((sentColumns tab).zip (List.range (sentColumns tab).length)).map fun p ↦
+      Relation.equal (.table tab.opcode p.1) (w.take lh) (vals.getD p.2 0), vals.drop (sentColumns tab).length⟩
+  rw [hX]
+  refine List.mem_append_left _ (List.mem_map.mpr ⟨((sentColumns tab).getD p 0, p), ?_, rfl⟩)
+  have hz : p < ((sentColumns tab).zip (List.range (sentColumns tab).length)).length := by simp [hp]
+  have := List.getElem_mem hz
+  rwa [List.getElem_zip, List.getElem_range, ← List.getD_eq_getElem _ 0] at this
+
+theorem tables_length : tables.length = 6 := rfl
+
+theorem jumpSent (tab : Table) (h : tab.opcode = opJump) :
+    colIdx tab.columns "b" ∈ sentColumns tab ∧ colIdx tab.columns "v_cond" ∈ sentColumns tab := by
+  unfold sentColumns factorColumns
+  rw [h]
+  simp [opJump, opMul, opDeref]
+
+/-- A relation whose terms are all on `C2` is on `C1` only if it has no terms. -/
+theorem terms_nil_of {r : Relation} (h : ∀ tm ∈ r.terms, tm.column.commitment = .c2)
+    (hc : r.commitment = .c1) : r.terms = [] := by
+  unfold Relation.commitment at hc
+  rcases hr : r.terms with _ | ⟨tm0, rest⟩
+  · rfl
+  · rw [hr] at hc
+    have := h tm0 (by rw [hr]; exact List.mem_cons_self ..)
+    simp only at hc
+    rw [this] at hc
+    exact absurd hc (by decide)
+
+theorem qTerms_c2 (column : ℕ → Column) (hcol : ∀ c, (column c).commitment = .c2) (w : List E) :
+    ∀ (l : List ℕ) (k : ℕ) (sc : E), ∀ tm ∈ qTerms column w l k sc, tm.column.commitment = .c2 ∧ tm.twist = 0 :=
+  fun l k sc tm htm ↦ by
+    obtain ⟨c, -, h1, -, h3⟩ := qTerms_mem column w l k sc tm htm
+    exact ⟨by rw [h1]; exact hcol _, h3⟩
+
+theorem qTerms_pt (column : ℕ → Column) (w : List E) : ∀ (l : List ℕ) (k : ℕ) (sc : E), ∀ c < l.length,
+    ∃ tm ∈ qTerms column w l k sc, tm.point = w.take (l.getD c 0)
+  | [], _, _, c, hc => by simp at hc
+  | e :: rest, k, sc, 0, _ => ⟨_, List.mem_cons_self .., rfl⟩
+  | e :: rest, k, sc, c + 1, hc => by
+    obtain ⟨tm, htm, hp⟩ := qTerms_pt column w rest (k + 1) (sc * w.getD e 0) c (by simpa using hc)
+    exact ⟨tm, List.mem_cons_of_mem _ htm, by simpa using hp⟩
+
+/-- Every relation of the heap's is on `C2` (or has no terms), untwisted. -/
+theorem heap_terms (S : Shape) (active : List E) (parts : List TablePart) (weights : Array E)
+    (beta hv cv mpull mpush bpull bpush : E) (w : List E) (cc : List ℕ) :
+    ∀ r ∈ (heapRelations S active parts weights beta hv cv mpull mpush bpull bpush w cc).1, ∀ tm ∈ r.terms,
+      tm.column.commitment = .c2 ∧ tm.twist = 0 := by
+  rw [heapRelations_fst]
+  intro r hr tm htm
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with ((rfl | rfl | rfl) | hr) | rfl
+  · simp only [Relation.equal, term, List.mem_singleton] at htm; subst htm; exact ⟨rfl, rfl⟩
+  · simp only [term, List.mem_cons, List.not_mem_nil, or_false] at htm
+    rcases htm with rfl | rfl | rfl | rfl <;> exact ⟨rfl, rfl⟩
+  · simp only [term, List.mem_singleton] at htm; subst htm; exact ⟨rfl, rfl⟩
+  · obtain ⟨x, -, rfl⟩ := List.mem_map.mp hr
+    unfold blockRel at htm
+    dsimp only at htm
+    split at htm
+    · simp only [term, List.mem_singleton] at htm; subst htm; exact ⟨rfl, rfl⟩
+    all_goals
+      rw [List.mem_append] at htm
+      rcases htm with htm | htm
+      · simp only [term, List.mem_singleton] at htm; subst htm; exact ⟨rfl, rfl⟩
+      · rw [quotientTerms_eq] at htm
+        exact qTerms_c2 _ (fun _ ↦ rfl) w _ 0 _ tm htm
+  · rw [quotientTerms_eq] at htm
+    exact qTerms_c2 _ (fun _ ↦ rfl) w _ 0 _ tm htm
+
+section Ctx
+
+variable (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (s : USt) (c1 : Stk) (ch : List E) (fd : Done)
+  (c2 : Stk) (t : E) (vals : List E)
+
+/-- `y(t)`, `BLAKE2S`'s coordinates of `t`. -/
+def yOf : List E := coordinatesAt t (coordinateFunctionals (D.shape.heights.getD opBlake2s 0))
+
+/-- **Every `C1` point**: a prefix of the digits, `y(t)`, or Flock's point. -/
+theorem c1_points : ∀ r ∈ relsAt D Fl s ch fd t vals, r.commitment = .c1 → ∀ tm ∈ r.terms,
+    (∃ k, tm.point = (inpOf D Fl s ch fd t vals).w.take k) ∨ tm.point = yOf D t ∨
+      tm.point = (inpOf D Fl s ch fd t vals).flockPoint := by
+  intro r hr hc tm htm
+  unfold relsAt relsOf at hr
+  simp only [List.mem_append, List.mem_singleton] at hr
+  rcases hr with ((((hr | hr) | hr) | rfl) | hr) | hr
+  · obtain ⟨tab, -, v', hv⟩ := tablesPart_rels _ _ _ _ _ _ r hr
+    exact Or.inl ⟨_, (tablePartOf_terms tab _ _ _ _ v' r hv tm htm).2.1⟩
+  · simp only [RelInput.memRels, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl
+    · simp only [Relation.equal, term, List.mem_singleton] at htm; subst htm; exact Or.inl ⟨_, rfl⟩
+    · simp only [Relation.equal, term, List.mem_singleton] at htm; subst htm; exact Or.inl ⟨_, rfl⟩
+    · obtain ⟨k, -, rfl⟩ := List.mem_map.mp htm
+      exact Or.inl ⟨_, rfl⟩
+  · simp only [RelInput.bcRels, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl
+    · simp only [Relation.equal, term, List.mem_singleton] at htm; subst htm; exact Or.inl ⟨_, rfl⟩
+    · simp [Relation.equal, Relation.commitment, term, Column.commitment] at hc
+  · have := crOf_terms _ _ _ _ _ _ _ tm (by rw [← constraintRelation_eq]; exact htm)
+    rcases this.2.2 with h | h
+    · exact Or.inl h
+    · exact Or.inr (Or.inl h)
+  · have := terms_nil_of (fun tm' htm' ↦ (heap_terms _ _ _ _ _ _ _ _ _ _ _ _ _ r hr tm' htm').1) hc
+    rw [this] at htm
+    simp at htm
+  · unfold RelInput.ringRels at hr
+    split at hr
+    · simp only [List.mem_singleton] at hr
+      subst hr
+      simp only [List.mem_singleton] at htm
+      subst htm
+      exact Or.inr (Or.inr rfl)
+    · simp at hr
+
+/-- **No longer `C1` point extends `y(t)`** where `Z_bad(t) ≠ 0`. -/
+theorem y_self (h2 : 1 ≤ D.shape.heights.getD opBlake2s 0)
+    (hz : (zBad D.shape ((Fl.prog.out fd []).1.getD 0 0)).eval t ≠ 0) :
+    ∀ r ∈ relsAt D Fl s ch fd t vals, r.commitment = .c1 → ∀ tm ∈ r.terms,
+      (yOf D t).length < tm.point.length → tm.point.take (yOf D t).length ≠ yOf D t := by
+  have hlen : (yOf D t).length = D.shape.heights.getD opBlake2s 0 := by
+    rw [yOf, coordinatesAt_length, coordinateFunctionals_size]
+  have hy0 : (yOf D t).getD 0 0 = (yP (coordinateFunctionals (D.shape.heights.getD opBlake2s 0)) 0).eval t := by
+    rw [yOf, coordinatesAt_getD _ _ _ (by rw [coordinateFunctionals_size]; omega)]
+  unfold zBad at hz
+  rw [Polynomial.eval_mul, Polynomial.eval_add, Polynomial.eval_add, Polynomial.eval_X, Polynomial.eval_C,
+    ← hy0] at hz
+  have hne1 : (yOf D t).getD 0 0 ≠ t := fun h ↦ hz (by rw [h, CharTwo.add_self_eq_zero, zero_mul])
+  have hne2 : (yOf D t).getD 0 0 ≠ (Fl.prog.out fd []).1.getD 0 0 :=
+    fun h ↦ hz (by rw [h, CharTwo.add_self_eq_zero, mul_zero])
+  intro r hr hc tm htm hlt heq
+  have h0 : (tm.point.take (yOf D t).length).getD 0 0 = (yOf D t).getD 0 0 := by rw [heq]
+  rw [take_getD _ (by omega)] at h0
+  rcases c1_points D Fl s ch fd t vals r hr hc tm htm with ⟨k, hk⟩ | hk | hk
+  · rw [hk] at h0 hlt
+    rw [take_getD _ (by rw [List.length_take] at hlt; omega), w_getD D Fl s ch fd t vals 0 (by unfold nDigits; omega)] at h0
+    exact hne1 (by rw [← h0]; simp [digitP])
+  · rw [hk] at hlt
+    exact lt_irrefl _ hlt
+  · rw [hk] at h0
+    exact hne2 h0.symm
+
+theorem height_lt_nDigits (o : ℕ) : D.shape.heights.getD o 0 < nDigits D.shape := by
+  have := height_le_rW D.shape o
+  unfold nDigits; omega
+
+theorem lm_lt_nDigits : D.shape.logMemory < nDigits D.shape := by
+  have := logMemory_le_rW D.shape
+  unfold nDigits; omega
+
+/-- **Each table's part at `t`**: its point is a `C1` point, its sent values are its columns at `t`,
+its leaf's products the flushes' fingerprints at `t`, its degrees `tableDegrees`. -/
+theorem part_spec (hL : TablesLin) (hold : HoldAll D Fl s c1 ch fd c2 t vals) (o : ℕ) (ho : o < 6) :
+    IsPt D Fl s ch fd t vals .c1 ((inpOf D Fl s ch fd t vals).w.take (D.shape.heights.getD o 0)) ∧
+    (∀ c ∈ sentColumns (tables.getD o default),
+      ((inpOf D Fl s ch fd t vals).tp.1.getD o default).sent.getD c none =
+        some ((c1P D.shape c1 (.table o c)).eval t)) ∧
+    ((inpOf D Fl s ch fd t vals).tp.1.getD o default).pull =
+      (((tables.getD o default).flushes.pull.zip (tables.getD o default).flushes.push).map fun fl ↦
+        (inpOf D Fl s ch fd t vals).beta +
+          tupleE fl.1 (inpOf D Fl s ch fd t vals).weights fun c ↦ (c1P D.shape c1 (.table o c)).eval t).prod ∧
+    ((inpOf D Fl s ch fd t vals).tp.1.getD o default).push =
+      (((tables.getD o default).flushes.pull.zip (tables.getD o default).flushes.push).map fun fl ↦
+        (inpOf D Fl s ch fd t vals).beta +
+          tupleE fl.2 (inpOf D Fl s ch fd t vals).weights fun c ↦ (c1P D.shape c1 (.table o c)).eval t).prod ∧
+    ((inpOf D Fl s ch fd t vals).tp.1.getD o default).pullDegree = (tableDegrees (tables.getD o default)).1 ∧
+    ((inpOf D Fl s ch fd t vals).tp.1.getD o default).pushDegree = (tableDegrees (tables.getD o default)).2 := by
+  have h6 : o < tables.length := by rw [tables_length]; exact ho
+  obtain ⟨v', hpart, hsub⟩ := tablesPart_getD D.shape (inpOf D Fl s ch fd t vals).weights
+    (inpOf D Fl s ch fd t vals).beta (inpOf D Fl s ch fd t vals).w tables (inpOf D Fl s ch fd t vals).vals o h6
+  rw [← List.getD_eq_getElem _ default h6, tables_opcode o ho] at hpart hsub
+  have hw0 := tablePartOf_equal_mem (tables.getD o default) (D.shape.heights.getD o 0)
+    (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta (inpOf D Fl s ch fd t vals).w v' 0
+    (List.length_pos_iff.mpr (sentColumns_ne_nil _))
+  have hpt : IsPt D Fl s ch fd t vals .c1 ((inpOf D Fl s ch fd t vals).w.take (D.shape.heights.getD o 0)) :=
+    ⟨_, mem_rels_tp D Fl s ch fd t vals (hsub _ hw0), rfl, _, List.mem_singleton_self _, rfl⟩
+  have hev : ∀ c, evOf D Fl s c1 ch fd c2 t vals (.table (tables.getD o default).opcode c)
+      ((inpOf D Fl s ch fd t vals).w.take (D.shape.heights.getD o 0)) = (c1P D.shape c1 (.table o c)).eval t := by
+    intro c
+    rw [tables_opcode o ho]
+    exact ev_c1 D Fl s c1 ch fd c2 t vals (.table o c) rfl (fun j h ↦ by cases h) _
+      (height_lt_nDigits D o).le le_rfl hpt
+  have hh : ∀ r ∈ (tablePartOf (tables.getD o default) (D.shape.heights.getD o 0)
+      (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta (inpOf D Fl s ch fd t vals).w v').2.1,
+      RelHolds (evOf D Fl s c1 ch fd c2 t vals) r := by
+    intro r hr
+    refine hold r (mem_rels_tp D Fl s ch fd t vals (hsub r hr)) .c1 fun tm htm ↦ ?_
+    obtain ⟨⟨c, hc⟩, -, htw⟩ := tablePartOf_terms _ _ _ _ _ _ r hr tm htm
+    exact ⟨htw, by rw [hc]; rfl⟩
+  obtain ⟨s1, s2, s3, s4, s5⟩ := tablePartOf_spec (tables.getD o default) (tables_mem o ho) hL _ _ _ _ v'
+    (evOf D Fl s c1 ch fd c2 t vals) (fun c ↦ (c1P D.shape c1 (.table o c)).eval t) hev hh
+  have hpart' : (inpOf D Fl s ch fd t vals).tp.1.getD o default = (tablePartOf (tables.getD o default)
+      (D.shape.heights.getD o 0) (inpOf D Fl s ch fd t vals).weights (inpOf D Fl s ch fd t vals).beta
+      (inpOf D Fl s ch fd t vals).w v').1 := hpart
+  rw [hpart']
+  exact ⟨hpt, s1, s2, s3, s4, s5⟩
+
+/-- A relation whose terms are all on `C1` is on `C1`. -/
+theorem commitment_c1 {r : Relation} (h : ∀ tm ∈ r.terms, tm.column.commitment = .c1) : r.commitment = .c1 := by
+  unfold Relation.commitment
+  rcases hr : r.terms with _ | ⟨tm0, rest⟩
+  · rfl
+  · exact h tm0 (by rw [hr]; exact List.mem_cons_self ..)
+
+/-- The relation of a quotient's chunks, on `C2` where it has a chunk. -/
+theorem qrel_commitment (column : ℕ → Column) (hcol : ∀ c, (column c).commitment = .c2) (w : List E)
+    (sizes : List ℕ) (hne : sizes ≠ []) (sc v : E) :
+    (⟨qTerms column w sizes 0 sc, v⟩ : Relation).commitment = .c2 := by
+  rcases sizes with _ | ⟨e, rest⟩
+  · exact absurd rfl hne
+  · exact hcol 0
+
+/-- **The constraint quotient's identity at `t`.** -/
+theorem wP_eval (hL : TablesLin) (hC : ChunksFit D.shape) (h2 : 1 ≤ D.shape.heights.getD opBlake2s 0)
+    (hold : HoldAll D Fl s c1 ch fd c2 t vals) :
+    (wP D.shape c1 c2 (publicWordsOf s.1.toList) (gammaOf ch) ((Fl.prog.out fd []).1.getD 0 0)).eval t = 0 := by
+  unfold wP
+  rw [Polynomial.eval_mul]
+  by_cases hz : (zBad D.shape ((Fl.prog.out fd []).1.getD 0 0)).eval t = 0
+  · rw [hz, zero_mul]
+  refine mul_eq_zero_of_right _ ?_
+  have hplen : tables.length ≤ (inpOf D Fl s ch fd t vals).tp.1.length := by
+    show tables.length ≤ (tablesPart _ _ _ _ tables _).1.length
+    rw [tablesPart_length]
+  have hdeg : (inpOf D Fl s ch fd t vals).constraint.2 = D.shape.constraintDegree := by
+    show (constraintRelation _ _ _ _ _ _ _).2 = _
+    rw [constraintRelation_eq]
+    exact crOf_deg _ _ _ _ _ _ _ hplen
+  -- The constraint quotient's value: its chunks at `t`.
+  have mQ := mem_rels_heap D Fl s ch fd t vals (by
+    rw [heap_fst]; exact List.mem_append_right _ (List.mem_singleton_self _))
+  have hQ := hold _ mQ .c2 fun tm htm ↦ by
+    rw [quotientTerms_eq] at htm
+    obtain ⟨h1, h3⟩ := qTerms_c2 _ (fun _ ↦ rfl) _ _ 0 _ tm htm
+    exact ⟨h3, h1⟩
+  unfold RelHolds at hQ
+  simp only [quotientTerms_eq] at hQ mQ
+  rw [hdeg] at hQ mQ
+  have hev : ∀ c < (chunks (D.shape.constraintDegree + 1)).length,
+      evOf D Fl s c1 ch fd c2 t vals (.constraintQuotient c)
+        ((inpOf D Fl s ch fd t vals).w.take ((chunks (D.shape.constraintDegree + 1)).getD c 0)) =
+        (c2P D.shape c2 (.constraintQuotient c) digitP).eval t := by
+    intro c hc
+    have he := hC.1 _ (getD_mem' (d := 0) hc)
+    obtain ⟨tm, htm, hpt⟩ := qTerms_pt Column.constraintQuotient (inpOf D Fl s ch fd t vals).w _ 0 1 c hc
+    refine ev_c2 D Fl s c1 ch fd c2 t vals _ rfl _ digitP
+      ⟨_, mQ, qrel_commitment _ (fun _ ↦ rfl) _ _ (List.ne_nil_of_length_pos (by omega)) _ _, tm, htm, hpt⟩
+      (by rw [wtake_length D Fl s ch fd t vals _ he.le]; rfl) (fun l hl ↦ ?_)
+    exact (wtake_getD D Fl s ch fd t vals _ he.le l hl).symm
+  rw [qTerms_val D.shape c2 _ _ t _ _ 1 hev
+    (fun c hc ↦ w_getD D Fl s ch fd t vals _ (hC.1 _ (getD_mem' (d := 0) hc))), one_mul] at hQ
+  -- The constraint relation at `t`.
+  have hok : ∀ x ∈ tables.zip (inpOf D Fl s ch fd t vals).tp.1,
+      CrTableOk D.shape c1 t (inpOf D Fl s ch fd t vals).w (evOf D Fl s c1 ch fd c2 t vals) x.1 x.2 := by
+    intro x hx
+    obtain ⟨i, hi, hxi⟩ := List.getElem_of_mem hx
+    have hi6 : i < 6 := by rw [List.length_zip] at hi; have := tables_length; omega
+    rw [← hxi, List.getElem_zip, ← List.getD_eq_getElem _ default, ← List.getD_eq_getElem _ default]
+    obtain ⟨hpt, hsent, -⟩ := part_spec D Fl s c1 ch fd c2 t vals hL hold i hi6
+    have hop := tables_opcode i hi6
+    refine ⟨?_, ?_, ?_, ?_, ?_, jumpSent _⟩
+    · rw [hop]
+      exact vanishingRatio_eval _ t _ _ fun j hj ↦ w_getD D Fl s ch fd t vals j
+        (by have := rW_lt_nDigits D; omega)
+    · rw [hop]
+      intro c
+      exact ev_c1 D Fl s c1 ch fd c2 t vals (.table i c) rfl (fun j h ↦ by cases h) _
+        (height_lt_nDigits D i).le le_rfl hpt
+    · rw [hop]
+      exact ev_c1 D Fl s c1 ch fd c2 t vals (.inverse i) rfl (fun j h ↦ by cases h) _
+        (height_lt_nDigits D i).le le_rfl hpt
+    · intro hb slot
+      rw [hb]
+      have hyl : (yOf D t).length = D.shape.heights.getD opBlake2s 0 := by
+        rw [yOf, coordinatesAt_length, coordinateFunctionals_size]
+      obtain ⟨tm, htm, hpt'⟩ := crOf_slot D.shape (inpOf D Fl s ch fd t vals).tp.1
+        (inpOf D Fl s ch fd t vals).publicWords (inpOf D Fl s ch fd t vals).gamma t
+        (inpOf D Fl s ch fd t vals).constraintValue (inpOf D Fl s ch fd t vals).w hplen
+      refine ev_slot D Fl s c1 ch fd c2 t vals slot (yOf D t) _ ⟨_, mem_rels_constraint D Fl s ch fd t vals,
+        ?_, tm, ?_, hpt'⟩ (y_self D Fl s ch fd t vals h2 hz) ?_ ?_
+      · show (constraintRelation _ _ _ _ _ _ _).1.commitment = _
+        rw [constraintRelation_eq]
+        exact commitment_c1 fun tm' htm' ↦ (crOf_terms _ _ _ _ _ _ _ tm' htm').2.1
+      · show tm ∈ (constraintRelation _ _ _ _ _ _ _).1.terms
+        rw [constraintRelation_eq]
+        exact htm
+      · intro b hb'
+        obtain ⟨h1, h3⟩ := c1_limbs D.shape .qflock b hb'
+        refine ⟨?_, h3⟩
+        rw [h1, hyl]
+        simp only [c1Vars]
+        omega
+      · intro m hm
+        rw [hyl] at hm
+        rw [yOf, coordinatesAt_getD _ _ _ (by rw [coordinateFunctionals_size]; exact hm)]
+    · rw [hop]
+      exact hsent
+  have hmem : ∀ k < 3, evOf D Fl s c1 ch fd c2 t vals (.memory k)
+      ((inpOf D Fl s ch fd t vals).w.take D.shape.logMemory) = (c1P D.shape c1 (.memory k)).eval t := by
+    intro k _
+    refine ev_c1 D Fl s c1 ch fd c2 t vals (.memory k) rfl (fun j h ↦ by cases h) _ (lm_lt_nDigits D).le le_rfl
+      ⟨_, mem_rels_mem D Fl s ch fd t vals (List.mem_cons_self ..), rfl, _, List.mem_singleton_self _, rfl⟩
+  have mC := mem_rels_constraint D Fl s ch fd t vals
+  have hCr := hold _ mC .c1 fun tm htm ↦ by
+    have := crOf_terms _ _ _ _ _ _ _ tm (by rw [← constraintRelation_eq]; exact htm)
+    exact ⟨this.1, this.2.1⟩
+  have hc := crOf_holds D.shape c1 (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).publicWords
+    (inpOf D Fl s ch fd t vals).gamma t (inpOf D Fl s ch fd t vals).constraintValue (inpOf D Fl s ch fd t vals).w
+    (evOf D Fl s c1 ch fd c2 t vals) hplen hok hmem
+    (vanishingRatio_eval _ t _ _ fun j hj ↦ w_getD D Fl s ch fd t vals j (by have := rW_lt_nDigits D; omega))
+    (by rw [← constraintRelation_eq]; exact hCr)
+  rw [Polynomial.eval_add, eval_batched, Polynomial.eval_mul,
+    ← w_getD D Fl s ch fd t vals _ (by have := rW_lt_nDigits D; omega)]
+  have two : (2 : E) = 0 := CharTwo.two_eq_zero
+  have e1 : (inpOf D Fl s ch fd t vals).publicWords = publicWordsOf s.1.toList := rfl
+  have e2 : (inpOf D Fl s ch fd t vals).gamma = gammaOf ch := rfl
+  rw [e1, e2] at hc
+  linear_combination hc + (inpOf D Fl s ch fd t vals).w.getD D.shape.constraintVars 0 * hQ -
+    (inpOf D Fl s ch fd t vals).constraintValue * (inpOf D Fl s ch fd t vals).w.getD D.shape.constraintVars 0 * two
+
+/-! ### The heap's blocks -/
+
+theorem block_mem (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) :
+    blockRel D.shape (inpOf D Fl s ch fd t vals).active (inpOf D Fl s ch fd t vals).tp.1
+      (inpOf D Fl s ch fd t vals).memoryPull (inpOf D Fl s ch fd t vals).memoryPush
+      (inpOf D Fl s ch fd t vals).bytecodePull (inpOf D Fl s ch fd t vals).bytecodePush
+      (inpOf D Fl s ch fd t vals).w (b, i) ∈ relsAt D Fl s ch fd t vals :=
+  mem_rels_heap D Fl s ch fd t vals (by
+    rw [heap_fst]
+    exact List.mem_append_left _ (List.mem_append_right _ (List.mem_map.mpr ⟨(b, i), hbi, rfl⟩)))
+
+theorem block_holds (hold : HoldAll D Fl s c1 ch fd c2 t vals) (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) :
+    RelHolds (evOf D Fl s c1 ch fd c2 t vals) (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) := by
+  refine hold _ (block_mem D Fl s ch fd t vals b i hbi) .c2 fun tm htm ↦ ?_
+  have hmem : blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i) ∈
+      (inpOf D Fl s ch fd t vals).heap.1 := by
+    rw [heap_fst]
+    exact List.mem_append_left _ (List.mem_append_right _ (List.mem_map.mpr ⟨(b, i), hbi, rfl⟩))
+  obtain ⟨h1, h2⟩ := heap_terms _ _ _ _ _ _ _ _ _ _ _ _ _ _ hmem tm htm
+  exact ⟨h2, h1⟩
+
+/-- **A block's mixed point**: the heap's polynomial at the restriction's point. -/
+theorem ev_mixed (hH : HeapGood D.shape) (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) :
+    evOf D Fl s c1 ch fd c2 t vals .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b) =
+      (c2P D.shape c2 .heap (mixP b)).eval t := by
+  have hb := block_r_lt D.shape hH b (List.of_mem_zip hbi).1
+  have hN := h_lt_nDigits D
+  obtain ⟨c, hc⟩ := blockRel_heap D.shape (inpOf D Fl s ch fd t vals).active
+    (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+    (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+    (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)
+  refine ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl _ (mixP b)
+    ⟨_, block_mem D Fl s ch fd t vals b i hbi, blockRel_commitment _ _ _ _ _ _ _ _ _, _, hc, rfl⟩
+    (by simp [mixedOf, c2Vars]) (fun l hl ↦ ?_)
+  change l < D.shape.heap.h at hl
+  unfold mixedOf
+  rw [getD_map_range _ hl]
+  unfold mixP
+  split_ifs with h
+  · rw [Polynomial.eval_add, Polynomial.eval_C, w_getD D Fl s ch fd t vals l (by omega)]
+  · rw [Polynomial.eval_C]
+
+/-- **A leaf quotient's chunks** at the digits: their polynomials at `t`. -/
+theorem ev_leafQ (hC : ChunksFit D.shape) (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) (d : ℕ)
+    (hd : Shape.leafDegree b = some d) (sc : E)
+    (hsub : ∀ tm ∈ qTerms (Column.leafQuotient i) (inpOf D Fl s ch fd t vals).w (chunks (d + 1)) 0 sc,
+      tm ∈ (blockRel D.shape (inpOf D Fl s ch fd t vals).active (inpOf D Fl s ch fd t vals).tp.1
+        (inpOf D Fl s ch fd t vals).memoryPull (inpOf D Fl s ch fd t vals).memoryPush
+        (inpOf D Fl s ch fd t vals).bytecodePull (inpOf D Fl s ch fd t vals).bytecodePush
+        (inpOf D Fl s ch fd t vals).w (b, i)).terms) :
+    ∀ c < (chunks (d + 1)).length, evOf D Fl s c1 ch fd c2 t vals (.leafQuotient i c)
+        ((inpOf D Fl s ch fd t vals).w.take ((chunks (d + 1)).getD c 0)) =
+      (c2P D.shape c2 (.leafQuotient i c) digitP).eval t := by
+  intro c hc
+  have hget : D.shape.heap.blocks.getD i default = b := (mem_zip_range_iff _ default _ hbi).2
+  have he := hC.2 b (List.of_mem_zip hbi).1 d hd _ (getD_mem' (d := 0) hc)
+  obtain ⟨tm, htm, hpt⟩ := qTerms_pt (Column.leafQuotient i) (inpOf D Fl s ch fd t vals).w _ 0 sc c hc
+  have hv : c2Vars D.shape (.leafQuotient i c) = (chunks (d + 1)).getD c 0 := by
+    simp only [c2Vars, hget, hd]
+  refine ev_c2 D Fl s c1 ch fd c2 t vals _ rfl _ digitP
+    ⟨_, block_mem D Fl s ch fd t vals b i hbi, blockRel_commitment _ _ _ _ _ _ _ _ _, tm, hsub tm htm, hpt⟩
+    (by rw [hv, wtake_length D Fl s ch fd t vals _ he.le]) (fun l hl ↦ ?_)
+  rw [hv] at hl
+  exact (wtake_getD D Fl s ch fd t vals _ he.le l hl).symm
+
+/-- **The memory's values at `t`**: the final count and the pull fingerprint. -/
+theorem mem_facts (hold : HoldAll D Fl s c1 ch fd c2 t vals) :
+    (inpOf D Fl s ch fd t vals).memoryFinalCount = (c1P D.shape c1 (.memory 3)).eval t ∧
+      (inpOf D Fl s ch fd t vals).memoryPull =
+        (memPullP D.shape c1 (stackFor D c1 c2 .setup) (inpOf D Fl s ch fd t vals).weights
+          (inpOf D Fl s ch fd t vals).beta).eval t := by
+  have hlm := lm_lt_nDigits D
+  have m1 := mem_rels_mem D Fl s ch fd t vals (List.mem_cons_self ..)
+  have m2 := mem_rels_mem D Fl s ch fd t vals (List.mem_cons_of_mem _ (List.mem_cons_self ..))
+  have m3 := mem_rels_mem D Fl s ch fd t vals
+    (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_self ..)))
+  have hs : (inpOf D Fl s ch fd t vals).shape = D.shape := rfl
+  rw [hs] at m1 m2 m3
+  have hpt : IsPt D Fl s ch fd t vals .c1 ((inpOf D Fl s ch fd t vals).w.take D.shape.logMemory) :=
+    ⟨_, m1, rfl, _, List.mem_singleton_self _, rfl⟩
+  have h1 := holds_equal (hold _ m1 .c1 (by simp [Relation.equal, term, Column.commitment]))
+  have h2 := holds_equal (hold _ m2 .setup (by simp [Relation.equal, term, Column.commitment]))
+  have h3 := hold _ m3 .c1 fun tm htm ↦ by
+    obtain ⟨k, -, rfl⟩ := List.mem_map.mp htm
+    exact ⟨rfl, rfl⟩
+  have ek : ∀ k, evOf D Fl s c1 ch fd c2 t vals (.memory k) ((inpOf D Fl s ch fd t vals).w.take D.shape.logMemory) =
+      (c1P D.shape c1 (.memory k)).eval t := fun k ↦
+    ev_c1 D Fl s c1 ch fd c2 t vals (.memory k) rfl (fun j h ↦ by cases h) _ hlm.le le_rfl hpt
+  have ea := ev_setup D Fl s c1 ch fd c2 t vals .address rfl
+    ((inpOf D Fl s ch fd t vals).w.take D.shape.logMemory) digitP ⟨_, m2, rfl, _, List.mem_singleton_self _, rfl⟩
+    (fun b hb ↦ by rw [(setup_limbs D.shape _ b hb).2.1 rfl, wtake_length D Fl s ch fd t vals _ hlm.le])
+    (fun b hb l hl ↦ by
+      rw [(setup_limbs D.shape _ b hb).2.1 rfl] at hl
+      rw [wtake_getD D Fl s ch fd t vals _ hlm.le l hl])
+  rw [ek] at h1
+  rw [ea] at h2
+  refine ⟨h1.symm, ?_⟩
+  unfold RelHolds at h3
+  simp only [List.map_map, Function.comp_def, term, ek] at h3
+  unfold memPullP
+  simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, eval_listSum, List.map_map,
+    Function.comp_def]
+  rw [h2, h1]
+  rw [← add_eq_zero_iff']
+  linear_combination h3
+
+/-- **The bytecode's values at `t`**: the final count and the pull fingerprint. -/
+theorem bc_facts (hLb : LbFits D.shape) (hold : HoldAll D Fl s c1 ch fd c2 t vals) :
+    (inpOf D Fl s ch fd t vals).bytecodeFinalCount = (c1P D.shape c1 .bytecodeFinal).eval t ∧
+      (inpOf D Fl s ch fd t vals).bytecodePull =
+        (bcPullP D.shape c1 (stackFor D c1 c2 .setup) (alphasOf ch) (inpOf D Fl s ch fd t vals).weights
+          (inpOf D Fl s ch fd t vals).beta).eval t := by
+  have hlb : D.shape.logBytecode < nDigits D.shape := by
+    have := h_lt_nDigits D
+    unfold LbFits at hLb
+    omega
+  have m1 := mem_rels_bc D Fl s ch fd t vals (List.mem_cons_self ..)
+  have m2 := mem_rels_bc D Fl s ch fd t vals (List.mem_cons_of_mem _ (List.mem_cons_self ..))
+  have hs : (inpOf D Fl s ch fd t vals).shape = D.shape := rfl
+  rw [hs] at m1 m2
+  have h1 := holds_equal (hold _ m1 .c1 (by simp [Relation.equal, term, Column.commitment]))
+  have h2 := holds_equal (hold _ m2 .setup (by simp [Relation.equal, term, Column.commitment]))
+  have e1 := ev_c1 D Fl s c1 ch fd c2 t vals .bytecodeFinal rfl (fun j h ↦ by cases h) _ hlb.le le_rfl
+    ⟨_, m1, rfl, _, List.mem_singleton_self _, rfl⟩
+  have halen : (alphasOf ch).length = 4 := by simp [alphasOf]
+  have e2 := ev_setup D Fl s c1 ch fd c2 t vals .bytecodeTuple rfl
+    ((inpOf D Fl s ch fd t vals).alphas ++ (inpOf D Fl s ch fd t vals).w.take D.shape.logBytecode)
+    (fun l ↦ if l < 4 then Polynomial.C ((alphasOf ch).getD l 0) else digitP (l - 4))
+    ⟨_, m2, rfl, _, List.mem_singleton_self _, rfl⟩
+    (fun b hb ↦ by
+      rw [(setup_limbs D.shape _ b hb).1 rfl, List.length_append,
+        wtake_length D Fl s ch fd t vals _ hlb.le]
+      show _ ≤ (alphasOf ch).length + _
+      rw [halen]; omega)
+    (fun b hb l hl ↦ by
+      rw [(setup_limbs D.shape _ b hb).1 rfl] at hl
+      show _ = ((alphasOf ch) ++ _).getD l 0
+      by_cases h4 : l < 4
+      · rw [ite_eq_left h4, Polynomial.eval_C, List.getD_append _ _ _ _ (by rw [halen]; exact h4)]
+      · rw [ite_eq_right h4, List.getD_append_right _ _ _ _ (by rw [halen]; omega), halen,
+          wtake_getD D Fl s ch fd t vals _ hlb.le _ (by omega)])
+  rw [e1] at h1
+  rw [e2] at h2
+  refine ⟨h1.symm, ?_⟩
+  unfold bcPullP
+  simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C]
+  rw [h2, h1]
+  have two : (2 : E) = 0 := CharTwo.two_eq_zero
+  linear_combination (-(inpOf D Fl s ch fd t vals).beta -
+    (inpOf D Fl s ch fd t vals).weights.getD 2 0 * (inpOf D Fl s ch fd t vals).bytecodeFinalCount) * two
+
+/-- **A table's `Z_act(t)`** (F1b): the verifier's, from the count's bits, is `zActP`'s. -/
+theorem active_eval (hfit : CountsFit D.shape s.2) (o : ℕ) (ho : o < 6) :
+    (inpOf D Fl s ch fd t vals).active.getD o 0 =
+      (zActP ((List.range (D.shape.heights.getD o 0 + 1)).map fun j ↦ intBits (s.2.getD o 0) j 1)
+        (D.shape.heights.getD o 0)).eval t := by
+  have hh6 : D.shape.heights.length = 6 := D.valid.1
+  have hr6 : s.2.length = 6 := hfit.1
+  have hlen : o < ((countsOf D.shape s.2).zip D.shape.heights).length := by
+    simp [countsOf, hh6, hr6, ho]
+  show (((countsOf D.shape s.2).zip D.shape.heights).map fun p ↦
+    activeVanishingFromBits (inpOf D Fl s ch fd t vals).w p.1 p.2).getD o 0 = _
+  rw [List.getD_eq_getElem _ _ (by simpa using hlen), List.getElem_map, List.getElem_zip]
+  simp only [countsOf, List.getElem_map, List.getElem_zip]
+  rw [← List.getD_eq_getElem s.2 0, ← List.getD_eq_getElem D.shape.heights 0]
+  exact activeVanishing_eval _ _ t _ fun j hj ↦ w_getD D Fl s ch fd t vals j
+    (by have := height_lt_nDigits D o; omega)
+
+theorem pullP_evalE (tab : Table) (weights : Array E) (beta : E) (cols : ℕ → Polynomial E) :
+    (pullP tab weights beta cols).eval t = ((tab.flushes.pull.zip tab.flushes.push).map fun fl ↦
+      beta + tupleE fl.1 weights fun c ↦ (cols c).eval t).prod := by
+  unfold pullP
+  rw [eval_list_prod_of, List.map_map]
+  refine congrArg List.prod (List.map_congr_left fun fl _ ↦ ?_)
+  simp only [Function.comp_apply, Polynomial.eval_add, Polynomial.eval_C, tupleP_evalE]
+
+theorem pushP_evalE (tab : Table) (weights : Array E) (beta : E) (cols : ℕ → Polynomial E) :
+    (pushP tab weights beta cols).eval t = ((tab.flushes.pull.zip tab.flushes.push).map fun fl ↦
+      beta + tupleE fl.2 weights fun c ↦ (cols c).eval t).prod := by
+  unfold pushP
+  rw [eval_list_prod_of, List.map_map]
+  refine congrArg List.prod (List.map_congr_left fun fl _ ↦ ?_)
+  simp only [Function.comp_apply, Polynomial.eval_add, Polynomial.eval_C, tupleP_evalE]
+
+/-- **Each heap block's leaf identity at `t`.** -/
+theorem blockP_eval (hL : TablesLin) (hC : ChunksFit D.shape) (hLb : LbFits D.shape) (hH : HeapGood D.shape)
+    (hfit : CountsFit D.shape s.2) (hold : HoldAll D Fl s c1 ch fd c2 t vals) (b : Block) (i : ℕ)
+    (hbi : (b, i) ∈ D.shape.heap.blocks.zip (List.range D.shape.heap.blocks.length)) :
+    (blockP D.shape c1 c2 (stackFor D c1 c2 .setup) s.2 (alphasOf ch) (betaOf ch) b i).eval t = 0 := by
+  have hb := (List.of_mem_zip hbi).1
+  have hbr := block_r_lt D.shape hH b hb
+  have hN := h_lt_nDigits D
+  have hR := ev_mixed D Fl s c1 ch fd c2 t vals hH b i hbi
+  unfold mixedOf at hR
+  have hrel := block_holds D Fl s c1 ch fd c2 t vals hold b i hbi
+  have hsub : ∀ (sizes : List ℕ) (X sc : E), (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)).terms =
+        [term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b) X] ++
+          quotientTerms (Column.leafQuotient i) sizes (inpOf D Fl s ch fd t vals).w sc →
+      ∀ tm ∈ qTerms (Column.leafQuotient i) (inpOf D Fl s ch fd t vals).w sizes 0 sc, tm ∈ (blockRel D.shape
+        (inpOf D Fl s ch fd t vals).active (inpOf D Fl s ch fd t vals).tp.1
+        (inpOf D Fl s ch fd t vals).memoryPull (inpOf D Fl s ch fd t vals).memoryPush
+        (inpOf D Fl s ch fd t vals).bytecodePull (inpOf D Fl s ch fd t vals).bytecodePush
+        (inpOf D Fl s ch fd t vals).w (b, i)).terms := by
+    intro sizes X sc h tm htm
+    rw [h, quotientTerms_eq]
+    exact List.mem_append_right _ htm
+  have hwq : ∀ d, Shape.leafDegree b = some d → ∀ c < (chunks (d + 1)).length,
+      (inpOf D Fl s ch fd t vals).w.getD ((chunks (d + 1)).getD c 0) 0 =
+        (digitP ((chunks (d + 1)).getD c 0)).eval t :=
+    fun d hd c hc ↦ w_getD D Fl s ch fd t vals _ (hC.2 b hb d hd _ (getD_mem' (d := 0) hc))
+  have hwr := w_getD D Fl s ch fd t vals b.r (by omega)
+  have hblk := hH.2.2.2.2.2 b hb
+  have hw : (inpOf D Fl s ch fd t vals).weights = eqKernel (alphasOf ch) := rfl
+  have hbeta : (inpOf D Fl s ch fd t vals).beta = betaOf ch := rfl
+  have hterms : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+      blockRel D.shape (inpOf D Fl s ch fd t vals).active
+      (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+      (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+      (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i) := rfl
+  unfold RelHolds at hrel
+  unfold blockP
+  dsimp only
+  rcases hlv : b.leaves with _ | _ | tt | _
+  · -- The memory's block.
+    have hd : Shape.leafDegree b = some (degree (2 * (2 ^ b.r - 1)) (2 ^ b.r)) := by
+      unfold Shape.leafDegree; rw [hlv]
+    have ht : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+        (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+        (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+        (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+        ⟨[term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b) (inpOf D Fl s ch fd t vals).memoryPull] ++
+          quotientTerms (Column.leafQuotient i) (chunks (degree (2 * (2 ^ b.r - 1)) (2 ^ b.r) + 1))
+            (inpOf D Fl s ch fd t vals).w ((inpOf D Fl s ch fd t vals).w.getD b.r 0),
+          (inpOf D Fl s ch fd t vals).memoryPush⟩ := by
+      unfold blockRel mixedOf; dsimp only; rw [hlv]
+    have hq := qTerms_val D.shape c2 (evOf D Fl s c1 ch fd c2 t vals) (inpOf D Fl s ch fd t vals).w t
+      (Column.leafQuotient i) _ ((inpOf D Fl s ch fd t vals).w.getD b.r 0)
+      (ev_leafQ D Fl s c1 ch fd c2 t vals hC b i hbi _ hd _ (hsub _ _ _ (by rw [ht])))
+      (hwq _ hd)
+    rw [ht] at hrel
+    simp only [quotientTerms_eq, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+      List.sum_cons, List.sum_nil, add_zero, term, hq] at hrel
+    obtain ⟨hmfc, hmpull⟩ := mem_facts D Fl s c1 ch fd c2 t vals hold
+    unfold mixedOf at hrel
+    rw [hR] at hrel
+    unfold RelInput.memoryPush at hrel
+    rw [hmfc, hmpull, hwr, hw, hbeta] at hrel
+    simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_one]
+    linear_combination hrel
+  · -- The bytecode's block.
+    have hd : Shape.leafDegree b = some (degree (2 * (2 ^ b.r - 1)) (2 ^ b.r)) := by
+      unfold Shape.leafDegree; rw [hlv]
+    have ht : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+        (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+        (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+        (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+        ⟨[term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b)
+            (inpOf D Fl s ch fd t vals).bytecodePull] ++
+          quotientTerms (Column.leafQuotient i) (chunks (degree (2 * (2 ^ b.r - 1)) (2 ^ b.r) + 1))
+            (inpOf D Fl s ch fd t vals).w ((inpOf D Fl s ch fd t vals).w.getD b.r 0),
+          (inpOf D Fl s ch fd t vals).bytecodePush⟩ := by
+      unfold blockRel mixedOf; dsimp only; rw [hlv]
+    have hq := qTerms_val D.shape c2 (evOf D Fl s c1 ch fd c2 t vals) (inpOf D Fl s ch fd t vals).w t
+      (Column.leafQuotient i) _ ((inpOf D Fl s ch fd t vals).w.getD b.r 0)
+      (ev_leafQ D Fl s c1 ch fd c2 t vals hC b i hbi _ hd _ (hsub _ _ _ (by rw [ht])))
+      (hwq _ hd)
+    rw [ht] at hrel
+    simp only [quotientTerms_eq, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+      List.sum_cons, List.sum_nil, add_zero, term, hq] at hrel
+    obtain ⟨hbfc, hbpull⟩ := bc_facts D Fl s c1 ch fd c2 t vals hLb hold
+    unfold mixedOf at hrel
+    rw [hR] at hrel
+    unfold RelInput.bytecodePush at hrel
+    rw [hbfc, hbpull, hwr, hw, hbeta] at hrel
+    simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, Polynomial.eval_one]
+    linear_combination hrel
+  · -- A table's block.
+    have htt : tt < 6 ∧ b.r = D.shape.heights.getD tt 0 := by rw [hlv] at hblk; exact hblk
+    obtain ⟨-, -, hpull, hpush, hpd, hppd⟩ := part_spec D Fl s c1 ch fd c2 t vals hL hold tt htt.1
+    have hop := tables_opcode tt htt.1
+    have hd : Shape.leafDegree b = some (degree (max (tableDegrees (tables.getD tt default)).1
+        (tableDegrees (tables.getD tt default)).2 * (2 ^ b.r - 1) + (2 ^ b.r - Shape.leastRows b.r))
+        (2 ^ b.r)) := by
+      unfold Shape.leafDegree; rw [hlv]
+    have ht : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+        (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+        (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+        (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+        ⟨[term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b)
+            (((inpOf D Fl s ch fd t vals).tp.1.getD tt default).pull * (inpOf D Fl s ch fd t vals).w.getD b.r 0 +
+              (inpOf D Fl s ch fd t vals).active.getD tt 0 * (inpOf D Fl s ch fd t vals).active.getD tt 0)] ++
+          quotientTerms (Column.leafQuotient i) (chunks (degree (max (tableDegrees (tables.getD tt default)).1
+            (tableDegrees (tables.getD tt default)).2 * (2 ^ b.r - 1) + (2 ^ b.r - Shape.leastRows b.r))
+            (2 ^ b.r) + 1))
+            (inpOf D Fl s ch fd t vals).w
+            ((inpOf D Fl s ch fd t vals).w.getD b.r 0 * (inpOf D Fl s ch fd t vals).active.getD tt 0),
+          ((inpOf D Fl s ch fd t vals).tp.1.getD tt default).push * (inpOf D Fl s ch fd t vals).w.getD b.r 0 +
+            (inpOf D Fl s ch fd t vals).active.getD tt 0 * (inpOf D Fl s ch fd t vals).active.getD tt 0⟩ := by
+      unfold blockRel mixedOf; dsimp only; rw [hlv]; dsimp only; rw [hpd, hppd]
+    have hq := qTerms_val D.shape c2 (evOf D Fl s c1 ch fd c2 t vals) (inpOf D Fl s ch fd t vals).w t
+      (Column.leafQuotient i) _
+      ((inpOf D Fl s ch fd t vals).w.getD b.r 0 * (inpOf D Fl s ch fd t vals).active.getD tt 0)
+      (ev_leafQ D Fl s c1 ch fd c2 t vals hC b i hbi _ hd _ (hsub _ _ _ (by rw [ht])))
+      (hwq _ hd)
+    rw [ht] at hrel
+    simp only [quotientTerms_eq, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+      List.sum_cons, List.sum_nil, add_zero, term, hq] at hrel
+    unfold mixedOf at hrel
+    rw [hR, hpull, hpush, hwr, hw, hbeta, active_eval D Fl s ch fd t vals hfit tt htt.1, ← htt.2] at hrel
+    simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_pow, pullP_evalE, pushP_evalE, hop]
+    linear_combination hrel
+  · -- An unused block.
+    have ht : (blockRel D.shape (inpOf D Fl s ch fd t vals).active
+        (inpOf D Fl s ch fd t vals).tp.1 (inpOf D Fl s ch fd t vals).memoryPull
+        (inpOf D Fl s ch fd t vals).memoryPush (inpOf D Fl s ch fd t vals).bytecodePull
+        (inpOf D Fl s ch fd t vals).bytecodePush (inpOf D Fl s ch fd t vals).w (b, i)) =
+        ⟨[term .heap (mixedOf D.shape (inpOf D Fl s ch fd t vals).w b) 1], 1⟩ := by
+      unfold blockRel mixedOf; dsimp only; rw [hlv]
+    rw [ht] at hrel
+    simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero, term, one_mul] at hrel
+    unfold mixedOf at hrel
+    rw [hR] at hrel
+    simp only [Polynomial.eval_add, Polynomial.eval_one]
+    exact hrel
+
+end Ctx
+
+/-- `BLAKE2S` has at least one row variable (a valid shape with Flock: at least `7`). -/
+theorem hB_pos (D : Deployment) : 1 ≤ D.shape.heights.getD opBlake2s 0 := by
+  have h := D.valid.2
+  unfold Shape.validate at h
+  simp at h
+  rw [List.getD_eq_getElem?_getD]
+  omega
+
+/-! ## The tables' flushes and the heap's depth, proved -/
+
+set_option maxRecDepth 100000 in
+/-- **The tables' flushes are as `linearise` reads them** (the kernel checks the six tables' monomials,
+not their coefficients). -/
+theorem tablesLin : TablesLin := by
+  unfold TablesLin
+  decide +kernel
+
+/-- **The bytecode's block fits the heap**, at every shape: `HeapLayout.new`'s depth `⌈log₂ Σ 2^r⌉ + 1`
+is above `lb` (the sum, a permutation of the used blocks', has `2^lb`). -/
+theorem lbFits (S : Shape) : LbFits S := by
+  unfold LbFits Shape.heap HeapLayout.new
+  dsimp only
+  rw [List.Perm.sum_eq (List.Perm.map _ (List.mergeSort_perm _ _))]
+  have h1 : 2 ^ S.logBytecode ≤ ((([(Leaves.memory, S.logMemory), (Leaves.bytecode, S.logBytecode)] ++
+      List.map (fun t => (Leaves.table t, S.heights.getD t 0)) (List.range S.heights.length))).map
+        fun x ↦ 2 ^ x.2).sum :=
+    List.le_sum_of_mem (List.mem_map.mpr ⟨(.bytecode, S.logBytecode), by simp, rfl⟩)
+  have h3 := (Nat.pow_le_pow_iff_right (by norm_num)).mp (h1.trans (le_pow_log2Ceil _))
+  omega
+
+/-! ## The quotients' chunks fit the digits (`ChunksFit`), proved -/
+
+/-- `chunks`' loop body, on (sizes, left). -/
+def chunkStep (s : Array ℕ × ℕ) (_ : ℕ) : Array ℕ × ℕ :=
+  if s.2 > 0 then
+    if s.1.size = 2 ∧ s.2 ≠ 2 ^ Nat.log2 s.2 then (s.1.push (Nat.log2 s.2 + 1), 0)
+    else (s.1.push (Nat.log2 s.2), s.2 - 2 ^ Nat.log2 s.2)
+  else s
+
+/-- **`chunks` is its loop** (its `Id.run do`, unfolded). -/
+theorem chunks_eq (count : ℕ) :
+    chunks count = ((List.range' 0 4).foldl chunkStep (#[], count)).1.toList := by
+  unfold chunks
+  simp only [Id.run]
+  rw [Std.Legacy.Range.forIn_eq_forIn_range', forIn_id_eq_foldl' _ _ _ chunkStep]
+  · simp [Std.Legacy.Range.size]
+    rfl
+  · intro x s
+    unfold chunkStep
+    split_ifs <;> rfl
+
+/-- `chunks`' invariant: every chunk at most the count, what is left at most the count and below the
+last chunk. -/
+def ChunkInv (count : ℕ) (s : Array ℕ × ℕ) : Prop :=
+  (∀ e ∈ s.1.toList, 2 ^ e ≤ count) ∧ s.2 ≤ count ∧ ∀ e, s.1.back? = some e → s.2 < 2 ^ e
+
+theorem chunkStep_inv (count : ℕ) (s : Array ℕ × ℕ) (x : ℕ) (h : ChunkInv count s) :
+    ChunkInv count (chunkStep s x) := by
+  obtain ⟨h1, h2, h3⟩ := h
+  unfold chunkStep
+  by_cases h0 : s.2 > 0
+  · rw [ite_eq_left h0]
+    have hne : s.2 ≠ 0 := by omega
+    have hle := Nat.log2_self_le hne
+    have hlt := Nat.lt_log2_self (n := s.2)
+    by_cases hs : s.1.size = 2 ∧ s.2 ≠ 2 ^ Nat.log2 s.2
+    · rw [ite_eq_left hs]
+      have hb : s.1.back? = some (s.1.getD 1 0) := by
+        rw [Array.back?_eq_getElem?, Array.getD_eq_getD_getElem?]
+        rw [hs.1]
+        simp [Array.getElem?_eq_getElem (show 1 < s.1.size by omega)]
+      have hlast := h3 _ hb
+      have hmem : s.1.getD 1 0 ∈ s.1.toList := by
+        rw [Array.getD_eq_getD_getElem?, Array.getElem?_eq_getElem (show 1 < s.1.size by omega)]
+        simp
+      have hc := h1 _ hmem
+      have hlog : Nat.log2 s.2 < s.1.getD 1 0 := (Nat.log2_lt hne).mpr hlast
+      refine ⟨fun e he ↦ ?_, Nat.zero_le _, fun e he ↦ ?_⟩
+      · simp only [Array.toList_push, List.mem_append, List.mem_singleton] at he
+        rcases he with he | rfl
+        · exact h1 e he
+        · exact (Nat.pow_le_pow_right (by norm_num) hlog).trans hc
+      · simp only [Array.back?_push, Option.some.injEq] at he
+        subst he
+        exact Nat.two_pow_pos _
+    · rw [ite_eq_right hs]
+      refine ⟨fun e he ↦ ?_, by dsimp only; omega, fun e he ↦ ?_⟩
+      · simp only [Array.toList_push, List.mem_append, List.mem_singleton] at he
+        rcases he with he | rfl
+        · exact h1 e he
+        · omega
+      · simp only [Array.back?_push, Option.some.injEq] at he
+        subst he
+        dsimp only
+        rw [pow_succ] at hlt
+        omega
+  · rw [ite_eq_right h0]
+    exact ⟨h1, h2, h3⟩
+
+/-- **A chunk is at most the count**: `2^e ≤ count` for every `e ∈ chunks count`. -/
+theorem chunks_pow_le (count : ℕ) : ∀ e ∈ chunks count, 2 ^ e ≤ count := by
+  rw [chunks_eq]
+  have key : ∀ (l : List ℕ) (s : Array ℕ × ℕ), ChunkInv count s → ChunkInv count (l.foldl chunkStep s) := by
+    intro l
+    induction l with
+    | nil => intro s h; exact h
+    | cons x l ih => intro s h; exact ih _ (chunkStep_inv count s x h)
+  exact (key _ _ ⟨by simp, le_rfl, by simp⟩).1
+
+theorem chunk_lt (count n : ℕ) (h : count < 2 ^ n) : ∀ e ∈ chunks count, e < n := by
+  intro e he
+  have := (chunks_pow_le count e he).trans_lt h
+  exact (Nat.pow_lt_pow_iff_right (by norm_num)).mp this
+
+theorem tupleDegree_le (tuple : List Form) (k : ℕ) (hk : 1 ≤ k)
+    (h : ∀ f ∈ tuple, ∀ mc ∈ f, mc.1.length ≤ k) : tupleDegree tuple ≤ k := by
+  unfold tupleDegree
+  refine max_le hk ?_
+  have inner : ∀ (f : Form) (d : ℕ), d ≤ k → (∀ mc ∈ f, mc.1.length ≤ k) →
+      f.foldl (fun d (mc : List ℕ × E) ↦ if mc.2 = 0 then d else max d mc.1.length) d ≤ k := by
+    intro f
+    induction f with
+    | nil => intro d hd _; exact hd
+    | cons mc f ih =>
+      intro d hd hm
+      rw [List.foldl_cons]
+      refine ih _ ?_ fun m hm' ↦ hm m (List.mem_cons_of_mem _ hm')
+      split_ifs
+      · exact hd
+      · exact max_le hd (hm mc (List.mem_cons_self ..))
+  have outer : ∀ (l : List Form) (d : ℕ), d ≤ k → (∀ f ∈ l, ∀ mc ∈ f, mc.1.length ≤ k) →
+      l.foldl (fun d (form : Form) ↦
+        form.foldl (fun d (mc : List ℕ × E) ↦ if mc.2 = 0 then d else max d mc.1.length) d) d ≤ k := by
+    intro l
+    induction l with
+    | nil => intro d hd _; exact hd
+    | cons f l ih =>
+      intro d hd hm
+      rw [List.foldl_cons]
+      exact ih _ (inner f d hd (hm f (List.mem_cons_self ..))) fun g hg ↦ hm g (List.mem_cons_of_mem _ hg)
+  exact outer tuple 0 (Nat.zero_le _) h
+
+/-- **The tables' shapes, as the degrees read them**: at most eleven flushes, monomials of degree at
+most two, at most ten counters. -/
+def TablesDeg : Prop :=
+  ∀ tab ∈ tables, (tab.flushes.pull.zip tab.flushes.push).length ≤ 11 ∧
+    (∀ fl ∈ tab.flushes.pull.zip tab.flushes.push, ∀ f ∈ fl.1 ++ fl.2, ∀ mc ∈ f, mc.1.length ≤ 2) ∧
+    tab.countColumns.length ≤ 10
+
+set_option maxRecDepth 100000 in
+/-- The tables' shapes (the kernel checks their monomials and counters, not their coefficients). -/
+theorem tablesDeg : TablesDeg := by
+  unfold TablesDeg
+  decide +kernel
+
+theorem sum_le_of {l : List ℕ} {k : ℕ} (h : ∀ x ∈ l, x ≤ k) : l.sum ≤ l.length * k := by
+  induction l with
+  | nil => simp
+  | cons x l ih =>
+    simp only [List.sum_cons, List.length_cons]
+    have := ih fun y hy ↦ h y (List.mem_cons_of_mem _ hy)
+    have := h x (List.mem_cons_self ..)
+    rw [Nat.succ_mul]
+    omega
+
+/-- A table's leaf degrees are at most `23`. -/
+theorem tableDegrees_le (tab : Table) (htab : tab ∈ tables) :
+    (tableDegrees tab).1 ≤ 23 ∧ (tableDegrees tab).2 ≤ 23 := by
+  obtain ⟨hn, hm, -⟩ := tablesDeg tab htab
+  rw [tableDegrees_eq]
+  have h1 : ∀ x ∈ (tab.flushes.pull.zip tab.flushes.push).map (fun fl ↦ tupleDegree fl.1), x ≤ 2 := by
+    intro x hx
+    obtain ⟨fl, hfl, rfl⟩ := List.mem_map.mp hx
+    exact tupleDegree_le _ 2 (by norm_num) fun f hf mc hmc ↦ hm fl hfl f (List.mem_append_left _ hf) mc hmc
+  have h2 : ∀ x ∈ (tab.flushes.pull.zip tab.flushes.push).map (fun fl ↦ tupleDegree fl.2), x ≤ 2 := by
+    intro x hx
+    obtain ⟨fl, hfl, rfl⟩ := List.mem_map.mp hx
+    exact tupleDegree_le _ 2 (by norm_num) fun f hf mc hmc ↦ hm fl hfl f (List.mem_append_right _ hf) mc hmc
+  have s1 := sum_le_of h1
+  have s2 := sum_le_of h2
+  rw [List.length_map] at s1 s2
+  dsimp only
+  constructor <;> omega
+
+/-- A valid shape's heights are at most `31`. -/
+theorem heights_le (D : Deployment) (o : ℕ) : D.shape.heights.getD o 0 ≤ 31 := by
+  have h := D.valid.2
+  unfold Shape.validate at h
+  simp at h
+  by_cases ho : o < D.shape.heights.length
+  · rw [List.getD_eq_getElem _ _ ho]
+    exact h.1.2 _ (List.getElem_mem ho)
+  · rw [List.getD_eq_default _ _ (by omega)]
+    omega
+
+/-- **The constraint quotient's degree is below `2^(r_W + 4)`.** -/
+theorem constraintDegree_lt (D : Deployment) :
+    D.shape.constraintDegree < 2 ^ (D.shape.constraintVars + 4) := by
+  set rW := D.shape.constraintVars
+  have hB : 2 ^ (rW + 4) = 16 * 2 ^ rW := by rw [pow_add]; ring
+  have key : ∀ (L : List Table) (d : ℕ), d < 16 * 2 ^ rW → (∀ tab ∈ L, tab ∈ tables) →
+      L.foldl (cdStep D.shape) d < 16 * 2 ^ rW := by
+    intro L
+    induction L with
+    | nil => intro d hd _; exact hd
+    | cons tab L ih =>
+      intro d hd hL
+      rw [List.foldl_cons]
+      refine ih _ ?_ fun t ht ↦ hL t (List.mem_cons_of_mem _ ht)
+      have htab := hL tab (List.mem_cons_self ..)
+      have hcnt := (tablesDeg tab htab).2.2
+      have hr := height_le_rW D.shape tab.opcode
+      have hr31 := heights_le D tab.opcode
+      have hn : 2 ^ D.shape.heights.getD tab.opcode 0 ≤ 2 ^ rW := Nat.pow_le_pow_right (by norm_num) hr
+      have hpos := Nat.two_pow_pos (D.shape.heights.getD tab.opcode 0)
+      unfold cdStep UniStatement.degree
+      dsimp only
+      generalize 2 ^ D.shape.heights.getD tab.opcode 0 = n at hn hpos ⊢
+      generalize D.shape.heights.getD tab.opcode 0 = r at hr hr31 ⊢
+      have h1 : (n - 1) * (1 + tab.countColumns.length) ≤ (n - 1) * 11 := Nat.mul_le_mul_left _ (by omega)
+      have h2 : r * (n / 2) ≤ 31 * (n / 2) := Nat.mul_le_mul_right _ hr31
+      split_ifs <;> simp only [max_lt_iff] <;> omega
+  unfold Shape.constraintDegree UniStatement.degree
+  dsimp only
+  rw [hB]
+  have hlm : 2 ^ D.shape.logMemory ≤ 2 ^ rW := Nat.pow_le_pow_right (by norm_num) (logMemory_le_rW D.shape)
+  have := Nat.two_pow_pos rW
+  refine max_lt (key tables 0 (by positivity) fun _ h ↦ h) ?_
+  omega
+
+/-- **The quotients' chunks fit the digits**, at a valid shape whose heap's blocks are `HeapGood`'s:
+the constraint quotient's chunks are at most `r_W + 4`, a table's leaf quotient's at most its height
+plus `4` (`23` fingerprint degrees), the memory's and the bytecode's at most their blocks'. -/
+theorem chunksFit (D : Deployment) (hH : HeapGood D.shape) : ChunksFit D.shape := by
+  have hN := rW_lt_nDigits D
+  refine ⟨fun e he ↦ ?_, fun b hb d hd e he ↦ ?_⟩
+  · have := chunk_lt _ (D.shape.constraintVars + 5) (by
+      have := constraintDegree_lt D
+      rw [pow_succ]; omega) e he
+    omega
+  · have hbr := block_r_lt D.shape hH b hb
+    have hhN := h_lt_nDigits D
+    have hblk := hH.2.2.2.2.2 b hb
+    have hpos := Nat.two_pow_pos b.r
+    unfold Shape.leafDegree at hd
+    rcases hlv : b.leaves with _ | _ | tt | _ <;> rw [hlv] at hd hblk
+    · simp only [Option.some.injEq] at hd
+      subst hd
+      have := chunk_lt _ (b.r + 1) (by unfold UniStatement.degree; rw [pow_succ]; omega) e he
+      omega
+    · simp only [Option.some.injEq] at hd
+      subst hd
+      have := chunk_lt _ (b.r + 1) (by unfold UniStatement.degree; rw [pow_succ]; omega) e he
+      omega
+    · obtain ⟨ht6, hrt⟩ := hblk
+      dsimp only at hd
+      simp only [Option.some.injEq] at hd
+      subst hd
+      obtain ⟨hp1, hp2⟩ := tableDegrees_le _ (tables_mem tt ht6)
+      have hr := height_le_rW D.shape tt
+      have hmax : max (tableDegrees (tables.getD tt default)).1 (tableDegrees (tables.getD tt default)).2 ≤ 23 :=
+        max_le hp1 hp2
+      have hm : max (tableDegrees (tables.getD tt default)).1 (tableDegrees (tables.getD tt default)).2 *
+          (2 ^ b.r - 1) ≤ 23 * (2 ^ b.r - 1) := Nat.mul_le_mul_right _ hmax
+      have h32 : 2 ^ (b.r + 5) = 32 * 2 ^ b.r := by rw [pow_add]; ring
+      have := chunk_lt _ (b.r + 5) (by unfold UniStatement.degree; omega) e he
+      omega
+    · simp at hd
+
+end UniSound.Ids.Eval
+
+namespace UniSound.Ids
+
+open LeanVM.Parameters UniStatement UniSound.Ids.Eval
+
+/-- **The verifier's relations at `t`, all zero, give every identity polynomial at `t`**
+(`DiffsEvalP`), from the heap's layout (`HeapGood`), the tables' flushes as `linearise` reads them
+(`TablesLin`), the quotients' chunks within the digits (`ChunksFit`) and the bytecode within the heap
+(`LbFits`). -/
+theorem diffsEval (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hL : TablesLin) (hC : ChunksFit D.shape)
+    (hLb : LbFits D.shape) (hH : HeapGood D.shape) : DiffsEvalP D Fl := by
+  intro s c1 ch fd c2 t vals hd P hP
+  by_cases hg : CountsFit D.shape s.2 ∧ FlockGood κ (batchVars D.shape) (Fl.prog.out fd [])
+  swap
+  · exfalso
+    have := hd [1] (by unfold diffsOf; rw [ite_eq_right hg]; exact List.mem_singleton_self _) 1
+      (List.mem_singleton_self _)
+    exact one_ne_zero this
+  have hold : HoldAll D Fl s c1 ch fd c2 t vals :=
+    fun r hr c hc ↦ holds_of_diffs D Fl s c1 ch fd c2 t vals hg hd r hr c hc
+  unfold polysOf at hP
+  rw [ite_eq_left hg.1] at hP
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map] at hP
+  rcases hP with (rfl | rfl | rfl) | ⟨⟨b, i⟩, hbi, rfl⟩
+  · exact treeP_eval D Fl s c1 ch fd c2 t vals hold
+  · exact rootP_eval D Fl s c1 ch fd c2 t vals hold
+  · exact wP_eval D Fl s c1 ch fd c2 t vals hL hC (hB_pos D) hold
+  · exact blockP_eval D Fl s c1 ch fd c2 t vals hL hC hLb hH hg.1 hold b i hbi
+
+/-- info: 'UniSound.Ids.diffsEval' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms diffsEval
+
+/-- **`DiffsEvalP`** from the heap's layout (`HeapGood`) and the quotients' chunks within the digits
+(`ChunksFit`). -/
+theorem diffsEval_of (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hC : ChunksFit D.shape)
+    (hH : HeapGood D.shape) : DiffsEvalP D Fl :=
+  diffsEval D Fl tablesLin hC (lbFits D.shape) hH
+
+/-- info: 'UniSound.Ids.diffsEval_of' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms diffsEval_of
+
+/-- **The verifier's relations at `t`, all zero, give every identity polynomial at `t`**
+(`DiffsEvalP`), for a deployment whose heap's blocks fill the leaves (`HeapGood`, proved at the
+reference shape by `heapGood_reference`). -/
+theorem diffsEvalP_of_heapGood (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hH : HeapGood D.shape) :
+    DiffsEvalP D Fl :=
+  diffsEval_of D Fl (chunksFit D hH) hH
+
+/-- info: 'UniSound.Ids.diffsEvalP_of_heapGood' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms diffsEvalP_of_heapGood
+
+/-- **`DiffsEvalP` at the reference shape**, unconditionally. -/
+theorem diffsEvalP_reference (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (hD : D.shape = reference) :
+    DiffsEvalP D Fl :=
+  diffsEvalP_of_heapGood D Fl (hD ▸ heapGood_reference)
+
+/-- info: 'UniSound.Ids.diffsEvalP_reference' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms diffsEvalP_reference
+
+end UniSound.Ids
