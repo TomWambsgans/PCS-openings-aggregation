@@ -21,9 +21,29 @@ stack (`Combined.Holds`) is the pairing of its weight (`denseWeight`) with the s
 2. **`combine_holds`**: if every relation of `rels` on `c` holds on `c`'s stack, and every term of those
    relations **reads its own point** (`ReadsOwnPoint`), the combined claim holds. `combine_holds_of_relations`
    states it with `Relation.Holds` for relations whose terms are all on `c`.
-3. **The verifier's relations** (`atTOf`): `AtTWellFormed` (the condition of 2 for every commitment, and every
-   relation on one commitment), and `atT_combined_hold`: under it, the combined claims the prover hands the batch
-   hold whenever the relations do.
+3. **The verifier's relations** (`atTOf`): `AtTWellFormed` (`AtTOnOne`: every relation on one commitment;
+   `AtTCovers`: every term's point covers its column; `AtTSlotsMaximal`: the slot points maximal on `C1`), and
+   `atT_combined_hold`: under it, the combined claims the prover hands the batch hold whenever the relations do.
+   A walk over the verifier's code (`atTOf_terms`: `tablePart` through a small Hoare logic on `ChanM Id`,
+   `ChanOk`; `constraintRelation`, `heapRelations`, `atTOf` through `Id` loop invariants, `forIn_id_inv`) gives
+   every term's form (`AtTForm`); from it `atTOf_onOne` (no hypothesis), `atTOf_covers` (on `C1` and the setup;
+   `C2` is `AtTCoversC2`, not proved), `atTOf_slotsMaximal` (under `AtTSlotCondition`, the bad event on `t`
+   excluded) and **`atTOf_combined`**: under those hypotheses every combined claim is well formed for the batch
+   (`WeightWF`, `BatchProofWeight`'s, through `combine_weightWF` and `combine_origin`) and holds when the
+   relations do.
+
+## What remains (precise `Prop`s)
+
+* `AtTCoversC2 tr.shape (atTOf …)`: every `C2` term's point has at least its column's variables, i.e. every
+  chunk size of the constraint and leaf quotients is at most `w`'s length `max h (r_W + 4) + 2` and each chunk's
+  column is listed in `c2Columns` at its term's size (the heap's points have `h` coordinates, the tree
+  quotient's `h` and `0`).
+* `AtTSlotCondition w y flockOut` (`¬ BadT`): `y(t)` is a prefix neither of `w(t)` nor of Flock's point. It
+  implies `y_0(t) ≠ w_0(t) = t` or nothing to exclude, and `y_0(t) ≠ p_0`: `y_0` is a linearized polynomial of
+  degree `2^(h_B − 1)` (the coordinate functional), so each fails for at most `2^(h_B − 1)` values of `t`, a
+  bound not proved here.
+* The hypotheses of `atTOf_combined` on Flock's prover: its point has at least `h_B + 8` coordinates, its ring
+  map at most six stages; and four tuple weights.
 
 ## Decisions and findings
 
@@ -1552,6 +1572,247 @@ theorem atTOf_covers (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t 
     omega
   · rw [vars_setup hb, hpt, length_take_w (Or.inl hlm)]; rfl
 
+/-! ### Every combined term comes from a relation's term -/
+
+theorem mem_modify_or {α : Type} (f : α → α) :
+    ∀ (l : List α) (i : ℕ) (x : α), x ∈ l.modify i f → x ∈ l ∨ ∃ a ∈ l, x = f a
+  | [], _, _, h => by simp at h
+  | a :: l, 0, x, h => by
+    rw [List.modify_zero_cons, List.mem_cons] at h
+    rcases h with rfl | h
+    · exact Or.inr ⟨a, List.mem_cons_self, rfl⟩
+    · exact Or.inl (List.mem_cons_of_mem _ h)
+  | a :: l, i + 1, x, h => by
+    rw [List.modify_succ_cons, List.mem_cons] at h
+    rcases h with rfl | h
+    · exact Or.inl List.mem_cons_self
+    · rcases mem_modify_or f l i x h with h | ⟨b, hb, rfl⟩
+      · exact Or.inl (List.mem_cons_of_mem _ h)
+      · exact Or.inr ⟨b, List.mem_cons_of_mem _ hb, rfl⟩
+
+/-- `mergeTerm`'s entries: one of the array's, or the merged term's (column, point index, twist). -/
+theorem mergeTerm_mem {terms : Array (Column × ℕ × ℕ × E)} {column : Column} {p twist : ℕ} {coefficient : E}
+    {e : Column × ℕ × ℕ × E} (he : e ∈ (mergeTerm terms column p twist coefficient).toList) :
+    (∃ e' ∈ terms.toList, e'.1 = e.1 ∧ e'.2.1 = e.2.1 ∧ e'.2.2.1 = e.2.2.1) ∨
+      (e.1 = column ∧ e.2.1 = p ∧ e.2.2.1 = twist) := by
+  unfold mergeTerm at he
+  split at he
+  · rw [Array.toList_modify] at he
+    rcases mem_modify_or _ _ _ _ he with h | ⟨a, ha, rfl⟩
+    · exact Or.inl ⟨e, h, rfl, rfl, rfl⟩
+    · obtain ⟨c', q', k', v⟩ := a
+      exact Or.inl ⟨(c', q', k', v), ha, rfl, rfl, rfl⟩
+  · rw [Array.toList_push, List.mem_append, List.mem_singleton] at he
+    rcases he with h | rfl
+    · exact Or.inl ⟨e, h, rfl, rfl, rfl⟩
+    · exact Or.inr ⟨rfl, rfl, rfl⟩
+
+theorem mergeFold_mem (ren : ℕ → ℕ) :
+    ∀ (L : List (Column × ℕ × ℕ × E)) (acc : Array (Column × ℕ × ℕ × E)) (e : Column × ℕ × ℕ × E),
+      e ∈ (L.foldl (fun acc e ↦ mergeTerm acc e.1 (ren e.2.1) e.2.2.1 e.2.2.2) acc).toList →
+      (∃ e' ∈ acc.toList, e'.1 = e.1 ∧ e'.2.1 = e.2.1 ∧ e'.2.2.1 = e.2.2.1) ∨
+        (∃ e' ∈ L, e.1 = e'.1 ∧ e.2.1 = ren e'.2.1 ∧ e.2.2.1 = e'.2.2.1)
+  | [], _, _, h => Or.inl ⟨_, h, rfl, rfl, rfl⟩
+  | e0 :: L, acc, e, h => by
+    rcases mergeFold_mem ren L _ e h with ⟨e', he', h1, h2, h3⟩ | ⟨e', he', h1, h2, h3⟩
+    · rcases mergeTerm_mem he' with ⟨e'', he'', g1, g2, g3⟩ | ⟨g1, g2, g3⟩
+      · exact Or.inl ⟨e'', he'', g1.trans h1, g2.trans h2, g3.trans h3⟩
+      · exact Or.inr ⟨e0, List.mem_cons_self, h1.symm.trans g1, h2.symm.trans g2, h3.symm.trans g3⟩
+    · exact Or.inr ⟨e', List.mem_cons_of_mem _ he', h1, h2, h3⟩
+
+theorem combineTerms_origin (PF : Array (List E)) (scale : E) (G : Column × ℕ × ℕ → Prop) :
+    ∀ (L : List Term) (acc : Array (List E) × Array (Column × ℕ × ℕ × E)),
+      (L.foldl (combineTerm scale) acc).1.toList <+: PF.toList →
+      (∀ e ∈ acc.2.toList, G (e.1, e.2.1, e.2.2.1)) →
+      (∀ t ∈ L, ∀ p < PF.size, PF.getD p [] = t.point → G (t.column, p, t.twist)) →
+      ∀ e ∈ (L.foldl (combineTerm scale) acc).2.toList, G (e.1, e.2.1, e.2.2.1)
+  | [], _, _, h, _ => h
+  | t :: L, acc, hpre, hacc, ht => by
+    obtain ⟨p, -, -, hp, hpt, hterms⟩ := combineTerm_spec scale acc t
+    have hpre' := (combineTerms_mono scale L (combineTerm scale acc t)).trans hpre
+    obtain ⟨hpPF, hget⟩ := getD_of_prefix hpre' hp
+    refine combineTerms_origin PF scale G L (combineTerm scale acc t) hpre ?_
+      (fun t' h' ↦ ht t' (List.mem_cons_of_mem _ h'))
+    intro e he
+    rw [hterms] at he
+    rcases mergeTerm_mem he with ⟨e', he', g1, g2, g3⟩ | ⟨g1, g2, g3⟩
+    · have := hacc e' he'
+      rw [g1, g2, g3] at this
+      exact this
+    · rw [g1, g2, g3]
+      exact ht t List.mem_cons_self p hpPF (hget.trans hpt)
+
+theorem combineRels_origin (PF : Array (List E)) (rho : E) (G : Column × ℕ × ℕ → Prop) :
+    ∀ (L : List Relation) (acc : Array (List E) × Array (Column × ℕ × ℕ × E) × E × E),
+      (L.foldl (combineRel rho) acc).1.toList <+: PF.toList →
+      (∀ e ∈ acc.2.1.toList, G (e.1, e.2.1, e.2.2.1)) →
+      (∀ r ∈ L, ∀ t ∈ r.terms, ∀ p < PF.size, PF.getD p [] = t.point → G (t.column, p, t.twist)) →
+      ∀ e ∈ (L.foldl (combineRel rho) acc).2.1.toList, G (e.1, e.2.1, e.2.2.1)
+  | [], _, _, h, _ => h
+  | r :: L, acc, hpre, hacc, ht => by
+    refine combineRels_origin PF rho G L (combineRel rho acc r) hpre ?_
+      (fun r' h' ↦ ht r' (List.mem_cons_of_mem _ h'))
+    have hpre' : (r.terms.foldl (combineTerm acc.2.2.2) (acc.1, acc.2.1)).1.toList <+: PF.toList := by
+      have := (combineRels_mono rho L (combineRel rho acc r)).trans hpre
+      rwa [combineRel_eq] at this
+    rw [combineRel_eq]
+    exact combineTerms_origin PF acc.2.2.2 G r.terms (acc.1, acc.2.1) hpre' hacc (ht r List.mem_cons_self)
+
+/-- **Every term of a combined claim comes from a term of a relation on `c`**: the same column and twist, the
+claim's point having the term's point as a prefix and being a point of the relations on `c`. -/
+theorem combine_origin {rels : List Relation} {c : Commitment} {rho : E} {claim : Combined}
+    (h : combine rels c rho = some claim) :
+    ∀ e ∈ claim.terms, ∃ r ∈ rels, r.commitment = c ∧ ∃ t ∈ r.terms, t.column = e.1 ∧ t.twist = e.2.2.1 ∧
+      t.point <+: claim.points.getD e.2.1 [] ∧ claim.points.getD e.2.1 [] ∈ pointsOn rels c := by
+  rw [combine_eq] at h
+  split at h
+  · exact absurd h (by simp)
+  · have hclaim := Option.some.inj h
+    subst hclaim
+    have hmem : ∀ r ∈ rels.filter (·.commitment == c), r ∈ rels ∧ r.commitment = c := fun r hr ↦ by
+      rw [List.mem_filter, beq_iff_eq] at hr
+      exact hr
+    set mine := rels.filter (·.commitment == c) with hmine
+    set st := mine.foldl (combineRel rho) (#[], #[], 0, 1) with hst
+    set PF := st.1 with hPF
+    have hPFsub : ∀ q ∈ PF.toList, q ∈ pointsOn rels c := by
+      intro q hq
+      rcases combineRels_mem rho mine (#[], #[], 0, 1) q hq with h' | h'
+      · simp at h'
+      · exact h'
+    have horig := combineRels_origin PF rho (fun g ↦ ∃ r ∈ mine, ∃ t ∈ r.terms, t.column = g.1 ∧
+        t.twist = g.2.2 ∧ g.2.1 < PF.size ∧ PF.getD g.2.1 [] = t.point) mine (#[], #[], 0, 1)
+      (List.prefix_refl _) (by simp) (fun r hr t ht p hp hpt ↦ ⟨r, hr, t, ht, rfl, rfl, hp, hpt⟩)
+    intro e he
+    simp only [combineEnd] at he ⊢
+    rw [← Array.foldl_toList] at he
+    rcases mergeFold_mem (renumberOf PF) st.2.1.toList #[] e he with ⟨e', he', -⟩ | ⟨e0, he0, h1, h2, h3⟩
+    · simp at he'
+    · obtain ⟨r, hr, t, ht, g1, g2, gp, gpt⟩ := horig e0 he0
+      obtain ⟨hlt, hpre, -⟩ := longestOf_spec PF gp
+      refine ⟨r, (hmem r hr).1, (hmem r hr).2, t, ht, g1.trans h1.symm, g2.trans h3.symm, ?_, ?_⟩
+      · rw [h2, getD_renumber PF gp, ← gpt]
+        exact hpre
+      · rw [h2, getD_renumber PF gp]
+        exact hPFsub _ (getD_mem_toList hlt)
+
+/-! ### The combined claim is well formed for the batch's weight (`WeightWF`) -/
+
+/-- **A term well formed for the batch's weight** (`WeightWF`'s conditions, on a relation's term): a slot of
+`q_flock` untwisted, `j < 256`, its point of `v − 8` coordinates for every block of `q_flock`; a ring-switch term's
+point of at least `v` coordinates for every block of its column. -/
+def TermWeightWF (layout : StackLayout) (t : Term) : Prop :=
+  (∀ j, t.column = .qflockSlot j → t.twist = 0 ∧ j < 256 ∧
+    ∀ limb v off, (limb, v, off) ∈ layout.limbs .qflock → t.point.length + 8 = v) ∧
+  (t.twist = ringTwist → ∀ limb v off, (limb, v, off) ∈ layout.limbs t.column → v ≤ t.point.length)
+
+/-- **The combined claim of well-formed relations is well formed** (`WeightWF`): its slot terms stay at their
+own points (maximal, `ReadsOwnPoint`), its ring-switch terms move to longer points. -/
+theorem combine_weightWF (rels : List Relation) (c : Commitment) (rho : E) (layout : StackLayout)
+    (ringMap : Option (List E)) (claim : Combined)
+    (hwf : ∀ r ∈ rels, r.commitment = c → ∀ t ∈ r.terms,
+      TermWeightWF layout t ∧ ReadsOwnPoint layout (pointsOn rels c) t.column t.point)
+    (hmap : ∀ map, ringMap = some map → map.length ≤ 6)
+    (h : combine rels c rho = some claim) : WeightWF claim layout ringMap := by
+  refine ⟨fun j p twist coefficient he ↦ ?_, fun column p coefficient he ↦ ?_, hmap⟩
+  · obtain ⟨r, hr, hc, t, ht, h1, h2, hpre, hmemq⟩ := combine_origin h _ he
+    obtain ⟨⟨hslot, -⟩, hreads⟩ := hwf r hr hc t ht
+    dsimp only at h1 h2 hpre hmemq
+    rw [h1] at hreads
+    have hq : claim.points.getD p [] = t.point := hreads _ hmemq hpre
+    obtain ⟨g1, g2, g3⟩ := hslot j h1
+    refine ⟨h2.symm.trans g1, g2, fun limb v off hb ↦ ?_⟩
+    rw [hq]
+    exact g3 limb v off hb
+  · obtain ⟨r, hr, hc, t, ht, h1, h2, hpre, -⟩ := combine_origin h _ he
+    obtain ⟨⟨-, hring⟩, -⟩ := hwf r hr hc t ht
+    dsimp only at h1 h2 hpre
+    intro limb v off hb
+    rw [← h1] at hb
+    exact (hring h2 limb v off hb).trans hpre.length_le
+
+/-! ### The verifier's combined claims -/
+
+theorem length_coordinatesAt (t : E) (r : ℕ) : (coordinatesAt t (coordinateFunctionals r)).length = r := by
+  unfold coordinatesAt
+  rw [List.length_map, Array.length_toList, Domain.coordinateFunctionals_size]
+
+/-- **The terms at `t` are well formed for the batch's weight** (`TermWeightWF`), on their commitments' layouts,
+for Flock's point of at least `h_B + 8` coordinates. -/
+theorem atTOf_termWeightWF (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t : E)
+    (flockOut : Option FlockOut)
+    (hflock : ∀ out, flockOut = some out → tr.shape.heights.getD opBlake2s 0 + 8 ≤ out.point.length) :
+    ∀ r ∈ (atTOf tr c2 alphas beta gamma t flockOut).relations, ∀ x ∈ r.terms,
+      TermWeightWF (layoutIn (layouts tr.shape (atTOf tr c2 alphas beta gamma t flockOut).c2Columns)
+        r.commitment) x := by
+  intro r hr x hx
+  obtain ⟨hcom, htw, h⟩ := atTOf_form_of tr c2 alphas beta gamma t flockOut hr hx
+  refine ⟨fun j hj ↦ ?_, fun hring ↦ ?_⟩
+  · have hc1 : r.commitment = .c1 := by rw [← hcom, hj]; rfl
+    have htw0 : x.twist = 0 := htw.resolve_right (by rw [hj]; exact fun h ↦ nomatch h)
+    rcases h with h | ⟨_, _, h, -⟩ | ⟨_, h, -⟩ | ⟨j', h, hp, hj'⟩ | ⟨_, h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩ | ⟨h, -⟩
+    · rw [hc1] at h; cases h
+    all_goals first
+      | (rw [hj] at h; injection h with h; subst h
+         refine ⟨htw0, hj', fun limb v off hb ↦ ?_⟩
+         rw [hc1] at hb
+         have := vars_c1 hb
+         dsimp only at this
+         rw [hp, length_coordinatesAt, this]
+         rfl)
+      | (rw [hj] at h; cases h)
+  · have hq : x.column = .qflock := htw.resolve_left (by rw [hring]; decide)
+    have hc1 : r.commitment = .c1 := by rw [← hcom, hq]; rfl
+    intro limb v off hb
+    rw [hc1, hq] at hb
+    have hv := vars_c1 hb
+    dsimp only at hv
+    rcases h with h | ⟨_, _, h, -⟩ | ⟨_, h, -⟩ | ⟨_, h, -⟩ | ⟨_, h, -⟩ | ⟨h, -⟩ | ⟨-, out, hout, hpt⟩ | ⟨h, -⟩ |
+        ⟨h, -⟩
+    · rw [hc1] at h; cases h
+    all_goals first
+      | (rw [hv, hpt]; exact hflock out hout)
+      | (rw [hq] at h; cases h)
+
+/-- **The combined claims the prover hands the batch, at `t`**: on the hypotheses below (the slot condition
+`AtTSlotCondition` is the bad event on `t` excluded, `¬ BadT`), every combined claim is well formed for the
+batch's weight (`WeightWF`, on its commitment's layout) and, when every relation holds, holds
+(`Combined.Holds`). The hypotheses: four tuple weights; Flock's point of at least `h_B + 8` coordinates; the
+ring map of at most six stages; `C2`'s terms covering their columns (`AtTCoversC2`, not proved here). -/
+theorem atTOf_combined (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t rho : E)
+    (flockOut : Option FlockOut) (stackOf : Commitment → Array K) (halphas : alphas.length = 4)
+    (hflock : ∀ out, flockOut = some out → tr.shape.heights.getD opBlake2s 0 + 8 ≤ out.point.length)
+    (hmap : ∀ map, (atTOf tr c2 alphas beta gamma t flockOut).ringMap = some map → map.length ≤ 6)
+    (hc2 : AtTCoversC2 tr.shape (atTOf tr c2 alphas beta gamma t flockOut))
+    (hslot : AtTSlotCondition (digits t (max tr.shape.heap.h (tr.shape.constraintVars + 4) + 2))
+      (coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD opBlake2s 0))) flockOut) :
+    AtTWellFormed tr.shape (atTOf tr c2 alphas beta gamma t flockOut) ∧
+    ∀ p ∈ commitments.filterMap (fun c ↦ (combine (atTOf tr c2 alphas beta gamma t flockOut).relations c rho).map
+        (c, ·)),
+      WeightWF p.2 (layoutIn (layouts tr.shape (atTOf tr c2 alphas beta gamma t flockOut).c2Columns) p.1)
+          (atTOf tr c2 alphas beta gamma t flockOut).ringMap ∧
+        ((∀ r ∈ (atTOf tr c2 alphas beta gamma t flockOut).relations,
+          Relation.Holds (layoutIn (layouts tr.shape (atTOf tr c2 alphas beta gamma t flockOut).c2Columns))
+            stackOf (atTOf tr c2 alphas beta gamma t flockOut).ringMap r) →
+          Combined.Holds (layoutIn (layouts tr.shape (atTOf tr c2 alphas beta gamma t flockOut).c2Columns) p.1)
+            (stackOf p.1) (atTOf tr c2 alphas beta gamma t flockOut).ringMap p.2) := by
+  have hwf : AtTWellFormed tr.shape (atTOf tr c2 alphas beta gamma t flockOut) :=
+    ⟨atTOf_onOne tr c2 alphas beta gamma t flockOut,
+      atTOf_covers tr c2 alphas beta gamma t flockOut halphas hflock hc2,
+      atTOf_slotsMaximal tr c2 alphas beta gamma t flockOut hslot⟩
+  refine ⟨hwf, fun p hp ↦ ⟨?_, fun hholds ↦ atT_combined_hold tr.shape _ stackOf rho hwf hholds p hp⟩⟩
+  obtain ⟨c, -, hc⟩ := List.mem_filterMap.mp hp
+  cases h : combine (atTOf tr c2 alphas beta gamma t flockOut).relations c rho with
+  | none => rw [h] at hc; exact absurd hc (by simp)
+  | some claim =>
+    rw [h] at hc
+    obtain rfl := Option.some.inj hc
+    obtain ⟨-, hreads⟩ := atTWellFormed_readsOwn hwf c
+    refine combine_weightWF _ c rho _ _ claim (fun r hr hrc x hx ↦ ⟨?_, hreads r hr hrc x hx⟩) hmap h
+    have := atTOf_termWeightWF tr c2 alphas beta gamma t flockOut hflock r hr x hx
+    rw [hrc] at this
+    exact this
+
 end UniComplete
 
 /-- info: 'UniComplete.dotK_denseWeight' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -1573,3 +1834,43 @@ end UniComplete
 /-- info: 'UniComplete.atT_combined_hold' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniComplete.atT_combined_hold
+
+/-- info: 'UniComplete.termEval_mul' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.termEval_mul
+
+/-- info: 'UniComplete.termEval_add' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.termEval_add
+
+/-- info: 'UniComplete.combine_origin' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.combine_origin
+
+/-- info: 'UniComplete.combine_weightWF' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.combine_weightWF
+
+/-- info: 'UniComplete.atTOf_terms' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.atTOf_terms
+
+/-- info: 'UniComplete.atTOf_onOne' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.atTOf_onOne
+
+/-- info: 'UniComplete.atTOf_slotsMaximal' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.atTOf_slotsMaximal
+
+/-- info: 'UniComplete.atTOf_covers' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.atTOf_covers
+
+/-- info: 'UniComplete.atTOf_termWeightWF' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.atTOf_termWeightWF
+
+/-- info: 'UniComplete.atTOf_combined' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.atTOf_combined
