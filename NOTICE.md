@@ -71,6 +71,11 @@ option. Every file says where it comes from in its first lines.
       `ProverState`'s), which the univariate prover's Keccak-256 chain implements.
   - `crates/gf2_linear` (new here): the GF(2)-linear maps `x ↦ Σ_k c_k x^(2^k)` of `E` that the prover's batching
     sumcheck evaluates the ring switch's twisted weight with, as byte tables and eight at a time with GFNI.
+- **`crates/leanvm_rec`** (new here): recursion for `crates/leanvm_univariate`'s verifier (`SPEC-REC.md`). It counts
+  and evaluates that verifier's recorded graph (`crates/leanvm_flock_gas/src/evm/record.rs`, whose node semantics and
+  Keccak-256 chain, adapted there from leanVM `42422001`'s transcript, `src/eval.rs` follows), and measures
+  `crates/quotient`'s circuit (adapted from leanVM `651453c6`) as the reference of its outer proof.
+  `review/leanvm_rec_params.py` (new here) builds on `review/leanvm_univariate_params.py`.
 - **Built on [leanerVM](https://github.com/Verified-zkEVM/leanerVM) `mumbai`, commit `6175f1a0`** (MIT OR
   Apache-2.0): `formal/WhirBridge` states this repository's WHIR openings in mumbai's verifier language and
   proves their soundness from mumbai's theorems, importing them; `WhirBridge/Variant.lean` adapts mumbai's

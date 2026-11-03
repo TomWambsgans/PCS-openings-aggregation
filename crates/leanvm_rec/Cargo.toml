@@ -1,0 +1,19 @@
+# Part of this repository. Builds on crates/leanvm_univariate and crates/leanvm_flock_gas (which vendors and adapts
+# leanVM (https://github.com/leanEthereum/leanVM), commit 42422001), MIT OR Apache-2.0. See NOTICE.md.
+[package]
+name = "leanvm_rec"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "Recursion for the univariate leanVM 42422001 verifier: pi1's verifier graph counted and evaluated (milestone R1 of SPEC-REC.md)"
+
+[lints]
+workspace = true
+
+[dependencies]
+leanvm_flock_gas = { path = "../leanvm_flock_gas" }
+leanvm_univariate = { path = "../leanvm_univariate" }
+
+[dev-dependencies]
+# The Merkle-path quotient SNARK, measured as pi2's reference (SPEC-REC.md §2).
+quotient.workspace = true

@@ -1,0 +1,303 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+"""Recursion for the univariate leanVM 42422001 verifier (crates/leanvm_rec/SPEC-REC.md): the sizes of the outer
+proof pi2 in each arithmetization, its soundness round by round after the union bounds over WHIR's level-0 Johnson
+lists, and the contract's gas.
+
+    python3 -I review/leanvm_rec_params.py
+
+MEASURED (crates/leanvm_rec/tests/counts.rs and quotient_reference.rs, on h1): pi1's verifier graph at 1,000
+signatures (Keccak-256 calls and permutations, E operations, packings, claims), and the Merkle-path circuit's rows per
+Keccak-f and words per row. MODELLED (here): every pi2 size, every soundness figure, every gas figure. The models are
+formulas over the measured counts; SPEC-REC.md §2-§4 derives each one.
+"""
+import importlib.util
+import math
+import os
+import sys
+
+sys.dont_write_bytecode = True  # review/__pycache__ is tracked: loading the other scripts must not rewrite it
+
+LOGQ = 192
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load(name):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, name + ".py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+uni = _load("leanvm_univariate_params")
+CERTIFIED_L0 = uni.CERTIFIED_L0
+WHIR_BITS = uni.WHIR_BITS
+
+# ---------------------------------------------------------------------------------------------------------------------
+# MEASURED: pi1's verifier graph, Claims::Point, 1,000 signatures (crates/leanvm_rec/tests/counts.rs, count_report).
+# perms: Keccak-f[1600] permutations of every Keccak-256 call, the seed's included; ops: live E operations with the
+# ring switch's kernel expanded; packs: live stream reads + challenges (each a bytes/bits <-> E packing in pi2).
+PI1 = {
+    "main line (skip 3)": dict(perms=131, calls=104, challenges=103, products=6413, linear=5218, reads=297,
+                               coords=46, values=5, stream=7072, bits=125, zero=13),
+    "pi1-rec (skip 3; alpha, zerocheck point derived)": dict(perms=107, calls=80, challenges=79, products=6437,
+                                                             linear=5218, reads=297, coords=46, values=5, stream=7072,
+                                                             bits=125, zero=13),
+    "leanVM skip (skip 6, weighted)": dict(perms=135, calls=98, challenges=97, products=10802, linear=5021, reads=347,
+                                           coords=43, values=5, stream=8272, bits=125, zero=13),
+    "pi1-rec at skip 6": dict(perms=114, calls=77, challenges=76, products=6800, linear=5591, reads=347, coords=43,
+                              values=5, stream=8272, bits=125, zero=13),
+    "BLAKE2s omitted (scale only)": dict(perms=52, calls=37, challenges=36, products=2009, linear=1982, reads=147,
+                                         coords=27, values=3, stream=3472, bits=125, zero=13),
+}
+# MEASURED: crates/quotient's circuit (tests/quotient_reference.rs): rows per Keccak-f, the membership circuit, and the
+# words per row of its three tables at 2^22 rows (4 cells a row; witness and quotient hidden).
+QUOTIENT_ROWS_PER_PERM = 113_114
+QUOTIENT_MERKLE = dict(perms=34, used=3_878_612, log_rows=22, witness=20_971_520, wiring=16_777_216,
+                       quotient=264_241_152)
+# MEASURED: pi1's main line on revm (crates/leanvm_univariate SPEC.md §13): execution 182,104 gas straight for 11,631
+# E operations, of which transcript 11,175, calldata reads 6,442, PCS_OPEN 3,444: the per-operation cost below.
+GAS_PER_OP = (182_104 - 11_175 - 6_442 - 3_444) / (6413 + 5218)
+
+# ---------------------------------------------------------------------------------------------------------------------
+# pi2's arithmetizations (SPEC-REC.md §2). Each gives the positions (wired cells) of one Keccak-f, the row width W
+# (the values the verifier is sent at t), and the quotient table's words per position.
+ROUNDS = 24
+
+
+def keccak_positions(design):
+    """Positions of one Keccak-f[1600] permutation."""
+    if design == "B4":  # crates/quotient's bit gate, 4 cells a row (measured rows)
+        return 4 * QUOTIENT_ROWS_PER_PERM
+    if design == "C16":  # cell outputs, 16-cell rows: chi5+theta rows (15 cells), 2 C (6) + 1 D (3) rows
+        return ROUNDS * (320 + 192) * 16
+    if design == "C64":  # cell outputs, slice rows: 25 b, 5 C, 5 C_prev, 25 a' (60 of 64)
+        return ROUNDS * 64 * 64
+    if design == "D16v":  # virtual pushes, 16-position rows: plane-0 rows (10) + 3 D units, planes 1-4 (15), D rows;
+        # and the theta prep of round 0 (C_0: 320 rows of 5 pulls, 3 to a 16-row)
+        return ROUNDS * (64 + 256 + 16) * 16 + 107 * 16
+    if design == "D32v":  # virtual pushes, slice rows: 25 b + 5 C_prev pulls, 30 expression pushes; + a theta prep
+        return (ROUNDS + 1) * 64 * 32
+    raise ValueError(design)
+
+
+DESIGNS = {
+    # name: (row width W = values at t, quotient words per position, extra values, proof commitments, note)
+    "B4": dict(W=4, qwords=13.75, extra=1, note="crates/quotient's chi gate on bits, cell outputs"),
+    "C16": dict(W=16, qwords=9 + 3 / 16, extra=2, note="cell outputs, chi5+theta rows"),
+    "C64": dict(W=64, qwords=9 + 3 / 64, extra=2, note="cell outputs, slice rows"),
+    # extra: sigma(t) and kappa(t), the setup's wiring and constants columns
+    "D16v": dict(W=16, qwords=3 + 3 * (4 - 1 / 16), extra=2, note="virtual pushes, chi5+theta + partial sums"),
+    "D32v": dict(W=32, qwords=3 + 3 * (4 - 1 / 32), extra=2, note="virtual pushes, slice rows"),
+}
+
+
+def other_positions(pi1, design):
+    """Positions besides Keccak's rounds: E products and linear operations (K-limbs: a product 6 pulls, a sum 6),
+    the packings (64 bits a limb, 3 limbs an element, W - 1 bits a row), the public region and constants, and the
+    absorption XORs of the multi-block hashes' later blocks."""
+    w = DESIGNS[design]["W"]
+    per_row = max(1, w // 6)
+    e_rows = (pi1["products"] + pi1["linear"]) / per_row
+    packs = (pi1["reads"] + pi1["challenges"]) * 3 * math.ceil(65 / (w - 1)) * w
+    public = 3 * (pi1["coords"] + pi1["values"] + 14) + 3 * 461
+    absorb = (pi1["perms"] - pi1["calls"]) * 1088 * 2  # the XOR of a later block into the state, 2 pulls a bit
+    return e_rows * w + packs + public + absorb
+
+
+def size(pi1_name, design):
+    pi1, d = PI1[pi1_name], DESIGNS[design]
+    keccak = pi1["perms"] * keccak_positions(design)
+    total = keccak + other_positions(pi1, design)
+    log_n = math.ceil(math.log2(total))
+    n = 1 << log_n
+    q = d["qwords"] * n
+    return dict(keccak=keccak, total=total, log_n=log_n, n=n, fill=total / n, witness=n, quotient=q,
+                values=d["W"] + d["extra"])
+
+
+def stack(words):
+    return max(24, math.ceil(math.log2(words) - 1e-9))
+
+
+def bits(err):
+    return -math.log2(err)
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Soundness (SPEC-REC.md §5).
+
+def pi1_rec_rounds(xmss=1000, derived=True):
+    """pi1's rounds as review/leanvm_univariate_params.py states them, with pi1-rec's two derivations: the bus's alpha
+    as (c, c^2, c^4, c^8) (each fingerprint multilinear in alpha, so degree 16 in c a tuple, with beta independent),
+    and Flock's zerocheck eq point after its first coordinate as squares (degree 2^22 - 1 in c)."""
+    a = uni.analyse(xmss)
+    s1, s2 = uni.stack_vars(a["c1"]), uni.stack_vars(a["c2"])
+    l1, l2 = CERTIFIED_L0[s1], CERTIFIED_L0[s2]
+    rs = uni.rounds(a, l1, l2)
+    if not derived:
+        return rs
+    out = []
+    for label, err, union in rs:
+        if label.startswith("bus"):
+            label, err = "bus (α = (c, c², c⁴, c⁸), β): degree 16 a tuple in c, every table full", err * 4
+        if label.startswith("Flock"):
+            label, err = label + " + the eq point as powers (2^22)", err + 2 ** 22 / 2.0 ** LOGQ
+        out.append((label, err, union))
+    return out
+
+
+def pi2_rounds(s, split=False):
+    """pi2's rounds: the copy argument's (alpha, beta) after W; t after Q; the fold and claim combination. With
+    `split`, Q is two commitments (h, then q and the gate quotient), and the caller multiplies in h's list."""
+    q = 2.0 ** LOGQ
+    q_words = s["quotient"] - 3 * s["n"] if split else s["quotient"]
+    lw, lq = CERTIFIED_L0[stack(s["witness"])], CERTIFIED_L0[stack(q_words)]
+    n = s["n"]
+    return lw, lq, [
+        ("copy argument (α, β): 2N fractions, unique tags both sides, and no vanishing denominator", 4 * n / q, lw),
+        ("public weight's batching (γ): ≤ 128 public words", 128 / q, lw),
+        ("t: the copy identity, degree ≤ 5N (h · d_pull · d_push)", 5 * n / q, lw * lq),
+        ("ρ: the row's fold and the claims' combination", 64 / q, lw * lq),
+    ]
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Gas (SPEC-REC.md §4): EIP-7623 max(16 B + exec, 40 B) (zero bytes 4 and 10), EIP-7976's floor at 64 a byte.
+
+def calldata(pi1, values, pi2_roots=2, extra=0):
+    """selector 4, public input 32, row counts 24, pi1's roots 64, pi1's claims (distinct coordinates and values,
+    24 bytes each), pi2's roots and values; zero bytes: one a row count, and the random bytes' 1/256."""
+    b = 4 + 32 + 24 + 64 + 24 * (pi1["coords"] + pi1["values"]) + 32 * pi2_roots + 24 * values + extra
+    zero = 6 + round((b - 10) / 256)
+    return b, zero
+
+
+def verifier_ops(design, values):
+    """The pi2 verifier's E operations at t (SPEC-REC.md §4.2): digits, role and region selectors, the row's values
+    from its fold, the push formulas and their selection, the copy identity, the public target."""
+    w = DESIGNS[design]["W"]
+    lw = int(math.log2(w))
+    digits = 2 * 25
+    roles = 61 + 10 + 7 * w + 70
+    regions = 4 * 40
+    fold = 2 * sum((1 << j) * (1 << (lw - j)) for j in range(lw)) // 1 + 2 * w + 20
+    formulas = {"B4": 8, "C16": 120, "C64": 400, "D16v": 345, "D32v": 450}[design]
+    selection = 2 * (15 * w + w) if design.startswith("D") else 4 * w
+    identity = 100
+    # the public side of the copy argument: one fraction 1/(α + c0 + γ c1 + γ² c2 + β τ_J) an element (57: pi1's
+    # 51 claims' elements, 2 roots, the public input, the counts) and a check (13), batch-inverted
+    publics = 57 + 13
+    public = publics * (4 + 3) + 70
+    return digits + roles + regions + fold + formulas + selection + identity + public
+
+
+def execution(pi1, design, values, claims_pi2=4, calls_pi2=3, pi2_words=123):
+    ops = verifier_ops(design, values)
+    words_pi1 = 5 * 3 + 134 + 5
+    marshal = 15 * (words_pi1 + pi2_words) + 100 * (5 + calls_pi2)
+    reads = 6 * (pi1["coords"] + pi1["values"] + values + 8)
+    transcript = 420 + 4 * 100
+    entry = 500
+    return round(GAS_PER_OP * ops + marshal + reads + transcript + entry), ops
+
+
+def tx(b, zero, exec_gas, claims, c, floor=40):
+    nonzero = b - zero
+    standard = 16 * nonzero + 4 * zero + exec_gas + c * claims
+    floor_gas = floor * nonzero + (10 if floor == 40 else 64) * zero
+    return max(standard, floor_gas)
+
+
+def grouped(x):
+    return f"{round(x):,}"
+
+
+def main():
+    print("== pi1's verifier (MEASURED, 1,000 signatures, Claims::Point)")
+    for name, p in PI1.items():
+        print(f"  {name:52s} Keccak-256 {p['calls']:>3}, Keccak-f {p['perms']:>3}, challenges {p['challenges']:>3},"
+              f" E products {p['products']:>5}, linear {p['linear']:>5}, packings {p['reads'] + p['challenges']:>3},"
+              f" claims' coordinates {p['coords']} + {p['values']} values")
+    m = QUOTIENT_MERKLE
+    print(f"\n== crates/quotient (MEASURED): {QUOTIENT_ROWS_PER_PERM:,} rows a Keccak-f; the Merkle path's {m['perms']}"
+          f" permutations use {m['used']:,} of 2^{m['log_rows']} rows; words a row: witness"
+          f" {m['witness'] / 2**22:.2f}, wiring {m['wiring'] / 2**22:.2f}, quotient {m['quotient'] / 2**22:.2f}"
+          f" (2^{math.log2(m['quotient']):.2f}, hidden)")
+    for p in ["main line (skip 3)", "pi1-rec (skip 3; alpha, zerocheck point derived)"]:
+        rows = PI1[p]["perms"] * QUOTIENT_ROWS_PER_PERM
+        print(f"   {p}: {rows:,} rows of that gate = 2^{math.log2(rows):.2f} rows: quotient 2^"
+              f"{math.log2(rows * 63):.2f} words, over 2^28 by {rows * 63 / 2**28:.1f}x")
+
+    print("\n== pi2's arithmetizations (MODELLED from the measured counts; N = positions, a power of two)")
+    rows = []
+    for design in DESIGNS:
+        for p in ["main line (skip 3)", "pi1-rec (skip 3; alpha, zerocheck point derived)"]:
+            s = size(p, design)
+            fits = s["quotient"] <= 2 ** 28
+            rows.append((design, p, s, fits))
+            print(f"  {design:5s} [{DESIGNS[design]['note']}] x {p[:8]}: Keccak-f {keccak_positions(design):,}"
+                  f" positions, total {s['total'] / 1e6:.2f}M -> N = 2^{s['log_n']} ({100 * s['fill']:.0f}% used);"
+                  f" W 2^{math.log2(s['witness']):.2f}, Q 2^{math.log2(s['quotient']):.2f}"
+                  f" {'fits 2^28' if fits else '** over 2^28 **'}; {s['values']} values at t")
+
+    print("\n== soundness (MODELLED; per round, bits after the union over the lists it is drawn against)")
+    for derived in (False, True):
+        rs = pi1_rec_rounds(derived=derived)
+        print(f"  pi1 {'pi1-rec' if derived else 'main line'} (C1 4,473, C2 4,473):")
+        for label, err, union in rs:
+            print(f"     {label:90s} {bits(err):6.1f} alone, {bits(err * union):6.1f} after")
+        print(f"     {'PIOP':90s}        {bits(sum(e * u for _, e, u in rs)):6.1f}")
+    for design in ["D16v", "D32v", "C16"]:
+        p = "pi1-rec (skip 3; alpha, zerocheck point derived)" if design == "D16v" else "main line (skip 3)"
+        s = size(p, design)
+        lw, lq, rs = pi2_rounds(s, split=design == "C16")
+        extra = ""
+        if design == "C16":
+            # two quotient commitments (h, then q and the gate quotient) in one round: t pays three lists
+            lh = CERTIFIED_L0[stack(3 * s["n"])]
+            rs = [(l, e, u * (lh if l.startswith(("t", "ρ")) else 1)) for l, e, u in rs]
+            extra = f", H {lh}"
+        print(f"  pi2 {design} (N = 2^{s['log_n']}; lists W {lw}, Q {lq}{extra}):")
+        for label, err, union in rs:
+            print(f"     {label:90s} {bits(err):6.1f} alone, {bits(err * union):6.1f} after")
+        print(f"     {'PIOP':90s}        {bits(sum(e * u for _, e, u in rs)):6.1f}")
+    openings = 5 + 3
+    print(f"  WHIR openings: pi1's 5 + pi2's 3 = {openings}, {WHIR_BITS} bits each: a plain union"
+          f" {WHIR_BITS - math.log2(openings):.1f}; in the query-bounded model about {WHIR_BITS:.1f}")
+
+    print("\n== gas (MODELLED): transaction gas without the 21,000 base; claims c = 0 / 2K / 5K / 20K")
+    configs = [
+        ("D16v x pi1-rec (recommended)", "D16v", "pi1-rec (skip 3; alpha, zerocheck point derived)", 4, 3, 123, 0),
+        ("D32v x pi1 main line (fallback)", "D32v", "main line (skip 3)", 4, 3, 123, 0),
+        ("C64 x pi1 main line", "C64", "main line (skip 3)", 4, 3, 123, 0),
+        ("C16 x pi1-rec (3 proof commitments)", "C16", "pi1-rec (skip 3; alpha, zerocheck point derived)", 5, 4, 150, 32),
+    ]
+    print(f"  {'configuration':40s} {'calldata':>9s} {'exec':>7s} {'E ops':>6s} {'claims':>6s}   EIP-7623 c = 0 / 2K / 5K / 20K"
+          "        (+21K base, c = 0)   EIP-7976 c = 0 / 20K")
+    for name, design, p, claims2, calls2, words2, extra in configs:
+        pi1 = PI1[p]
+        s = size(p, design)
+        b, zero = calldata(pi1, s["values"], pi2_roots=2 + (design == "C16"), extra=0)
+        ex, ops = execution(pi1, design, s["values"], claims2, calls2, words2)
+        claims = 5 + claims2
+        g = [tx(b, zero, ex, claims, c) for c in (0, 2000, 5000, 20000)]
+        g76 = [tx(b, zero, ex, claims, c, floor=64) for c in (0, 20000)]
+        print(f"  {name:40s} {b:>7,} B {ex:>7,} {ops:>6,} {claims:>6}   " + " / ".join(grouped(x) for x in g)
+              + f"   ({grouped(g[0] + 21000)})   " + " / ".join(grouped(x) for x in g76))
+    # the chain pi1 -> pi2 (D32v) -> pi3 (D16v of pi2's verifier): pi2's claims on-chain as t2, rho2 and 4 values
+    pi1 = PI1["main line (skip 3)"]
+    b, zero = calldata(pi1, 18, pi2_roots=4, extra=24 * 6)
+    ex, ops = execution(pi1, "D16v", 18, 8, 6, 250)
+    claims = 5 + 4 + 4
+    g = [tx(b, zero, ex, claims, c) for c in (0, 2000, 5000, 20000)]
+    g76 = [tx(b, zero, ex, claims, c, floor=64) for c in (0, 20000)]
+    print(f"  {'chain pi1 -> pi2 (D32v) -> pi3 (D16v)':40s} {b:>7,} B {ex:>7,} {ops:>6,} {claims:>6}   "
+          + " / ".join(grouped(x) for x in g) + f"   ({grouped(g[0] + 21000)})   " + " / ".join(grouped(x) for x in g76))
+    print("  measured today (pi1 on chain, main line, deployed): 7,108 B, 192,392 exec, 5 claims: 305,808 / 315,808 /"
+          " 330,808 / 405,808; EIP-7976 454,912")
+    print(f"\n  (per-operation gas {GAS_PER_OP:.2f}: pi1's measured execution less its transcript, reads and calls, over"
+          " its E operations)")
+
+
+if __name__ == "__main__":
+    main()
