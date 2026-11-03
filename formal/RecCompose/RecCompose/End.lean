@@ -8,6 +8,7 @@ import RecCompose.Circuit
 import RecCompose.CallsPure
 import RecCompose.Couplings
 import RecCompose.CompleteCouplings
+import RecCompose.RunShape
 
 /-!
 # The end theorems
@@ -95,12 +96,12 @@ theorem recCompleteness_of_couplings (D : RecDeployment) (P1 : Pi1Prover D) (P2 
   recCompleteness_of_part1 h2 hA hC δ1 δh
 
 /-- **The recursive verifier is complete end to end, at the real deployment**: the couplings proved
-(`completenessAgree`, `completenessPi1Coupling` at the reference shape), under π2's completeness `RecCompleteness2 D
-P1 P2 δ2` (π2's honest prover is not transcribed) and `Pi1RunShape` (π1-rec3's run's result has no matrices' claim and
-roots of two limbs; open). -/
+(`completenessAgree`, `completenessPi1Coupling` at the reference shape, `pi1RunShape`), under π2's completeness
+`RecCompleteness2 D P1 P2 δ2` (π2's honest prover is not transcribed). -/
 theorem recCompleteness_end (D : RecDeployment) (hD : D.Real) (P1 : Pi1Prover D) (P2 : Pi2Prover) (δ2 : ℝ≥0∞)
-    (h2 : RecCompleteness2 D P1 P2 δ2) (hS : Pi1RunShape) (δ1 δh : ℝ≥0∞) : RecCompleteness D P1 P2 δ1 δh δ2 :=
-  recCompleteness_of_part1 h2 (completenessAgree D P1 P2) (completenessPi1Coupling D hD.2.2.1 hS P1 P2) δ1 δh
+    (h2 : RecCompleteness2 D P1 P2 δ2) (δ1 δh : ℝ≥0∞) : RecCompleteness D P1 P2 δ1 δh δ2 :=
+  recCompleteness_of_part1 h2 (completenessAgree D P1 P2) (completenessPi1Coupling D hD.2.2.1 pi1RunShape P1 P2)
+    δ1 δh
 
 end RecCompose
 
