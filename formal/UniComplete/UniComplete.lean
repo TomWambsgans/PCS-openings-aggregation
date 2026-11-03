@@ -10,3 +10,4 @@ import UniComplete.Witness
 import UniComplete.Honest
 import UniComplete.Whir
 import UniComplete.Domain
+import UniComplete.Mapping
