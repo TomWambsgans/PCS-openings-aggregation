@@ -556,4 +556,139 @@ theorem sim_add3W (cw : Array E) {x y z : Word bm} {xw yw zw : Array E} (hx : WR
   rw [show 31 - 31 = 0 from rfl] at HM
   exact sim_add3W_ripple cw hx hy hz l r σ hl hr hfit _ _ HM
 
+/-- `sim_addW` at a named base and named results. -/
+theorem sim_addW' (cw : Array E) {x y : Word bm} {xw yw : Array E} (hx : WRel cw xw x) (hy : WRel cw yw y)
+    (l r : Array E) (σ : BuildState bm) (hl : l.size = 2 ^ bm) (hr : r.size = 2 ^ bm) {cb : ℕ}
+    (hcb : σ.next = cb) (hfit : cb + 31 ≤ 2 ^ bm) (w : Array E × Array E × WalkWord)
+    (hw : w = walkAdd cw l r xw yw cb) (b : Word bm × BuildState bm) (hb : b = (addW x y).run σ) :
+    Grow cw l r σ w.1 w.2.1 b.2 31 ∧ WRel cw w.2.2 b.1 := by
+  rw [hw, hb, ← hcb]
+  exact sim_addW cw hx hy l r σ hl hr (by omega)
+
+/-- `sim_add3W` at a named base and named results. -/
+theorem sim_add3W' (cw : Array E) {x y z : Word bm} {xw yw zw : Array E} (hx : WRel cw xw x)
+    (hy : WRel cw yw y) (hz : WRel cw zw z) (l r : Array E) (σ : BuildState bm) (hl : l.size = 2 ^ bm)
+    (hr : r.size = 2 ^ bm) {cb : ℕ} (hcb : σ.next = cb) (hfit : cb + 61 ≤ 2 ^ bm)
+    (w : Array E × Array E × WalkWord) (hw : w = walkAdd3 cw l r xw yw zw cb) (b : Word bm × BuildState bm)
+    (hb : b = (add3W x y z).run σ) :
+    Grow cw l r σ w.1 w.2.1 b.2 61 ∧ WRel cw w.2.2 b.1 := by
+  rw [hw, hb, ← hcb]
+  exact sim_add3W cw hx hy hz l r σ hl hr (by omega)
+
+/-! ## The mixing step, a round, the rounds -/
+
+/-- **The working vectors correspond**: sixteen walk words, each the evaluation of the builder's word. -/
+def SRel (cw : Array E) (st : Array WalkWord) (v : Vector (Word bm) 16) : Prop :=
+  st.size = 16 ∧ ∀ j : Fin 16, WRel cw (st.getD j #[]) v[j]
+
+theorem SRel.set {cw : Array E} {st : Array WalkWord} {v : Vector (Word bm) 16} (hv : SRel cw st v)
+    (j : Fin 16) {w : WalkWord} {x : Word bm} (hw : WRel cw w x) : SRel cw (st.set! j w) (v.set j x) := by
+  refine ⟨by rw [size_set!, hv.1], fun k ↦ ?_⟩
+  rw [getD_set!]
+  by_cases h : (j : ℕ) = k
+  · rw [if_pos ⟨h, by rw [hv.1]; exact j.isLt⟩]
+    have e : (v.set j x)[k] = x := by simp [Fin.getElem_fin, Vector.getElem_set, h]
+    rw [e]
+    exact hw
+  · rw [if_neg (fun h' ↦ h h'.1)]
+    have e : (v.set j x)[k] = v[k] := by simp [Fin.getElem_fin, Vector.getElem_set, h]
+    rw [e]
+    exact hv.2 k
+
+/-- The message words. -/
+def msgV : Vector (Word bm) 16 := Vector.ofFn fun w ↦ Blake2sCircuit.msgW w
+
+theorem wrel_msg (cw : Array E) (ix : Fin 16) : WRel cw (walkSlots cw (640 + 32 * (ix : ℕ))) msgV[ix] := by
+  rw [msgV, Fin.getElem_fin, Vector.getElem_ofFn]
+  exact wrel_slots cw (by have := ix.isLt; rw [two_pow_bm]; omega)
+
+/-- A mixing step's walk, its base, lanes and message words as parameters (`gateStep` reads them from the round). -/
+def gateRes (cw : Array E) (gb la lb lc ld : ℕ) (mx my : WalkWord) (st : Array E × Array E × Array WalkWord) :
+    Array E × Array E × Array WalkWord :=
+  let a := st.2.2.getD la #[]
+  let b := st.2.2.getD lb #[]
+  let c := st.2.2.getD lc #[]
+  let d := st.2.2.getD ld #[]
+  let r1 := walkAdd3 cw st.1 st.2.1 a b mx gb
+  let d1 := walkRotr (walkXor d r1.2.2) 16
+  let r2 := walkAdd cw r1.1 r1.2.1 c d1 (gb + 61)
+  let b1 := walkRotr (walkXor b r2.2.2) 12
+  let r3 := walkAdd3 cw r2.1 r2.2.1 r1.2.2 b1 my (gb + 92)
+  let d2 := walkRotr (walkXor d1 r3.2.2) 8
+  let r4 := walkAdd cw r3.1 r3.2.1 r2.2.2 d2 (gb + 153)
+  let b2 := walkRotr (walkXor b1 r4.2.2) 7
+  (r4.1, r4.2.1, (((st.2.2.set! la r3.2.2).set! lb b2).set! lc r4.2.2).set! ld d2)
+
+theorem gateStep_eq (cw : Array E) (sigma : List ℕ) (ri : ℕ) (st : Array E × Array E × Array WalkWord)
+    (lg : List ℕ × ℕ) :
+    gateStep cw sigma ri st lg =
+      gateRes cw (1280 + 184 * (ri * 8 + lg.2)) (lg.1.getD 0 0) (lg.1.getD 1 0) (lg.1.getD 2 0) (lg.1.getD 3 0)
+        (walkSlots cw (640 + 32 * sigma.getD (2 * lg.2) 0)) (walkSlots cw (640 + 32 * sigma.getD (2 * lg.2 + 1) 0))
+        st := rfl
+
+/-- **A mixing step**: the walk's 184 rows from `next` are the gates `gW` records, and the working vectors still
+correspond. -/
+theorem sim_gate_core (cw : Array E) (w : Array E × Array E × Array WalkWord) (σ : BuildState bm)
+    (hl : w.1.size = 2 ^ bm) (hr : w.2.1.size = 2 ^ bm) (hfit : σ.next + 184 ≤ 2 ^ bm) (v : Vector (Word bm) 16)
+    (hv : SRel cw w.2.2 v) (a b c d : Fin 16) {mx my : Word bm} {mxw myw : Array E} (hmx : WRel cw mxw mx)
+    (hmy : WRel cw myw my) :
+    Grow cw w.1 w.2.1 σ (gateRes cw σ.next a b c d mxw myw w).1 (gateRes cw σ.next a b c d mxw myw w).2.1
+        ((Blake2sCircuit.gW v a b c d mx my).run σ).2 184 ∧
+      SRel cw (gateRes cw σ.next a b c d mxw myw w).2.2 ((Blake2sCircuit.gW v a b c d mx my).run σ).1 := by
+  obtain ⟨w1, hw1⟩ : ∃ q, q = walkAdd3 cw w.1 w.2.1 (w.2.2.getD a #[]) (w.2.2.getD b #[]) mxw σ.next :=
+    ⟨_, rfl⟩
+  obtain ⟨b1, hb1⟩ : ∃ p : Word bm × BuildState bm, p = (add3W v[a] v[b] mx).run σ := ⟨(add3W v[a] v[b] mx).run σ, rfl⟩
+  have H1 := sim_add3W' cw (hv.2 a) (hv.2 b) hmx w.1 w.2.1 σ hl hr rfl (by omega) w1 hw1 b1 hb1
+  obtain ⟨w2, hw2⟩ : ∃ q, q = walkAdd cw w1.1 w1.2.1 (w.2.2.getD c #[])
+      (walkRotr (walkXor (w.2.2.getD d #[]) w1.2.2) 16) (σ.next + 61) := ⟨_, rfl⟩
+  obtain ⟨b2, hb2⟩ : ∃ p : Word bm × BuildState bm, p = (addW v[c] (rotrW (xorW v[d] b1.1) 16)).run b1.2 := ⟨(addW v[c] (rotrW (xorW v[d] b1.1) 16)).run b1.2, rfl⟩
+  have H2 := sim_addW' cw (hv.2 c) (wrel_rotr (wrel_xor (hv.2 d) H1.2) 16) w1.1 w1.2.1 b1.2
+    (by rw [H1.1.lsize, hl]) (by rw [H1.1.rsize, hr]) H1.1.next (by omega) w2 hw2 b2 hb2
+  obtain ⟨w3, hw3⟩ : ∃ q, q = walkAdd3 cw w2.1 w2.2.1 w1.2.2 (walkRotr (walkXor (w.2.2.getD b #[]) w2.2.2) 12)
+      myw (σ.next + 92) := ⟨_, rfl⟩
+  obtain ⟨b3, hb3⟩ : ∃ p : Word bm × BuildState bm, p = (add3W b1.1 (rotrW (xorW v[b] b2.1) 12) my).run b2.2 := ⟨(add3W b1.1 (rotrW (xorW v[b] b2.1) 12) my).run b2.2, rfl⟩
+  have H3 := sim_add3W' cw H1.2 (wrel_rotr (wrel_xor (hv.2 b) H2.2) 12) hmy w2.1 w2.2.1 b2.2
+    (by rw [H2.1.lsize, H1.1.lsize, hl]) (by rw [H2.1.rsize, H1.1.rsize, hr])
+    (by rw [H2.1.next, H1.1.next]) (by omega) w3 hw3 b3 hb3
+  obtain ⟨w4, hw4⟩ : ∃ q, q = walkAdd cw w3.1 w3.2.1 w2.2.2
+      (walkRotr (walkXor (walkRotr (walkXor (w.2.2.getD d #[]) w1.2.2) 16) w3.2.2) 8) (σ.next + 153) := ⟨_, rfl⟩
+  obtain ⟨b4, hb4⟩ : ∃ p : Word bm × BuildState bm, p = (addW b2.1 (rotrW (xorW (rotrW (xorW v[d] b1.1) 16) b3.1) 8)).run b3.2 := ⟨(addW b2.1 (rotrW (xorW (rotrW (xorW v[d] b1.1) 16) b3.1) 8)).run b3.2, rfl⟩
+  have H4 := sim_addW' cw H2.2 (wrel_rotr (wrel_xor (wrel_rotr (wrel_xor (hv.2 d) H1.2) 16) H3.2) 8)
+    w3.1 w3.2.1 b3.2 (by rw [H3.1.lsize, H2.1.lsize, H1.1.lsize, hl]) (by rw [H3.1.rsize, H2.1.rsize, H1.1.rsize, hr])
+    (by rw [H3.1.next, H2.1.next, H1.1.next]) (by omega) w4 hw4 b4 hb4
+  have hgate : gateRes cw σ.next a b c d mxw myw w =
+      (w4.1, w4.2.1, (((w.2.2.set! a w3.2.2).set! b
+        (walkRotr (walkXor (walkRotr (walkXor (w.2.2.getD b #[]) w2.2.2) 12) w4.2.2) 7)).set! c w4.2.2).set! d
+        (walkRotr (walkXor (walkRotr (walkXor (w.2.2.getD d #[]) w1.2.2) 16) w3.2.2) 8)) := by
+    subst hw4 hw3 hw2 hw1
+    rfl
+  have hrun : (Blake2sCircuit.gW v a b c d mx my).run σ =
+      ((((v.set a b3.1).set b (rotrW (xorW (rotrW (xorW v[b] b2.1) 12) b4.1) 7)).set c b4.1).set d
+        (rotrW (xorW (rotrW (xorW v[d] b1.1) 16) b3.1) 8), b4.2) := by
+    rw [hb4, hb3, hb2, hb1]
+    simp only [Blake2sCircuit.gW, StateT.run_bind, StateT.run_pure]
+    rfl
+  rw [hgate, hrun]
+  refine ⟨((H1.1.trans H2.1).trans (H3.1.trans H4.1)).cast (by omega : 61 + 31 + (61 + 31) = 184), ?_⟩
+  exact (((hv.set a H3.2).set b (wrel_rotr (wrel_xor (wrel_rotr (wrel_xor (hv.2 b) H2.2) 12) H4.2) 7)).set c
+    H4.2).set d (wrel_rotr (wrel_xor (wrel_rotr (wrel_xor (hv.2 d) H1.2) 16) H3.2) 8)
+
+/-- **`gateStep` follows `gW`**, its lanes and message indices read from the round. -/
+theorem sim_gate (cw : Array E) (sigma : List ℕ) (ri g : ℕ) (lanes : List ℕ) (a b c d ix iy : Fin 16)
+    (hla : lanes.getD 0 0 = a) (hlb : lanes.getD 1 0 = b) (hlc : lanes.getD 2 0 = c) (hld : lanes.getD 3 0 = d)
+    (hix : sigma.getD (2 * g) 0 = ix) (hiy : sigma.getD (2 * g + 1) 0 = iy)
+    (w : Array E × Array E × Array WalkWord) (σ : BuildState bm) (hσ : σ.next = 1280 + 184 * (ri * 8 + g))
+    (hl : w.1.size = 2 ^ bm) (hr : w.2.1.size = 2 ^ bm) (hfit : σ.next + 184 ≤ 2 ^ bm)
+    (v : Vector (Word bm) 16) (hv : SRel cw w.2.2 v) (w' : Array E × Array E × Array WalkWord)
+    (hw' : w' = gateStep cw sigma ri w (lanes, g)) (b' : Vector (Word bm) 16 × BuildState bm)
+    (hb' : b' = (Blake2sCircuit.gW v a b c d msgV[ix] msgV[iy]).run σ) :
+    Grow cw w.1 w.2.1 σ w'.1 w'.2.1 b'.2 184 ∧ SRel cw w'.2.2 b'.1 := by
+  have e : gateStep cw sigma ri w (lanes, g) = gateRes cw σ.next a b c d
+      (walkSlots cw (640 + 32 * (ix : ℕ))) (walkSlots cw (640 + 32 * (iy : ℕ))) w := by
+    rw [gateStep_eq]
+    dsimp only
+    rw [hla, hlb, hlc, hld, hix, hiy, ← hσ]
+  rw [hw', hb', e]
+  exact sim_gate_core cw w σ hl hr hfit v hv a b c d (wrel_msg cw ix) (wrel_msg cw iy)
+
 end FlockSound.Uni.Walk
