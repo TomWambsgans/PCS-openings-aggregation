@@ -147,7 +147,13 @@ theorem reduce_steps (F : KeccakState → Id KeccakState) (Hk : List UInt8 → D
         w'.stream.toList = publicWire (view.reads.zip values) ++ rootWord (digestScalars out.wTree.root) ++
           rootWord (digestScalars out.qTree.root) ++ (out.inputs.a ++ [out.inputs.ξ]).flatMap scalarWire ∧
         out.wTree = E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk) (layoutsOf G.logN).1.logN out.wStack ∧
-        out.qTree = E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk) (layoutsOf G.logN).2.1.logN out.qStack) := by
+        out.qTree = E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk) (layoutsOf G.logN).2.1.logN out.qStack ∧
+        out.inputs = ⟨publicScalarsOf input values, out.inputs.α, out.inputs.β, out.inputs.γ, out.inputs.t,
+          foldValues G.logN G.logW (wTableB G w) out.inputs.t, xiOf G.logN setupStack out.inputs.β out.inputs.t,
+          out.inputs.ρ⟩ ∧
+        out.wStack = placePublic (layoutsOf G.logN).1 (fun i ↦ (wTableB G w).getD i 0) ∧
+        out.qStack = placePublic (layoutsOf G.logN).2.1 (qEntry G.logN (hNovel G w out.inputs.α out.inputs.β
+          out.inputs.γ) (qNovel G w out.inputs.α out.inputs.β out.inputs.γ))) := by
   unfold RecStatement.reduceWith pi2ProveStreamWith
   dsimp only
   apply StepsE.pbind (sendPublic_writes _ _)
@@ -183,7 +189,7 @@ theorem reduce_steps (F : KeccakState → Id KeccakState) (Hk : List UInt8 → D
   case e => simp; omega
   apply StepsE.pget
   apply StepsE.pure
-  refine ⟨rfl, rfl, ?_, ?_, rfl, ?_, rfl, rfl⟩
+  refine ⟨rfl, rfl, ?_, ?_, rfl, ?_, rfl, rfl, rfl, rfl, rfl⟩
   · simp [publicScalarsOf]
   · simp [publicScalarsOf]
   · simp [Wr.start]
@@ -217,15 +223,34 @@ theorem runWith_honest (F : KeccakState → Id KeccakState) (Hk : List UInt8 →
           (proverOut Hk G view setupStack iv input values w).wStack ∧
       (proverOut Hk G view setupStack iv input values w).qTree =
         E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk) (layoutsOf G.logN).2.1.logN
-          (proverOut Hk G view setupStack iv input values w).qStack := by
+          (proverOut Hk G view setupStack iv input values w).qStack ∧
+      (proverOut Hk G view setupStack iv input values w).inputs =
+        ⟨publicScalarsOf input values, (proverOut Hk G view setupStack iv input values w).inputs.α,
+          (proverOut Hk G view setupStack iv input values w).inputs.β,
+          (proverOut Hk G view setupStack iv input values w).inputs.γ,
+          (proverOut Hk G view setupStack iv input values w).inputs.t,
+          foldValues G.logN G.logW (wTableB G w) (proverOut Hk G view setupStack iv input values w).inputs.t,
+          xiOf G.logN setupStack (proverOut Hk G view setupStack iv input values w).inputs.β
+            (proverOut Hk G view setupStack iv input values w).inputs.t,
+          (proverOut Hk G view setupStack iv input values w).inputs.ρ⟩ ∧
+      (proverOut Hk G view setupStack iv input values w).wStack =
+        placePublic (layoutsOf G.logN).1 (fun i ↦ (wTableB G w).getD i 0) ∧
+      (proverOut Hk G view setupStack iv input values w).qStack =
+        placePublic (layoutsOf G.logN).2.1 (qEntry G.logN
+          (hNovel G w (proverOut Hk G view setupStack iv input values w).inputs.α
+            (proverOut Hk G view setupStack iv input values w).inputs.β
+            (proverOut Hk G view setupStack iv input values w).inputs.γ)
+          (qNovel G w (proverOut Hk G view setupStack iv input values w).inputs.α
+            (proverOut Hk G view setupStack iv input values w).inputs.β
+            (proverOut Hk G view setupStack iv input values w).inputs.γ)) := by
   set seed := Hk (RecStatement.name ++ iv ++ input) with hseed
-  obtain ⟨r, b, pos', w', zs, ⟨hp, -, hv⟩, hpos, hstream, hinp, -, hout, hws, hwt, hqt⟩ :=
+  obtain ⟨r, b, pos', w', zs, ⟨hp, -, hv⟩, hpos, hstream, hinp, -, hout, hws, hwt, hqt, hi, hwsk, hqsk⟩ :=
     reduce_steps F Hk hk G view setupStack input values w seed hmatch hrow
   have hb : proverOut Hk G view setupStack iv input values w = b := by
     unfold proverOut
     rw [← hseed, hp]
   rw [hb]
-  refine ⟨r, ?_, hinp, hout, by rw [hstream, hws], hwt, hqt⟩
+  refine ⟨r, ?_, hinp, hout, by rw [hstream, hws], hwt, hqt, hi, hwsk, hqsk⟩
   have e := hv b.stream #[] (by rw [hstream])
   rw [← UniComplete.chan_start_eq] at e
   have hsd : keccak256With (m := Id) F (RecStatement.name ++ iv ++ input) = seed := by

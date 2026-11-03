@@ -155,7 +155,7 @@ theorem contract_accepts (D : RecDeployment) (F : KeccakState → Id KeccakState
     (Id.run (D.contractWith F roots input ⟨(outOf D F Hk roots G input values w).stream, c1, c2, cf, pW, pS, pQ⟩)).1 =
       true := by
   have hlogN : (D.circuitAt roots.pi1).circuit.logN = 24 := by rw [hview]; rfl
-  obtain ⟨r, hr, hinp, hout, hstr, hwt, hqt⟩ := runWith_honest F Hk hk G (D.circuitAt roots.pi1).circuit
+  obtain ⟨r, hr, hinp, hout, hstr, hwt, hqt, -, -, -⟩ := runWith_honest F Hk hk G (D.circuitAt roots.pi1).circuit
     (D.circuitAt roots.pi1).setupStack (ivOf D F roots) input.toList values w (by rw [hview]; exact hmatch)
     (by rw [hview]; exact hrow)
   generalize hout_def : outOf D F Hk roots G input values w = out at halg hW hS hQ hpi1 ⊢
