@@ -261,8 +261,45 @@ theorem prEvent_staged5_le {α γ : Type} (chal : Digest → E) (hreg : Regular 
     exact sum_bad_le chal hreg _ Nbad (hbad _)
   exact prEvent_final_le _ ([chal s₁, chal s₂, chal s₃, chal s₄], chal s₅) (fun v ↦ bad v.1 v.2)
 
+/-! ## The `t` query -/
+
+/-- **The point challenge `t` in the random-oracle model.** For a computation that, after a prefix `X`, queries
+`tin x` and then continues, an event that forces `t = chal(answer)` into a bad set (at most `ct` values for every prior
+`pr x`) has probability at most the probability that `tin x` is already cached after `X`, plus `ct / 2^192`. (The
+cache-hit probability is the only place `t`'s input enters: unlike the bus challenges, it is not fresh by its length,
+`64` bytes being a Merkle node's.) -/
+theorem prEvent_tquery_le {β γ ω : Type} (chal : Digest → E) (hreg : Regular chal) (badT : List E → E → Prop)
+    (ct : ℕ) (hct : ∀ fp, ∃ T : Finset E, T.card ≤ ct ∧ ∀ b, badT fp b → b ∈ T)
+    (X : OracleComp KeccakCalls β) (tin : β → Bytes) (pr : β → List E)
+    (K : β → Digest → OracleComp KeccakCalls γ) (h : β → Digest → γ → ω) (ev : ω → Prop)
+    (hev : ∀ x st z, ev (h x st z) → badT (pr x) (chal st)) (c₀ : Cache) :
+    Pr{let z ← (simulateQ ro (X >>= fun x ↦ callKeccak256 (tin x) >>= fun st ↦ K x st >>= fun z ↦
+        pure (h x st z))).run c₀}[ev z.1] ≤
+      Pr{let p ← (simulateQ ro X).run c₀}[p.2 (.inl (tin p.1)) ≠ none] + (ct : ℝ≥0∞) / 2 ^ 192 := by
+  classical
+  simp only [simulateQ_bind, simulateQ_callKeccak256, simulateQ_pure, StateT.run_bind, StateT.run_pure]
+  refine prEvent_bind_le_prEvent_add_of_support _ _ _ _ fun p _ hp ↦ ?_
+  have hfresh : p.2 (.inl (tin p.1)) = none := not_not.mp hp
+  rw [prEvent_fresh _ _ hfresh]
+  refine le_trans (ENNReal.div_le_div_right (Finset.sum_le_sum fun u _ ↦ ?_) _)
+    (sum_bad_le chal hreg (badT (pr p.1)) ct (hct _))
+  by_cases hb : badT (pr p.1) (chal u)
+  · simp only [hb, ↓reduceIte]
+    exact prEvent_le_one _
+  · simp only [hb, ↓reduceIte]
+    refine le_of_eq (prEvent_eq_zero_of_forall_mem_support _ _ fun z hz ↦ ?_)
+    rw [mem_support_bind_iff] at hz
+    obtain ⟨w, -, hz⟩ := hz
+    rw [support_pure, Set.mem_singleton_iff] at hz
+    subst hz
+    exact fun he ↦ hb (hev _ _ _ he)
+
 end UniComplete.Prob
 
 /-- info: 'UniComplete.Prob.prEvent_staged5_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniComplete.Prob.prEvent_staged5_le
+
+/-- info: 'UniComplete.Prob.prEvent_tquery_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.Prob.prEvent_tquery_le

@@ -13,8 +13,9 @@ import E2ECompleteness.Grinding
 # The grinding at good bus challenges
 
 **`rejectGood_uni`**: in the two-call random-oracle model the staged univariate run (`stagedU`) is rejected while its
-bus challenges avoid `BadFp` of the honest trace with probability at most `Q · (1 − 2^-17)^(2^25)`, `Q` its block
-count, from the named hypotheses `ProverCommutes`, `CoreAccepts`, `CoreFailsOnlyAtPow` (at every pure `H`, `F`).
+bus challenges avoid `BadFp` of the honest trace and its point challenge avoids `BadT` with probability at most
+`Q · (1 − 2^-17)^(2^25)`, `Q` its block count, from the named hypotheses `ProverCommutes`, `FlockCommutes`,
+`CoreAccepts`, `CoreFailsOnlyAtPow` (at every pure `H`, `F`).
 
 ## The proof (`E2ECompleteness.Grinding`'s)
 
@@ -177,42 +178,53 @@ theorem one_le_powPot_of_opening_none (ℓ : Log) (Ht : Bytes → Digest) {L : P
 
 variable (flock : PolyFlock) (D : Deployment)
 
-/-- **The staged run at a pure `(H, F)`**: the experiment at `Id` (the prover and the verifier at `H`, `F`) and the
-prover's bus challenges. -/
-theorem runAt_stagedU (hc : ProverCommutes flock D) (H : Bytes → Digest) (F : KeccakState → KeccakState)
-    (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) :
+/-- The good outcomes: neither the bus challenges nor `t` bad. -/
+abbrev GoodU (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows)
+    (z : (Bool × (List E × E)) × (List E × E)) : Prop :=
+  ¬ BadFp (honestTrace D input rows q) z.2.1 z.2.2 ∧ ¬ BadT D.shape z.1.2.1 z.1.2.2
+
+/-- **The staged run at a pure `(H, F)`**: the experiment at `Id` (the prover and the verifier at `H`, `F`), the
+prover's point challenge with Flock's point, and its bus challenges. -/
+theorem runAt_stagedU (hc : ProverCommutes flock D) (hf : FlockCommutes flock) (H : Bytes → Digest)
+    (F : KeccakState → KeccakState) (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) :
     runAt H F (stagedU flock D input rows q).run =
-      (expW (m := Id) H F (flock H) D input rows q, proverChallenges H D input rows q) := by
-  refine Prod.ext ?_ ?_
+      ((expW (m := Id) H F (flock H) D input rows q, proverTChallenge H (flock H) D input rows q),
+        proverChallenges H D input rows q) := by
+  refine Prod.ext (Prod.ext ?_ ?_) ?_
   · have h := congrArg (fun X ↦ simulateQ (totalImpl H F) X) (expW_eq_staged flock D input rows q)
     simp only [simulateQ_map, simulateQ_expW flock D hc] at h
     exact h.symm
+  · simp only [runAt, UniStaged.run, UniStaged.tail, stagedU, staged5, simulateQ_bind, simulateQ_pure,
+      simulateQ_queryH, simulateQ_setupTreesWithH, simulateQ_proverA, simulateQ_midU flock D hf]
+    rfl
   · simp only [runAt, UniStaged.run, stagedU, staged5, simulateQ_bind, simulateQ_pure, simulateQ_queryH,
       simulateQ_setupTreesWithH, simulateQ_proverA]
     rfl
 
-/-- **A run rejected at good bus challenges puts the potential at one.** -/
-theorem one_le_powPot_of_rejectedU (hc : ProverCommutes flock D) (hacc : CoreAccepts D flock)
-    (hpow : CoreFailsOnlyAtPow D flock) (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows)
-    (hfit : D.shape.RowsFit rows) (hrel : D.HonestRelation rows input q) {ℓ : Log}
-    {z : Bool × (List E × E)} (hz : simulateQ (lookImpl ℓ) (stagedU flock D input rows q).run = some z)
-    (hrej : z.1 = false) (hgood : ¬ BadFp (honestTrace D input rows q) z.2.1 z.2.2) :
+/-- **A run rejected at good challenges puts the potential at one.** -/
+theorem one_le_powPot_of_rejectedU (hc : ProverCommutes flock D) (hf : FlockCommutes flock)
+    (hacc : CoreAccepts D flock) (hpow : CoreFailsOnlyAtPow D flock) (input : Vector UInt8 32) (rows : List ℕ)
+    (q : D.Stack rows) (hfit : D.shape.RowsFit rows) (hrel : D.HonestRelation rows input q) {ℓ : Log}
+    {z : (Bool × (List E × E)) × (List E × E)}
+    (hz : simulateQ (lookImpl ℓ) (stagedU flock D input rows q).run = some z)
+    (hrej : z.1.1 = false) (hgood : GoodU D input rows q z) :
     1 ≤ powPot Whir.queryGrindingBits PcsQuotient.nonceFuel ℓ := by
   let Ht : Bytes → Digest := fun x ↦ (lookH ℓ x).getD default
   let Ft : KeccakState → KeccakState := fun s ↦ (lookF ℓ s).getD winState
   have hH : ∀ x u, lookH ℓ x = some u → Ht x = u := fun x u hx ↦ by simp [Ht, hx]
   have hF : ∀ s u, lookF ℓ s = some u → Ft s = u := fun s u hs ↦ by simp [Ft, hs]
   have hrun : runAt Ht Ft (stagedU flock D input rows q).run = z := simulateQ_id_of_look ℓ Ht Ft hH hF _ z hz
-  rw [runAt_stagedU flock D hc] at hrun
+  rw [runAt_stagedU flock D hc hf] at hrun
   subst hrun
-  dsimp only at hrej hgood
+  obtain ⟨hab, ht⟩ := hgood
+  dsimp only at hrej hab ht
   cases hπ : uniProverWith (m := Id) Ht Ft (flock Ht) D input rows q with
   | none =>
-    obtain ⟨L, tree, stack, claims, hfail⟩ := hpow input rows q hfit hrel Ht Ft hgood hπ
+    obtain ⟨L, tree, stack, claims, hfail⟩ := hpow input rows q hfit hrel Ht Ft hab ht hπ
     exact one_le_powPot_of_opening_none ℓ Ht hfail
   | some π =>
     exfalso
-    have hv := hacc input rows q hfit hrel Ht Ft π hπ hgood
+    have hv := hacc input rows q hfit hrel Ht Ft π hπ hab ht
     have hexp : expW (m := Id) Ht Ft (flock Ht) D input rows q = true := by
       show verdictW (m := Id) Ht Ft D (setupTreesWithH (m := Id) Ht Ft D) input
         (uniProverWith (m := Id) Ht Ft (flock Ht) D input rows q) = true
@@ -223,14 +235,15 @@ theorem one_le_powPot_of_rejectedU (hc : ProverCommutes flock D) (hacc : CoreAcc
 
 /-! ## The bound -/
 
-/-- **The grinding at good bus challenges**: in the two-call random-oracle model the staged run is rejected while
-its bus challenges avoid `BadFp` with probability at most `Q · (1 − 2^-17)^(2^25)`, `Q` its block count. -/
-theorem rejectGood_uni (hc : ProverCommutes flock D) (hacc : CoreAccepts D flock)
+/-- **The grinding at good challenges**: in the two-call random-oracle model the staged run is rejected while its bus
+challenges avoid `BadFp` and `t` avoids `BadT` with probability at most `Q · (1 − 2^-17)^(2^25)`, `Q` its block
+count. -/
+theorem rejectGood_uni (hc : ProverCommutes flock D) (hf : FlockCommutes flock) (hacc : CoreAccepts D flock)
     (hpow : CoreFailsOnlyAtPow D flock) (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows)
     (hfit : D.shape.RowsFit rows) (hrel : D.HonestRelation rows input q) {Q : ℕ}
     (hQ : Common.QueryCostAtMost (stagedU flock D input rows q).run hashBlocks Q) :
     Pr{let z ← (simulateQ ro (stagedU flock D input rows q).run).run' ∅}[
-      z.1 = false ∧ ¬ BadFp (honestTrace D input rows q) z.2.1 z.2.2] ≤
+      z.1.1 = false ∧ ¬ BadFp (honestTrace D input rows q) z.2.1 z.2.2 ∧ ¬ BadT D.shape z.1.2.1 z.1.2.2] ≤
       (Q : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel := by
   have hfuel : PcsQuotient.nonceFuel ≤ 2 ^ 64 := by norm_num [PcsQuotient.nonceFuel]
   have hstep : LogFreshStepBound (powPot Whir.queryGrindingBits PcsQuotient.nonceFuel)
@@ -241,19 +254,19 @@ theorem rejectGood_uni (hc : ProverCommutes flock D) (hacc : CoreAccepts D flock
       exact (avg_le_of_le fun _ ↦ le_rfl).trans le_self_add
     · exact powPot_stepF (by decide) (by decide) hfuel ((lookR_eq_none_iff ℓ s).mpr hs')
   have e : Pr{let z ← (simulateQ ro (stagedU flock D input rows q).run).run' ∅}[
-      z.1 = false ∧ ¬ BadFp (honestTrace D input rows q) z.2.1 z.2.2] =
+      z.1.1 = false ∧ ¬ BadFp (honestTrace D input rows q) z.2.1 z.2.2 ∧ ¬ BadT D.shape z.1.2.1 z.1.2.2] =
       Pr{let z ← (simulateQ loggedRO (stagedU flock D input rows q).run).run []}[
-        z.1.1 = false ∧ ¬ BadFp (honestTrace D input rows q) z.1.2.1 z.1.2.2] := by
+        z.1.1.1 = false ∧ GoodU D input rows q z.1] := by
     rw [StateT.run'_eq, prEvent_map]
     exact prEvent_run_randomOracle_eq_loggedRO _
-      (fun (z : Bool × (List E × E)) _ ↦ z.1 = false ∧ ¬ BadFp (honestTrace D input rows q) z.2.1 z.2.2)
+      (fun (z : (Bool × (List E × E)) × (List E × E)) _ ↦ z.1.1 = false ∧ GoodU D input rows q z)
   rw [e]
   refine (prEvent_run_loggedRO_le_of_freshStepBound hstep _ Q
     (E2ECompleteness.isTotalQueryBound_of_queryCostAtMost hQ) []
-    (fun (z : Bool × (List E × E)) _ ↦ z.1 = false ∧ ¬ BadFp (honestTrace D input rows q) z.2.1 z.2.2)
+    (fun (z : (Bool × (List E × E)) × (List E × E)) _ ↦ z.1.1 = false ∧ GoodU D input rows q z)
     fun z hz hev ↦ ?_).trans ?_
   · have hlook := (simulateQ_look_of_mem_support _ [] z hz).2 z.2 (List.prefix_refl _)
-    exact one_le_powPot_of_rejectedU flock D hc hacc hpow input rows q hfit hrel hlook hev.1 hev.2
+    exact one_le_powPot_of_rejectedU flock D hc hf hacc hpow input rows q hfit hrel hlook hev.1 hev.2
   · rw [powPot_nil, zero_add]
 
 end UniComplete.Prob

@@ -21,20 +21,25 @@ are proved elsewhere (the prover's staging, branch `lean-uni-pstagec`; the PIOP'
   and the permutation `implF impl` (Flock's prover too);
 * `ProverDuplex flock D`: it follows the duplex discipline from any earlier answers (`E2ECompleteness.Disc`);
 * `ProverCost flock D N`: at most `N` block calls (`hashBlocks`) on every path;
-* `ProverStreamSize flock D S`: every proof it can output has a stream of at most `S` bytes.
+* `ProverStreamSize flock D S`: every proof it can output has a stream of at most `S` bytes;
+* `FlockCommutes flock`: Flock's prover commutes with every simulation.
 
 **The deterministic core** (at every pure `H : List UInt8 → Digest`, `F : KeccakState → KeccakState`, the prover at
 `m := Id`, i.e. `pure ∘ H`, `pure ∘ F`):
 
 * `CoreAccepts D flock`: when the prover's bus challenges (`proverChallenges H`, its writer's first five) avoid the
-  bad set `BadFp` of the honest trace and the prover returns a proof, the deployed verifier at the same `H`, `F`,
-  on the setup's roots at `H`, accepts it;
-* `CoreFailsOnlyAtPow D flock`: when they avoid it and the prover returns no proof, one of its WHIR opening provers
+  bad set `BadFp` of the honest trace, its point challenge (`proverTChallenge H`, with Flock's point) avoids `BadT`,
+  and the prover returns a proof, the deployed verifier at the same `H`, `F`, on the setup's roots at `H`, accepts it;
+* `CoreFailsOnlyAtPow D flock`: when they avoid them and the prover returns no proof, one of its WHIR opening provers
   (`E2ECompleteness.proveOpeningWithH` at `H`, `F`, `nonceFuel` nonces) returns none. (`UniComplete.pcsOpen_fails_only_at_pow`
   turns that into a failed `17`-bit search; the probability layer does it itself, `ProbGrind.lean`, tracking the
   sponge's shape, which the potential needs.)
 
-**The bad set's count**: `BadFpCard D Nbad`: for every `α`, at most `Nbad` values of `β` are bad.
+**The bad sets' counts**: `BadFpCard D Nbad`: for every `α`, at most `Nbad` values of `β` are bad;
+`BadTCard s ct`: for every Flock point, at most `ct` values of `t` are bad (`BadT`).
+
+**Flock's prover** (`FlockCommutes flock`): it commutes with simulation. **`t`'s freshness** (`TQueryFresh`, stated in
+`ProbExp.lean` on the staged run): `t`'s input was hashed before its query with probability at most `εt`.
 
 Each hypothesis is asked only for an honest witness at row counts that fit (`RowsFit`, `HonestRelation`), but for
 `ProverCommutes`, an identity of programs.
@@ -87,6 +92,30 @@ def ProverStreamSize (flock : PolyFlock) (D : Deployment) (S : ℕ) : Prop :=
     some π ∈ support (uniProverWith callKeccak256 callKeccakF1600 (flock callKeccak256) D input rows q) →
       π.stream.size ≤ S
 
+/-- **Flock's prover commutes with simulation** (what `ProverCommutes` needs of it; the probability layer also uses it
+alone, for the prover's stage between `γ` and `t`). -/
+def FlockCommutes (flock : PolyFlock) : Prop :=
+  ∀ {r : Type → Type} [Monad r] [LawfulMonad r] (impl : QueryImpl KeccakCalls r) (logN : ℕ)
+    (variant : UniStatement.Flock.Variant) (qflock : Array K) (w : Wr),
+    simulateQ impl ((flock callKeccak256 logN variant qflock).run w) =
+      (flock (implH impl) logN variant qflock).run w
+
+/-! ## The bad point challenges -/
+
+/-- **The bad point challenges** (the batch agent's finding): `combine` renumbers a point to any strictly longer point
+of the same commitment having it as a prefix, so the honest proof is rejected when `y(t)` (BLAKE2S's coordinate
+functionals at `t`, the point of `q_flock`'s slot terms, `tablePart`) is a proper prefix of another `C1` point: the
+memory's and the bytecode's `w.take lm`, `w.take lb` (`w = digits t n`, `n` the walk's digit count), or Flock's point
+on `q_flock` (`flockPoint`, fixed before `t`). -/
+def BadT (s : UniStatement.Shape) (flockPoint : List E) (t : E) : Prop :=
+  let y := coordinatesAt t (coordinateFunctionals (s.heights.getD opBlake2s 0))
+  let w := digits t (max s.heap.h (s.constraintVars + 4) + 2)
+  ∃ P ∈ [w.take s.logBytecode, w.take s.logMemory, flockPoint], y.length < P.length ∧ P.take y.length = y
+
+/-- **At most `ct` bad point challenges** for every Flock point. -/
+def BadTCard (s : UniStatement.Shape) (ct : ℕ) : Prop :=
+  ∀ flockPoint : List E, ∃ T : Finset E, T.card ≤ ct ∧ ∀ t, BadT s flockPoint t → t ∈ T
+
 /-! ## The deterministic core -/
 
 /-- **The PIOP's completeness at a pure hash and permutation**: at good bus challenges, the honest proof is accepted. -/
@@ -97,6 +126,8 @@ def CoreAccepts (D : Deployment) (flock : PolyFlock) : Prop :=
       uniProverWith (m := Id) H F (flock H) D input rows q = some π →
       ¬ BadFp (honestTrace D input rows q) (proverChallenges H D input rows q).1
         (proverChallenges H D input rows q).2 →
+      ¬ BadT D.shape (proverTChallenge H (flock H) D input rows q).1
+        (proverTChallenge H (flock H) D input rows q).2 →
       Deployment.verifierWithH (m := Id) H F D (setupTreesWithH (m := Id) H F D).roots input π = true
 
 /-- **The prover fails only at an opening**, at a pure hash and permutation and good bus challenges. -/
@@ -106,6 +137,8 @@ def CoreFailsOnlyAtPow (D : Deployment) (flock : PolyFlock) : Prop :=
     ∀ (H : List UInt8 → Digest) (F : KeccakState → KeccakState),
       ¬ BadFp (honestTrace D input rows q) (proverChallenges H D input rows q).1
         (proverChallenges H D input rows q).2 →
+      ¬ BadT D.shape (proverTChallenge H (flock H) D input rows q).1
+        (proverTChallenge H (flock H) D input rows q).2 →
       uniProverWith (m := Id) H F (flock H) D input rows q = none →
       ∃ (L : PcsQuotient.Layout) (tree : LeanVM.Prover.Tree) (stack : Array K) (claims : List PcsQuotient.Claim),
         E2ECompleteness.proveOpeningWithH (m := Id) H F PcsQuotient.nonceFuel L tree stack claims = none

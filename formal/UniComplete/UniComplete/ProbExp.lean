@@ -36,6 +36,7 @@ open LeanVM.Protocol.Compile (Bytes)
 open LeanVM.Protocol.Compile.Rom (implH implF simulateQ_queryH)
 open UniStatement
 open E2ECompleteness (HashOK hashOK_callKeccak256 Disc)
+open scoped ENNReal
 open Common (queryPermutation)
 
 set_option autoImplicit false
@@ -99,33 +100,82 @@ theorem simulateQ_proverA {r : Type → Type} [Monad r] [LawfulMonad r] (impl : 
   simp only [proverA, setupTreesOf, contractIvOf, seedOf, simulateQ_bind, simulateQ_pure,
     E2ECompleteness.simulateQ_commitWithH, simulateQ_queryH]
 
-/-- **The experiment's stages**: `A` the setup and the prover before the bus challenges, `C` the prover after them
-and the verdict. -/
+/-- **What the run carries to `t`**: the setup's trees, the prover before the bus challenges, the five answers, and
+the stream from `γ` to `C2`'s root (`midB`'s output, the writer). -/
+structure MidU where
+  trees : SetupTrees
+  a : ProverA
+  s₁ : Digest
+  s₂ : Digest
+  s₃ : Digest
+  s₄ : Digest
+  s₅ : Digest
+  mw : (E × FlockOut × Committed) × Wr
+
+/-- `midB` over the two calls, from the writer after the bus challenges. -/
+def midU (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) (a : ProverA) (s₁ s₂ s₃ s₄ s₅ : Digest) :
+    OracleComp KeccakCalls ((E × FlockOut × Committed) × Wr) :=
+  (midB callKeccak256 (commitReal callKeccak256) (flock callKeccak256) (honestTrace D input rows q)
+    [chal s₁, chal s₂, chal s₃, chal s₄] (chal s₅)).run (writerAfter rows a.c1 s₁ s₂ s₃ s₄ s₅)
+
+/-- **The experiment's stages**: `A` the setup and the prover before the bus challenges; `B` the prover from `γ` to
+`C2`'s root (`midB`); `t`'s input the writer's (`tInput`), its prior Flock's point; `C` the prover after `t`
+(`proverD`) and the verdict. -/
 def stagedU (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) : UniStaged where
   α := SetupTrees × ProverA
+  β := MidU
   inp x := firstInput rows x.2
   A := do
     let trees ← setupTreesWithH callKeccak256 callKeccakF1600 D
     let a ← proverA callKeccak256 D input rows q
     return (trees, a)
-  C x s₁ s₂ s₃ s₄ s₅ := do
-    let o ← proverC callKeccak256 callKeccakF1600 (flock callKeccak256) D input rows q x.2 s₁ s₂ s₃ s₄ s₅
-    verdictW callKeccak256 callKeccakF1600 D x.1 input o
+  B x s₁ s₂ s₃ s₄ s₅ := do
+    let m ← midU flock D input rows q x.2 s₁ s₂ s₃ s₄ s₅
+    return ⟨x.1, x.2, s₁, s₂, s₃, s₄, s₅, m⟩
+  tin b := tInput b.mw.2
+  pr b := b.mw.1.2.1.point
+  C b st := do
+    let o ← proverD callKeccak256 callKeccakF1600 D input rows q b.a b.s₁ b.s₂ b.s₃ b.s₄ b.s₅ b.mw st
+    verdictW callKeccak256 callKeccakF1600 D b.trees input o
 
 /-- **The two-call experiment is the staged run's verdict.** -/
 theorem expW_eq_staged (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) :
     expW callKeccak256 callKeccakF1600 (flock callKeccak256) D input rows q =
-      (fun z ↦ z.1) <$> (stagedU flock D input rows q).run := by
-  simp only [expW, uniProverWith_split, UniStaged.run, stagedU, staged5, map_bind, map_pure, bind_assoc,
-    pure_bind, bind_pure]
+      (fun z ↦ z.1.1) <$> (stagedU flock D input rows q).run := by
+  simp only [expW, uniProverWith_split, proverC_split, UniStaged.run, UniStaged.tail, stagedU, midU, staged5,
+    map_bind, map_pure, bind_assoc, pure_bind, bind_pure]
 
 /-- **The staged experiment**, against the random permutation. -/
 theorem experiment_staged (hc : ProverCommutes flock D) (input : Vector UInt8 32) (rows : List ℕ)
     (q : D.Stack rows) :
     uniCompletenessExperiment D (uniProverRP flock D) input rows q =
-      (fun z ↦ z.1) <$> (simulateQ keccakCallsOverRandomPermutation (stagedU flock D input rows q).run).run' [] := by
+      (fun z ↦ z.1.1) <$>
+        (simulateQ keccakCallsOverRandomPermutation (stagedU flock D input rows q).run).run' [] := by
   rw [experiment_eq flock D hc, expW_eq_staged, simulateQ_map, StateT.run'_eq, StateT.run'_eq, StateT.run_map,
     Functor.map_map, Functor.map_map]
+
+/-- **`midB` over the two calls commutes with simulation**, given Flock's prover's. -/
+theorem simulateQ_midU (hf : FlockCommutes flock) {r : Type → Type} [Monad r] [LawfulMonad r]
+    (impl : QueryImpl KeccakCalls r) (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) (a : ProverA)
+    (s₁ s₂ s₃ s₄ s₅ : Digest) :
+    simulateQ impl (midU flock D input rows q a s₁ s₂ s₃ s₄ s₅) =
+      (midB (implH impl) (commitReal (implH impl)) (flock (implH impl)) (honestTrace D input rows q)
+        [chal s₁, chal s₂, chal s₃, chal s₄] (chal s₅)).run (writerAfter rows a.c1 s₁ s₂ s₃ s₄ s₅) := by
+  simp only [midU, midB, StateT.run_bind, run_sampleW, StateT.run_lift, run_sendRoot, commitReal, bind_assoc,
+    pure_bind, StateT.run_pure, simulateQ_bind, simulateQ_pure, simulateQ_queryH, hf impl,
+    E2ECompleteness.simulateQ_commitWithH]
+
+/-- **`t`'s freshness** (a named hypothesis, not proved here): in the two-call random-oracle model, `t`'s input
+(`tInput`, the writer's state and the bytes since the last challenge, `C2`'s root word) has been hashed before its
+query with probability at most `εt`. It is not fresh by its length (`64` bytes when Flock's prover ends with a
+challenge, a Merkle node's length): an earlier node query has the same input only if its left child is the writer's
+state, Flock's last challenge's answer, so the bound needs Flock's prover's chain (that its last query is fresh, of
+another length than a Merkle node's) and the Merkle digests computed after it (`C2`'s tree). -/
+def TQueryFresh (εt : ℝ≥0∞) : Prop :=
+  ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows), D.shape.RowsFit rows →
+    D.HonestRelation rows input q →
+    Pr{let p ← (simulateQ E2ECompleteness.ro (stagedU flock D input rows q).pre).run ∅}[
+      p.2 (.inl ((stagedU flock D input rows q).tin p.1.1)) ≠ none] ≤ εt
 
 /-! ## What stage A hashes -/
 

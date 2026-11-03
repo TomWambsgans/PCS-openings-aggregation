@@ -320,4 +320,135 @@ theorem firstInput_length {rows : List ℕ} (h : rows.length = 6) (a : ProverA) 
   simp only [firstInput, prefixStream, Array.toList_extract, List.length_append, length_digestBytes']
   simp [countBytes_length, rootWord_length, h]
 
+/-! ## The prover, cut at `t` -/
+
+section T
+
+variable {m : Type → Type} [Monad m] (H : List UInt8 → m Digest)
+
+/-- **The stream from `γ` to `C2`'s root** (Flock at the main line): `γ`, Flock's prover, `C2`'s commitment, its
+root's halves; it returns `γ`, Flock's output and `C2`'s commitment. -/
+def midB (commit : Commitment → ℕ → Array K → m Committed) (flock : FlockProver m) (tr : Trace) (alphas : List E)
+    (beta : E) : WrM m (E × FlockOut × Committed) := do
+  let gamma ← sampleW H
+  let out ← flock (blake2sR1csLogSize + tr.shape.heights.getD opBlake2s 0) flockMain tr.qflock
+  let c2 := c2DataOf tr (eqKernel alphas) beta gamma
+  let committed2 ← (StateT.lift (commit .c2 (((layoutsOf tr.shape).lookup .c2).getD default).vars c2.stack) :
+    WrM m Committed)
+  sendRoot committed2.halves
+  return (gamma, out, committed2)
+
+/-- **The stream from `t` on** (`proveStreamWith`'s text from `let a := atTOf …`). -/
+def tailT (tr : Trace) (committed1 : Committed)
+    (alphas : List E) (beta gamma : E) (flockOut : Option FlockOut) (committed2 : Committed) (t : E) :
+    WrM m CoreOut := do
+  let shape := tr.shape
+  let stack1 := c1Stack tr
+  let c2 := c2DataOf tr (eqKernel alphas) beta gamma
+  let a := atTOf tr c2 alphas beta gamma t flockOut
+  sendScalars a.values
+  -- 8. ρ, the combined claims.
+  let rho ← sampleW H
+  let combined : List (Commitment × Combined) :=
+    commitments.filterMap fun c ↦ (combine a.relations c rho).map (c, ·)
+  let stackLayouts := layouts shape a.c2Columns
+  let stack3 := setupStackOf tr
+  let stackOf : Commitment → Array K
+    | .c1 => stack1
+    | .c2 => c2.stack
+    | .setup => stack3
+  -- 9. The batching sumcheck.
+  let lambda ← sampleW H
+  let vars := (stackLayouts.map (·.2.vars)).foldl max 0
+  let st : BatchState := ⟨combined.map (fun (c, claim) ↦ denseWeight claim (layoutIn stackLayouts c) a.ringMap),
+    combined.map (fun (c, _) ↦ (stackOf c).map ofK), flockOut.map (·.tables), 0, []⟩
+  let r ← batchRounds H lambda vars st
+  let claims : List (Commitment × List E × E) := combined.map fun (c, _) ↦
+    let pt := r.take (layoutIn stackLayouts c).vars
+    (c, pt, multilinearEval ((stackOf c).toList.map ofK) pt)
+  sendScalars (claims.map (·.2.2))
+  let matrices ← match a.pending with
+    | some (p, _) => do
+      let mc := p.matrixClaim r 0 0
+      let ma := multilinearEval ((flockMatrixStack true).toList.map ofK) mc.point
+      let mb := multilinearEval ((flockMatrixStack false).toList.map ofK) mc.point
+      sendScalars [ma, mb]
+      pure (some (p.matrixClaim r ma mb))
+    | none => pure none
+  let c ← get
+  return ⟨c.stream, (stack1, committed1), (c2.stack, committed2), stack3, claims, matrices, combined,
+    c2.heapVals⟩
+
+/-- **`t`'s input**: the writer's state, then the bytes since the last challenge (`sampleW`'s). -/
+def tInput (w : Wr) : List UInt8 := digestBytes w.state ++ (w.stream.extract w.absorbed w.stream.size).toList
+
+/-- The writer after `t`. -/
+def afterT (w : Wr) (s : Digest) : Wr :=
+  { w with absorbed := w.stream.size, state := s, challenges := w.challenges.push (chal s) }
+
+/-- **The stream's tail, cut at `t`.** -/
+theorem streamTail_cut [LawfulMonad m] (commit : Commitment → ℕ → Array K → m Committed) (flock : FlockProver m)
+    (tr : Trace) (committed1 : Committed) (alphas : List E) (beta : E) :
+    streamTail H commit flock (.flock flockMain) tr committed1 alphas beta = (do
+      let x ← midB H commit flock tr alphas beta
+      let t ← sampleW H
+      tailT H tr committed1 alphas beta x.1 (some x.2.1) x.2.2 t) := by
+  simp only [streamTail, midB, tailT, bind_assoc, pure_bind, bind_map_left]
+
+/-- **The stream's tail, run, cut at `t`.** -/
+theorem run_streamTail [LawfulMonad m] (flock : FlockProver m) (tr : Trace) (committed1 : Committed)
+    (alphas : List E) (beta : E) (w : Wr) :
+    (streamTail H (commitReal H) flock (.flock flockMain) tr committed1 alphas beta).run w = (do
+      let x ← (midB H (commitReal H) flock tr alphas beta).run w
+      let st ← H (tInput x.2)
+      (tailT H tr committed1 alphas beta x.1.1 (some x.1.2.1) x.1.2.2 (chal st)).run
+        (afterT x.2 st)) := by
+  rw [streamTail_cut, StateT.run_bind]
+  refine bind_congr fun x ↦ ?_
+  rw [StateT.run_bind, run_sampleW, bind_assoc]
+  simp only [pure_bind]
+  rfl
+
+end T
+
+section T
+
+variable {m : Type → Type} [Monad m] (H : List UInt8 → m Digest) (F : KeccakState → m KeccakState)
+
+/-- **The prover after `t`**: the stream's tail from `t` on the writer after it, the openings. -/
+def proverD (D : Deployment) (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows)
+    (a : ProverA) (s₁ s₂ s₃ s₄ s₅ : Digest) (x : (E × FlockOut × Committed) × Wr) (st : Digest) :
+    m (Option UniProof) := do
+  let tr := honestTrace D input rows q
+  let (out, _) ← (tailT H tr ⟨a.c1, digestScalars a.c1.root⟩ [chal s₁, chal s₂, chal s₃, chal s₄]
+    (chal s₅) x.1.1 (some x.1.2.1) x.1.2.2 (chal st)).run (afterT x.2 st)
+  openingsTail H F PcsQuotient.nonceFuel tr a.trees out
+
+/-- **The prover after the bus challenges, cut at `t`.** -/
+theorem proverC_split [LawfulMonad m] (flock : FlockProver m) (D : Deployment) (input : Vector UInt8 32)
+    (rows : List ℕ) (q : D.Stack rows) (a : ProverA) (s₁ s₂ s₃ s₄ s₅ : Digest) :
+    proverC H F flock D input rows q a s₁ s₂ s₃ s₄ s₅ = (do
+      let x ← (midB H (commitReal H) flock (honestTrace D input rows q) [chal s₁, chal s₂, chal s₃, chal s₄]
+        (chal s₅)).run (writerAfter rows a.c1 s₁ s₂ s₃ s₄ s₅)
+      let st ← H (tInput x.2)
+      proverD H F D input rows q a s₁ s₂ s₃ s₄ s₅ x st) := by
+  simp only [proverC, run_streamTail, bind_assoc]
+  rfl
+
+end T
+
+/-- **The prover's `t`-stage challenge** at a hash function `H` and Flock's prover `flock` (at `Id`): Flock's point on
+`q_flock` (fixed before `t`) and `t`. -/
+def proverTChallenge (H : List UInt8 → Digest) (flock : FlockProver Id) (D : Deployment) (input : Vector UInt8 32)
+    (rows : List ℕ) (q : D.Stack rows) : List E × E :=
+  let a := proverA (m := Id) H D input rows q
+  let s₁ := H (firstInput rows a)
+  let s₂ := H (digestBytes s₁)
+  let s₃ := H (digestBytes s₂)
+  let s₄ := H (digestBytes s₃)
+  let s₅ := H (digestBytes s₄)
+  let x := (midB (m := Id) H (commitReal (m := Id) H) flock (honestTrace D input rows q)
+    [chal s₁, chal s₂, chal s₃, chal s₄] (chal s₅)).run (writerAfter rows a.c1 s₁ s₂ s₃ s₄ s₅)
+  (x.1.2.1.point, chal (H (tInput x.2)))
+
 end UniComplete.Prob

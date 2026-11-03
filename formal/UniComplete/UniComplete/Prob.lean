@@ -10,19 +10,21 @@ import UniComplete.ProbGrind
 
 **`uniCompleteness_of_core`**: for every deployment `D`, `UniCompleteness D (uniProverRP flock D) δ` with
 
-  `δ = Nbad / 2^192 + 6 / 2^256 + N · (1 − 2^-17)^(2^25) + N² / 2^508`,
+  `δ = Nbad / 2^192 + 6 / 2^256 + (ct / 2^192 + εt) + N · (1 − 2^-17)^(2^25) + N² / 2^508`,
   `N = setupCost D + (NP + verifierCost D S)`,
 
-from the named hypotheses of `ProbHyp.lean` (`ProverCommutes`, `ProverDuplex`, `ProverCost NP`,
-`ProverStreamSize S`, `CoreAccepts`, `CoreFailsOnlyAtPow`, `BadFpCard Nbad`): the staged experiment
-(`stagedU`, `UniStaged.Holds`: `experiment_staged`, `duplexVm_stagedU`, `cost_stagedU`, `firstInput_length`,
-`hashA_stagedU`, `rejectGood_uni`) and `uniCompleteness_of_staged`.
+from the named hypotheses of `ProbHyp.lean` and `ProbExp.lean` (`ProverCommutes`, `FlockCommutes`, `ProverDuplex`,
+`ProverCost NP`, `ProverStreamSize S`, `CoreAccepts`, `CoreFailsOnlyAtPow`, `BadFpCard Nbad`, `BadTCard ct`,
+`TQueryFresh εt`): the staged experiment (`stagedU`, `UniStaged.Holds`: `experiment_staged`, `duplexVm_stagedU`,
+`cost_stagedU`, `firstInput_length`, `hashA_stagedU`, `rejectGood_uni`) and `uniCompleteness_of_staged`.
 
 **`uniCompleteness_reference`**: at the reference shape (`D.shape = reference`), with a program IV of at most `2^40`
-bytes (the deployed one has `32`), `NP = 2^47` block calls for the prover, `S = 2^40` stream bytes and `Nbad < 2^24`
-bad `β` per `α`: `UniCompleteness D (uniProverRP flock D) deltaUni`, where
+bytes (the deployed one has `32`), `NP = 2^47` block calls for the prover, `S = 2^40` stream bytes, `Nbad < 2^24`
+bad `β` per `α`, `ct = 3 · 2^17` bad `t` per Flock point and `εt = 2^-200`:
+`UniCompleteness D (uniProverRP flock D) deltaUni`, where
 
-  `deltaUni = (2^24 − 1) / 2^192 + 6 / 2^256 + 2^-304 + (2^48)² / 2^508 < 2^-168` (`deltaUni_lt`).
+  `deltaUni = (2^24 − 1) / 2^192 + 6 / 2^256 + (3 · 2^17 / 2^192 + 2^-200) + 2^-304 + (2^48)² / 2^508 < 2^-167`
+  (`deltaUni_lt`; about `2^-167.95`: the bus challenges' `2^-168`, `t`'s `2^-173.4`).
 
 The block count at the reference shape (`totalCost_le`): the setup's `5 · 2^19 + 10 · 2^23` (its layout has at most
 `24` variables, `setupLayout_reference_vars`, through `List.mergeSort_perm`: the layout's offset is the sum of its
@@ -45,12 +47,13 @@ variable (flock : PolyFlock) (D : Deployment)
 /-! ## The staged experiment holds -/
 
 /-- **The univariate experiment's code-level bridge**, from the named hypotheses. -/
-theorem stagedU_holds {Nbad NP S : ℕ} (hc : ProverCommutes flock D) (hdup : ProverDuplex flock D)
-    (hcost : ProverCost flock D NP) (hstream : ProverStreamSize flock D S) (hacc : CoreAccepts D flock)
-    (hpow : CoreFailsOnlyAtPow D flock) (hbad : BadFpCard D Nbad) (input : Vector UInt8 32) (rows : List ℕ)
+theorem stagedU_holds {Nbad ct NP S : ℕ} {εt : ℝ≥0∞} (hc : ProverCommutes flock D) (hf : FlockCommutes flock)
+    (hdup : ProverDuplex flock D) (hcost : ProverCost flock D NP) (hstream : ProverStreamSize flock D S)
+    (hacc : CoreAccepts D flock) (hpow : CoreFailsOnlyAtPow D flock) (hbad : BadFpCard D Nbad)
+    (hbadT : BadTCard D.shape ct) (htf : TQueryFresh flock D εt) (input : Vector UInt8 32) (rows : List ℕ)
     (q : D.Stack rows) (hfit : D.shape.RowsFit rows) (hrel : D.HonestRelation rows input q) :
     (stagedU flock D input rows q).Holds D (uniProverRP flock D) input rows q (BadFp (honestTrace D input rows q))
-      Nbad (Cost.setupCost D + (NP + Cost.verifierCost D S))
+      (BadT D.shape) Nbad ct (Cost.setupCost D + (NP + Cost.verifierCost D S)) εt
       (((Cost.setupCost D + (NP + Cost.verifierCost D S) : ℕ) : ℝ≥0∞) *
         missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel) where
   experiment := experiment_staged flock D hc input rows q
@@ -59,21 +62,24 @@ theorem stagedU_holds {Nbad NP S : ℕ} (hc : ProverCommutes flock D) (hdup : Pr
   inp_length a := firstInput_length hfit.1 a.2
   hashA := hashA_stagedU flock D input rows q
   badCard := hbad input rows q hfit hrel
-  rejectGood := rejectGood_uni flock D hc hacc hpow input rows q hfit hrel
+  badTCard := hbadT
+  tFresh := htf input rows q hfit hrel
+  rejectGood := rejectGood_uni flock D hc hf hacc hpow input rows q hfit hrel
     (cost_stagedU flock D hcost hstream input rows q hfit hrel)
 
 /-- **`UniCompleteness` from the named hypotheses**, for every deployment. -/
-theorem uniCompleteness_of_core {Nbad NP S : ℕ} (hc : ProverCommutes flock D) (hdup : ProverDuplex flock D)
-    (hcost : ProverCost flock D NP) (hstream : ProverStreamSize flock D S) (hacc : CoreAccepts D flock)
-    (hpow : CoreFailsOnlyAtPow D flock) (hbad : BadFpCard D Nbad) :
+theorem uniCompleteness_of_core {Nbad ct NP S : ℕ} {εt : ℝ≥0∞} (hc : ProverCommutes flock D)
+    (hf : FlockCommutes flock) (hdup : ProverDuplex flock D) (hcost : ProverCost flock D NP)
+    (hstream : ProverStreamSize flock D S) (hacc : CoreAccepts D flock) (hpow : CoreFailsOnlyAtPow D flock)
+    (hbad : BadFpCard D Nbad) (hbadT : BadTCard D.shape ct) (htf : TQueryFresh flock D εt) :
     UniCompleteness D (uniProverRP flock D)
-      ((Nbad : ℝ≥0∞) / 2 ^ 192 + 6 / 2 ^ 256 +
+      ((Nbad : ℝ≥0∞) / 2 ^ 192 + 6 / 2 ^ 256 + ((ct : ℝ≥0∞) / 2 ^ 192 + εt) +
         ((Cost.setupCost D + (NP + Cost.verifierCost D S) : ℕ) : ℝ≥0∞) *
           missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel +
         rpmError (Cost.setupCost D + (NP + Cost.verifierCost D S))) :=
   uniCompleteness_of_staged fun input rows q hfit hrel ↦
-    ⟨stagedU flock D input rows q, _,
-      stagedU_holds flock D hc hdup hcost hstream hacc hpow hbad input rows q hfit hrel⟩
+    ⟨stagedU flock D input rows q, _, _,
+      stagedU_holds flock D hc hf hdup hcost hstream hacc hpow hbad hbadT htf input rows q hfit hrel⟩
 
 /-- A larger error is still an error. -/
 theorem UniCompletenessWith.mono {P : UniProver D} {δ δ' : ℝ≥0∞} (h : UniCompletenessWith D P δ) (hδ : δ ≤ δ') :
@@ -154,71 +160,89 @@ theorem totalCost_le (hD : D.shape = reference) (hiv : D.programIv.length ≤ 2 
 
 /-! ## The numbers -/
 
-/-- **The deployed bound**: `Nbad < 2^24` bad `β` per `α`, `2^48` block calls (the grinding's `2^-304`, the
-transfer's `(2^48)² / 2^508`). -/
+/-- **The deployed bound**: `Nbad < 2^24` bad `β` per `α`, `3 · 2^17` bad `t` per Flock point, `t`'s cache hit
+`2^-200`, `2^48` block calls (the grinding's `2^-304`, the transfer's `(2^48)² / 2^508`). -/
 noncomputable def deltaUni : ℝ≥0∞ :=
-  ((2 ^ 24 - 1 : ℕ) : ℝ≥0∞) / 2 ^ 192 + 6 / 2 ^ 256 + (2 : ℝ≥0∞)⁻¹ ^ 304 + rpmError (2 ^ 48)
+  ((2 ^ 24 - 1 : ℕ) : ℝ≥0∞) / 2 ^ 192 + 6 / 2 ^ 256 +
+    (((3 * 2 ^ 17 : ℕ) : ℝ≥0∞) / 2 ^ 192 + (2 : ℝ≥0∞)⁻¹ ^ 200) + (2 : ℝ≥0∞)⁻¹ ^ 304 + rpmError (2 ^ 48)
 
 theorem rpmError_mono {a b : ℕ} (h : a ≤ b) : rpmError a ≤ rpmError b := by
   unfold rpmError
   gcongr
 
-theorem deltaUni_lt : deltaUni < (2 : ℝ≥0∞)⁻¹ ^ 168 := by
-  have hb : (6 : ℝ≥0∞) / 2 ^ 256 ≤ (2 : ℝ≥0∞)⁻¹ ^ 253 := by
+theorem deltaUni_lt : deltaUni < (2 : ℝ≥0∞)⁻¹ ^ 167 := by
+  have ha : ((2 ^ 24 - 1 : ℕ) : ℝ≥0∞) / 2 ^ 192 ≤ (2 : ℝ≥0∞)⁻¹ ^ 168 := by
+    calc ((2 ^ 24 - 1 : ℕ) : ℝ≥0∞) / 2 ^ 192 ≤ 2 ^ 24 * (2 : ℝ≥0∞)⁻¹ ^ (168 + 24) := by
+          rw [ENNReal.div_eq_inv_mul, ← ENNReal.inv_pow, mul_comm]
+          gcongr
+          norm_num
+      _ = (2 : ℝ≥0∞)⁻¹ ^ 168 := E2ECompleteness.two_pow_mul_inv_pow 24 168
+  have hb : (6 : ℝ≥0∞) / 2 ^ 256 ≤ (2 : ℝ≥0∞)⁻¹ ^ 173 := by
     calc (6 : ℝ≥0∞) / 2 ^ 256 ≤ 2 ^ 3 * (2 : ℝ≥0∞)⁻¹ ^ (253 + 3) := by
           rw [ENNReal.div_eq_inv_mul, ← ENNReal.inv_pow, mul_comm]
           gcongr
           norm_num
       _ = (2 : ℝ≥0∞)⁻¹ ^ 253 := E2ECompleteness.two_pow_mul_inv_pow 3 253
-  have hc : (2 : ℝ≥0∞)⁻¹ ^ 304 ≤ (2 : ℝ≥0∞)⁻¹ ^ 253 := E2ECompleteness.inv_pow_le_inv_pow (by norm_num)
-  have hd : rpmError (2 ^ 48) ≤ (2 : ℝ≥0∞)⁻¹ ^ 253 := by
+      _ ≤ (2 : ℝ≥0∞)⁻¹ ^ 173 := E2ECompleteness.inv_pow_le_inv_pow (by norm_num)
+  have hct : ((3 * 2 ^ 17 : ℕ) : ℝ≥0∞) / 2 ^ 192 ≤ (2 : ℝ≥0∞)⁻¹ ^ 173 := by
+    calc ((3 * 2 ^ 17 : ℕ) : ℝ≥0∞) / 2 ^ 192 ≤ 2 ^ 19 * (2 : ℝ≥0∞)⁻¹ ^ (173 + 19) := by
+          rw [ENNReal.div_eq_inv_mul, ← ENNReal.inv_pow, mul_comm]
+          gcongr
+          norm_num
+      _ = (2 : ℝ≥0∞)⁻¹ ^ 173 := E2ECompleteness.two_pow_mul_inv_pow 19 173
+  have he : (2 : ℝ≥0∞)⁻¹ ^ 200 ≤ (2 : ℝ≥0∞)⁻¹ ^ 173 := E2ECompleteness.inv_pow_le_inv_pow (by norm_num)
+  have hc : (2 : ℝ≥0∞)⁻¹ ^ 304 ≤ (2 : ℝ≥0∞)⁻¹ ^ 173 := E2ECompleteness.inv_pow_le_inv_pow (by norm_num)
+  have hd : rpmError (2 ^ 48) ≤ (2 : ℝ≥0∞)⁻¹ ^ 173 := by
     calc rpmError (2 ^ 48) = 2 ^ (48 * 2) * (2 : ℝ≥0∞)⁻¹ ^ (412 + 48 * 2) := by
           rw [rpmError, Nat.cast_pow, Nat.cast_ofNat, ← pow_mul, ENNReal.div_eq_inv_mul,
             ← ENNReal.inv_pow, mul_comm]
       _ = (2 : ℝ≥0∞)⁻¹ ^ 412 := E2ECompleteness.two_pow_mul_inv_pow _ 412
-      _ ≤ (2 : ℝ≥0∞)⁻¹ ^ 253 := E2ECompleteness.inv_pow_le_inv_pow (by norm_num)
-  have hrest : 6 / 2 ^ 256 + (2 : ℝ≥0∞)⁻¹ ^ 304 + rpmError (2 ^ 48) ≤ (2 : ℝ≥0∞)⁻¹ ^ 193 := by
-    calc _ ≤ (2 : ℝ≥0∞)⁻¹ ^ 253 + (2 : ℝ≥0∞)⁻¹ ^ 253 + (2 : ℝ≥0∞)⁻¹ ^ 253 :=
-          add_le_add (add_le_add hb hc) hd
-      _ ≤ 2 ^ 2 * (2 : ℝ≥0∞)⁻¹ ^ (251 + 2) := by
-          have : (2 : ℝ≥0∞)⁻¹ ^ 253 + (2 : ℝ≥0∞)⁻¹ ^ 253 + (2 : ℝ≥0∞)⁻¹ ^ 253 =
-              3 * (2 : ℝ≥0∞)⁻¹ ^ (251 + 2) := by ring
-          rw [this]
+      _ ≤ (2 : ℝ≥0∞)⁻¹ ^ 173 := E2ECompleteness.inv_pow_le_inv_pow (by norm_num)
+  have hrest : 6 / 2 ^ 256 + ((((3 * 2 ^ 17 : ℕ) : ℝ≥0∞) / 2 ^ 192 + (2 : ℝ≥0∞)⁻¹ ^ 200) +
+      ((2 : ℝ≥0∞)⁻¹ ^ 304 + rpmError (2 ^ 48))) ≤ (2 : ℝ≥0∞)⁻¹ ^ 170 := by
+    calc _ ≤ (2 : ℝ≥0∞)⁻¹ ^ 173 + (((2 : ℝ≥0∞)⁻¹ ^ 173 + (2 : ℝ≥0∞)⁻¹ ^ 173) +
+          ((2 : ℝ≥0∞)⁻¹ ^ 173 + (2 : ℝ≥0∞)⁻¹ ^ 173)) :=
+          add_le_add hb (add_le_add (add_le_add hct he) (add_le_add hc hd))
+      _ = 5 * (2 : ℝ≥0∞)⁻¹ ^ (170 + 3) := by ring
+      _ ≤ 2 ^ 3 * (2 : ℝ≥0∞)⁻¹ ^ (170 + 3) := by
           gcongr
           norm_num
-      _ = (2 : ℝ≥0∞)⁻¹ ^ 251 := E2ECompleteness.two_pow_mul_inv_pow 2 251
-      _ ≤ (2 : ℝ≥0∞)⁻¹ ^ 193 := E2ECompleteness.inv_pow_le_inv_pow (by norm_num)
-  have h193 : (2 : ℝ≥0∞)⁻¹ ^ 193 < (2 : ℝ≥0∞)⁻¹ ^ 192 := by
-    have e : (2 : ℝ≥0∞)⁻¹ ^ 193 + (2 : ℝ≥0∞)⁻¹ ^ 193 = (2 : ℝ≥0∞)⁻¹ ^ 192 := by
-      calc (2 : ℝ≥0∞)⁻¹ ^ 193 + (2 : ℝ≥0∞)⁻¹ ^ 193 = 2 ^ 1 * (2 : ℝ≥0∞)⁻¹ ^ (192 + 1) := by
-            rw [← two_mul, pow_one]
-        _ = (2 : ℝ≥0∞)⁻¹ ^ 192 := E2ECompleteness.two_pow_mul_inv_pow 1 192
-    rw [← e]
-    exact ENNReal.lt_add_right (by simp) (by simp)
-  have ha : ((2 ^ 24 - 1 : ℕ) : ℝ≥0∞) / 2 ^ 192 + (2 : ℝ≥0∞)⁻¹ ^ 192 = (2 : ℝ≥0∞)⁻¹ ^ 168 := by
-    have e1 : (2 : ℝ≥0∞)⁻¹ ^ 192 = 1 / 2 ^ 192 := by rw [← ENNReal.inv_pow, one_div]
-    have e2 : ((2 ^ 24 - 1 : ℕ) : ℝ≥0∞) + 1 = 2 ^ 24 := by norm_num
-    rw [e1, ENNReal.div_add_div_same, e2, ENNReal.div_eq_inv_mul, mul_comm,
-      show (192 : ℕ) = 168 + 24 from rfl, ENNReal.inv_pow, E2ECompleteness.two_pow_mul_inv_pow 24 168]
-  have hne : ((2 ^ 24 - 1 : ℕ) : ℝ≥0∞) / 2 ^ 192 ≠ ⊤ :=
-    ENNReal.div_ne_top (ENNReal.natCast_ne_top _) (by simp)
-  unfold deltaUni
-  rw [add_assoc, add_assoc, ← ha]
-  refine ENNReal.add_lt_add_left hne ?_
-  rw [← add_assoc]
-  exact lt_of_le_of_lt hrest h193
+      _ = (2 : ℝ≥0∞)⁻¹ ^ 170 := E2ECompleteness.two_pow_mul_inv_pow 3 170
+  have e169 : (2 : ℝ≥0∞)⁻¹ ^ 169 + (2 : ℝ≥0∞)⁻¹ ^ 169 = (2 : ℝ≥0∞)⁻¹ ^ 168 := by
+    calc (2 : ℝ≥0∞)⁻¹ ^ 169 + (2 : ℝ≥0∞)⁻¹ ^ 169 = 2 ^ 1 * (2 : ℝ≥0∞)⁻¹ ^ (168 + 1) := by
+          rw [← two_mul, pow_one]
+      _ = (2 : ℝ≥0∞)⁻¹ ^ 168 := E2ECompleteness.two_pow_mul_inv_pow 1 168
+  have e168 : (2 : ℝ≥0∞)⁻¹ ^ 168 + (2 : ℝ≥0∞)⁻¹ ^ 168 = (2 : ℝ≥0∞)⁻¹ ^ 167 := by
+    calc (2 : ℝ≥0∞)⁻¹ ^ 168 + (2 : ℝ≥0∞)⁻¹ ^ 168 = 2 ^ 1 * (2 : ℝ≥0∞)⁻¹ ^ (167 + 1) := by
+          rw [← two_mul, pow_one]
+      _ = (2 : ℝ≥0∞)⁻¹ ^ 167 := E2ECompleteness.two_pow_mul_inv_pow 1 167
+  have h168 : (2 : ℝ≥0∞)⁻¹ ^ 170 < (2 : ℝ≥0∞)⁻¹ ^ 168 := by
+    calc (2 : ℝ≥0∞)⁻¹ ^ 170 ≤ (2 : ℝ≥0∞)⁻¹ ^ 169 := E2ECompleteness.inv_pow_le_inv_pow (by norm_num)
+      _ < (2 : ℝ≥0∞)⁻¹ ^ 169 + (2 : ℝ≥0∞)⁻¹ ^ 169 := ENNReal.lt_add_right (by simp) (by simp)
+      _ = (2 : ℝ≥0∞)⁻¹ ^ 168 := e169
+  have hne : ((2 ^ 24 - 1 : ℕ) : ℝ≥0∞) / 2 ^ 192 ≠ ⊤ := ne_top_of_le_ne_top (by simp) ha
+  have hsum : deltaUni = ((2 ^ 24 - 1 : ℕ) : ℝ≥0∞) / 2 ^ 192 + (6 / 2 ^ 256 +
+      ((((3 * 2 ^ 17 : ℕ) : ℝ≥0∞) / 2 ^ 192 + (2 : ℝ≥0∞)⁻¹ ^ 200) +
+        ((2 : ℝ≥0∞)⁻¹ ^ 304 + rpmError (2 ^ 48)))) := by
+    unfold deltaUni
+    ac_rfl
+  rw [hsum, ← e168]
+  exact ENNReal.add_lt_add_of_le_of_lt hne ha (hrest.trans_lt h168)
 
 /-! ## The end theorem -/
 
-/-- **`UniCompleteness` at the reference shape**, `deltaUni < 2^-168`, from the named hypotheses at `NP = 2^47` prover
-block calls, `S = 2^40` stream bytes and `Nbad = 2^24 − 1` bad `β` per `α`, for a program IV of at most `2^40`
-bytes. -/
+/-- **`UniCompleteness` at the reference shape**, `deltaUni < 2^-167`, from the named hypotheses at `NP = 2^47` prover
+block calls, `S = 2^40` stream bytes, `Nbad = 2^24 − 1` bad `β` per `α`, `ct = 3 · 2^17` bad `t` per Flock point and
+`t`'s cache hit `εt = 2^-200`, for a program IV of at most `2^40` bytes. -/
 theorem uniCompleteness_reference (hD : D.shape = reference) (hiv : D.programIv.length ≤ 2 ^ 40)
-    (hc : ProverCommutes flock D) (hdup : ProverDuplex flock D) (hcost : ProverCost flock D (2 ^ 47))
-    (hstream : ProverStreamSize flock D (2 ^ 40)) (hacc : CoreAccepts D flock) (hpow : CoreFailsOnlyAtPow D flock)
-    (hbad : BadFpCard D (2 ^ 24 - 1)) :
+    (hc : ProverCommutes flock D) (hf : FlockCommutes flock) (hdup : ProverDuplex flock D)
+    (hcost : ProverCost flock D (2 ^ 47)) (hstream : ProverStreamSize flock D (2 ^ 40))
+    (hacc : CoreAccepts D flock) (hpow : CoreFailsOnlyAtPow D flock) (hbad : BadFpCard D (2 ^ 24 - 1))
+    (hbadT : BadTCard reference (3 * 2 ^ 17)) (htf : TQueryFresh flock D ((2 : ℝ≥0∞)⁻¹ ^ 200)) :
     UniCompleteness D (uniProverRP flock D) deltaUni := by
-  refine UniCompletenessWith.mono D (uniCompleteness_of_core flock D hc hdup hcost hstream hacc hpow hbad) ?_
+  rw [← hD] at hbadT
+  refine UniCompletenessWith.mono D
+    (uniCompleteness_of_core flock D hc hf hdup hcost hstream hacc hpow hbad hbadT htf) ?_
   have hN := totalCost_le D hD hiv
   set N := Cost.setupCost D + (2 ^ 47 + Cost.verifierCost D (2 ^ 40))
   unfold deltaUni
@@ -235,6 +259,18 @@ end UniComplete.Prob
 
 /-- info: 'UniComplete.Prob.prEvent_staged5_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms UniComplete.Prob.prEvent_staged5_le
+
+/-- info: 'UniComplete.Prob.prEvent_tquery_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.Prob.prEvent_tquery_le
+
+/-- info: 'UniComplete.Prob.proverC_split' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.Prob.proverC_split
+
+/-- info: 'UniComplete.Prob.simulateQ_midU' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.Prob.simulateQ_midU
+
+/-- info: 'UniComplete.Prob.runAt_stagedU' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.Prob.runAt_stagedU
 
 /-- info: 'UniComplete.Prob.uniCompleteness_of_staged' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms UniComplete.Prob.uniCompleteness_of_staged
