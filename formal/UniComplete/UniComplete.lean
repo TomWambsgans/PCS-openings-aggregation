@@ -18,3 +18,4 @@ import UniComplete.AlgCRun
 import UniComplete.AlgCTerm
 import UniComplete.AlgCQuot
 import UniComplete.AlgCConstraint
+import UniComplete.AlgCRel
