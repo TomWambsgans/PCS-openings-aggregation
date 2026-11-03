@@ -231,6 +231,38 @@ python3 -I Review/UniSoundnessNumbers.py      # uniBound in exact rationals
 python3 -I Review/UniSoundnessNumbers128.py   # uniBound128 in exact rationals
 ```
 
+## π1-rec3: the recursion's inner verifier (knowledge soundness and completeness)
+
+π1-rec3 (`crates/leanvm_rec/SPEC-REC.md` §12 items 5, 7, 8, §1.4; `SPEC-POINTS.md`) is the univariate verifier with
+`α = (c, c², c⁴, c⁸)`, Flock's zerocheck coordinates as squares of one challenge, Flock's lincheck terminal walked
+(no `A0`, `B0` claims: three openings), and the batch two variables a round with narrow (160-bit) challenges. Its
+statement is `UniStatement/UniStatement/RecSecurity.lean`'s (`UniKnowledgeSoundnessRec3`, `UniCompletenessRec3`, over
+`Rec.lean`'s `verifyWithFs … .rec3 true`); the proofs are `UniSound/UniSound/Rec3*` (report: `UniSound/Rec3.lean`),
+`FlockSound/FlockSound/{Kronecker, FlockSq}.lean`, `FlockSound/FlockSoundUni/{Rec3*, Walk*}.lean` and
+`UniComplete/UniComplete/Rec3*`.
+
+```lean
+theorem UniSound.Rec3Ref.uniKnowledgeSoundness_closed_rec3_of_rows (hR : RowsSpec) (D : Deployment)
+    (hD : D.shape = reference) (hIv : D.programIv = programIv) :
+    UniKnowledgeSoundnessRec3 D (uniBound128 (((2 ^ 35 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞))) ∧
+      ∀ Q ≤ 2 ^ 64, uniBound128 (((2 ^ 35 : ℕ) : ℝ≥0∞) / (Fintype.card E : ℝ≥0∞)) Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64
+theorem UniComplete.Rec3.uniCompletenessRec3_end_of_rows (D : Deployment) (hD : D.shape = reference)
+    (hiv : D.programIv.length ≤ 2 ^ 16) (hR : FlockSound.Uni.RowsSpec) :
+    UniCompletenessRec3 D (uniProverRec3RP flockProve3H D) deltaRec3
+```
+
+`uniBound128 (2^35/|E|)` is `2^-64.494` at `Q = 2^64` (128.49 bits; `Review/UniRec3Numbers.py`): every round errs
+with probability at most `2^35/|E|`, the narrow pairs' `8 · 2^32/|E|` the largest (the bus `16 N/|E|`, Flock's squares
+`(2^22 − 1)/|E|`). `deltaRec3 < 2^-167` (about `2^-167.97`). Both take `RowsSpec` (the BLAKE2s circuit walk
+`blake2sRowValues` computes `A0 w`, `B0 w`, `FlockSoundUni/WalkAlg.lean`), from which the walk's lemma and its converse
+follow (`walkLemma_of_rows`, `walkLemmaConverse_of_rows`).
+
+```sh
+cd formal/EndToEnd   # on h1
+systemd-run --scope -p MemoryMax=10G lake build UniSound.Rec3 UniComplete.Rec3EndRows
+python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|E|, the rounds' bits
+```
+
 ## Layers
 
 | | What | Source | Status |
