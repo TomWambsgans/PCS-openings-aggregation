@@ -327,6 +327,26 @@ theorem sim_countBits (st : RecState) (heights : List Nat) :
       exact List.rel_append ((hI.imp fun _ _ h ↦ h.grow π iv publicInput stream hg'.inv.kinv
         (hgr1.trans hgr17)).imp fun _ _ h ↦ h.pgrow hg7 hst8) (List.Forall₂.cons hbs List.Forall₂.nil)
 
+/-! ## The end of the stream -/
+
+set_option linter.unusedSimpArgs false in
+/-- **`finish`**: the stream read to its end, or `StreamNotConsumed` (the channel unchanged). -/
+theorem finish_run (c : Chan) :
+    ((UniStatement.finish (m := Id)).run).run c =
+      if c.cursor = c.data.size then (.ok (), c) else (.error .streamNotConsumed, c) := by
+  unfold UniStatement.finish
+  simp only [ExceptT.run, StateT.run, bind, ExceptT.bind, ExceptT.mk, StateT.bind, get, getThe, MonadStateOf.get,
+    ExceptT.lift, liftM, monadLift, MonadLift.monadLift, pure, ExceptT.pure]
+  simp only [Functor.map, StateT.map, StateT.get, ExceptT.bindCont]
+  simp only [pure_bind]
+  rw [show (pure (Except.ok c, c) : Id (Except UniError Chan × Chan)) = (Except.ok c, c) from rfl]
+  dsimp only
+  by_cases h : c.cursor = c.data.size
+  · simp only [h, ↓reduceIte]
+    rfl
+  · simp only [h, ↓reduceIte]
+    rfl
+
 end Transcript
 
 end RecGraph.Sim
