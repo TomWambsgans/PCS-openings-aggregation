@@ -179,6 +179,14 @@ pub fn verify(
         });
         eq_low * on_lanes
     };
-    verifier::whir::verify_whir(&mut transcript, vars, placed, LOG_INV_RATE, ext(value), Digest(*root), &weight)?;
+    verifier::whir::verify_whir(
+        &mut transcript,
+        vars,
+        placed,
+        LOG_INV_RATE,
+        ext(value),
+        Digest(*root),
+        &weight,
+    )?;
     transcript.finish().map(|_| ())
 }

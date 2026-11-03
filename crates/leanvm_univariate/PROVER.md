@@ -80,7 +80,8 @@ random streams.
    - `q_flock` is leanVM's packed witness, as values.
    - The stack is `stacks::StackLayout::new` on the verifier's column list (rebuilt in `stack.rs`, and checked
      against `Reduced::stack_vars`).
-   - The commit is leanVM's WHIR (`pcs::whir::commit_tree_in`), rate 1/2, 64 lanes.
+   - The commit is leanVM's WHIR (`pcs::whir::commit`), rate 1/2, 64 lanes. Its codeword is kept for the opening
+     (`opening::commit_keeping_codeword`), as `C2`'s and the setup's.
 2. **Setup `F`.** The 16 tuple slots, interleaved (word `slot + 16 k`): slot 0 `SEP_BYTECODE`, 1 the pc `g^i`, 2
    zero, 3..16 leanVM's stacked bytecode, whose slots 0..2 are zero (checked). Also the addresses `g^i` on `V_lm`.
 3. **The challenges** `α, β, γ` (`KeccakWriter`, the contract's chain).
@@ -112,18 +113,33 @@ random streams.
 9. **`ρ`.** The prover runs `verifier::reduce` in weighted mode on the stream so far, which reads nothing after
    `ρ`, to learn each commitment's combined claim. The check `Σ_u W_k(u) S_k(u) = v_k` is made against the
    committed stacks.
-10. **The batching sumcheck** (`batch.rs`, behind one call).
-    - Each commitment's weight is written out on its stack (`dense_weight`: the verifier's `weight_at`, term by
-      term, one eq table per point).
+10. **The batching sumcheck** (`weight.rs`, `batch.rs`, behind one call).
+    - Each commitment's weight (the verifier's `weight_at`, term by term) is kept as pieces on the stack's blocks,
+      never written out at the stack's size (`Weight`): a column read at one point is `c · eq(p, ·)`, kept as
+      `eq(p_(<8), ·) ⊗ eq(p_(≥8), ·)` and shared by every column at that point and size; `q_flock`'s slots at one
+      point are the slots' coefficients `⊗ eq(y, ·)`; a column read at several points (the heap's 13) is one table
+      for its three limbs.
     - The ring switch's 64 Frobenius-twisted terms on `q_flock` read one eq table: on the cube
-      `eq(φ^k(P), u) = eq(P, u)^(2^k)`, so their sum is one GF(2)-linear map of it (24 byte tables).
-    - The rounds go low variable first. A stack shorter than the longest is folded as zero-padded, so its
-      zero-extension's `(1 + r_j)` factors fall out of the same folds.
+      `eq(φ^k(P), u) = eq(P, u)^(2^k)`, so their sum is one GF(2)-linear map `L` of it. After `j` rounds it is still
+      one map of `eq(P_(≥j), ·)`, its coefficients times `1 + r + P^(2^k)` a round. `crates/gf2_linear` evaluates
+      such maps eight elements at a time with GFNI (`vgf2p8affineqb`, one 8 × 8 bit block per lane), byte tables
+      otherwise.
+    - The rounds go low variable first. The first 6 read the stacks' `K`-words as they are, the folded stack
+      `C_j(m) = Σ_y eq(r_(<j), y) C(2^j m + y)` taken inside the sums: an eq piece's round is two inner products
+      of words with `E`-tables per 256 words (`dot_base`); a table's or the twisted piece's, its pair's two weights
+      against the pair's words, one mixed product a word, summed by the word's offset. Then every stack and
+      weight is written out folded (`2^21` words for `C1` and `C2`) and folded on, a round's fold and the next
+      round's sums in one pass.
+    - A stack shorter than the longest is folded as zero-padded, so its zero-extension's `(1 + r_j)` factors fall
+      out of the same folds.
     - The prover sends two scalars a round (`q(0)` and `q`'s `X^2` coefficient), then each stack's value at its
       part of the end point.
+    - The combined-claims check (`Config::check`, a test's) is its own phase.
 11. **The openings** (`opening.rs`).
     - One point claim per commitment, proven with leanVM's WHIR (`recursive_prover_with_lane_tensors`) and checked
       with its verifier (`verifier::whir::verify_whir`), in the transcript shape of `crates/quotient/src/opening.rs`.
+    - The rows the first queries open are read from the commitment's kept codeword (freed after its opening), not
+      encoded again from the stack: the same proof.
     - WHIR commits only the lanes that carry data. Its prover needs a weight that vanishes on the absent lanes, so
       the claim's `eq(point, ·)` is restricted to the committed lanes. That is the same claim, since the stack is
       zero there.

@@ -38,17 +38,26 @@ fn opening_at_the_reference_shape() {
         } else {
             opening::commit(&words, vars, placed)
         };
-        println!("  commit (codeword kept: {keep}) {:.3} s", started.elapsed().as_secs_f64());
+        println!(
+            "  commit (codeword kept: {keep}) {:.3} s",
+            started.elapsed().as_secs_f64()
+        );
         let started = std::time::Instant::now();
         let proof = opening::open(&words, &committed, &layout, &point, value);
-        println!("  open (codeword kept: {keep}) {:.3} s", started.elapsed().as_secs_f64());
+        println!(
+            "  open (codeword kept: {keep}) {:.3} s",
+            started.elapsed().as_secs_f64()
+        );
         opening::verify(&committed.root, &layout, &point, value, &opening::wire_proof(&proof)).expect("verifies");
         proofs.push(proof);
     }
     let same = |a: &fiat_shamir::transcript::Proof, b: &fiat_shamir::transcript::Proof| {
         a.stream == b.stream
             && a.merkle.len() == b.merkle.len()
-            && a.merkle.iter().zip(&b.merkle).all(|(x, y)| x.leaf_data == y.leaf_data && x.sibling_hashes == y.sibling_hashes)
+            && a.merkle
+                .iter()
+                .zip(&b.merkle)
+                .all(|(x, y)| x.leaf_data == y.leaf_data && x.sibling_hashes == y.sibling_hashes)
     };
     assert!(same(&proofs[0], &proofs[1]), "the same proof");
 }

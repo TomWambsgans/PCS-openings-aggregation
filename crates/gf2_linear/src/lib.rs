@@ -14,7 +14,13 @@ pub struct Linear<const N: usize> {
     tables: Vec<[[F192; N]; 256]>,
     /// Map `n`'s blocks from input byte `i` to output bytes `8h..8h + 8`, as `vgf2p8affineqb` matrices (one qword per
     /// output byte): `affine[n][i][h]`.
-    #[cfg(all(target_arch = "x86_64", target_feature = "gfni", target_feature = "avx512f", target_feature = "avx512bw", target_feature = "avx512vbmi"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "gfni",
+        target_feature = "avx512f",
+        target_feature = "avx512bw",
+        target_feature = "avx512vbmi"
+    ))]
     affine: Vec<[[[u64; 8]; 3]; 24]>,
 }
 
@@ -49,7 +55,13 @@ impl<const N: usize> Linear<N> {
         }
         Self {
             tables,
-            #[cfg(all(target_arch = "x86_64", target_feature = "gfni", target_feature = "avx512f", target_feature = "avx512bw", target_feature = "avx512vbmi"))]
+            #[cfg(all(
+                target_arch = "x86_64",
+                target_feature = "gfni",
+                target_feature = "avx512f",
+                target_feature = "avx512bw",
+                target_feature = "avx512vbmi"
+            ))]
             affine: (0..N).map(|n| affine_blocks(&images, n)).collect(),
         }
     }
@@ -72,12 +84,24 @@ impl<const N: usize> Linear<N> {
     /// The maps at eight elements.
     #[inline]
     pub fn at8(&self, x: &[F192; 8]) -> [[F192; 8]; N] {
-        #[cfg(all(target_arch = "x86_64", target_feature = "gfni", target_feature = "avx512f", target_feature = "avx512bw", target_feature = "avx512vbmi"))]
+        #[cfg(all(
+            target_arch = "x86_64",
+            target_feature = "gfni",
+            target_feature = "avx512f",
+            target_feature = "avx512bw",
+            target_feature = "avx512vbmi"
+        ))]
         {
             // SAFETY: the kernel's target features are enabled at compile time.
             unsafe { self.at8_gfni(x) }
         }
-        #[cfg(not(all(target_arch = "x86_64", target_feature = "gfni", target_feature = "avx512f", target_feature = "avx512bw", target_feature = "avx512vbmi")))]
+        #[cfg(not(all(
+            target_arch = "x86_64",
+            target_feature = "gfni",
+            target_feature = "avx512f",
+            target_feature = "avx512bw",
+            target_feature = "avx512vbmi"
+        )))]
         {
             let each: [[F192; N]; 8] = std::array::from_fn(|e| self.at(x[e]));
             std::array::from_fn(|n| std::array::from_fn(|e| each[e][n]))
@@ -87,7 +111,13 @@ impl<const N: usize> Linear<N> {
     /// [`Self::at8`] by `vgf2p8affineqb`: the eight elements' limbs transposed so that qword lane `l` of limb `h`'s
     /// register holds byte `l` of the eight elements, then per input byte `i` (broadcast) and output limb `h`, one
     /// affine product by the blocks from byte `i` to the limb's eight bytes; the sums transposed back.
-    #[cfg(all(target_arch = "x86_64", target_feature = "gfni", target_feature = "avx512f", target_feature = "avx512bw", target_feature = "avx512vbmi"))]
+    #[cfg(all(
+        target_arch = "x86_64",
+        target_feature = "gfni",
+        target_feature = "avx512f",
+        target_feature = "avx512bw",
+        target_feature = "avx512vbmi"
+    ))]
     #[inline]
     unsafe fn at8_gfni(&self, x: &[F192; 8]) -> [[F192; 8]; N] {
         use std::arch::x86_64::*;
@@ -136,7 +166,13 @@ impl<const N: usize> Linear<N> {
 
 /// Map `n`'s blocks as `vgf2p8affineqb` matrices: from input byte `i`, the qword for output byte `8h + l` has, in its
 /// byte `7 - k`, the input bits `m` that output bit `k` reads.
-#[cfg(all(target_arch = "x86_64", target_feature = "gfni", target_feature = "avx512f", target_feature = "avx512bw", target_feature = "avx512vbmi"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    target_feature = "gfni",
+    target_feature = "avx512f",
+    target_feature = "avx512bw",
+    target_feature = "avx512vbmi"
+))]
 fn affine_blocks<const N: usize>(images: &[[F192; N]], n: usize) -> [[[u64; 8]; 3]; 24] {
     let bit = |x: F192, b: usize| ([x.c0, x.c1, x.c2][b / 64] >> (b % 64)) & 1;
     std::array::from_fn(|i| {

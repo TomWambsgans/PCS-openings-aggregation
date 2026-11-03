@@ -104,7 +104,11 @@ enum Shape {
     /// A table, and the buffer it folds into.
     Dense { table: Vec<F192>, spare: Vec<F192> },
     /// `Σ_k c_k eq(point_(≥bound), ·)^(2^k)`.
-    Twisted { c: Vec<F192>, point: Vec<F192>, bound: usize },
+    Twisted {
+        c: Vec<F192>,
+        point: Vec<F192>,
+        bound: usize,
+    },
 }
 
 impl Shape {
@@ -139,10 +143,19 @@ struct Piece {
 enum Prep {
     /// The inner products' tables over `2^(a + j)` words: `ga` takes `low[2l] e(y)` on the pair's low half (0 on
     /// the other), `gb` takes `(low[2l] + low[2l + 1]) e(y)` on both.
-    Factored { ga: Table, gb: Table, span: usize },
+    Factored {
+        ga: Table,
+        gb: Table,
+        span: usize,
+    },
     Dense,
     /// `eq(point_(>j), i)` as `lo[i mod 2^bits] hi[i >> bits]`; the map's pair `(W(2i), W(2i) + W(2i + 1))` of it.
-    Twisted { lo: Vec<F192>, hi: Vec<F192>, bits: usize, map: Linear<2> },
+    Twisted {
+        lo: Vec<F192>,
+        hi: Vec<F192>,
+        bits: usize,
+        map: Linear<2>,
+    },
     Scalar(F192),
 }
 
@@ -175,11 +188,18 @@ fn eq8(lo: &[F192], hi: &[F192], bits: usize, first: usize, end: usize) -> [F192
     let mask = (1 << bits) - 1;
     let at = |k: usize| {
         let i = first + k;
-        if i < end { (lo[i & mask], hi[i >> bits]) } else { (F192::ZERO, F192::ZERO) }
+        if i < end {
+            (lo[i & mask], hi[i >> bits])
+        } else {
+            (F192::ZERO, F192::ZERO)
+        }
     };
     let pairs: [(F192, F192); 8] = std::array::from_fn(at);
     let low = mul4(std::array::from_fn(|k| pairs[k].0), std::array::from_fn(|k| pairs[k].1));
-    let high = mul4(std::array::from_fn(|k| pairs[4 + k].0), std::array::from_fn(|k| pairs[4 + k].1));
+    let high = mul4(
+        std::array::from_fn(|k| pairs[4 + k].0),
+        std::array::from_fn(|k| pairs[4 + k].1),
+    );
     std::array::from_fn(|k| if k < 4 { low[k] } else { high[k - 4] })
 }
 
@@ -229,7 +249,11 @@ impl Weight {
     /// The weight of `claim` on the stack `layout` places.
     pub fn new(claim: &Combined<E>, layout: &StackLayout) -> Self {
         let basis = [F192::ONE, F192::new(0, 1, 0), F192::new(0, 0, 1)];
-        let points: Vec<Vec<F192>> = claim.points.iter().map(|p| p.iter().map(|&x| from_v(x)).collect()).collect();
+        let points: Vec<Vec<F192>> = claim
+            .points
+            .iter()
+            .map(|p| p.iter().map(|&x| from_v(x)).collect())
+            .collect();
         // Per column: its terms by point, untwisted (point, coefficient), twisted (point, [(twist, coefficient)]), and
         // q_flock's slots (point, the slots' coefficients).
         #[derive(Default)]
@@ -276,7 +300,9 @@ impl Weight {
             let mut twisted = Vec::new();
             for (p, list) in std::mem::take(&mut terms.twisted) {
                 if list.iter().all(|&(k, _)| k == 0) {
-                    terms.plain.push((p, list.iter().fold(F192::ZERO, |acc, &(_, c)| acc + c)));
+                    terms
+                        .plain
+                        .push((p, list.iter().fold(F192::ZERO, |acc, &(_, c)| acc + c)));
                 } else {
                     twisted.push((p, list));
                 }
@@ -432,7 +458,11 @@ impl Weight {
         let mut tasks = Vec::new();
         for (index, piece) in self.pieces.iter().enumerate() {
             let (count, per) = units(piece);
-            tasks.extend((0..count).step_by(per).map(|start| (index, start, (start + per).min(count))));
+            tasks.extend(
+                (0..count)
+                    .step_by(per)
+                    .map(|start| (index, start, (start + per).min(count))),
+            );
         }
         tasks
     }
@@ -563,7 +593,10 @@ impl Weight {
                     (Prep::Scalar(value), _) => {
                         // The block is one word of the folded stack, at its offset's position.
                         let position = piece.offset >> j;
-                        let (own, other) = (folded.dot_clipped(words, position << j), folded.dot_clipped(words, (position ^ 1) << j));
+                        let (own, other) = (
+                            folded.dot_clipped(words, position << j),
+                            folded.dot_clipped(words, (position ^ 1) << j),
+                        );
                         let s = piece.scale * *value;
                         let a = if position & 1 == 0 { s * own } else { F192::ZERO };
                         return (a, s * (own + other));
@@ -656,7 +689,12 @@ impl Weight {
             assert!(start >= cursor, "the blocks are disjoint");
             let (block, tail) = std::mem::take(&mut rest)[start - cursor..].split_at_mut(size);
             (rest, cursor) = (tail, start + size);
-            tasks.extend(block.chunks_mut(CHUNK).enumerate().map(|(k, chunk)| (chunk, b, k * CHUNK)));
+            tasks.extend(
+                block
+                    .chunks_mut(CHUNK)
+                    .enumerate()
+                    .map(|(k, chunk)| (chunk, b, k * CHUNK)),
+            );
         }
         parallel::for_each_mut(&mut tasks, |_, (chunk, b, first)| {
             let first = *first;
@@ -812,7 +850,8 @@ mod tests {
             .map(|_| (0..12).map(|_| super::super::poly::to_v(rng.e())).collect())
             .collect();
         let mut terms = Vec::new();
-        let mut term = |column: Column, p: usize, twist: u8| terms.push((column, p, twist, super::super::poly::to_v(rng.e())));
+        let mut term =
+            |column: Column, p: usize, twist: u8| terms.push((column, p, twist, super::super::poly::to_v(rng.e())));
         term(Column::Table { table: 0, column: 0 }, 0, 0);
         for p in 0..3 {
             term(Column::Heap, p, 0);
@@ -836,7 +875,10 @@ mod tests {
         let words: Vec<F64> = (0..len).map(|_| F64(rng.u64())).collect();
         let mut dense = reference(&claim, &layout, len);
         let mut weight = Weight::new(&claim, &layout);
-        let direct = dense.iter().zip(&words).fold(F192::ZERO, |acc, (w, &k)| acc + w.mul_base(k));
+        let direct = dense
+            .iter()
+            .zip(&words)
+            .fold(F192::ZERO, |acc, (w, &k)| acc + w.mul_base(k));
         assert_eq!(weight.sum(&words), direct);
         let mut stack: Vec<F192> = words.iter().map(|&k| F192::from(k)).collect();
         let mut e = vec![F192::ONE];
@@ -855,7 +897,11 @@ mod tests {
             weight.fold(r);
             dense = fold(&dense, r);
             stack = fold(&stack, r);
-            e = e.iter().map(|&x| x * (F192::ONE + r)).chain(e.iter().map(|&x| x * r)).collect();
+            e = e
+                .iter()
+                .map(|&x| x * (F192::ONE + r))
+                .chain(e.iter().map(|&x| x * r))
+                .collect();
         }
     }
 }

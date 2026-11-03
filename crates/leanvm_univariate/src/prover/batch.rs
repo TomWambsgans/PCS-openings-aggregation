@@ -105,10 +105,15 @@ impl Folded {
         self.sums = if half == 1 {
             (w_out[0] * c_out[0], w_out[0] * c_out[0])
         } else {
-            let (a, b) = parts.iter().fold((F192Unreduced::ZERO, F192Unreduced::ZERO), |acc, p| (acc.0 ^ p.2.0, acc.1 ^ p.2.1));
+            let (a, b) = parts.iter().fold((F192Unreduced::ZERO, F192Unreduced::ZERO), |acc, p| {
+                (acc.0 ^ p.2.0, acc.1 ^ p.2.1)
+            });
             (a.reduce(), b.reduce())
         };
-        self.spare = (std::mem::replace(&mut self.w, w_out), std::mem::replace(&mut self.c, c_out));
+        self.spare = (
+            std::mem::replace(&mut self.w, w_out),
+            std::mem::replace(&mut self.c, c_out),
+        );
         self.len = half;
     }
 }
@@ -160,7 +165,9 @@ pub fn prove(
         pending.map(|p| std::array::from_fn(|t| p.tables[t].iter().map(|&x| from_v(x)).collect()));
     let rounds = pending.map_or(0, |p| p.rounds());
     if rounds > vars {
-        return Err(format!("the matrices' reduction has {rounds} variables, the batch {vars}"));
+        return Err(format!(
+            "the matrices' reduction has {rounds} variables, the batch {vars}"
+        ));
     }
     // Past its variables, the matrices' sum is its value times Π (1 + r_j).
     let mut matrix_value = F192::ZERO;
@@ -204,7 +211,11 @@ pub fn prove(
             for weight in &mut weights {
                 weight.fold(r);
             }
-            e = e.iter().map(|&x| x * (F192::ONE + r)).chain(e.iter().map(|&x| x * r)).collect();
+            e = e
+                .iter()
+                .map(|&x| x * (F192::ONE + r))
+                .chain(e.iter().map(|&x| x * r))
+                .collect();
         } else {
             for (k, f) in folded.iter_mut().enumerate() {
                 f.fold(r);
