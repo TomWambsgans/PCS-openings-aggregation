@@ -63,7 +63,7 @@ over the permutation, the permutation itself for WHIR's proofs of work), with Fl
 | `3·2^17/2^192` | `y(t)` is a proper prefix of another point on `C1` (≤ `2·2^17` such `t`) | `ProbBadT.badTCard_reference` |
 | `2^-200` | `t`'s query is not fresh (below `73·2^28/2^256`) | `ProbTFresh.tQueryFresh_reference` |
 | `2^-304` | an opening's proof of work fails for every nonce below `nonceFuel` | `Core.coreFailsOnlyAtPow`, `ProbGrind` |
-| `rpmError (2^48)` | the permutation as two random oracles, `≤ 2^48` blocks (prover `≤ 3·2^46`) | `FlockCost`, `ProverCost` |
+| `rpmError (2^48)` | the permutation as two random oracles, `≤ 2^48` blocks (prover `≤ 3·2^46`): `(2^48)²/2^508` | `FlockCost`, `ProverCost` |
 
 Off the bad events the honest proof is accepted (`Core.coreAccepts_of`, `Core.accepts_of_trace`): the verifier's run
 synchronises with the prover's stream (`SyncVerifier.runWithH_syncs`), every relation at `t` holds and the batch's
@@ -86,8 +86,8 @@ batch's forms, `¬ BadT` as the slot condition, `C2`'s terms covering their colu
   constraint quotient (every trace). Counts below a table's `leastRows`, which F1 allows (any count `≤ 2^h`), cannot
   be proved honestly at that shape class; heights `29–31`, which `Shape.validate` allows, exceed the prover's
   interpolation (the `28`-vector basis), and such stacks exceed WHIR's `2^28` words anyway.
-* **A completeness gap at `t`.** If `y(t)` is a proper prefix of another point on `C1`, `combine` merges the slot
-  terms with that point's and the honest proof is rejected (the Rust has the same: `dense_weight` truncates,
+* **A completeness gap at `t`.** If `y(t)` is a proper prefix of another point on `C1`, `combine` renumbers the slot
+  terms and the honest proof is rejected (the Rust has the same: `dense_weight` truncates,
   `weight_at` does not). At most `2·2^17` such `t` per Flock point: the `3·2^17/2^192` term.
 * **`t`'s query is `64` bytes**, a Merkle node's length, so its freshness is not by length; it is proved by the chain
   of challenges and `C2`'s tree never asking a `32`-byte input (`ProbTFresh`).
