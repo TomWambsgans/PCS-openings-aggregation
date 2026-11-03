@@ -15,31 +15,40 @@ for every measured workload but `xmss32`:
 * **`UniShapes`** (the five layout words name `24 … 28` variables) and **`LayoutVarsSmall`**: at the
   reference, `C1`, `C2` and the setup have `27`, `27` and `24` variables (`layoutVars_reference`), and
   `A0`, `B0` have `28` (`matrixVars`), so the five words name `[27, 27, 24, 28, 28]`
-  (`wv_reference`). Of the measured workloads, `xmss128`, `xmss400`, `xmss1000`, `xmss1290` and
-  `xmss2000` satisfy both (`uniShapes_workloads`); **`xmss32` does not**: its `C1` has `22` variables
-  (`not_uniShapes_xmss32`), below the large WHIR shapes' `24`.
+  (`wv_reference`; `uniShapes_reference`, `layoutVarsSmall_reference`). The measured workloads'
+  stacks have `[22, 24, 24]`, `[24, 25, 24]`, `[26, 27, 24]`, `[27, 27, 24]`, `[27, 28, 24]`,
+  `[28, 28, 24]` variables (`layoutVars_workloads`): `xmss128`, `xmss400`, `xmss1000`, `xmss1290` and
+  `xmss2000` satisfy both facts (`uniShapes_workloads`); **`xmss32` does not**: its `C1` has `22`
+  variables (`not_uniShapes_xmss32`), below the large WHIR shapes' `24`, so a deployment at that shape
+  needs a WHIR shape this proof does not have.
 * **`UniIv`** for the reference program IV (`32` bytes): `uniIv_of`.
-* **`hnQ`**: the main line's chain makes `41 + 2κ + V` queries (`nQ_flock`), at most `2^10` for
-  `2κ + V ≤ 983` (`hnQ_flock`; `κ ≤ 32`, `V ≤ 64` in `hnQ_flock'`); **`hnv`**: every round reads at
-  most `2^30` scalars, for every `κ` and `V` (`hnv_flock`; the values at `t` are at most `122`,
-  `valsCount_le`).
-* **At the reference**: `κ = 18` (`hκ_reference`), `V = 27` (`varsOf_reference`), and the
-  Fiat–Shamir layer from the three bridge facts alone (`fsLayer_reference`).
+* **`hnQ`**: the main line's chain makes `41 + 2κ + V` queries (`nQ_flock`, for every number of values
+  at `t`), at most `2^10` for `2κ + V ≤ 983` (`hnQ_flock`; `κ ≤ 32`, `V ≤ 64` in `hnQ_flock'`; `86` at
+  the reference). **`hnv`**: every round reads at most `2^30` scalars, for every `κ` and `V`
+  (`hnv_flock`; Flock's rounds at most `64`, the values at `t` at most `122`, `valsCount_le`, an upper
+  bound: which fingerprints are sent depends on `E` coefficients, so `valsCount` is not evaluated).
+* **At the reference**: `κ = 18` (`hκ_reference`), `V = 27` (`varsOf_reference`). Beyond the five facts:
+  Flock's round errors are at most `(15 + κ)/|E|` (`err_flock_le`, so `hFl_flock`), and with them
+  `fsLayer_reference` (the Fiat–Shamir layer from the three bridge facts) and
+  `uniKnowledgeSoundness_reference` (the end theorem with `hκ`, `LayoutVarsSmall`, `hFl` and the
+  Fiat–Shamir layer's numbers discharged).
 
 **How the stacks' variables are computed** without evaluating a layout in the kernel (`List.mergeSort`
-is well-founded recursion, and `E`'s arithmetic does not reduce there): a stack's variables are
-`max (log2Ceil (max W 2)) 15` of the words `W` its columns fill (`stackLayout_vars`; the sort only
-permutes the pieces). `C1`'s and the setup's words are a closed sum of the shape's numbers
-(`c1Cols`, `setupCols`). `C2`'s are `6 · 2^h + 3`, the constraint quotient's chunks and each used heap
-block's leaf quotient's chunks (`c2Words`, `heap_blocks_words`: the heap's sort permutes the used
-blocks, the unused ones have no quotient). A table's leaf degree reads its flushes' degrees
-(`tableDegrees`), which test `E` coefficients against zero; they are bounded instead, below by
-`1 + #flushes` (every tuple has degree at least `1`) and above by the degrees of the monomials alone
-(`tupleDegreeU`, no coefficient read), and the leaf quotient's words are bounded by their least and
-greatest over that range (`leafLo`, `leafHi`, `c2Lo`, `c2Hi`). Every closed number is then a small
-`decide +kernel` (the heights, the widths, the chunks, the bounds); `layoutsOf`, `layoutWords`,
-`Shape.heap` are never evaluated whole. At the reference the bounds give `2^26 < c2Lo ≤ c2Hi ≤ 2^27`,
-so `C2`'s `27` is exact (its words are `109,117,443`).
+is well-founded recursion, and `E`'s arithmetic and equality do not reduce there): a stack's variables
+are `max (log2Ceil (max W 2)) 15` of the words `W` its columns fill (`stackLayout_vars`; the sort only
+permutes the pieces). `C1`'s and the setup's words are a closed sum of the shape's numbers (`c1Cols`,
+`setupCols`; `102,891,520` and `10,485,760` at the reference). `C2`'s are `6 · 2^h + 3`, the
+constraint quotient's chunks and each used heap block's leaf quotient's chunks (`c2Words`,
+`heap_blocks_words`: the heap's sort permutes the used blocks, the unused ones have no quotient). A
+table's leaf degree reads its flushes' degrees (`tableDegrees`), which test `E` coefficients against
+zero; they are bounded instead, below by `1 + #flushes` (every tuple has degree at least `1`) and
+above by the degrees of the monomials alone (`tupleDegreeU`, no coefficient read), and a leaf
+quotient's words by their least and greatest over that range (`leafLo`, `leafHi`; `c2Lo`, `c2Hi`).
+Every closed number is then a small `decide +kernel` (the heights, the widths, the counters, the
+chunks, the bounds; each well under a second); `layoutsOf`, `layoutWords` and `Shape.heap` are never
+evaluated, and `layoutWords` stays irreducible here. At every measured shape `C2`'s bounds fall in one
+interval `(2^(k−1), 2^k]`, so its variables are exact: at the reference `93,388,803 ≤ W ≤ 109,117,443`
+(`c2Lo`, `c2Hi`; the upper bound is the words themselves by `#eval`).
 -/
 
 namespace FlockSound.Uni
@@ -543,10 +552,12 @@ theorem c1Words_reference : colsWords (c1Cols reference) = 102891520 := by decid
 /-- The setup's words at the reference: `2^23 + 2^21`. -/
 theorem setupWords_reference : colsWords (setupCols reference) = 10485760 := by decide +kernel
 
-/-- `C2`'s words at the reference lie in `(2^26, 2^27]` (`#eval`: `109,117,443`). -/
-theorem c2Words_reference : 2 ^ 26 < colsWords reference.c2Columns ∧ colsWords reference.c2Columns ≤ 2 ^ 27 := by
-  have h : 2 ^ 26 < c2Lo reference ∧ c2Hi reference ≤ 2 ^ 27 := by decide +kernel
-  exact ⟨h.1.trans_le (c2Lo_le _), (le_c2Hi _).trans h.2⟩
+/-- `C2`'s words at the reference: between `93,388,803` and `109,117,443` (`c2Lo`, `c2Hi`), inside
+`(2^26, 2^27]` (`#eval`: `109,117,443`). -/
+theorem c2Words_reference :
+    93388803 ≤ colsWords reference.c2Columns ∧ colsWords reference.c2Columns ≤ 109117443 := by
+  have h : c2Lo reference = 93388803 ∧ c2Hi reference = 109117443 := by decide +kernel
+  exact ⟨h.1 ▸ c2Lo_le _, h.2 ▸ le_c2Hi _⟩
 
 theorem varsBounds_reference : (commitments.map fun c ↦ (varsLo reference c, varsHi reference c)) =
     [(27, 27), (27, 27), (24, 24)] := by decide +kernel
