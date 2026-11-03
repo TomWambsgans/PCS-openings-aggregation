@@ -167,4 +167,71 @@ theorem pending_claim_eq (k : ℕ) (hk : k ≤ 6) (zSkip : Option E) (low chiIn 
   linear_combination (epow α 2 * LeanVM.Protocol.Verifier.eqEval chiIn χs.reverse *
     ∑ y ∈ range 64, lowW.getD y 0 * s.getD y 0 + eqB χs.reverse 8 * epow α 3 * s.getD 0 0) * two_eq_zero_E
 
+/-- **The tables' product sum** is `Σ_y s_y Mf(y)`. -/
+theorem tables_sum_eq (k : ℕ) (hk : k ≤ 6) (zSkip : Option E) (low chiIn cip : List E) (α : E) (s : List E)
+    (hskip : (rowLowWeights zSkip low).1.length = 2 ^ k) (hlow : low.length = 6 - k) (hin : chiIn.length = 8)
+    (hcip : cip.length = 8) :
+    ∑ i ∈ range (2 ^ (k + 6)), (sliced k low chiIn cip α).getD i 0 *
+        (skipTable k (rowLowWeights zSkip low).1).getD i 0 * (sliceTable k s).getD i 0 =
+      ∑ y ∈ range 64, s.getD y 0 * Mf (rowLowWeights zSkip low).2 chiIn cip α y := by
+  set lowW := (rowLowWeights zSkip low).2 with hlowW
+  set skip := (rowLowWeights zSkip low).1 with hskipdef
+  have hlc : (low ++ chiIn).length = 14 - k := by rw [List.length_append, hlow, hin]; omega
+  have h14 : 2 ^ (k + (14 - k)) = 2 ^ 14 := by rw [show k + (14 - k) = 14 by omega]
+  rw [sum_split k 6]
+  refine sum_congr rfl fun y hy ↦ ?_
+  have hy' : y < 64 := by simpa using mem_range.mp hy
+  -- The tables' entries at `x + 2^k y`.
+  have hi : ∀ x < 2 ^ k, x + 2 ^ k * y < 2 ^ k * kBits := fun x hx ↦ by
+    unfold kBits
+    calc x + 2 ^ k * y < 2 ^ k + 2 ^ k * y := by omega
+      _ = 2 ^ k * (y + 1) := by ring
+      _ ≤ 2 ^ k * 64 := Nat.mul_le_mul_left _ hy'
+  have hL : ∀ x < 2 ^ k, (skipTable k skip).getD (x + 2 ^ k * y) 0 = skip.getD x 0 := fun x hx ↦ by
+    rw [skipTable, E2ECompleteness.getD_ofFn' _ (hi x hx)]
+    simp only [Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt hx]
+  have hS : ∀ x < 2 ^ k, (sliceTable k s).getD (x + 2 ^ k * y) 0 = s.getD y 0 := fun x hx ↦ by
+    rw [sliceTable, E2ECompleteness.getD_ofFn' _ (hi x hx)]
+    simp only [Nat.add_mul_div_left _ _ (Nat.two_pow_pos k), Nat.div_eq_of_lt hx, zero_add]
+  -- `P(row) = Σ_h eq(chi_in', h) (A + α B)[row][y + 64 h]`.
+  set P : ℕ → E := fun row ↦ ∑ h ∈ range (2 ^ 8), eqB cip h *
+    (matE true row (y + 2 ^ 6 * h) + α * matE false row (y + 2 ^ 6 * h)) with hP
+  have hG : ∀ x < 2 ^ k, (sliced k low chiIn cip α).getD (x + 2 ^ k * y) 0 =
+      ∑ row' ∈ range (2 ^ (14 - k)), eqB (low ++ chiIn) row' * P (x + 2 ^ k * row') := fun x hx ↦
+    sliced_getD k (by omega) low chiIn cip α hlc hcip hx hy'
+  calc ∑ x ∈ range (2 ^ k), (sliced k low chiIn cip α).getD (x + 2 ^ k * y) 0 *
+          (skipTable k skip).getD (x + 2 ^ k * y) 0 * (sliceTable k s).getD (x + 2 ^ k * y) 0
+      = s.getD y 0 * ∑ x ∈ range (2 ^ k), ∑ row' ∈ range (2 ^ (14 - k)),
+          rowW lowW chiIn (x + 2 ^ k * row') * P (x + 2 ^ k * row') := by
+        rw [mul_sum]
+        refine sum_congr rfl fun x hx ↦ ?_
+        have hx' := mem_range.mp hx
+        rw [hG x hx', hL x hx', hS x hx', mul_sum, sum_mul, sum_mul]
+        refine sum_congr rfl fun row' hrow' ↦ ?_
+        rw [rowW_split zSkip low chiIn k hk hskip hlow hin hx' (mem_range.mp hrow')]
+        ring
+    _ = s.getD y 0 * ∑ row ∈ range (2 ^ 14), rowW lowW chiIn row * P row := by
+        rw [sum_comm, ← h14, sum_split k (14 - k)]
+    _ = s.getD y 0 * Mf lowW chiIn cip α y := by
+        refine congrArg (s.getD y 0 * ·) ?_
+        rw [Mf]
+        simp only [hP, mul_sum]
+        rw [sum_comm]
+        refine sum_congr rfl fun h _ ↦ sum_congr rfl fun row _ ↦ ?_
+        ring
+
+/-- **The pending sum, purely**: given the lincheck's last claim, the tables' product sum is `Pending.new`'s
+claim. -/
+theorem pendingSum_pure (k : ℕ) (hk : k ≤ 6) (zSkip : Option E) (low chiIn χs : List E) (α rLc : E) (s : List E)
+    (hskip : (rowLowWeights zSkip low).1.length = 2 ^ k) (hlow : low.length = 6 - k) (hin : chiIn.length = 8)
+    (hχ : χs.length = 8) (hs : s.length = 64)
+    (hrLc : rLc = ∑ y ∈ range 64,
+      (χs.foldl foldHigh (lincheckWeights (rowWeightsOf (rowLowWeights zSkip low).2 chiIn) α)).getD y 0 *
+        s.getD y 0) :
+    ∑ i ∈ range (2 ^ (k + 6)), (sliced k low chiIn χs.reverse α).getD i 0 *
+        (skipTable k (rowLowWeights zSkip low).1).getD i 0 * (sliceTable k s).getD i 0 =
+      (Pending.new zSkip low chiIn χs.reverse α rLc (some s)).claim := by
+  rw [tables_sum_eq k hk zSkip low chiIn χs.reverse α s hskip hlow hin (by rw [List.length_reverse, hχ]),
+    pending_claim_eq k hk zSkip low chiIn χs α rLc s hskip hlow hin hχ hs hrLc]
+
 end UniComplete.FlockP
