@@ -46,6 +46,10 @@ theorem PH.bind' {α β : Type} {p : Prog α} {k : α → Prog β} {st : RecStat
 theorem PH.psim {α β : Type} {p : Prog α} {st : RecState} {b : β} {R : RecState → α → β → Prop}
     (h : PH p st (fun st' a ↦ R st' a b)) : PSim st p b R := h
 
+/-- `Sim.Chan`'s `PSim` as `PH`. -/
+theorem PSim.ph {α β : Type} {p : Prog α} {st : RecState} {b : β} {R : RecState → α → β → Prop}
+    (h : PSim st p b R) : PH p st (fun st' a ↦ R st' a b) := h
+
 /-- `Id`'s bind is application (for `rw`, keeping the kernel off the loops). -/
 theorem idBind {α β : Type} (x : Id α) (f : α → Id β) : x >>= f = f x := rfl
 
@@ -264,9 +268,6 @@ theorem RpA.ofFn {st : RecState} {a : Array Sym} {n : ℕ} {g : Fin n → E} (hs
   simp only [Array.getD_eq_getD_getElem?, Array.getElem?_ofFn, hi]
   have := h i hi
   simpa [Array.getD_eq_getD_getElem?] using this
-
-theorem RpL.length {st : RecState} {l : List Sym} {xs : List E} (h : RpL π iv publicInput stream st l xs) :
-    l.length = xs.length := List.Forall₂.length_eq h
 
 /-! ## The arithmetic operations -/
 
