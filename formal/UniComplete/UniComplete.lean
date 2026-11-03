@@ -17,3 +17,4 @@ import UniComplete.AlgCChunks
 import UniComplete.AlgCRun
 import UniComplete.AlgCTerm
 import UniComplete.AlgCQuot
+import UniComplete.AlgCConstraint
