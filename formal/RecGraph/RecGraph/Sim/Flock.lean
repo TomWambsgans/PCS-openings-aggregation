@@ -139,7 +139,7 @@ theorem forall₂_some {st : RecState} {l : List Sym} {L : List E} (h : RpL' st 
 theorem fixedChallenges_length : Flock.fixedChallenges.length = 7 := rfl
 
 /-- `FsShape::draw` at `.rec3`: one challenge, its squares. -/
-theorem sim_drawRun_rec3 (st : RecState) (count : ℕ) (hc : count ≠ 0) :
+theorem sim_drawRun_rec3B (st : RecState) (count : ℕ) (hc : count ≠ 0) :
     Sim π iv publicInput stream st (Pi1.drawRun .rec3 count) (UniStatement.drawRun (Fp π) .rec3 count) 0 1
       (fun st' a b ↦ RpL' st' a b ∧ b.length = count) := by
   unfold Pi1.drawRun UniStatement.drawRun
@@ -169,7 +169,7 @@ theorem zerocheck_sim0 (st : RecState) :
         rw [Array.toList_push, take_succ_getElem _ _ hj, List.map_append]
         exact List.rel_append (forall₂_optRp_grow hs'.good hs''.grows hacc) (List.Forall₂.cons hd List.Forall₂.nil)
       · rwa [List.take_length] at h) fun st1 acc hg1 hgr1 hacc ↦ ?_
-  refine Sim.bind (sim_drawRun_rec3 st1 (32 - 3 - Flock.nFixed) (by decide))
+  refine Sim.bind (sim_drawRun_rec3B st1 (32 - 3 - Flock.nFixed) (by decide))
     fun st2 drawn sampled hg2 hgr2 ⟨hdr, hsl⟩ ↦ ?_
   refine Sim.bind (sim_nextScalars π iv publicInput stream st2 (2 ^ 3)) fun st3 cs cU hg3 hgr3 hcs ↦ ?_
   refine Sim.bind (sim_sample π iv publicInput stream st3) fun st4 z zU hg4 hgr4 ⟨hz, _⟩ ↦ ?_
