@@ -18,6 +18,7 @@ pub mod circuit;
 pub mod count;
 pub mod eval;
 pub mod fs;
+pub mod pi2;
 
 use leanvm_univariate::Shape;
 

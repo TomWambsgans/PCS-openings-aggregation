@@ -93,6 +93,8 @@ pub enum VerifierError {
     TableRows,
     /// New here (`crates/leanvm_univariate`): a shape the verifier cannot be built for (a height below 2).
     InvalidShape,
+    /// New here (`crates/leanvm_rec`, π2): a denominator of π2's verifier vanishes at its challenges.
+    RecDegenerate,
     /// Of the Keccak GKR (leanVM 4af2cddd), ported for the estimate (`keccak_gkr`).
     KeccakProduct,
     KeccakLayer,

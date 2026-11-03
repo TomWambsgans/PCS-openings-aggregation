@@ -1,11 +1,12 @@
 # Part of this repository. Builds on crates/leanvm_univariate and crates/leanvm_flock_gas (which vendors and adapts
-# leanVM (https://github.com/leanEthereum/leanVM), commit 42422001), MIT OR Apache-2.0. See NOTICE.md.
+# leanVM (https://github.com/leanEthereum/leanVM), commit 42422001), MIT OR Apache-2.0; pi2 (src/pi2) also on
+# crates/quotient (its Cantor basis, transforms and opening layouts) and leanVM's WHIR (c445e3d5). See NOTICE.md.
 [package]
 name = "leanvm_rec"
 version.workspace = true
 edition.workspace = true
 publish = false
-description = "Recursion for the univariate leanVM 42422001 verifier: pi1's verifier graph counted and evaluated (milestone R1 of SPEC-REC.md)"
+description = "Recursion for the univariate leanVM 42422001 verifier: pi1's verifier graph counted and evaluated (R1 of SPEC-REC.md); pi2's PIOP, its verifier compiled to EVM, its gas (R3)"
 
 [lints]
 workspace = true
@@ -13,7 +14,14 @@ workspace = true
 [dependencies]
 leanvm_flock_gas = { path = "../leanvm_flock_gas" }
 leanvm_univariate = { path = "../leanvm_univariate" }
+# pi2 (src/pi2): crates/quotient's Cantor basis, transforms and opening layouts; leanVM's WHIR (c445e3d5).
+quotient.workspace = true
+primitives.workspace = true
+fiat_shamir.workspace = true
+pcs.workspace = true
+verifier.workspace = true
+parallel.workspace = true
 
 [dev-dependencies]
-# The Merkle-path quotient SNARK, measured as pi2's reference (SPEC-REC.md §2).
-quotient.workspace = true
+# The allocator of the proving runs: jemalloc, freed pages kept (crates/bench), as crates/leanvm_univariate's.
+bench.workspace = true
