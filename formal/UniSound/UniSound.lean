@@ -10,6 +10,11 @@ import UniSound.Bus
 import UniSound.Final
 import UniSound.Mle
 import UniSound.PendingLink
+import UniSound.CodeBase
+import UniSound.CodeTables
+import UniSound.CodeBatch
+import UniSound.CodeShape
+import UniSound.CodeLink
 
 /-!
 # UniSound: knowledge soundness of the univariate verifier for leanVM 42422001
@@ -30,6 +35,8 @@ for `Q ≤ 2^64`, from the PIOP's round-by-round soundness (proved) and named hy
 | `Fs.lean` | The code-level link (`UniCode`), the last link (`UniFinal`), the Fiat–Shamir layer (`FsLayer`), the bound (`uniBound`). |
 | `Bus.lean` | Round `0` from `formal/Heap`: the bus model (`BusModel`), **`BusModel.mainSound`** (`4N/|E|` and the constraints' batching), `UniIds.ofBus`. |
 | `Mle.lean` | The sumcheck's folds are the claims' multilinear extensions (`foldAll_eq_sum`, `mleStk_eq_foldAll`): glue for `UniFinal`; the pending term's target `PendingTerminalLink`. |
+| `CodeBase.lean`, `CodeTables.lean`, `CodeBatch.lean`, `CodeShape.lean` | The code-level link's layers: fixed reads, loops of fixed reads, observational equivalence (`obsOf`), the row counts, `tablePart` as `tableReads` reads, `batch` as its rounds (`batch_eq`), `C2`'s columns the shape's (`c2Columns_run`). |
+| `CodeLink.lean` | **`uniCode`**: `UniCode D hFlock valsCount (varsOf (layoutsOf D.shape))`, `reduceWith` on the main line as the chain program `mainProg` (`link_obs`), Flock's segment by `hFlock.link`. |
 | `PendingLink.lean` | **`pendingTerminalLink`**: the batch's `λ³` product at its point is the pending reduction's terminal times the zero extension (`multilinear_eval` as the extension, substitution into `Â0`, `B̂0`). |
 | `Final.lean` | **`uniKnowledgeSoundness`**, **`uniKnowledgeSoundness_bits`**, **`uniKnowledgeSoundness_bus`**. |
 
@@ -102,3 +109,11 @@ The build fails if the end theorems' axioms grow beyond Lean's three standard on
 /-- info: 'UniSound.pendingTerminalLink' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.pendingTerminalLink
+
+/-- info: 'UniSound.link_obs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.link_obs
+
+/-- info: 'UniSound.uniCode' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.uniCode
