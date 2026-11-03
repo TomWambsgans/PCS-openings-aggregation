@@ -16,7 +16,17 @@ runner's `lv42Bridge` tests on random rows, here for every row.
   Clean's `valueFromOffset`), the PIOP's tuples of either side (`sideForms j side`, the forms at the cells) are, in
   order, the tuples the table's Clean component emits on that side (`tuplesOn`), each in `E` (`phi`). Per table:
   Lv42's sends in closed form (`Completeness.Messages`), the bus's view of the six channels (`nameView`), the forms
-  term by term (`formE_*`), then a ring identity per slot.
+  term by term (`formE_*`), then a ring identity per slot. The two sides list their tuples in the same order (the
+  state, the bytecode, then the memory reads in the circuits' order), so the bridge is an equality of lists, not
+  only of multisets. A ring identity whose `1 : K` Lv42's closed form writes through another instance path
+  (`DEREF`'s `1 + f_pc + f_fp`) goes through `ring_nf` first.
+* **`rowBridge`**: the same for every table `j` at any row `r` of Lv42's width, against Lv42's flush polynomials
+  filtered by side and evaluated at `r` (`flushesEval_eq`), the row's cells read as `rowE r`.
+* **The rest of the correspondence**: `tables_width` (the widths), `countColumns_eq` (the `cnt…` columns are Lv42's
+  count columns), `jump_constraints` (Lv42's `JUMP` constraints at a row are `b + v_cond·w`, `v_cond·(b + 1)`, cells
+  `13, 5, 12`), `qflockSlot_eq` (a `BLAKE2S` column with a `q_flock` slot is limb `c − 9`, at Flock's
+  `blake2sFlockSpec.slot`); the first, second and last by `decide +kernel` on the tables' data (Clean's row
+  operations of the six circuits, as Lv42's `counts_le_pushes` evaluates them).
 -/
 
 namespace UniComplete.Mapping

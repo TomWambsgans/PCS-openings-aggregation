@@ -19,13 +19,18 @@ algebra needs (`TraceHonest`), each read off one clause of Lv42's relation:
 | `bus` | `Balanced` (`bus_perm`: the tuples are Lv42's in `E`, `phi` injective) |
 | `flock` | `aux` (Flock's R1CS on `QFLOCK`), block by block: `q_flock`'s block `rowPosition x` is `QFLOCK`'s `x` |
 
-Under `RowsFit` Lv42's height `⌈log₂ rows⌉` is the shape's (`tau_eq`), so the placed rows are Lv42's rows.
+Under `RowsFit` Lv42's height `⌈log₂ rows⌉` is the shape's (`tau_eq`), so the placed rows are Lv42's rows. No
+definition needed a change: every field holds of `honestTrace` and `TraceHonest` as they are. Two readings are
+worth keeping: the placed counters differ from Lv42's on the padding rows (`1` against `padRow`'s `0`), which no
+clause of the bus sees (the PIOP's bus reads the active rows only); `copies` holds by construction (both the limb
+columns and `q_flock` are read off Lv42's `QFLOCK`), with no hypothesis on `q`.
 
-**`badFp_card`**: for every `α`, at most `(dividedTuples tr).length` challenges `β` are bad (`BadFp`: one root of
-each divided fingerprint, linear in `β`). **`dividedTuples_length`**: that length is
-`Σ_t pulls_t · |activeRows t| + 2^lm + 2^lb`; under `RowsFit` it is `dividedBound` of the shape and the row counts
-(`Σ_t pulls_t · rows_t + 2^lm + 2^lb`, `pulls = [5, 5, 3, 5, 5, 11]`), at most `capBound` of the shape
-(`rows_t ≤ 2^h_t`); the reference shape's (`UniStatement.reference`) is `10,878,976 < 2^24`.
+**`badFp_card`**: for every `α` (of any length), at most `(dividedTuples tr).length` challenges `β` are bad
+(`BadFp`: each divided fingerprint is `β` plus a constant, so one root each), for any `Fintype E` instance.
+**`dividedTuples_length`**: that length is `Σ_t pulls_t · |activeRows t| + 2^lm + 2^lb`; under `RowsFit` it is
+`dividedBound` of the shape and the row counts (`Σ_t pulls_t · rows_t + 2^lm + 2^lb`,
+`pulls = [5, 5, 3, 5, 5, 11]`, `pulls_eq`), at most `capBound` of the shape (`rows_t ≤ 2^h_t`); the reference
+shape's (`UniStatement.reference`: `h = 18, 18, 18, 18, 17, 18`, `lm = 21`, `lb = 19`) is `10,878,976 < 2^24`.
 -/
 
 namespace UniComplete.Mapping
@@ -383,6 +388,16 @@ theorem dividedBound_le (shape : UniStatement.Shape) (rows : List ℕ) (h : shap
 /-- The reference shape's bound: `10,878,976 < 2^24`. -/
 theorem capBound_reference : capBound UniStatement.reference = 10878976 := by decide +kernel
 
+/-- The reference shape's bound is below `2^24`. -/
+theorem capBound_reference_lt : capBound UniStatement.reference < 2 ^ 24 := by
+  rw [capBound_reference]
+  norm_num
+
+/-- **Under `RowsFit`, at most `dividedBound` divided tuples.** -/
+theorem dividedTuples_length_le (tr : Trace) (h : tr.shape.RowsFit tr.rows) :
+    (dividedTuples tr).length ≤ dividedBound tr.shape tr.rows :=
+  (dividedTuples_length_eq tr h).le
+
 /-- **The bad challenges of an honest trace**, at most `capBound` of its shape. -/
 theorem badFp_card_honest (tr : Trace) (h : TraceHonest tr) (alphas : List E) [Fintype E]
     [DecidablePred (BadFp tr alphas)] :
@@ -418,3 +433,6 @@ end UniComplete.Mapping
 
 /-- info: 'UniComplete.Mapping.tau_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms UniComplete.Mapping.tau_eq
+
+/-- info: 'UniComplete.Mapping.capBound_reference_lt' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.Mapping.capBound_reference_lt

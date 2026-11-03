@@ -12,7 +12,7 @@ What `honestTrace D input rows q` holds, cell by cell, under `RowsFit`:
 * **Scattering** (`foldl_set_getD`, `scatter_getD`): writing value `x` at `f x` for every `x` of a duplicate-free
   list, `f` injective on it, leaves `value x` at `f x`; so `scatter r (rowPosition count r) value` holds
   Lv42's row `x` at `rowPosition count r x`.
-* **The cells** (`column_getD`, `cell_rowPosition`, `memory_getD`, `bytecodeFinal_getD`, `slots_getD`,
+* **The cells** (`column_eq`, `cell_rowPosition`, `memory_getD`, `bytecodeFinal_getD`, `slots_getD`,
   `qflock_getD`): a table's column `c` at the PIOP's row `rowPosition x` is Lv42's cell `x` of column
   `⟨opIdx t, c⟩` (`lv42TableCell`), but `1` on a counter column at a padding row (`x ≥ count`); the memory's,
   the bytecode's final counts', the setup slots', and `q_flock`'s word `j + 256 · rowPosition x` is
