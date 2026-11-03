@@ -214,4 +214,29 @@ def LvBusCount (D : Deployment) (N : ℕ) : Prop :=
   ∀ rows : List ℕ, CountsFit D.shape rows →
     Heap.busCount (D.inst rows) .push ≤ N ∧ Heap.busCount (D.inst rows) .pull ≤ N
 
+/-! ## Small facts of the verifier's definitions -/
+
+/-- **The fixed cosets** (F1b): `Z_act(ω_k)`, read off the count's bits, vanishes exactly on the active
+rows (`isActive`), for a count in range. -/
+def ZActZero : Prop :=
+  BetaCantor → ∀ (count r k : ℕ), r < 24 → count ≤ 2 ^ r → k < 2 ^ r →
+    ((zActP ((List.range (r + 1)).map fun j ↦ intBits count j 1) r).eval (pointE k) = 0 ↔
+      isActive k count r = true)
+
+/-- **`eqKernel` is the fingerprint's weights** (`eq(α, s)` for the sixteen slots). -/
+def EqKernelLagrange : Prop :=
+  ∀ (ch : List E) (s : Fin 16),
+    (eqKernel (alphasOf ch)).getD s.val 0 =
+      (LeanVM.Protocol.fingerprintWeights (fun i : Fin 4 ↦ ch.getD i.val 0)).get s
+
+/-- **`g^n` is in `K`.** -/
+def GpowInK : Prop := ∀ n, ofK (toK (UniStatement.gpow n)) = UniStatement.gpow n
+
+/-- **The tables' flushes**: as many pulls as pushes, tuples of at most `16` forms, every coefficient
+in `K`. -/
+def TablesFacts : Prop :=
+  ∀ tab ∈ tables, tab.flushes.pull.length = tab.flushes.push.length ∧
+    ∀ tup ∈ tab.flushes.pull ++ tab.flushes.push, tup.length ≤ 16 ∧
+      ∀ f ∈ tup, ∀ mc ∈ f, ofK (toK mc.2) = mc.2
+
 end UniSound.Ids
