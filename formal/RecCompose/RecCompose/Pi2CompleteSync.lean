@@ -1,8 +1,9 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. Follows `formal/UniComplete/UniComplete/SyncVerifier.lean`
 -- (`reduce_steps`, `runWithH_syncs`) for π2: its verifier is `formal/RecStatement`'s (`reduceWith`, `runWith`), its
 -- honest prover `RecCompose.Pi2Prover`'s (`pi2ProveStreamWith`); the joint steps are UniComplete's (`Steps`, `StepsE`,
--- `Reads`, `Writes`, `SyncBasic.lean`).
+-- `UniComplete.Reads`, `Writes`, `SyncBasic.lean`).
 import RecCompose.Pi2Prover
+import RecCompose.Pi2CompleteH
 import UniComplete.SyncVerifier
 
 /-!
@@ -64,29 +65,29 @@ theorem rootRead_halvesOf (b : List UInt8) : rootRead (halvesOf b) = halvesOf b 
 
 /-- **The verifier's public reads** read `sendPublic`'s bytes and give the values' scalars after the statement's. -/
 theorem loop_reads (body : Read → List E → UniStatement.ChanM Id (ForInStep (List E)))
-    (hroot : ∀ (pubs : List E) (h : E × E), Reads (body .root pubs) (rootWord h)
+    (hroot : ∀ (pubs : List E) (h : E × E), UniComplete.Reads (body .root pubs) (rootWord h)
       (.yield (pubs ++ [(rootRead h).1, (rootRead h).2])) [])
-    (hscalar : ∀ (pubs : List E) (x : E), Reads (body .scalar pubs) (scalarWire x) (.yield (pubs ++ [x])) []) :
+    (hscalar : ∀ (pubs : List E) (x : E), UniComplete.Reads (body .scalar pubs) (scalarWire x) (.yield (pubs ++ [x])) []) :
     ∀ (rs : List Read) (vs : List PublicValue), List.Forall₂ ReadMatch rs vs → ∀ pubs : List E,
-      Reads (ForIn.forIn rs pubs body) (publicWire (rs.zip vs)) (pubs ++ vs.flatMap PublicValue.scalars) []
-  | [], [], .nil, pubs => by simpa [publicWire] using Reads.pure (α := List E) pubs
+      UniComplete.Reads (ForIn.forIn rs pubs body) (publicWire (rs.zip vs)) (pubs ++ vs.flatMap PublicValue.scalars) []
+  | [], [], .nil, pubs => by simpa [publicWire] using UniComplete.Reads.pure (α := List E) pubs
   | .root :: rs, .root b :: vs, .cons _ h, pubs => by
     have h1 := hroot pubs (halvesOf b)
     rw [rootRead_halvesOf] at h1
     have h2 := loop_reads body hroot hscalar rs vs h (pubs ++ [(halvesOf b).1, (halvesOf b).2])
-    have h3 : Reads (ForIn.forIn (Read.root :: rs) pubs body) (rootWord (halvesOf b) ++ publicWire (rs.zip vs))
+    have h3 : UniComplete.Reads (ForIn.forIn (Read.root :: rs) pubs body) (rootWord (halvesOf b) ++ publicWire (rs.zip vs))
         (pubs ++ [(halvesOf b).1, (halvesOf b).2] ++ vs.flatMap PublicValue.scalars) ([] ++ []) := by
       rw [List.forIn_cons]
-      exact Reads.bind h1 h2
-    exact Reads.congr h3 (by simp [publicWire]) (by simp [PublicValue.scalars]) (by simp)
+      exact UniComplete.Reads.bind h1 h2
+    exact UniComplete.Reads.congr h3 (by simp [publicWire]) (by simp [PublicValue.scalars]) (by simp)
   | .scalar :: rs, .scalar x :: vs, .cons _ h, pubs => by
     have h1 := hscalar pubs x
     have h2 := loop_reads body hroot hscalar rs vs h (pubs ++ [x])
-    have h3 : Reads (ForIn.forIn (Read.scalar :: rs) pubs body) (scalarWire x ++ publicWire (rs.zip vs))
+    have h3 : UniComplete.Reads (ForIn.forIn (Read.scalar :: rs) pubs body) (scalarWire x ++ publicWire (rs.zip vs))
         (pubs ++ [x] ++ vs.flatMap PublicValue.scalars) ([] ++ []) := by
       rw [List.forIn_cons]
-      exact Reads.bind h1 h2
-    exact Reads.congr h3 (by simp [publicWire]) (by simp [PublicValue.scalars]) (by simp)
+      exact UniComplete.Reads.bind h1 h2
+    exact UniComplete.Reads.congr h3 (by simp [publicWire]) (by simp [PublicValue.scalars]) (by simp)
   | .integer _ :: _, _ :: _, .cons hm _, _ => by cases hm
   | .root :: _, .integer _ :: _, .cons hm _, _ => by cases hm
   | .root :: _, .scalar _ :: _, .cons hm _, _ => by cases hm
@@ -96,21 +97,18 @@ theorem loop_reads (body : Read → List E → UniStatement.ChanM Id (ForInStep 
 /-! ## The joint steps -/
 
 /-- **A challenge on both sides**, the verifier's `sample` over a permutation `F` whose Keccak-256 is `Hk`. -/
-theorem stepsE_sample {γ δ : Type} (F : KeccakState → Id KeccakState) (Hk : List UInt8 → Digest)
-    (hk : keccak256With (m := Id) F = Pure.pure ∘ Hk) {f : E → UniStatement.ChanM Id γ} {g : E → WrM Id δ}
+theorem stepsE_sample {γ δ : Type} (Hk : List UInt8 → Digest) {f : E → UniStatement.ChanM Id γ} {g : E → WrM Id δ}
     {pos : ℕ} {w : Wr} {K : γ → δ → ℕ → Wr → List E → Prop} (e : pos = w.stream.size)
     (h2 : StepsE (f (Wr.sampled Hk w).1) (g (Wr.sampled Hk w).1) w.stream.size (Wr.sampled Hk w).2
       (fun c d p2 w2 z2 ↦ K c d p2 w2 ([] ++ z2))) :
-    StepsE (UniStatement.sample (m := Id) F >>= f) (UniComplete.sampleW (m := Id) (Pure.pure ∘ Hk) >>= g) pos w K := by
-  have hs : UniStatement.sample (m := Id) F = UniComplete.sampleH (m := Id) (Pure.pure ∘ Hk) := by
-    rw [UniComplete.sample_eqH, hk]
-  rw [hs]
+    StepsE (UniComplete.sampleH (m := Id) (Pure.pure ∘ Hk) >>= f) (UniComplete.sampleW (m := Id) (Pure.pure ∘ Hk) >>= g)
+      pos w K := by
   exact StepsE.bind_pos e (Steps.sample Hk w) h2
 
 /-- **A verifier-only read of the last bytes written**, at a position equal to the writer's end. -/
 theorem vreadEndAt {α γ δ : Type} {v : UniStatement.ChanM Id α} {f : α → UniStatement.ChanM Id γ} {p : WrM Id δ}
     {pos : ℕ} {w : Wr} {B : List UInt8} {a : α} {zs1 : List E} {K : γ → δ → ℕ → Wr → List E → Prop}
-    (e : pos = w.stream.size) (h1 : Reads v B a zs1)
+    (e : pos = w.stream.size) (h1 : UniComplete.Reads v B a zs1)
     (h2 : StepsE (f a) p (w.stream.size + B.length) (w.append B) (fun c d p2 w2 z2 ↦ K c d p2 w2 (zs1 ++ z2))) :
     StepsE (v >>= f) p pos (w.append B) K :=
   StepsE.pos_start e (StepsE.vreadEnd h1 h2)
@@ -136,11 +134,10 @@ theorem vreadValuesEnd {γ δ : Type} {f : List E → E → UniStatement.ChanM I
 /-- **The verifier's run and the honest prover's, in step**: on the prover's stream, π2's verifier reads the public
 values, `W`'s and `Q`'s roots, the fold values and `ξ` the prover writes, and draws its challenges; it ends at the end
 of the prover's stream, its arithmetic's inputs the prover's. -/
-theorem reduce_steps (F : KeccakState → Id KeccakState) (Hk : List UInt8 → Digest)
-    (hk : keccak256With (m := Id) F = Pure.pure ∘ Hk) (G : RecPiop.Circuit E) (view : Circuit)
+theorem reduce_steps (Hk : List UInt8 → Digest) (G : RecPiop.Circuit E) (view : Circuit)
     (setupStack : Array K) (input : List UInt8) (values : List PublicValue) (w : ℕ → K) (seed : Digest)
     (hmatch : List.Forall₂ ReadMatch view.reads values) (hrow : view.logRow = G.logW) :
-    StepsE (RecStatement.reduceWith (m := Id) F (Spec.of view) (UniStatement.publicWordsOf input))
+    StepsE (Pi2H.reduceWithH (m := Id) (Pure.pure ∘ Hk) (Spec.of view) (UniStatement.publicWordsOf input))
       (pi2ProveStreamWith (m := Id) (Pure.pure ∘ Hk) G view.reads setupStack input values w) 0 (Wr.start seed)
       (fun r out pos w' _ ↦ pos = w'.stream.size ∧ out.stream = w'.stream ∧ r.inputs = out.inputs ∧
         r.scalars = out.inputs.scalars ∧ r.out = (Spec.of view).core.run r.inputs ∧
@@ -154,38 +151,38 @@ theorem reduce_steps (F : KeccakState → Id KeccakState) (Hk : List UInt8 → D
         out.wStack = placePublic (layoutsOf G.logN).1 (fun i ↦ (wTableB G w).getD i 0) ∧
         out.qStack = placePublic (layoutsOf G.logN).2.1 (qEntry G.logN (hNovel G w out.inputs.α out.inputs.β
           out.inputs.γ) (qNovel G w out.inputs.α out.inputs.β out.inputs.γ))) := by
-  unfold RecStatement.reduceWith pi2ProveStreamWith
+  unfold Pi2H.reduceWithH pi2ProveStreamWith
   dsimp only
   apply StepsE.pbind (sendPublic_writes _ _)
   apply StepsE.pos_start (pos0 := (Wr.start seed).stream.size) rfl
   apply StepsE.vreadEnd (loop_reads _ ?hroot ?hscalar view.reads values hmatch (UniStatement.publicWordsOf input))
   case hroot =>
     intro pubs h
-    exact Reads.congr ((UniComplete.nextRoot_reads h).bind (Reads.pure _)) (by simp) rfl (by simp)
+    exact UniComplete.Reads.congr ((UniComplete.nextRoot_reads h).bind (UniComplete.Reads.pure _)) (by simp) rfl (by simp)
   case hscalar =>
     intro pubs x
-    exact Reads.congr ((UniComplete.nextScalar_reads x).bind (Reads.pure _)) (by simp) rfl (by simp)
+    exact UniComplete.Reads.congr ((UniComplete.nextScalar_reads x).bind (UniComplete.Reads.pure _)) (by simp) rfl (by simp)
   apply StepsE.plift
   apply StepsE.pbind (UniComplete.sendRoot_writes _ _)
   apply StepsE.pos_start (pos0 := ((Wr.start seed).append (publicWire (view.reads.zip values))).stream.size)
     (by simp)
   apply StepsE.vreadEnd (UniComplete.nextRoot_reads _)
-  apply stepsE_sample F Hk hk
+  apply stepsE_sample Hk
   case e => simp; omega
-  apply stepsE_sample F Hk hk
+  apply stepsE_sample Hk
   case e => simp only [UniComplete.Wr.sampled_stream]
-  apply stepsE_sample F Hk hk
+  apply stepsE_sample Hk
   case e => simp only [UniComplete.Wr.sampled_stream]
   apply StepsE.plift
   apply StepsE.pbind (UniComplete.sendRoot_writes _ _)
   apply vreadEndAt (by simp only [UniComplete.Wr.sampled_stream]) (UniComplete.nextRoot_reads _)
-  apply stepsE_sample F Hk hk
+  apply stepsE_sample Hk
   case e => simp; omega
   apply StepsE.pbind (UniComplete.sendScalars_writes _ _)
   apply vreadValuesEnd
   case hn => simp [foldValues, Spec.of, hrow]
   case e => simp only [UniComplete.Wr.sampled_stream]
-  apply stepsE_sample F Hk hk
+  apply stepsE_sample Hk
   case e => simp; omega
   apply StepsE.pget
   apply StepsE.pure
@@ -204,11 +201,10 @@ def proverOut (Hk : List UInt8 → Digest) (G : RecPiop.Circuit E) (view : Circu
 the seed of the IV and the public input, `runWith` returns the arithmetic on the prover's inputs, nothing of the stream
 left; the stream is the public values, `W`'s and `Q`'s roots' words and the values' scalars; the trees are the stacks'
 commitments. -/
-theorem runWith_honest (F : KeccakState → Id KeccakState) (Hk : List UInt8 → Digest)
-    (hk : keccak256With (m := Id) F = Pure.pure ∘ Hk) (G : RecPiop.Circuit E) (view : Circuit)
+theorem runWith_honest (Hk : List UInt8 → Digest) (G : RecPiop.Circuit E) (view : Circuit)
     (setupStack : Array K) (iv input : List UInt8) (values : List PublicValue) (w : ℕ → K)
     (hmatch : List.Forall₂ ReadMatch view.reads values) (hrow : view.logRow = G.logW) :
-    ∃ r, (RecStatement.runWith (m := Id) F (Spec.of view) iv input
+    ∃ r, (Pi2H.runWithH (m := Id) (Pure.pure ∘ Hk) (Spec.of view) iv input
         (proverOut Hk G view setupStack iv input values w).stream).result = .ok r ∧
       r.inputs = (proverOut Hk G view setupStack iv input values w).inputs ∧
       r.out = (Spec.of view).core.run r.inputs ∧
@@ -245,7 +241,7 @@ theorem runWith_honest (F : KeccakState → Id KeccakState) (Hk : List UInt8 →
             (proverOut Hk G view setupStack iv input values w).inputs.γ)) := by
   set seed := Hk (RecStatement.name ++ iv ++ input) with hseed
   obtain ⟨r, b, pos', w', zs, ⟨hp, -, hv⟩, hpos, hstream, hinp, -, hout, hws, hwt, hqt, hi, hwsk, hqsk⟩ :=
-    reduce_steps F Hk hk G view setupStack input values w seed hmatch hrow
+    reduce_steps Hk G view setupStack input values w seed hmatch hrow
   have hb : proverOut Hk G view setupStack iv input values w = b := by
     unfold proverOut
     rw [← hseed, hp]
@@ -253,12 +249,9 @@ theorem runWith_honest (F : KeccakState → Id KeccakState) (Hk : List UInt8 →
   refine ⟨r, ?_, hinp, hout, by rw [hstream, hws], hwt, hqt, hi, hwsk, hqsk⟩
   have e := hv b.stream #[] (by rw [hstream])
   rw [← UniComplete.chan_start_eq] at e
-  have hsd : keccak256With (m := Id) F (RecStatement.name ++ iv ++ input) = seed := by
-    rw [hk]; rfl
-  unfold RecStatement.runWith
-  simp only [hsd]
+  unfold Pi2H.runWithH
   show (((do
-      let r ← RecStatement.reduceWith (m := Id) F (Spec.of view) (UniStatement.publicWordsOf input)
+      let r ← Pi2H.reduceWithH (m := Id) (Pure.pure ∘ Hk) (Spec.of view) (UniStatement.publicWordsOf input)
       UniStatement.finish (m := Id)
       return r : UniStatement.ChanM Id RecStatement.Reduced).run).run (UniStatement.Chan.start seed b.stream)).1 = _
   rw [UniComplete.chan_run_bind, e]

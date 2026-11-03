@@ -81,8 +81,8 @@ variable {m : Type → Type} [Monad m] (H : List UInt8 → m Digest) (F : Keccak
 /-- **π2's honest prover** over `H`, `F`: the setup's trees, the IV, the witness, `pi2ProveWith`, π1's openings first. -/
 noncomputable def pi2ProverWith (D : RecDeployment) (C : Pi2Circuits D) (Fa : Pi2Facts D C) (fuel : ℕ)
     (input : Vector UInt8 32) (p1 : UniStatement.UniProof) : m (Option RecProof) := do
-  let trees ← D.setupTreesWith F
-  let iv ← D.ivWith F trees.roots
+  let trees ← Pi2H.setupTreesWithH H F D
+  let iv ← Pi2H.ivOfH H D trees.roots
   let vw := pi2Choice D C Fa trees.roots input p1.stream
   let c := D.circuitAt trees.roots.pi1
   let res ← pi2ProveWith H F fuel (C.G trees.roots) c.circuit c.setupStack trees.pi2 iv input.toList vw.1 vw.2
@@ -125,80 +125,82 @@ it takes, π1's openings first. -/
 theorem pi2ProverWith_run (Hk : List UInt8 → Digest) (F : KeccakState → Id KeccakState) (D : RecDeployment)
     (C : Pi2Circuits D) (Fa : Pi2Facts D C) (fuel : ℕ) (input : Vector UInt8 32) (p1 : UniStatement.UniProof) :
     Id.run (pi2ProverWith (m := Id) (Pure.pure ∘ Hk) F D C Fa fuel input p1) =
-      (Id.run (pi2ProveWith (m := Id) (Pure.pure ∘ Hk) F fuel (C.G (Id.run (D.setupTreesWith F)).roots)
-        (D.circuitAt (Id.run (D.setupTreesWith F)).roots.pi1).circuit
-        (D.circuitAt (Id.run (D.setupTreesWith F)).roots.pi1).setupStack (Id.run (D.setupTreesWith F)).pi2
-        (ivOf D F (Id.run (D.setupTreesWith F)).roots) input.toList
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2)).map
+      (Id.run (pi2ProveWith (m := Id) (Pure.pure ∘ Hk) F fuel (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots)
+        (D.circuitAt (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots.pi1).circuit
+        (D.circuitAt (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots.pi1).setupStack (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).pi2
+        (ivOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) input.toList
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2)).map
         fun x ↦ ⟨x.1, p1.c1, p1.c2, p1.setup, x.2.1, x.2.2.1, x.2.2.2⟩ := rfl
 
 /-- **π2's honest proof is accepted** at a pure permutation `F` (Keccak-256 `Hk`): for the witness the prover takes
 (an honest one, `hgood`), if the prover returns a proof, π2's arithmetic on its inputs passes and its claims hold on its
 stacks (off the bad challenges, `halg`), and π1's three openings are accepted (`hpi1`), the contract accepts. -/
 theorem pi2_accepts (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa : Pi2Facts D C)
-    (F : KeccakState → Id KeccakState) (Hk : List UInt8 → Digest) (hk : keccak256With (m := Id) F = Pure.pure ∘ Hk)
+    (F : KeccakState → Id KeccakState) (Hk : List UInt8 → Digest)
     (fuel : ℕ) (input : Vector UInt8 32) (p1 : UniStatement.UniProof)
-    (hgood : Pi2Good D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream
-      (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream))
-    (hGN : (C.G (Id.run (D.setupTreesWith F)).roots).logN = 24)
-    (hrow : Data.circuit.logRow = (C.G (Id.run (D.setupTreesWith F)).roots).logW)
+    (hgood : Pi2Good D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream
+      (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream))
+    (hGN : (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots).logN = 24)
+    (hrow : Data.circuit.logRow = (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots).logW)
     (proof : RecProof)
     (hp : Id.run (pi2ProverWith (m := Id) (Pure.pure ∘ Hk) F D C Fa fuel input p1) = some proof)
     (hroots : C.rootsAt = RecGraph.Emitted.rootsAt)
-    (hbad : ¬ BadCopy (C.G (Id.run (D.setupTreesWith F)).roots)
-      (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2
-      (Fa.pubOf (Id.run (D.setupTreesWith F)).roots
-        (publicScalarsOf input.toList (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1))
-      (outOf D F Hk (Id.run (D.setupTreesWith F)).roots (C.G (Id.run (D.setupTreesWith F)).roots) input
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2).inputs.α
-      (outOf D F Hk (Id.run (D.setupTreesWith F)).roots (C.G (Id.run (D.setupTreesWith F)).roots) input
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2).inputs.β
-      (outOf D F Hk (Id.run (D.setupTreesWith F)).roots (C.G (Id.run (D.setupTreesWith F)).roots) input
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2).inputs.γ)
-    (ht : ¬ BadT (C.G (Id.run (D.setupTreesWith F)).roots)
-      (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2
-      (outOf D F Hk (Id.run (D.setupTreesWith F)).roots (C.G (Id.run (D.setupTreesWith F)).roots) input
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2).inputs.α
-      (outOf D F Hk (Id.run (D.setupTreesWith F)).roots (C.G (Id.run (D.setupTreesWith F)).roots) input
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2).inputs.β
-      (outOf D F Hk (Id.run (D.setupTreesWith F)).roots (C.G (Id.run (D.setupTreesWith F)).roots) input
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2).inputs.γ
-      (outOf D F Hk (Id.run (D.setupTreesWith F)).roots (C.G (Id.run (D.setupTreesWith F)).roots) input
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2).inputs.t)
-    (hpi1 : ∃ ops, pi1OpsOf D (Id.run (D.setupTreesWith F)).roots input proof.stream = some ops ∧
-      Id.run (openSeq F (registryOf D.pi1.shape 24) ops proof) = true) :
-    (Id.run (D.contractWith F (Id.run (D.setupTreesWith F)).roots input proof)).1 = true := by
-  have hview : (D.circuitAt (Id.run (D.setupTreesWith F)).roots.pi1).circuit = Data.circuit := hD.1 _
+    (hbad : ¬ BadCopy (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots)
+      (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2
+      (Fa.pubOf (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots
+        (publicScalarsOf input.toList (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1))
+      (outOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) input
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2).inputs.α
+      (outOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) input
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2).inputs.β
+      (outOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) input
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2).inputs.γ)
+    (ht : ¬ BadT (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots)
+      (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2
+      (outOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) input
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2).inputs.α
+      (outOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) input
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2).inputs.β
+      (outOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) input
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2).inputs.γ
+      (outOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) input
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2).inputs.t)
+    (hpi1 : ∃ ops, pi1OpsOf D (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input proof.stream = some ops ∧
+      Id.run (Pi2H.openSeqH (m := Id) (Pure.pure ∘ Hk) F (registryOf D.pi1.shape 24) ops proof) = true) :
+    (Id.run (Pi2H.contractWithH (m := Id) (Pure.pure ∘ Hk) F D (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input proof)).1 =
+      true := by
+  have hview : (D.circuitAt (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots.pi1).circuit = Data.circuit := hD.1 _
   obtain ⟨hmatch, hwS, -⟩ := hgood
   have hmatch' := hmatch
   rw [hview] at hmatch
   -- the algebra (`lean-pi2-alg`'s `pi2_honest`), at the prover's inputs and stacks
-  obtain ⟨-, -, -, -, -, -, -, hi, hwsk, hqsk⟩ := runWith_honest F Hk hk (C.G (Id.run (D.setupTreesWith F)).roots)
-    (D.circuitAt (Id.run (D.setupTreesWith F)).roots.pi1).circuit
-    (D.circuitAt (Id.run (D.setupTreesWith F)).roots.pi1).setupStack (ivOf D F (Id.run (D.setupTreesWith F)).roots)
-    input.toList (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-    (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2 hmatch' (by rw [hview]; exact hrow)
-  have halg := pi2_honest Fa (pi2SetupColumns_of_real hD C hroots) (Id.run (D.setupTreesWith F)).roots
-    (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2
-    (publicScalarsOf input.toList (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1)
-    _ _ _ _ (outOf D F Hk (Id.run (D.setupTreesWith F)).roots (C.G (Id.run (D.setupTreesWith F)).roots) input
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).1
-        (pi2Choice D C Fa (Id.run (D.setupTreesWith F)).roots input p1.stream).2).inputs.ρ hwS hbad ht
+  obtain ⟨-, -, -, -, -, -, -, hi, hwsk, hqsk⟩ := runWith_honest Hk (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots)
+    (D.circuitAt (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots.pi1).circuit
+    (D.circuitAt (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots.pi1).setupStack (ivOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots)
+    input.toList (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+    (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2 hmatch' (by rw [hview]; exact hrow)
+  have halg := pi2_honest Fa (pi2SetupColumns_of_real hD C hroots) (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots
+    (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2
+    (publicScalarsOf input.toList (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1)
+    _ _ _ _ (outOf D Hk (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) input
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).1
+        (pi2Choice D C Fa (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots input p1.stream).2).inputs.ρ hwS hbad ht
 
-  have htree : (Id.run (D.setupTreesWith F)).pi2 = E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk)
-      (layoutsOf 24).2.2.logN (D.circuitAt (Id.run (D.setupTreesWith F)).roots.pi1).setupStack := by
-    show (D.circuitAt (Id.run (UniStatement.setupTreesWith (m := Id) F D.pi1)).roots).setupTreeWith F = _
-    unfold Pi2Circuit.setupTreeWith
-    rw [E2ECompleteness.commitWith_eqH, hk]
-    have hl : (D.circuitAt (Id.run (UniStatement.setupTreesWith (m := Id) F D.pi1)).roots).circuit.logN = 24 := by
+  have htree : (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).pi2 = E2ECompleteness.commitWithH (m := Id) (Pure.pure ∘ Hk)
+      (layoutsOf 24).2.2.logN (D.circuitAt (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots.pi1).setupStack := by
+    show Pi2H.setupTreeWithH (Pure.pure ∘ Hk)
+      (D.circuitAt (Id.run (UniComplete.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D.pi1)).roots) = _
+    unfold Pi2H.setupTreeWithH
+    have hl : (D.circuitAt (Id.run (UniComplete.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D.pi1)).roots).circuit.logN
+        = 24 := by
       unfold RecDeployment.circuitAt
       rw [hD.1]
       rfl
@@ -225,7 +227,7 @@ theorem pi2_accepts (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa : 
         simp only [Option.bind_some, Option.map_some, Option.some.injEq] at hres
         subst hres
         rw [htree] at hS
-        exact contract_accepts D F Hk hk _ (C.G (Id.run (D.setupTreesWith F)).roots) hview hGN hrow
+        exact contract_accepts D F Hk _ (C.G (Id.run (Pi2H.setupTreesWithH (m := Id) (Pure.pure ∘ Hk) F D)).roots) hview hGN hrow
           (by rw [hD.2.1]; rfl) (by rw [← htree]; rfl) input _ _ hmatch fuel p1.c1 p1.c2 p1.setup pW pS pQ
           (by obtain ⟨h1, h2⟩ := halg; exact ⟨by rw [hi]; exact h1, by rw [hwsk, hqsk, hi]; exact h2⟩)
           hW hS hQ hpi1

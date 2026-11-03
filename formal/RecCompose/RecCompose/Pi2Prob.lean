@@ -327,9 +327,10 @@ cache-hit probability `εt` and the rejection at good challenges `εpow`. -/
 structure Pi2Staged.Holds (S : Pi2Staged) (D : RecStatement.RecDeployment) (P1 : RecStatement.Pi1Prover D)
     (P2 : RecStatement.Pi2Prover) (input : Vector UInt8 32) (rows : List ℕ) (q : D.pi1.Stack rows)
     (L : ℕ) (Bad : S.ρ → Finset (E × E × E)) (badT : S.τ → E → Prop) (M ct N : ℕ) (εt εpow : ℝ≥0∞) : Prop where
-  /-- The experiment is the pair of the two-call run against the random permutation. -/
-  experiment : RecStatement.recCompletenessExperiment2 D P1 P2 input rows q =
-    (fun z ↦ z.1.1) <$> (simulateQ keccakCallsOverRandomPermutation S.run).run' []
+  /-- The experiment's event (the graph accepting, the contract rejecting) is at most the two-call run's against the
+  random permutation. -/
+  experiment : Pr{let v ← RecStatement.recCompletenessExperiment2 D P1 P2 input rows q}[v.1 = true ∧ v.2 = false] ≤
+    Pr{let z ← (simulateQ keccakCallsOverRandomPermutation S.run).run' []}[z.1.1.1 = true ∧ z.1.1.2 = false]
   /-- Every permutation call continues a duplex or starts one (`DuplexVm`). -/
   duplex : DuplexVm S.run []
   /-- At most `N` block calls (`hashBlocks`). -/
@@ -405,8 +406,7 @@ theorem recCompleteness2_of_staged {D : RecStatement.RecDeployment} {P1 : RecSta
     RecStatement.RecCompleteness2 D P1 P2 (deltaStaged M ct N εt εpow) := by
   intro input rows q hfit hrel
   obtain ⟨S, Bad, badT, h⟩ := hS input rows q hfit hrel
-  rw [h.experiment, prEvent_map]
-  exact prEvent_staged_bad_le S h
+  exact h.experiment.trans (prEvent_staged_bad_le S h)
 
 end RecCompose.Pi2P
 
