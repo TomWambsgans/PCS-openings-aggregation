@@ -286,6 +286,20 @@ def compare (v : Vec') : Option String := Id.run do
        ("sum", r.sum.1, r.sum.2), ("setup", r.setup.1, r.setup.2)]
     let calls := pcsCalls Data.circuit Data.pi1Calls Data.setupRoot v.stream.toArray r
     let invOk := r.out.all == 0 || (normInverse r.out.all == r.out.all⁻¹ && normInverse r.out.all * r.out.all == 1)
+    -- PCS_OPEN's decoding (the Props' verifier): every call decodes under the registry, π1's three by π1's layouts and
+    -- π2's three by π2's, re-encodes to its words, and π2's claims are the reduction's.
+    let reg := registryOf UniStatement.reference Data.circuit.logN
+    let reencodes := v.calls.all fun words ↦
+      match decodeWith reg words with
+      | none => false
+      | some (root, _, cs) =>
+        [rootWordOfBytes (LeanVM.Protocol.KeccakHash.digestBytes root), words.getD 1 [], UniStatement.numberWord cs.length] ++
+          cs.flatMap (fun c ↦ (c.point ++ [c.value]).map UniStatement.elementWord) == words
+    let kinds := v.calls.map fun words ↦ match decodeWith reg words with
+      | some (_, .pi1 _, _) => 1
+      | some (_, .pi2 _, _) => 2
+      | none => 0
+    let pi2Claims := (v.calls.drop 3).map fun words ↦ (decodeWith reg words).map (·.2.2)
     let checks : List (String × Bool) :=
       [("nonzero", v.nonzero == [r.out.all]),
        ("verdict", o.accepts == (v.nonzero.all (· != 0))),
@@ -295,6 +309,11 @@ def compare (v : Vec') : Option String := Id.run do
        ("claims", claims == v.claims),
        ("calls", calls == v.calls),
        ("the norm's inverse is the field's", invOk),
+       ("PCS_OPEN: every call decodes and re-encodes", reencodes),
+       ("PCS_OPEN: pi1's three by pi1's layouts, pi2's three by pi2's", kinds == [1, 1, 1, 2, 2, 2]),
+       ("PCS_OPEN: pi2's decoded claims are the reduction's", pi2Claims ==
+         [some [⟨r.witness.1, r.witness.2⟩], some [⟨r.setup.1, r.setup.2⟩],
+          some [⟨r.quotient.1, r.quotient.2⟩, ⟨r.sum.1, r.sum.2⟩]]),
        ("the contract's calls", match v.contract with
          | some n => n == (if o.accepts then calls.length else 0)
          | none => true)]

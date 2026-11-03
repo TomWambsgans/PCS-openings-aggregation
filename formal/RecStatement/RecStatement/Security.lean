@@ -172,13 +172,17 @@ inductive Opener where
   | pi1 (vars : ℕ)
   | pi2 (layout : PcsQuotient.Layout)
 
-/-- **The registry** (`contract::registry`): π2's three layout words, then π1's (its calls' layouts, `C1`, `C2`, `F`). -/
-def RecDeployment.registry (D : RecDeployment) : List (List UInt8 × Opener) :=
-  let m := D.pi2.circuit.logN
+/-- **The registry** (`contract::registry`) of π1's shape and π2's `m`: π2's three layout words, then π1's (its calls'
+layouts, `C1`, `C2`, `F`). -/
+def registryOf (shape : UniStatement.Shape) (m : ℕ) : List (List UInt8 × Opener) :=
   let (lw, lq, ls) := layoutWords m
   let (w, q, s) := layoutsOf m
   [(lw, .pi2 w), (lq, .pi2 q), (ls, .pi2 s)] ++
-    ((UniStatement.layoutWords D.pi1.shape).take 3).map fun word ↦ (word, .pi1 (UniStatement.layoutWordVars word))
+    ((UniStatement.layoutWords shape).take 3).map fun word ↦ (word, .pi1 (UniStatement.layoutWordVars word))
+
+/-- The deployment's registry. -/
+def RecDeployment.registry (D : RecDeployment) : List (List UInt8 × Opener) :=
+  registryOf D.pi1.shape D.pi2.circuit.logN
 
 /-- The variables of a registered layout's claims. -/
 def Opener.vars : Opener → ℕ
@@ -195,12 +199,12 @@ def rootOfWord (w : List UInt8) : Digest := UniStatement.digestOfBytes32 (rootWo
 
 /-- **`decode(input, registry)`**: the root word, the layout word, `k ≥ 1` claims of the registered variables; every
 element's top 64 bits zero, the exact length. -/
-def RecDeployment.decode (D : RecDeployment) (words : List (List UInt8)) :
+def decodeWith (registry : List (List UInt8 × Opener)) (words : List (List UInt8)) :
     Option (Digest × Opener × List PcsQuotient.Claim) := do
   let root ← words.head?
   let layout ← words[1]?
   let count ← words[2]?
-  let opener ← D.registry.lookup layout
+  let opener ← registry.lookup layout
   if !(count.length = 32 ∧ (count.take 24).all (· = 0)) then none
   let k := (count.drop 24).foldl (fun acc b ↦ acc * 256 + b.toNat) 0
   let v := opener.vars
@@ -210,6 +214,11 @@ def RecDeployment.decode (D : RecDeployment) (words : List (List UInt8)) :
     let value ← elementOfWord (words.getD (3 + c * (v + 1) + v) [])
     pure (⟨point, value⟩ : PcsQuotient.Claim)
   pure (rootOfWord root, opener, claims)
+
+/-- `decode` under the deployment's registry. -/
+def RecDeployment.decode (D : RecDeployment) (words : List (List UInt8)) :
+    Option (Digest × Opener × List PcsQuotient.Claim) :=
+  decodeWith D.registry words
 
 /-- π1's calls with the setup's root `F` the deployment's (the constant root word of the call that has one). -/
 def pi1CallsWith (calls : List (List CallWord)) (f : Digest) : List (List CallWord) :=
