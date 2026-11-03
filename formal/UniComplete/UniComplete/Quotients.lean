@@ -2,6 +2,7 @@
 -- (branch `leanvm-univariate-prover2`): the second commitment's quotients (SPEC.md §5.2, §6, §13), here as exact
 -- polynomial divisions (the Rust divides on an extension coset and interpolates back).
 import UniComplete.Bus
+import UniComplete.Div
 
 /-!
 # The quotients, as exact polynomial divisions
@@ -66,12 +67,6 @@ def compSNovel (h : ℕ) (d : Array E) : Array E :=
 /-- `T(X + 1)` from `T`'s novel coefficients: coefficient `j` is `d_j + d_{j+1}` for even `j`, `d_j` for odd. -/
 def shiftOneNovel (h : ℕ) (d : Array E) : Array E :=
   Array.ofFn (n := 2 ^ h) fun j ↦ if j.val % 2 = 0 then d.getD j.val 0 + d.getD (j.val + 1) 0 else d.getD j.val 0
-
-/-- `CompPoly`'s exact division by a monic polynomial. -/
-def divM (p q : Poly) : Poly := CompPoly.CPolynomial.divByMonic p q
-
-/-- The remainder. -/
-def modM (p q : Poly) : Poly := CompPoly.CPolynomial.modByMonic p q
 
 /-! ### The quotients -/
 
