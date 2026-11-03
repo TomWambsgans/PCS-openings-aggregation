@@ -154,6 +154,53 @@ theorem quotientTerms_phc {st : RecState} (hg : Good st) (h0 : Rp π iv publicIn
     (List.Forall₂.cons ⟨rfl, rfl, RpL.takeC π iv publicInput stream (RpL.pgrow hg hs1 hw) e, Rp.pgrow hg hs1 hf⟩
       List.Forall₂.nil)
 
+theorem RpL.arrGetD0 {st : RecState} {a : Array Nat} {b : Array E}
+    (h : RpL π iv publicInput stream st a.toList b.toList) (h0 : Rp π iv publicInput stream st 0 0) (k : Nat) :
+    Rp π iv publicInput stream st (a.getD k 0) (b.getD k 0) := by
+  have e : b.getD k 0 = b.toList.getD k 0 := by
+    rw [Array.getD_eq_getD_getElem?, ← Array.getElem?_toList, List.getD_eq_getElem?_getD]
+  rw [e]
+  exact RpL.arrGetDz π iv publicInput stream h h0 k
+
+theorem foldl_snoc_mapC {α β : Type} (f : α → β) (l : List α) (a0 : List β) :
+    l.foldl (fun a x ↦ a ++ [f x]) a0 = a0 ++ l.map f := by
+  induction l generalizing a0 with
+  | nil => simp
+  | cons x l ih => rw [List.foldl_cons, ih, List.map_cons, List.append_assoc, List.singleton_append]
+
+/-- **A list of nodes built one node at a time**: the program's `for k in [0:n]` pushing a node worth `f k`. -/
+theorem phc_snoc_range {st : RecState} (hg : Good st) (C : RecState → Prop)
+    (hC : ∀ st st', Good st → PStep st st' → C st → C st') (hc : C st) (n : ℕ) (f : ℕ → E)
+    (body : ℕ → Array Nat → Prog (ForInStep (Array Nat)))
+    (hb : ∀ k b s, Good s → C s → k < n →
+      PHc s (body k b) fun r s' ↦ ∃ v, r = .yield (b.push v) ∧ Rp π iv publicInput stream s' v (f k)) :
+    PHc st (forIn [0:n] #[] body) fun r st' ↦
+      RpL π iv publicInput stream st' r.toList ((List.range n).map f) ∧ C st' := by
+  rw [forIn_range, Nat.sub_zero, ← List.range_eq_range', ← List.nil_append ((List.range n).map f),
+    ← foldl_snoc_mapC]
+  refine phc_conseq (phc_forIn_same (fun k ↦ k < n) C hC body (fun a x ↦ a ++ [f x])
+    (fun (b : Array Nat) (l : List E) s ↦ RpL π iv publicInput stream s b.toList l ∧ C s) ?_ (List.range n)
+    (fun k hk ↦ List.mem_range.mp hk) st #[] [] hg hc ⟨List.Forall₂.nil, hc⟩) fun _ _ _ h ↦ h
+  intro k b l s hg' hk _ ⟨hbl, hcs⟩
+  refine phc_conseq (hb k b s hg' hcs hk) fun r s' hs ⟨v, hr, hv⟩ ↦ ⟨_, hr, ?_, hC s s' hg' hs hcs⟩
+  rw [Array.toList_push]
+  exact List.rel_append (RpL.pgrow hg' hs hbl) (List.Forall₂.cons hv List.Forall₂.nil)
+
+/-- The heap's inputs, represented. -/
+structure HeapCtx (st : RecState) (active : List Nat) (activeE : List E) (parts : List TablePartS)
+    (partsE : List TablePart) (weights : Array Nat) (weightsE : Array E) (w : List Nat) (wE : List E) : Prop where
+  h0 : Rp π iv publicInput stream st 0 0
+  ha : RpL π iv publicInput stream st active activeE
+  hp : List.Forall₂ (RpPart π iv publicInput stream st) parts partsE
+  hw : RpL π iv publicInput stream st weights.toList weightsE.toList
+  hwE : RpL π iv publicInput stream st w wE
+
+theorem HeapCtx.pgrow {st st' : RecState} (hg : Good st) (hs : PStep st st') {active activeE parts partsE weights
+    weightsE w wE} (h : HeapCtx π iv publicInput stream st active activeE parts partsE weights weightsE w wE) :
+    HeapCtx π iv publicInput stream st' active activeE parts partsE weights weightsE w wE :=
+  ⟨Rp.pgrow hg hs h.h0, RpL.pgrow hg hs h.ha, h.hp.imp fun _ _ h ↦ RpPart.pgrow π iv publicInput stream hg hs h,
+    RpL.pgrow hg hs h.hw, RpL.pgrow hg hs h.hwE⟩
+
 end Rel
 
 end RecGraph.Sim
