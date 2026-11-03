@@ -4,6 +4,7 @@ import UniComplete.Prover
 import UniComplete.BatchProofWeight
 import UniComplete.DomainCoord
 import UniComplete.DomainDigits
+import UniComplete.Reference
 
 /-!
 # Combining true relations with the powers of `ρ` gives a true weighted claim (milestone 4)
@@ -1396,16 +1397,7 @@ theorem mem_limbs_new {cols : List (Column × ℕ × Bool)} {column : Column} {b
     obtain ⟨rfl, -, rfl⟩ := he
     exact ⟨x.2.2, by simpa using hx⟩
 
-/-- `C1`'s columns (`layouts`' text). -/
-def c1Columns (shape : Shape) : List (Column × ℕ × Bool) :=
-  [(.qflock, shape.heights.getD opBlake2s 0 + 8, false)] ++
-    tables.flatMap (fun t ↦
-      let h := shape.heights.getD t.opcode 0
-      (List.range t.width).map (fun c ↦ (Column.table t.opcode c, h, false)) ++
-        [(.inverse t.opcode, h, false)]) ++
-    (List.range 4).map (fun k ↦ (Column.memory k, shape.logMemory, false)) ++
-    [(.bytecodeFinal, shape.logBytecode, false)]
-
+/-- `C1`'s layout is `StackLayout.new` of `Reference`'s `c1Columns` (`layouts`' `c1`). -/
 theorem layoutIn_c1 (shape : Shape) (c2 : List (Column × ℕ × Bool)) :
     layoutIn (layouts shape c2) .c1 = StackLayout.new (c1Columns shape) := rfl
 
