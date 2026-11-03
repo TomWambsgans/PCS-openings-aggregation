@@ -120,17 +120,6 @@ def ofNovelWith (ws : Array Poly) : ℕ → Array E → Poly
 /-- `Σ_k d_k X_k` for `2^m` novel coefficients. -/
 def ofNovel (m : ℕ) (d : Array E) : Poly := ofNovelWith (wPolys m) m d
 
-/-- **The novel coefficients** of a polynomial of degree `< 2^m`: the remainder and the quotient by `w_{m−1}`, each
-recursively. -/
-def toNovelWith (ws : Array Poly) : ℕ → Poly → Array E
-  | 0, p => #[p.coeff 0]
-  | m + 1, p =>
-    let w := ws.getD m 0
-    toNovelWith ws m (CompPoly.CPolynomial.modByMonic p w) ++ toNovelWith ws m (CompPoly.CPolynomial.divByMonic p w)
-
-/-- The `2^m` novel coefficients of `p`. -/
-def toNovel (m : ℕ) (p : Poly) : Array E := toNovelWith (wPolys m) m p
-
 /-- The subset-sum transform on `2^r` entries of `E` (`subset_sums`): `c_k = Σ_{S ⊆ k} d_S`, its own inverse. -/
 def subsetSumsE (r : ℕ) (d : Array E) : Array E :=
   (List.range r).foldl (fun a l ↦ Array.ofFn (n := a.size) fun k ↦
