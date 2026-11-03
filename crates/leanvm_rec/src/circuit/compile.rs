@@ -45,6 +45,7 @@ pub fn expand(graph: &Graph) -> (Graph, Vec<u32>) {
                 Node::Mul(a, b) => m(a) * m(b),
                 Node::Hash(s, from, to) => Sym::new(Node::Hash(m(s).0, from, to)),
                 Node::Low(h) => Sym::new(Node::Low(m(h).0)),
+                Node::Narrow(h) => Sym::new(Node::Narrow(m(h).0)),
                 Node::Bits(v, shift, width) => m(v).bits(shift as usize, width as usize),
                 Node::RingWeight(k, n) => {
                     let ops: Vec<Sym> = graph.kernels[k as usize].iter().map(|&id| m(id)).collect();
@@ -328,6 +329,16 @@ pub fn compile<P: Permutation>(
                 let l2 = limb(2, &mut b, &mut sponge.constants);
                 ([l0, l1, l2], true)
             }
+            // A narrow challenge: limb 2 is the low 32 bits of the digest's bytes 8..16, its bytes 12..16.
+            Node::Narrow(h) => {
+                packings += 1;
+                let d = &digests[&h];
+                let digest_bit = |i: usize| d[i];
+                let l0 = packer.pack(&mut b, &mut sponge.constants, &be_bits(&digest_bit, 24, 8));
+                let l1 = packer.pack(&mut b, &mut sponge.constants, &be_bits(&digest_bit, 16, 8));
+                let l2 = packer.pack(&mut b, &mut sponge.constants, &be_bits(&digest_bit, 12, 4));
+                ([l0, l1, l2], true)
+            }
             Node::Bits(v, shift, width) => {
                 let Node::Input { offset, len } = g.nodes[v as usize] else {
                     panic!("a bit field of a read integer")
@@ -384,7 +395,25 @@ pub fn compile<P: Permutation>(
         endable.insert(id, can_end);
     }
 
-    // Ports: the statement, the roots, the calls' elements, the zero checks.
+    // Ports: the zero checks first, padded with constant zeros to a power of two, so that their outside tags
+    // `N … N + 2^k` are an aligned coset (PI2.md §9, lever 3c: the verifier sums them in closed form); then the
+    // statement, the roots, the calls' elements.
+    let mut zero_ports = 0usize;
+    for &id in &zero {
+        match g.nodes[id as usize] {
+            Node::Const(c) => assert_eq!(c, [0; 3], "a zero check on a nonzero constant"),
+            _ => {
+                ports.port(&mut b, &limbs[&id], Source::Zero);
+                zero_ports += 1;
+            }
+        }
+    }
+    if zero_ports > 1 {
+        for _ in zero_ports..zero_ports.next_power_of_two() {
+            let pad = [(); 3].map(|_| sponge.constants.fresh(&mut b, K(0)));
+            ports.port(&mut b, &pad, Source::Pad);
+        }
+    }
     ports.port(&mut b, &statement_limb, Source::Statement);
     let mut roots: Vec<[u8; 32]> = Vec::new();
     let mut root_of: BTreeMap<usize, u32> = BTreeMap::new();
@@ -431,12 +460,6 @@ pub fn compile<P: Permutation>(
     }
     for (e, &id) in element_nodes.iter().enumerate() {
         ports.port(&mut b, &limbs[&id], Source::Element(e as u32));
-    }
-    for &id in &zero {
-        match g.nodes[id as usize] {
-            Node::Const(c) => assert_eq!(c, [0; 3], "a zero check on a nonzero constant"),
-            _ => ports.port(&mut b, &limbs[&id], Source::Zero),
-        }
     }
     b.calls = circuit_calls;
     let keccak_permutations = sponge.permutations;

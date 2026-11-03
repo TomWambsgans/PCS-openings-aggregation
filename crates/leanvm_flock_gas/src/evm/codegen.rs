@@ -85,7 +85,7 @@ impl Dag for Nodes<'_> {
     fn operands(&self, id: u32) -> Vec<u32> {
         match self.graph.nodes[id as usize] {
             Node::Add(a, b) | Node::Mul(a, b) => vec![a, b],
-            Node::Hash(state, _, _) | Node::Low(state) | Node::Bits(state, _, _) => vec![state],
+            Node::Hash(state, _, _) | Node::Low(state) | Node::Narrow(state) | Node::Bits(state, _, _) => vec![state],
             Node::RingWeight(kernel, _) => self.graph.kernels[kernel as usize].clone(),
             _ => vec![],
         }
@@ -145,6 +145,7 @@ impl Dag for Nodes<'_> {
                 code
             }
             Node::Low(_) => front::code([&push(&[0xff; 24])[..], &[AND]].concat()),
+            Node::Narrow(_) => front::code([&push(&[0xff; 20])[..], &[AND]].concat()),
             Node::RingWeight(_, n) => front::code(crate::evm::kernel::ring_weight_code(n as usize)),
             Node::Bits(_, shift, width) => {
                 let mut code = Vec::new();

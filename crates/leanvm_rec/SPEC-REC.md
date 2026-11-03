@@ -869,3 +869,7 @@ in `PI2.md` §9.
    (branch `leanvm-rec-points`) it removes the matrices' claims from the problem.
 5. **`PCS_OPEN`'s inputs written once** (the contract only: `evm_link`'s `reuse`; π2's call order `W`, setup, `Q`).
    Execution 32,646 → 31,103; EIP-7623 `c = 0` 53,270 → 51,727.
+6. **The zero checks' coset in closed form** (π2's circuit: the zero ports first, padded to a power of two; π2's
+   verifier). Execution 31,103 → 30,182; EIP-7623 `c = 0` 51,727 → 51,560 (the floor binds). The same commit adds the
+   narrow-challenge plumbing (`Channel::sample_narrow`, `record::Node::Narrow`, `FsShape::Rec2`, the prover's batch),
+   inert until item 7.

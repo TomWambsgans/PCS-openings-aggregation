@@ -63,7 +63,7 @@ impl<'a> Instance<'a> {
             spec.log_n == circuit.log_n
                 && spec.log_row == circuit.log_row
                 && spec.pairs.len() == circuit.pairs.len()
-                && spec.public.len() == circuit.public.len()
+                && spec.public.len() + spec.zero_coset.as_ref().map_or(0, |(_, k, _)| 1 << k) == circuit.public.len()
                 && spec.reads == circuit.reads,
             "the spec is the circuit's"
         );

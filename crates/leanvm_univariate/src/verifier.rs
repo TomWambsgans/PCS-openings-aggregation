@@ -16,7 +16,7 @@ use leanvm_flock_gas::layout::{
 use leanvm_flock_gas::matrices::MatrixClaim;
 use leanvm_flock_gas::multilinear::{eq_kernel, log2_ceil};
 use leanvm_flock_gas::scalar::{Scalar, enter};
-use leanvm_flock_gas::transcript::{Channel, FsShape, sumcheck};
+use leanvm_flock_gas::transcript::{Channel, FsShape, sumcheck_drawn};
 use leanvm_flock_gas::VerifierError;
 
 use crate::claims::{COMMITMENTS, Column, Combined, Commitment, Relations, Term, term};
@@ -336,11 +336,13 @@ pub const FLOCK_REC: Variant = Variant {
 /// **π1-rec2** (`crates/leanvm_rec/SPEC-REC.md` §12): π1-rec with Flock's lincheck terminal checked by a walk of the
 /// BLAKE2s circuit on the sent slices (leanVM's own check, `flock_min::walked_terminal`, [`Slices::TowerWalk`]): no
 /// matrices' reduction in the batching sumcheck, no `a`, `b` after it, no claims on `A0`, `B0`. Three claims in three
-/// calls (`C1`, `C2`, `F`), all at the batch's point. Too dear for a contract (the walk is about 49,000 products), it
-/// is for π2 to prove.
+/// calls (`C1`, `C2`, `F`), all at the batch's point, whose coordinates are narrow challenges (`FsShape::Rec2`: 160
+/// bits, four zero bytes a coordinate in the recursion's calldata). Too dear for a contract (the walk is about 49,000
+/// products), it is for π2 to prove.
 pub const FLOCK_REC2: Variant = Variant {
+    skip: 3,
     slices: Slices::TowerWalk,
-    ..FLOCK_REC
+    fs: FsShape::Rec,
 };
 
 /// The twist field of the term that stands for the whole ring-switch weight `Φ(eq(p, ·))` on the main line: the
@@ -781,6 +783,7 @@ pub fn reduce<S: Scalar + PartialEq, C: Channel<S>>(
         Claims::Point => {
             let (openings, deferred) = batch(
                 channel,
+                blake2s.fs() == FsShape::Rec2,
                 &combined,
                 &layouts,
                 bit_slice,
@@ -948,6 +951,7 @@ fn weight_at<S: Scalar>(
 /// first ones: after the stacks' values the prover sends `a = Â0`, `b = B̂0` at the point, and the terminal checks both.
 fn batch<S: Scalar + PartialEq, C: Channel<S>>(
     channel: &mut C,
+    narrow: bool,
     combined: &[(Commitment, Combined<S>)],
     layouts: &[(Commitment, StackLayout)],
     bit_slice: Option<Combined<S>>,
@@ -967,7 +971,8 @@ fn batch<S: Scalar + PartialEq, C: Channel<S>>(
         assert!(pending.rounds() <= vars);
         target += scale * pending.claim;
     }
-    let (r, last) = sumcheck(channel, target, 3, &vec![None; vars])?;
+    // π1-rec2 (`FsShape::Rec2`): the rounds' challenges narrow, 160 bits.
+    let (r, last) = sumcheck_drawn(channel, target, 3, &vec![None; vars], narrow)?;
     let values = channel.next_scalars(combined.len())?;
     let matrices = match pending {
         Some(_) => Some((channel.next_scalar()?, channel.next_scalar()?)),

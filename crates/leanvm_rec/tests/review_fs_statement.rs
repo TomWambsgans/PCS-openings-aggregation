@@ -320,7 +320,7 @@ fn review_fs_circuit_is_the_graph_on_a_random_stream() {
         }
         // Every root and element a call of π1 takes is a port's (the statement once, 2 roots, 51 elements, 13 zeros).
         let circuit = &c.finished.circuit;
-        let mut by_source = [0usize; 4];
+        let mut by_source = [0usize; 5];
         let (mut roots, mut elements) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
         for p in &circuit.ports {
             match p.source {
@@ -334,10 +334,12 @@ fn review_fs_circuit_is_the_graph_on_a_random_stream() {
                     elements.insert(i);
                 }
                 Source::Zero => by_source[3] += 1,
+                // PI2.md §9, lever 3c: the zero checks padded to a power of two, constants checking nothing.
+                Source::Pad => by_source[4] += 1,
             }
         }
-        println!("ports (statement, roots, elements, zeros): {by_source:?}");
-        assert_eq!(by_source, [1, 2, 51, 13]);
+        println!("ports (statement, roots, elements, zeros, padding): {by_source:?}");
+        assert_eq!(by_source, [1, 2, 51, 13, 3]);
         assert_eq!((roots.len(), elements.len()), (2, 51), "each once");
         for w in circuit.calls.iter().flatten() {
             match *w {

@@ -135,7 +135,7 @@ pub fn adapt(c: &spec::Circuit) -> Circuit {
                 // A root's halves are bytes 0..16 (L_3, L_2) and 16..32 (L_1, L_0): half 1 + γ half 0.
                 spec::Source::Root(i) => vec![(Coeff::ONE, 4 + 2 * i as u16 + 1), (Coeff::gamma(1), 4 + 2 * i as u16)],
                 spec::Source::Element(i) => vec![(Coeff::ONE, element_at(i))],
-                spec::Source::Zero => vec![],
+                spec::Source::Zero | spec::Source::Pad => vec![],
             };
             PublicTerm {
                 tag: (n + j) as u32,

@@ -34,6 +34,12 @@ pub trait Channel<S: Scalar> {
 
     fn sample(&mut self) -> S;
 
+    /// A challenge of [`NARROW_BITS`] bits (π1-rec2's batching sumcheck, `crates/leanvm_rec/SPEC-REC.md` §12): the
+    /// hash's low 160 bits instead of 192, so that its 24 calldata bytes start with four zeros.
+    fn sample_narrow(&mut self) -> S {
+        unimplemented!("this channel draws no narrow challenges")
+    }
+
     fn samples(&mut self, count: usize) -> Vec<S> {
         (0..count).map(|_| self.sample()).collect()
     }
@@ -64,6 +70,19 @@ pub enum FsShape {
     /// `π1-rec`: in each of the two runs, the first challenge `c` is drawn and the others are `c², c⁴, …`, each the
     /// square of the one before (no hash). 24 fewer Keccak-256 calls on the main line (131 → 107 Keccak-f).
     Rec,
+    /// `π1-rec2`'s (`crates/leanvm_rec/SPEC-REC.md` §12): [`FsShape::Rec`], and the batching sumcheck's challenges of
+    /// [`NARROW_BITS`] bits ([`Channel::sample_narrow`]): the claims' point, which the recursion's contract carries in
+    /// calldata, has four zero bytes a coordinate.
+    Rec2,
+}
+
+/// The bits of a narrow challenge: its top limb's low 32 (`c2 < 2^32`). Soundness: a sumcheck round of degree 2 errs
+/// with probability `2/2^160`; π1-rec2's batch, 27 rounds over `C1`'s and `C2`'s lists (`2^24.3`), at `2^-130`.
+pub const NARROW_BITS: usize = 160;
+
+/// The narrow challenge of a hash's challenge: its limb 2 cut to 32 bits.
+pub fn narrow(x: E) -> E {
+    E::new(x.c0, x.c1, x.c2 & 0xFFFF_FFFF)
 }
 
 impl FsShape {
@@ -72,8 +91,8 @@ impl FsShape {
     pub fn draw<S: Scalar, C: Channel<S> + ?Sized>(self, channel: &mut C, count: usize) -> Vec<S> {
         match self {
             FsShape::Main => channel.samples(count),
-            FsShape::Rec if count == 0 => Vec::new(),
-            FsShape::Rec => squares(channel.sample(), count),
+            FsShape::Rec | FsShape::Rec2 if count == 0 => Vec::new(),
+            FsShape::Rec | FsShape::Rec2 => squares(channel.sample(), count),
         }
     }
 }
@@ -299,14 +318,29 @@ pub fn sumcheck_round_poly<S: Scalar>(
 
 pub fn sumcheck<S: Scalar>(
     transcript: &mut impl Channel<S>,
+    claim: S,
+    count: usize,
+    equalities: &[Option<S>],
+) -> Result<(Vec<S>, S), VerifierError> {
+    sumcheck_drawn(transcript, claim, count, equalities, false)
+}
+
+/// [`sumcheck`], its challenges narrow ([`Channel::sample_narrow`]) when `narrow`.
+pub fn sumcheck_drawn<S: Scalar>(
+    transcript: &mut impl Channel<S>,
     mut claim: S,
     count: usize,
     equalities: &[Option<S>],
+    narrow: bool,
 ) -> Result<(Vec<S>, S), VerifierError> {
     let mut point = Vec::with_capacity(equalities.len());
     for &equality in equalities {
         let message = sumcheck_round_poly(transcript, count, claim, equality)?;
-        let challenge = transcript.sample();
+        let challenge = if narrow {
+            transcript.sample_narrow()
+        } else {
+            transcript.sample()
+        };
         point.push(challenge);
         claim = poly_eval(&message, challenge);
     }
@@ -413,6 +447,10 @@ impl Channel<E> for KeccakChannel<'_> {
         challenge_of(&self.state)
     }
 
+    fn sample_narrow(&mut self) -> E {
+        narrow(self.sample())
+    }
+
     fn require_zero(&mut self, value: E, error: VerifierError) -> Result<(), VerifierError> {
         match &mut self.checks {
             Checks::Enforce => require(value == ZERO, error),
@@ -479,6 +517,11 @@ impl KeccakWriter {
         self.absorbed = self.stream.len();
         self.state = keccak256(&input);
         challenge_of(&self.state)
+    }
+
+    /// [`Channel::sample_narrow`]'s challenge.
+    pub fn sample_narrow(&mut self) -> E {
+        narrow(self.sample())
     }
 }
 

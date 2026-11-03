@@ -569,6 +569,8 @@ fn differential(recorded: &Recorded, layout: Layout, iv: [u8; 32], public: [u8; 
                 zero_at += 1;
                 vec![x.c0, x.c1, x.c2]
             }
+            // PI2.md §9, lever 3c: the zero checks' padding to a power of two, zero constants.
+            Source::Pad => vec![0; 3],
         };
         assert_eq!(l, &want, "{label}: port {:?}", p.source);
     }

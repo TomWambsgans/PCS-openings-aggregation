@@ -64,6 +64,7 @@ pub fn evaluate(graph: &Graph, seed: [u8; 32], public: &[u8; 32], stream: &[u8])
                 Value::State(keccak256(&input))
             }
             Node::Low(h) => Value::E(challenge_of(&values[h as usize].state())),
+            Node::Narrow(h) => Value::E(leanvm_flock_gas::transcript::narrow(challenge_of(&values[h as usize].state()))),
             Node::Bits(v, shift, width) => Value::E(<E as Scalar>::bits(e(v), shift as usize, width as usize)),
             Node::RingWeight(k, n) => {
                 let ops: Vec<E> = graph.kernels[k as usize].iter().map(|&id| e(id)).collect();

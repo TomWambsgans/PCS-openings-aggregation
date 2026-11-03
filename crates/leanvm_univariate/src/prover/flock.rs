@@ -296,7 +296,7 @@ pub fn prove(
     // row weights otherwise.
     let eq = match variant.fs {
         FsShape::Main => EqPoint::Sampled,
-        FsShape::Rec => EqPoint::Squares,
+        FsShape::Rec | FsShape::Rec2 => EqPoint::Squares,
     };
     let started = std::time::Instant::now();
     let claim = setup.prove_reduction_skip(k, eq, &witness.z, &witness.a, &witness.b, &witness.z_lincheck, &mut chain);

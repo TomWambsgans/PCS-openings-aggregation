@@ -153,13 +153,17 @@ pub enum Source {
     Element(u32),
     /// A check of `π1`'s verifier: three zero limbs.
     Zero,
+    /// Padding of the zero checks to a power of two (`PI2.md` §9, lever 3c): three zero limbs of constants, checking
+    /// nothing. The zero ports and these are the first ports, so their outside tags `N … N + 2^k` are an aligned coset,
+    /// whose public sum π2's verifier takes in closed form.
+    Pad,
 }
 
 impl Source {
     pub fn limbs(self) -> usize {
         match self {
             Source::Statement | Source::Root(_) => 4,
-            Source::Element(_) | Source::Zero => 3,
+            Source::Element(_) | Source::Zero | Source::Pad => 3,
         }
     }
 }
@@ -334,7 +338,7 @@ impl Circuit {
                     let x = public.elements[i as usize];
                     vec![x.c0, x.c1, x.c2]
                 }
-                Source::Zero => vec![0; 3],
+                Source::Zero | Source::Pad => vec![0; 3],
             })
             .collect()
     }

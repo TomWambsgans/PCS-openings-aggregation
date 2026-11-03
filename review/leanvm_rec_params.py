@@ -130,6 +130,20 @@ def bits(err):
 # ---------------------------------------------------------------------------------------------------------------------
 # Soundness (SPEC-REC.md §5).
 
+def pi1_rec2_rounds(xmss=1000):
+    """pi1-rec2's rounds (SPEC-REC.md §12): pi1-rec's, Flock's lincheck terminal checked by the circuit's walk (no
+    matrices' rounds in the batch, 3 claims), and the batching sumcheck's challenges narrow: 160 bits, so each round of
+    degree 2 errs with probability 2/2^160 (over C1's and C2's lists, as every challenge after C2)."""
+    out = []
+    for label, err, union in pi1_rec_rounds(xmss):
+        if label.startswith("λ"):
+            vars_ = int(label.split("the ")[1].split("-round")[0])
+            out.append(("λ (3 claims)", 2 / 2.0 ** LOGQ, union))
+            label, err = f"the {vars_}-round batching sumcheck, narrow challenges (160 bits)", 2 * vars_ / 2.0 ** 160
+        out.append((label, err, union))
+    return out
+
+
 def pi1_rec_rounds(xmss=1000, derived=True):
     """pi1's rounds as review/leanvm_univariate_params.py states them, with pi1-rec's two derivations: the bus's alpha
     as (c, c^2, c^4, c^8) (each fingerprint multilinear in alpha, so degree 16 in c a tuple, with beta independent),
@@ -273,6 +287,11 @@ def main():
         for label, err, union in rs:
             print(f"     {label:90s} {bits(err):6.1f} alone, {bits(err * union):6.1f} after")
         print(f"     {'PIOP':90s}        {bits(sum(e * u for _, e, u in rs)):6.1f}")
+    rs = pi1_rec2_rounds()
+    print("  pi1 pi1-rec2 (C1 4,473, C2 4,473; SPEC-REC.md §12):")
+    for label, err, union in rs:
+        print(f"     {label:90s} {bits(err):6.1f} alone, {bits(err * union):6.1f} after")
+    print(f"     {'PIOP':90s}        {bits(sum(e * u for _, e, u in rs)):6.1f}")
     for design in ["D16v", "D32v", "C16"]:
         p = "pi1-rec (skip 3; alpha, zerocheck point derived)" if design == "D16v" else "main line (skip 3)"
         s = size(p, design)

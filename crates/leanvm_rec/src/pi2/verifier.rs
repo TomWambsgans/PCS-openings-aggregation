@@ -74,8 +74,49 @@ pub struct Spec {
     /// `I_p(x) = Z_V(x) / (Ẑ_s(x) + Ẑ_s(c_p))`.
     pub c: Vec<F64>,
     pub reads: Vec<Read>,
+    /// The public terms but the zero coset's.
     pub public: Vec<PublicTerm>,
     pub max_gamma: usize,
+    /// The public terms of value 0 whose tags are an aligned coset `c + V_k` (`k ≥ 1`; the zero checks and their
+    /// padding, `PI2.md` §9 lever 3c): `(c's tag, k, the coefficients a_i of V_k's subspace polynomial
+    /// w_k(X) = Σ a_i X^(2^i))`. Their sum `Σ_(u ∈ V_k) 1/(Y + βu)`, `Y = α + β ω_c`, is `β^(2^k − 1) / F(Y)` with
+    /// `F(Y) = Σ a_i Y^(2^i) β^(2^k − 2^i)` (`F = β^(2^k) w_k(Y/β)`, whose derivative is `a_0 β^(2^k-1)`, `a_0 = 1`).
+    pub zero_coset: Option<(u32, usize, Vec<F64>)>,
+}
+
+/// The coefficients of `w_k = s^k`, `s(X) = X² + X` (`V_k`'s subspace polynomial in the Cantor basis), low first:
+/// `a_i` of `X^(2^i)`, `i ≤ k`.
+pub fn subspace_coefficients(k: usize) -> Vec<F64> {
+    let mut a = vec![F64::ONE];
+    for _ in 0..k {
+        // s(Σ a_i X^(2^i)) = Σ a_i² X^(2^(i+1)) + Σ a_i X^(2^i).
+        let mut next = vec![F64::ZERO; a.len() + 1];
+        for (i, &c) in a.iter().enumerate() {
+            next[i + 1] += c * c;
+            next[i] += c;
+        }
+        a = next;
+    }
+    a
+}
+
+/// The zero-valued public terms, if their tags are exactly an aligned coset of `2^k` tags (`k ≥ 1`); and the others.
+fn zero_coset(public: &[PublicTerm]) -> (Option<(u32, usize, Vec<F64>)>, Vec<PublicTerm>) {
+    let (zeros, rest): (Vec<&PublicTerm>, Vec<&PublicTerm>) = public
+        .iter()
+        .partition(|t| t.value.terms.is_empty() && t.value.constant.is_none());
+    let mut tags: Vec<u32> = zeros.iter().map(|t| t.tag).collect();
+    tags.sort_unstable();
+    let n = tags.len();
+    let aligned = n >= 2
+        && n.is_power_of_two()
+        && tags[0] as usize % n == 0
+        && tags.windows(2).all(|w| w[1] == w[0] + 1);
+    if !aligned {
+        return (None, public.to_vec());
+    }
+    let k = n.trailing_zeros() as usize;
+    (Some((tags[0], k, subspace_coefficients(k))), rest.into_iter().cloned().collect())
 }
 
 /// `Ẑ_s`'s recursion constants `c_1 … c_count`.
@@ -124,6 +165,7 @@ impl Spec {
                 }),
             }
         }
+        let (coset, public) = zero_coset(&circuit.public);
         Self {
             log_n: m,
             log_row: r,
@@ -132,8 +174,9 @@ impl Spec {
             pull_less: (0..circuit.pairs.len()).filter(|&p| !circuit.pairs[p].pulls).collect(),
             c: normalised_constants(&e),
             reads: circuit.reads.clone(),
-            public: circuit.public.clone(),
+            public,
             max_gamma: circuit.max_gamma(),
+            zero_coset: coset,
         }
     }
 
@@ -401,7 +444,36 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
             last = Some((term.tag, beta_tag));
             alpha + lin(&term.value, &|c| public[c], &gammas) + beta_tag
         });
-        (!spec.public.is_empty()).then(|| fraction(&mut terms))
+        let side = (!spec.public.is_empty()).then(|| fraction(&mut terms));
+        // The zero coset `c + V_k`: `β^(2^k − 1) / F(Y)`, `Y = α + β ω_c`, `F(Y) = Σ a_i Y^(2^i) β^(2^k − 2^i)`.
+        let coset = spec.zero_coset.as_ref().map(|(tag, k, a)| {
+            let y = alpha + beta * base::<S>(point(*tag as usize));
+            let (mut y_pow, mut b_pow) = (vec![y], vec![beta]);
+            for i in 1..=*k {
+                y_pow.push(y_pow[i - 1].square());
+                if i < *k {
+                    b_pow.push(b_pow[i - 1].square());
+                }
+            }
+            // β^(2^k − 2^i) = Π_(i ≤ j < k) β^(2^j), down from i = k − 1; β^(2^k − 1) the product of them all.
+            let mut b_rest = vec![one; *k + 1];
+            for i in (0..*k).rev() {
+                b_rest[i] = if i + 1 == *k { b_pow[i] } else { b_rest[i + 1] * b_pow[i] };
+            }
+            let mut f = y_pow[*k];
+            for i in 0..*k {
+                if a[i] != F64::ZERO {
+                    let term = y_pow[i] * b_rest[i];
+                    f += if a[i] == F64::ONE { term } else { base::<S>(a[i]) * term };
+                }
+            }
+            (b_rest[0], f)
+        });
+        match (side, coset) {
+            (Some((n, d)), Some((nz, dz))) => Some((n * dz + d * nz, d * dz)),
+            (side, None) => side,
+            (None, coset) => coset,
+        }
     };
 
     // The pushes' sum `A / B = Σ_g (N_g / D_g)(E_g + v_0)`, one fraction: a group of one pair adds `X / d` (3 products),
@@ -550,6 +622,37 @@ mod tests {
         for _ in 0..8 {
             assert_eq!(inverse(x) * x, E::new(1, 0, 0));
             x = x * x + E::new(3, 1, 4);
+        }
+    }
+
+    /// The zero coset's closed form (PI2.md §9, lever 3c): `w_k`'s coefficients vanish on `V_k`, and
+    /// `Σ_(u ∈ V_k) 1/(Y + βu) = β^(2^k − 1) / F(Y)`, `F(Y) = Σ a_i Y^(2^i) β^(2^k − 2^i)`.
+    #[test]
+    fn the_zero_coset_sum_is_its_closed_form() {
+        assert_eq!(subspace_coefficients(4), [F64::ONE, F64::ZERO, F64::ZERO, F64::ZERO, F64::ONE]);
+        let (alpha, beta) = (E::new(3, 1, 4), E::new(1, 5, 9));
+        for k in 1..=5 {
+            let a = subspace_coefficients(k);
+            let w = |x: F64| {
+                let (mut acc, mut x_pow) = (F64::ZERO, x);
+                for &c in &a {
+                    acc += c * x_pow;
+                    x_pow = x_pow.square();
+                }
+                acc
+            };
+            for u in 0..1usize << k {
+                assert_eq!(w(point(u)), F64::ZERO, "w_{k} vanishes on V_{k}");
+            }
+            let c = 1usize << 24;
+            let y = alpha + beta * E::new(point(c).0, 0, 0);
+            let sum = (0..1usize << k).fold(E::default(), |acc, u| {
+                acc + inverse(alpha + beta * E::new(point(c + u).0, 0, 0))
+            });
+            let f = a.iter().enumerate().fold(E::default(), |acc, (i, &ai)| {
+                acc + E::new(ai.0, 0, 0) * y.pow(1 << i) * beta.pow((1u64 << k) - (1 << i))
+            });
+            assert_eq!(sum * f, beta.pow((1u64 << k) - 1), "k = {k}");
         }
     }
 }

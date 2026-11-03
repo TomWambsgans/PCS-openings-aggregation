@@ -247,7 +247,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
     // c⁸) of one challenge c, squared in E as the verifier squares it.
     let alphas: Vec<F192> = match config.blake2s.fs() {
         FsShape::Main => (0..4).map(|_| from_v(writer.sample())).collect(),
-        FsShape::Rec => squares(writer.sample(), 4).into_iter().map(from_v).collect(),
+        FsShape::Rec | FsShape::Rec2 => squares(writer.sample(), 4).into_iter().map(from_v).collect(),
     };
     let beta = from_v(writer.sample());
     let gamma = from_v(writer.sample());
@@ -536,7 +536,9 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
                     (&s.words[..], s.layout.vars)
                 })
                 .collect();
-            let (point, values, matrices) = super::batch::prove(&mut writer, &stacks, weights, lambda, pending.as_ref())?;
+            let narrow = config.blake2s.fs() == FsShape::Rec2;
+            let (point, values, matrices) =
+                super::batch::prove(&mut writer, &stacks, weights, lambda, pending.as_ref(), narrow)?;
             if let Some(claim) = matrices {
                 report.flock = Some(claim);
             }

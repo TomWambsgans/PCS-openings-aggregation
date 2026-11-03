@@ -149,6 +149,7 @@ pub fn prove(
     weights: Vec<Weight>,
     lambda: F192,
     pending: Option<&super::flock::Pending>,
+    narrow: bool,
 ) -> Result<(Vec<F192>, Vec<F192>, Option<(Vec<E>, E, E)>), String> {
     let vars = stacks.iter().map(|&(_, v)| v).max().expect("stacks");
     let shortest = stacks.iter().map(|&(_, v)| v).min().expect("stacks");
@@ -205,7 +206,8 @@ pub fn prove(
         }
         writer.send(to_v(q0));
         writer.send(to_v(q2));
-        let r = from_v(writer.sample());
+        // π1-rec2's narrow challenges (`FsShape::Rec2`), as the verifier draws them.
+        let r = from_v(if narrow { writer.sample_narrow() } else { writer.sample() });
         point.push(r);
         if round < base_rounds {
             for weight in &mut weights {

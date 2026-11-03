@@ -280,6 +280,17 @@ proof; transaction gas without the 21,000 base, `c = 0`. Each row is one commit.
 | **3a: the fold's siblings** | 1,796 B | 35,212 | 71,630 (floor) | 60,339 | `v_{2k+1} = v_{2k} + d`: 32 products, not 64 |
 | **1a′: π1-rec2, the BLAKE2s circuit walked inside π2** | 1,292 B | 32,646 | **53,270** | | no claims on `A0`, `B0`: 51 → 30 elements, 5 → 3 calls |
 | **3b: `PCS_OPEN`'s inputs reuse the region** | 1,292 B | 31,103 | **51,727** | 58,014 (π1-rec) | π1-rec: 35,212 → 32,916 |
+| **3c: the zero checks' coset in closed form** | 1,292 B | 30,182 | **51,560** (floor) | 57,266 (π1-rec) | π1-rec: 32,916 → 32,174 |
+
+**Lever 3c: the zero checks as one closed-form term.** π1's zero checks are ports of value 0 (13 on π1-rec, 14 on
+π1-rec2), each a fraction `1/(α + βτ_J)` of the public side. The circuit compiler now makes them the first ports,
+padded with constant-zero ports (`spec::Source::Pad`) to a power of two `2^k`, so that their outside tags are the
+aligned coset `ω_N + V_k`. `Spec::of` finds such a coset of zero-valued terms (`Spec::zero_coset`), and the verifier
+adds its sum in closed form: with `Y = α + βω_N` and `F = β^(2^k) w_k(X/β) = Σ a_i X^(2^i) β^(2^k − 2^i)` (`w_k = s^k`
+`= X^16 + X` for `k = 4`, the Cantor subspace polynomial), `Σ_(u ∈ V_k) 1/(Y + βu) = F'(Y)/F(Y) = β^(2^k − 1)/F(Y)`,
+about 15 products instead of 14 fractions. Tested against the sum (`the_zero_coset_sum_is_its_closed_form`, `k ≤ 5`).
+Two more ports in π2's circuit (145 pairs). Measured: the public side 4,723 → 3,746 (π1-rec2). EIP-7623's floor binds
+again (51,560): the calldata, not the execution, sets the price from here.
 
 **Lever 3b: the calls' inputs written once** (`evm_link::front::Source::reuse`, `codegen::Ending::PcsOpenReusing`).
 The contract wrote every call's words to their own place, all before the first call: 274 words for π1-rec's 8 calls.
