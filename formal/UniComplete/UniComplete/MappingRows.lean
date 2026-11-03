@@ -207,4 +207,85 @@ theorem bridge_blake2s (v : ℕ → K) (data : ProverData K) (side : Side) :
       (size Blake2sRow) from rfl, blake2s_sends_gen _ _ _ _ hx]
   cases side <;> simp only [sideForms, flushes_blake2s] <;> bridge_norm
 
+set_option linter.unusedSimpArgs true
+
+/-! ### Every table, every row -/
+
+/-- The cells of a row as a function of the index (`0` past the width). -/
+def cellsOf {n : ℕ} (r : Fin n → K) (c : ℕ) : K := if h : c < n then r ⟨c, h⟩ else 0
+
+theorem cellsOf_apply {n : ℕ} (r : Fin n → K) (i : Fin n) : cellsOf r i = r i := by
+  simp [cellsOf, i.isLt]
+
+theorem rowE_eq {n : ℕ} (r : Fin n → K) : rowE r = fun c ↦ ofK (cellsOf r c) := by
+  funext c
+  unfold rowE cellsOf
+  split_ifs
+  · rfl
+  · exact ofKZero.symm
+
+theorem ofFn_cellsOf {n : ℕ} (r : Fin n → K) : Array.ofFn r = Array.ofFn fun i : Fin n ↦ cellsOf r i :=
+  congrArg Array.ofFn (funext fun i ↦ (cellsOf_apply r i).symm)
+
+/-- **The PIOP's tuples of a table at a row are Lv42's**, side by side and in order: on a row `r` of opcode
+table `j`, the forms of either side at the row's cells are Lv42's flush polynomials of that side at `r`, each
+in `E`. -/
+theorem rowBridge (j : Fin 6) (side : Side) (r : Fin (width (opIdx j)) → K) :
+    (sideForms j side).map (tupleAt · (rowE r)) =
+      (((flushes (opIdx j)).filter fun f ↦ decide (f.1 = side)).map fun f ↦ f.2.map fun P ↦ P.eval r).map
+        phi := by
+  rw [flushesEval_eq j r (fun _ _ ↦ #[]) side, rowE_eq, ofFn_cellsOf]
+  fin_cases j
+  · exact bridge_xor (cellsOf r) _ side
+  · exact bridge_mul (cellsOf r) _ side
+  · exact bridge_set (cellsOf r) _ side
+  · exact bridge_deref (cellsOf r) _ side
+  · exact bridge_jump (cellsOf r) _ side
+  · exact bridge_blake2s (cellsOf r) _ side
+
+/-! ### Widths, counters, `JUMP`'s constraints, `BLAKE2S`'s slots -/
+
+/-- The PIOP's widths are Lv42's. -/
+theorem tables_width : ∀ t : Fin 6, (tables.getD t default).width = width (opIdx t) := by decide +kernel
+
+/-- **The PIOP's counter columns are Lv42's count columns** (`Table::count_columns`, the names `cnt…`; Lv42's
+the coordinate-`1` variables of the memory and bytecode pulls). -/
+theorem countColumns_eq :
+    ∀ t : Fin 6, (tables.getD t default).countColumns = (counts (opIdx t)).map Fin.val := by decide +kernel
+
+/-- **`JUMP`'s constraints** at a row are its two residuals `b + v_cond · w` (`b` cell `13`, `v_cond` cell `5`,
+`w` cell `12`) and `v_cond · (b + 1)`. -/
+theorem jump_constraints (r : Fin (width (opIdx 4)) → K) (v : ℕ → K) (hv : ∀ i, r i = v i)
+    (h : ∀ C ∈ LeanIsa.constraints (opIdx 4), C.eval r = 0) :
+    v 13 + v 5 * v 12 = 0 ∧ v 5 * (v 13 + 1) = 0 := by
+  obtain rfl : r = fun i : Fin (width (opIdx 4)) ↦ v i.val := funext hv
+  have hl := List.isEmpty_iff.mp (opcode_lookups 4)
+  have hc : (⟨jumpTable⟩ : Air.Flat.Component K).operations.ConstraintsHold
+      (Environment.fromArray (Array.ofFn fun i : Fin 14 ↦ v i) fun _ _ ↦ #[]) :=
+    (toM3_constraints_iff (opcodeComponent 4) channelSep channelDir counted hl _ (fun _ _ ↦ #[])).mp h
+  have hx : Eval.eval (Environment.fromArray (Array.ofFn fun i : Fin 14 ↦ v i) fun _ _ ↦ #[])
+      (varFromOffset JumpRow 0 : Var JumpRow K) =
+      (⟨v 0, v 1, v 2, v 3, v 4, v 5, v 6, v 7, v 8, v 9, v 10, v 11⟩ : JumpRow K) := by
+    rw [eval_varFromOffset_valueFromOffset]
+    simp [valueFromOffset, explicit_provable_type, circuit_norm, Array.getElem?_ofFn]
+  have hw : (Environment.fromArray (Array.ofFn fun i : Fin 14 ↦ v i) fun _ _ ↦ #[]).get
+      (size JumpRow) = v 12 := by
+    show ((Array.ofFn fun i : Fin 14 ↦ v i)[size JumpRow]?).getD 0 = v 12
+    rw [show size JumpRow = 12 from rfl]
+    simp
+  have hb : (Environment.fromArray (Array.ofFn fun i : Fin 14 ↦ v i) fun _ _ ↦ #[]).get
+      (size JumpRow + 1) = v 13 := by
+    show ((Array.ofFn fun i : Fin 14 ↦ v i)[size JumpRow + 1]?).getD 0 = v 13
+    rw [show size JumpRow + 1 = 13 from rfl]
+    simp
+  rw [Air.Flat.Component.constraintsHold_iff, Air.Flat.Component.rowOperations_mk] at hc
+  exact (jump_constraints_iff _ _ (size JumpRow) _ hx _ _ hw hb).mp hc
+
+/-- **`BLAKE2S`'s limb columns are Flock's slots**: a column of `BLAKE2S` with a `q_flock` slot
+(`qflockSlot`) is limb `c − 9` (`9 ≤ c < 27`), and its slot is Flock's (`blake2sFlockSpec.slot`). -/
+theorem qflockSlot_eq : ∀ c : Fin 37, ∀ s ∈ qflockSlot (blake2sColumns.getD c ""),
+    ∃ h : 9 ≤ c.val ∧ c.val < 27,
+      s = (Blake2sFlock.blake2sFlockSpec.slot ⟨c.val - 9, by omega⟩).val := by
+  decide +kernel
+
 end UniComplete.Mapping
