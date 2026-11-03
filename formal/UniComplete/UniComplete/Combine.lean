@@ -876,6 +876,71 @@ theorem combine_holds_of_relations (rels : List Relation) (c : Commitment) (rho 
   refine congrArg List.sum (List.map_congr_left fun t ht ↦ ?_)
   rw [hon r hr hc t ht]
 
+/-! ### The verifier's relations -/
+
+/-- **Every relation the prover states at `t` is on one commitment**: its terms are on its commitment (the
+first term's). -/
+def AtTOnOne (a : AtT) : Prop := ∀ r ∈ a.relations, ∀ t ∈ r.terms, t.column.commitment = r.commitment
+
+/-- **Every term's point covers its column**: on its commitment's layout (the verifier's `layouts shape
+c2Columns`), every block of its column has at most as many variables as its point has coordinates. (A slot of
+`q_flock` has no blocks of its own; `q_flock`'s are its.) -/
+def AtTCovers (shape : Shape) (a : AtT) : Prop :=
+  ∀ r ∈ a.relations, ∀ t ∈ r.terms,
+    ∀ b ∈ (layoutIn (layouts shape a.c2Columns) t.column.commitment).limbs t.column, b.2.1 ≤ t.point.length
+
+/-- **`q_flock`'s slot terms' points are maximal on `C1`**: no point of a relation on `C1` strictly extends
+one. At `atTOf` the slot terms are BLAKE2S's limb copies at `y(t) = coordinatesAt t (coordinateFunctionals
+h_B)` (`h_B` coordinates), and the other points on `C1` are `w(t).take r` for each table's height `r`,
+`w(t).take lm`, `w(t).take lb` and Flock's point on `q_flock`; so this asks that `y(t)` is not
+`w(t).take h_B` while some table, the memory or the bytecode has more than `h_B` variables, nor the first
+`h_B` coordinates of Flock's point: a condition on the challenges `t` (and Flock's), false on a small set of
+them (not bounded here). -/
+def AtTSlotsMaximal (a : AtT) : Prop :=
+  ∀ r ∈ a.relations, ∀ t ∈ r.terms, ∀ j, t.column = .qflockSlot j →
+    ∀ q ∈ pointsOn a.relations .c1, t.point <+: q → q = t.point
+
+/-- **The verifier's relations are well-formed for `combine`**, at the layouts `layouts shape a.c2Columns`. -/
+def AtTWellFormed (shape : Shape) (a : AtT) : Prop := AtTOnOne a ∧ AtTCovers shape a ∧ AtTSlotsMaximal a
+
+/-- Under `AtTWellFormed`, every relation on `c` has its terms on `c`, and they read their own points. -/
+theorem atTWellFormed_readsOwn {shape : Shape} {a : AtT} (hwf : AtTWellFormed shape a) (c : Commitment) :
+    (∀ r ∈ a.relations, r.commitment = c → ∀ t ∈ r.terms, t.column.commitment = c) ∧
+    ∀ r ∈ a.relations, r.commitment = c → ∀ t ∈ r.terms,
+      ReadsOwnPoint (layoutIn (layouts shape a.c2Columns) c) (pointsOn a.relations c) t.column t.point := by
+  obtain ⟨hone, hcov, hslot⟩ := hwf
+  refine ⟨fun r hr hc t ht ↦ (hone r hr t ht).trans hc, fun r hr hc t ht ↦ ?_⟩
+  have htc : t.column.commitment = c := (hone r hr t ht).trans hc
+  by_cases hs : ∃ j, t.column = .qflockSlot j
+  · obtain ⟨j, hj⟩ := hs
+    have hc1 : c = .c1 := by rw [← htc, hj]; rfl
+    subst hc1
+    rw [hj]
+    exact fun q hq hpq ↦ hslot r hr t ht j hj q hq hpq
+  · have hs' : ∀ j, t.column ≠ .qflockSlot j := fun j h ↦ hs ⟨j, h⟩
+    rw [readsOwnPoint_generic hs']
+    intro b hb
+    rw [← htc] at hb
+    exact hcov r hr t ht b hb
+
+/-- **The combined claims the prover hands the batch hold whenever the relations do** (`proveStreamWith`'s
+`combined`, on the layouts `layouts shape a.c2Columns` the batch reads them at), for well-formed relations. -/
+theorem atT_combined_hold (shape : Shape) (a : AtT) (stackOf : Commitment → Array K) (rho : E)
+    (hwf : AtTWellFormed shape a)
+    (hholds : ∀ r ∈ a.relations, Relation.Holds (layoutIn (layouts shape a.c2Columns)) stackOf a.ringMap r) :
+    ∀ p ∈ commitments.filterMap (fun c ↦ (combine a.relations c rho).map (c, ·)),
+      Combined.Holds (layoutIn (layouts shape a.c2Columns) p.1) (stackOf p.1) a.ringMap p.2 := by
+  intro p hp
+  obtain ⟨c, -, hc⟩ := List.mem_filterMap.mp hp
+  cases h : combine a.relations c rho with
+  | none => rw [h] at hc; exact absurd hc (by simp)
+  | some claim =>
+    rw [h] at hc
+    obtain rfl := Option.some.inj hc
+    obtain ⟨hon, hreads⟩ := atTWellFormed_readsOwn hwf c
+    exact combine_holds_of_relations a.relations c rho (layoutIn (layouts shape a.c2Columns)) stackOf a.ringMap
+      claim hon (fun r hr _ ↦ hholds r hr) hreads h
+
 end UniComplete
 
 /-- info: 'UniComplete.dotK_denseWeight' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -893,3 +958,7 @@ end UniComplete
 /-- info: 'UniComplete.combine_holds_of_relations' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniComplete.combine_holds_of_relations
+
+/-- info: 'UniComplete.atT_combined_hold' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.atT_combined_hold
