@@ -33,11 +33,13 @@ summand of degree `2` in each variable) two at a time, low first, then the last 
   (`claimAfter3`, `pointAfter3`). **`batchState3_step`**: at `P.vars = 2 np + 1`, a record `rs.length ≤ np`
   turns the state true with probability at most `8 · 2^32 / |E|` for a pair (`rs.length < np`) and
   `2 · 2^32 / |E|` for the last plain round; `batchState3_nil` (the start: the target is the sum),
-  `batchState3_full` (the end: the claim is `Σ_k c_k Â_k(r) B̂_k(r)` at the point, `ProdSum.T_full`).
+  `batchState3_full`, `batchState3_full_np` (the end: the claim is `Σ_k c_k Â_k(r) B̂_k(r)` at the point,
+  `ProdSum.T_full`).
 * **The verifier's constants**: `cantorBeta1_spec` (`β_1² + β_1 = 1` for `UniStatement.cantorBeta1`, algebraically:
   `g = x^((2^64 − 1)/3)` has `g³ = 1`, `g ≠ 1` by leanerVM's `g_pow_card_sub_one`, `g_pow_div_three_ne_one`, and
   either root of `X² + X + 1` works, `order3_spec`), `betaWord_spec` (the word `0x19c9369f278adc02`,
-  `UniStatement.beta`'s second, one product in `K` by the kernel); at them `batchState3_step_rec3`.
+  `UniStatement.beta`'s second, one product in `K` by the kernel) and `cantorBeta1_eq_word` (`cantorBeta1` is that
+  word: of the two roots it is the one with its low bit clear); at them `batchState3_step_rec3`.
 
 Decisions (recorded):
 * `b` is a parameter with the hypothesis `hb : b * b + b = 1` where it is used (the power sums, the corners), so
@@ -552,6 +554,20 @@ theorem batchState3_full (P : ProdSum) (b : E) (nw : E → E) (target : E) (rs :
   unfold BatchState3
   rw [P.T_full _ (length_pointAfter3_full P b nw rs hr)]
 
+/-- **At the end, at `P.vars = 2 np + 1`** (the `np` pairs and the last plain round): the point has `2 np + 1`
+coordinates and the state is the claim `Σ_k c_k Â_k(r) B̂_k(r)` there. -/
+theorem batchState3_full_np (P : ProdSum) (np : ℕ) (b : E) (nw : E → E) (target : E)
+    (rs : List (List E × List E)) (hv : P.vars = 2 * np + 1) (hr : rs.length = np + 1) :
+    (pointAfter3 b nw np rs).length = P.vars ∧
+      (BatchState3 b nw P target rs ↔ claimAfter3 nw np target rs =
+        ∑ k ∈ range P.n, P.coef k * (foldAll (P.A k) (pointAfter3 b nw np rs) 0 *
+          foldAll (P.B k) (pointAfter3 b nw np rs) 0)) := by
+  have hnp : P.vars / 2 = np := by omega
+  have h1 := length_pointAfter3_full P b nw rs (by omega)
+  have h2 := batchState3_full P b nw target rs (by omega)
+  rw [hnp] at h1 h2
+  exact ⟨h1, h2⟩
+
 /-! ## The verifier's constants -/
 
 /-- **The order-3 form**: an element of order `3` is a root of `X² + X + 1`. -/
@@ -632,6 +648,32 @@ theorem betaWord_spec :
     decide +kernel
   rw [← ofK_mul, ← ofK_add, h, ofK_one_rec3]
 
+/-- The two roots of `X² + X + 1`: a root is `β` or `β + 1`. -/
+theorem roots_of_hb {x β : E} (hx : x * x + x = 1) (hβ : β * β + β = 1) : x = β ∨ x = β + 1 := by
+  have h : (x + β) * (x + β + 1) = 0 := by
+    linear_combination hx + hβ + (1 + x * β) * (CharTwo.two_eq_zero : (2 : E) = 0)
+  rcases mul_eq_zero.mp h with h | h
+  · left
+    linear_combination h - β * (CharTwo.two_eq_zero : (2 : E) = 0)
+  · right
+    linear_combination h - (β + 1) * (CharTwo.two_eq_zero : (2 : E) = 0)
+
+/-- **The verifier's `β_1` is the word `0x19c9369f278adc02`** (`UniStatement.beta`'s second): both are roots of
+`X² + X + 1`, and of its two roots `β`, `β + 1` the word is the one whose low bit is clear, as `cantor_beta1`
+picks (two `K` additions by the kernel). -/
+theorem cantorBeta1_eq_word : cantorBeta1 = ofK (K.ofLane 0x19c9369f278adc02) := by
+  have hG := order3_spec cantorG_pow_three cantorG_ne_one
+  have h1 : ofK (K.ofLane 0x19c9369f278adc02) + 1 = ofK (K.ofLane 0x19c9369f278adc02 + 1) := by
+    rw [ofK_add, ofK_one_rec3]
+  have l0 : ((ofK (K.ofLane 0x19c9369f278adc02)).limb 0).lane &&& 1 = 0 := by decide +kernel
+  have l1 : ¬ (((ofK (K.ofLane 0x19c9369f278adc02 + 1)).limb 0).lane &&& 1 = 0) := by decide +kernel
+  rw [cantorBeta1_eq]
+  rcases roots_of_hb hG betaWord_spec with h | h
+  · rw [h]
+    exact ite_eq_left_of_eq_true _ _ (eq_true l0)
+  · rw [h, h1, ite_eq_right_of_eq_false _ _ (eq_false l1), ← h1]
+    linear_combination (CharTwo.two_eq_zero : (2 : E) = 0)
+
 /-- **π1-rec3's batch at the verifier's constants** (`cantorBeta1`, `narrowE`): `batchState3_step` with no
 hypothesis left but the shape. -/
 theorem batchState3_step_rec3 (P : ProdSum) (np : ℕ) (target : E) (rs : List (List E × List E)) (m : List E)
@@ -680,6 +722,10 @@ end UniSound
 #guard_msgs in
 #print axioms UniSound.batchState3_full
 
+/-- info: 'UniSound.batchState3_full_np' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.batchState3_full_np
+
 /-- info: 'UniSound.cantorBeta1_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.cantorBeta1_spec
@@ -687,6 +733,10 @@ end UniSound
 /-- info: 'UniSound.betaWord_spec' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniSound.betaWord_spec
+
+/-- info: 'UniSound.cantorBeta1_eq_word' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniSound.cantorBeta1_eq_word
 
 /-- info: 'UniSound.batchState3_step_rec3' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
