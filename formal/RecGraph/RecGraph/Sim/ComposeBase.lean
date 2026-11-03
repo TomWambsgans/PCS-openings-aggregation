@@ -262,7 +262,7 @@ def SimQ (Q : Chan → Prop) (st : RecState) {α β : Type} (p : Prog α) (u : C
       ∃ b c', (u.run).run c = (.ok b, c') ∧ Couple π iv publicInput stream (p.record st).2 c' ∧
         c'.cursor = c.cursor + n ∧ c'.challenges.size = c.challenges.size + ch ∧
         Grows st (p.record st).2 ∧ R (p.record st).2 (p.record st).1 b) ∧
-    (c.data.size < c.cursor + n → ∃ e c', (u.run).run c = (.error e, c'))
+    (c.data.size < c.cursor + n → (∃ e c', (u.run).run c = (.error e, c')) ∧ c.data.size < (p.record st).2.cursor)
 
 variable {π iv publicInput stream}
 
@@ -305,26 +305,44 @@ theorem SimQ.bind {Q : Chan → Prop} {st : RecState} {α β γ δ : Type} {p : 
     exact ⟨b2, c2, by rw [run_bind_ok f hu, hu2], hc2, by rw [hcur2, hcur, Nat.add_assoc],
       by rw [hch2, hch, Nat.add_assoc], hg.trans hg2, hS⟩
   · by_cases h : c.data.size < c.cursor + n
-    · obtain ⟨e, c', hu⟩ := hf1 h
-      exact ⟨e, c', run_bind_error f hu⟩
+    · obtain ⟨⟨e, c', hu⟩, hlt⟩ := hf1 h
+      exact ⟨⟨e, c', run_bind_error f hu⟩, lt_of_lt_of_le hlt (record_cursor_le _ _)⟩
     · obtain ⟨b, c', hu, hc', hcur, _, hg, hR⟩ := hs1 (by omega)
       have hd : c'.data = c.data := hc'.data.trans hc.data.symm
       rw [run_bind_ok f hu] at hq
       obtain ⟨_, hf2⟩ := h2 _ _ _ hc'.good hg hR c' hc' (by rw [hd, hcur]; omega) hq
-      obtain ⟨e, c2, hu2⟩ := hf2 (by rw [hd, hcur]; omega)
-      exact ⟨e, c2, by rw [run_bind_ok f hu, hu2]⟩
+      obtain ⟨⟨e, c2, hu2⟩, hlt⟩ := hf2 (by rw [hd, hcur]; omega)
+      exact ⟨⟨e, c2, by rw [run_bind_ok f hu, hu2]⟩, by rw [← hd]; exact hlt⟩
 
-/-- A pure part first, then a `SimQ`. -/
+/-- **A pure part first, then a `SimQ`**: the continuation from the pure step's end. -/
 theorem SimQ.pbind {Q : Chan → Prop} {st : RecState} {α β γ δ : Type} {p : Prog α} {b : β}
     {R : RecState → α → β → Prop} {k : α → Prog γ} {u : ChanM Id δ} {m ch : Nat} {S : RecState → γ → δ → Prop}
     (h1 : PSim st p b R)
-    (h2 : ∀ st' a, Good st' → Grows st st' → R st' a b → SimQ π iv publicInput stream Q st' (k a) u m ch S) :
+    (h2 : ∀ st' a, PStep st st' → R st' a b → SimQ π iv publicInput stream Q st' (k a) u m ch S) :
     SimQ π iv publicInput stream Q st (p >>= k) u m ch S := by
-  have h1' : PSim st p b (fun st' a b' ↦ R st' a b' ∧ b' = b) := ⟨h1.1, h1.2, rfl⟩
-  have := SimQ.bind (Q := Q) (Sim.of_psim (π := π) (iv := iv) (publicInput := publicInput) (stream := stream) h1')
-    (f := fun _ ↦ u) fun st' a b' hg hgr ⟨hR, hb⟩ ↦ h2 st' a hg hgr (hb ▸ hR)
-  rw [pure_bind] at this
-  exact SimQ.cast (Nat.zero_add m) (Nat.zero_add ch) this
+  intro c hc hle hq
+  obtain ⟨hp, hR⟩ := h1
+  have hc' := hc.pstep π iv publicInput stream hp
+  obtain ⟨hs, hf⟩ := h2 _ _ hp hR c hc' hle hq
+  rw [record_bind]
+  refine ⟨fun hr ↦ ?_, hf⟩
+  obtain ⟨b2, c2, hu2, hc2, hcur2, hch2, hg2, hS⟩ := hs hr
+  exact ⟨b2, c2, hu2, hc2, hcur2, hch2, hp.grows.trans hg2, hS⟩
+
+/-- **A pure part first, then a `Sim`.** -/
+theorem Sim.pbind' {st : RecState} {α β γ δ : Type} {p : Prog α} {b : β}
+    {R : RecState → α → β → Prop} {k : α → Prog γ} {u : ChanM Id δ} {m ch : Nat} {S : RecState → γ → δ → Prop}
+    (h1 : PSim st p b R)
+    (h2 : ∀ st' a, PStep st st' → R st' a b → Sim π iv publicInput stream st' (k a) u m ch S) :
+    Sim π iv publicInput stream st (p >>= k) u m ch S := by
+  intro c hc hle
+  obtain ⟨hp, hR⟩ := h1
+  have hc' := hc.pstep π iv publicInput stream hp
+  obtain ⟨hs, hf⟩ := h2 _ _ hp hR c hc' hle
+  rw [record_bind]
+  refine ⟨fun hr ↦ ?_, hf⟩
+  obtain ⟨b2, c2, hu2, hc2, hcur2, hch2, hg2, hS⟩ := hs hr
+  exact ⟨b2, c2, hu2, hc2, hcur2, hch2, hp.grows.trans hg2, hS⟩
 
 /-- **A `Sim` under a premise `P`**; off `P`, no run from a coupled channel ends in `Q`. -/
 theorem SimQ.of_cond {Q : Chan → Prop} {st : RecState} {α β : Type} {p : Prog α} {u : ChanM Id β} {n ch : Nat}
@@ -335,6 +353,16 @@ theorem SimQ.of_cond {Q : Chan → Prop} {st : RecState} {α β : Type} {p : Pro
   by_cases hP : P
   · exact h hP c hc hle
   · exact absurd hq (hQ hP c hc)
+
+/-- **The cursor**, `n` further. -/
+theorem Sim.withCursor {st : RecState} {α β : Type} {p : Prog α} {u : ChanM Id β} {n ch : Nat}
+    {R : RecState → α → β → Prop} (h : Sim π iv publicInput stream st p u n ch R) :
+    Sim π iv publicInput stream st p u n ch (fun st' a b ↦ R st' a b ∧ st'.cursor = st.cursor + n) := by
+  intro c hc hle
+  obtain ⟨hs, hf⟩ := h c hc hle
+  refine ⟨fun hr ↦ ?_, hf⟩
+  obtain ⟨b, c', hu, hc', hcur, hch, hg, hR⟩ := hs hr
+  exact ⟨b, c', hu, hc', hcur, hch, hg, hR, by rw [← hc'.cursor, hcur, hc.cursor]⟩
 
 /-- **The challenge nodes**, as many more as the challenges drawn. -/
 theorem Sim.withChIds {st : RecState} {α β : Type} {p : Prog α} {u : ChanM Id β} {n ch : Nat}
