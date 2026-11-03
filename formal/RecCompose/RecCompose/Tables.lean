@@ -18,6 +18,22 @@ as the model's values.
   **true fold values** at `t` are the table's partial evaluation at the high digits `w_r(t), …, w_{m−1}(t)` (`wFold`);
   the verifier's cells from them are the row's cells `w(t + ω_x)`, `x < 2^r` (`cells_wFold`: `s^l` is additive and
   `ω_{x >> l} = 0` for `l ≥ r`), and `W`'s claim at `(ρ, ρ², …, w_r(t), …)` is their fold at `ρ` (`claim_wFold`).
+* **`Q`** (`m + 5` variables: the position, two digits, the kind, two limb bits): its table (`qTable`) is zero outside
+  `quotient_chunks` (`qZero`, `readEntry_ofChunks_zero`); `h` and `q` are its kind-`0` and kind-`1` coefficients
+  `c_0 + Y c_1 + Y² c_2` in the novel basis (`hPoly`, `qPoly`: degrees below `N` and `4N`). At
+  `(u, ρ', y₀, y₁)`, `u_l = w_l/(1 + w_l)`, the claim is the scale, `Π_l (1 + w_l)⁻¹ = t/w_{m+2}` and the combination
+  `(1 + ρ') h(t) + ρ' q(t)` (`claim_quotient`); at `(1^m, 0, 0, 0, y₀, y₁)` the scale and `h`'s top coefficient
+  (`claim_sum`), which is `Σ_V h` (`sum_novP_omega`, `RecPiop.sum_tablePoly_omega`).
+* **The setup** (`m + 1` variables): its table is the setup stack in order (`readEntry_ofChunks_two`): `κ`'s basis-`B`
+  coefficients, then those of `κ + σ` (`setupStack_getD`); its claim at `(w_0(t), …, w_{m−1}(t), β)` is
+  `κ(t) + β σ(t)` (`claim_setup`) for the columns' basis-`B` polynomials, which take `κ`, `ω_σ` on `V_m`
+  (`wPoly_bCoefficients`).
+
+**`pi2Tables D C Fa hcol : Pi2Tables D C`**, from the circuit's facts (`Pi2Facts`: `SpecOf`, `2^24` positions, rows
+of `16`) and one named input, **`Pi2SetupColumns D C`**: the deployment's setup columns `σ`, `κ` (which the setup's
+table commits) are the compiled circuit's (which the PIOP reads) at every setup (`RecDeployment.Real` pins them at
+π1's reference IV; a run and a definition, not a proof). `pi2Extraction_of_fs`, `pi2Layers_of_fs`: π2's extraction and
+layers with it in place of `Pi2Tables`.
 -/
 
 set_option linter.unusedSectionVars false
@@ -77,11 +93,11 @@ theorem eqBits_append (p q : List E) {k : ℕ} (hk : k < 2 ^ p.length) (j : ℕ)
   congr 1
   · refine Finset.prod_congr rfl fun l hl ↦ ?_
     have hl' := Finset.mem_range.mp hl
-    rw [testBit_add_two_pow_mul hk, if_pos hl', List.getD_append _ _ _ _ hl']
+    rw [testBit_add_two_pow_mul hk, ite_eq_left hl', List.getD_append _ _ _ _ hl']
   · refine Finset.prod_congr rfl fun l _ ↦ ?_
     have hnl : ¬ p.length + l < p.length := by omega
     have hge : p.length ≤ p.length + l := by omega
-    rw [testBit_add_two_pow_mul hk, if_neg hnl, Nat.add_sub_cancel_left, List.getD_append_right _ _ _ _ hge,
+    rw [testBit_add_two_pow_mul hk, ite_eq_right hnl, Nat.add_sub_cancel_left, List.getD_append_right _ _ _ _ hge,
       Nat.add_sub_cancel_left]
 
 /-! ## The points and the digits -/
@@ -200,13 +216,13 @@ theorem cells_wFold {m r : ℕ} (hrm : r ≤ m) (T : ℕ → K) (t : E) {x : ℕ
         else 1 + (QuotientSecurity.sq^[l] t + pi2Omega (x >>> l)) := by
     refine Finset.prod_congr rfl fun l hl ↦ ?_
     have hl' := Finset.mem_range.mp hl
-    rw [testBit_add_two_pow_mul hk', if_pos hl', hdig]
+    rw [testBit_add_two_pow_mul hk', ite_eq_left hl', hdig]
   have hB : (∏ l ∈ range s, if (k + 2 ^ r * j).testBit (r + l) then QuotientSecurity.sq^[r + l] (t + pi2Omega x)
       else 1 + QuotientSecurity.sq^[r + l] (t + pi2Omega x)) =
       ∏ l ∈ range s, if j.testBit l then QuotientSecurity.sq^[r + l] t else 1 + QuotientSecurity.sq^[r + l] t := by
     refine Finset.prod_congr rfl fun l _ ↦ ?_
     have hnl : ¬ r + l < r := by omega
-    rw [testBit_add_two_pow_mul hk', if_neg hnl, Nat.add_sub_cancel_left, hdig, hhigh (r + l) (by omega), add_zero]
+    rw [testBit_add_two_pow_mul hk', ite_eq_right hnl, Nat.add_sub_cancel_left, hdig, hhigh (r + l) (by omega), add_zero]
   rw [Finset.prod_range_add, hA, hB]
   ring
 
@@ -227,7 +243,7 @@ theorem claim_wFold {m r : ℕ} (hrm : r ≤ m) (T : ℕ → K) (t ρ : E) :
   have hlr : ((List.range r).map (sqIter ρ)).length = r := by simp
   have hhi : ∀ l < m - r, (((digitsList t (m + 3)).drop r).take (m - r)).getD l 0 =
       QuotientSecurity.sq^[r + l] t := fun l hl ↦ by
-    rw [List.getD_eq_getElem?_getD, List.getElem?_take, if_pos hl, List.getElem?_drop, ← List.getD_eq_getElem?_getD]
+    rw [List.getD_eq_getElem?_getD, List.getElem?_take, ite_eq_left hl, List.getElem?_drop, ← List.getD_eq_getElem?_getD]
     exact digitsList_getD t (by omega)
   have hlenhi : (((digitsList t (m + 3)).drop r).take (m - r)).length = m - r := by
     simp [digitsList]; omega
@@ -655,12 +671,12 @@ theorem sum_novP_omega {m : ℕ} (hm : m ≤ 32) (d : ℕ → E) :
     simp
   have hlt : 2 ^ m - 1 < 2 ^ m := Nat.sub_lt (Nat.two_pow_pos m) Nat.one_pos
   rw [Finset.sum_eq_single (2 ^ m - 1) (fun i hi hne ↦ by
-      rw [if_neg]
+      rw [ite_eq_right]
       intro h
       apply hne
       exact (RecPiop.image_bits m).2 (Finset.mem_coe.mpr hi) (Finset.mem_coe.mpr (Finset.mem_range.mpr hlt))
         (h.trans hbits.symm))
-    (fun h ↦ absurd (Finset.mem_range.mpr hlt) h), if_pos hbits]
+    (fun h ↦ absurd (Finset.mem_range.mpr hlt) h), ite_eq_left hbits]
 
 end RecCompose
 
@@ -749,7 +765,7 @@ theorem claim_setup (T : ℕ → K) (m : ℕ) (t β : E) :
     rw [eqBits_eq_prod, hlen]
     refine Finset.prod_congr rfl fun l hl ↦ ?_
     have hl' := Finset.mem_range.mp hl
-    rw [List.getD_eq_getElem?_getD, List.getElem?_take, if_pos hl', ← List.getD_eq_getElem?_getD,
+    rw [List.getD_eq_getElem?_getD, List.getElem?_take, ite_eq_left hl', ← List.getD_eq_getElem?_getD,
       digitsList_getD t (by omega)]
   simp only [pow_one, Finset.sum_range_succ, Finset.sum_range_zero, zero_add, e, hw, mul_zero, add_zero, mul_one]
   rw [eqBits_eq_prod, eqBits_eq_prod]
@@ -1036,3 +1052,38 @@ end RecCompose
 /-- info: 'RecCompose.pi2Tables' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.pi2Tables
+
+namespace RecCompose
+
+open RecStatement
+
+/-- **π2's extraction without the tables' layer**: from the Fiat–Shamir layer, the circuit's facts and the setup's
+columns (`pi2Tables` in place of `Pi2Tables`). -/
+theorem pi2Extraction_of_fs {D : RecDeployment} (C : Pi2Circuits D) (Fa : Pi2Facts D C) (hcol : Pi2SetupColumns D C)
+    (hfs : Pi2FsLayer D) :
+    Pi2Extraction D (fun roots input stream w ↦ (C.G roots).Satisfies
+      (Fa.pubOf roots (pi2Scalars D roots input stream)) (RecCircuit.emb w)) pi2Bound :=
+  pi2Extraction_of_layers C Fa (pi2Tables D C Fa hcol) hfs
+
+/-- **π2's layers without the tables' layer**: `pi2Layers_of` with `pi2Tables`. -/
+noncomputable def pi2Layers_of_fs {D : RecDeployment} (C : Pi2Circuits D) (Fa : Pi2Facts D C)
+    (hcol : Pi2SetupColumns D C) (hfs : Pi2FsLayer D) (hcirc : Pi2CircuitAccepts C Fa) : Pi2Layers D pi2Bound :=
+  pi2Layers_of C Fa (pi2Tables D C Fa hcol) hfs hcirc
+
+end RecCompose
+
+/-- info: 'RecCompose.pi2Extraction_of_fs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.pi2Extraction_of_fs
+
+/-- info: 'RecCompose.cells_wFold' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.cells_wFold
+
+/-- info: 'RecCompose.claim_quotient' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.claim_quotient
+
+/-- info: 'RecCompose.sum_novP_omega' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.sum_novP_omega

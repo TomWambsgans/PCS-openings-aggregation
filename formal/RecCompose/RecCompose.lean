@@ -19,6 +19,7 @@ import RecCompose.Couplings
 import RecCompose.RunShape
 import RecCompose.RunOpenings
 import RecCompose.OpeningsAgree
+import RecCompose.Tables
 
 /-!
 # RecCompose: the recursive verifier's end theorems
