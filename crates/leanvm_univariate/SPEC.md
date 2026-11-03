@@ -315,6 +315,11 @@ and `B0` are `2^28` words each (WHIR's maximum), and the setup's `F` cannot join
 
 Not counted: Fiat–Shamir (Keccak-256 as a random oracle) and Flock's fixed zerocheck coordinates (leanVM's).
 
+**π1-rec** (`FLOCK_REC`, `FsShape::Rec`; `crates/leanvm_rec/SPEC-REC.md` §1.4, analysis there, not proven): `α` as
+`(c, c², c⁴, c⁸)` (the bus at degree 16 a factor in `(β, c)`: 164.6 bits alone, 152.5 after the union) and Flock's
+zerocheck coordinates after the fixed ones as successive squares (degree `2^22` in one variable: 170.0, 157.9). Every
+other row is unchanged, so the PIOP stays at 142.3 bits (`t`). The Lean theorems (README.md) are about the main line.
+
 ## 10. Gas (measured on revm; transaction gas computed from the calldata)
 
 **At 1,000 signatures (1,023,109 cycles).** Transaction gas is EIP-7623's `max(16 B + execution, 40 B)` (zero bytes 4

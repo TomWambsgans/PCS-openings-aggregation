@@ -247,7 +247,10 @@ fn rec_deployable_is_the_rust_verifier() {
 fn rec_gas_report() {
     deep(|| {
         let shape = Shape::of(&leanvm_flock_gas::shapes::reference().shape);
-        println!("| variant | calldata bytes | KECCAK256 (bytes) | FIELD_MUL | execution, straight | deployed (contracts) | tx EIP-7623, c = 0 |");
+        println!(
+            "| variant | calldata bytes | KECCAK256 (bytes) | FIELD_MUL | execution, straight | deployed (contracts) | tx \
+             EIP-7623, c = 0, straight / deployed |"
+        );
         println!("|---|---:|---:|---:|---:|---:|---:|");
         for (name, variant) in [("main line (FLOCK_MAIN)", FLOCK_MAIN), ("π1-rec (FLOCK_REC)", FLOCK_REC)] {
             let d = leanvm_univariate::contract::measure_deployable(
@@ -259,7 +262,7 @@ fn rec_gas_report() {
             );
             let r = measure(&shape, &PROGRAM_IV, Blake2s::Flock(variant), Claims::Point);
             println!(
-                "| {name} | {} | {} ({}) | {} | {} | {} ({}) | {} |",
+                "| {name} | {} | {} ({}) | {} | {} | {} ({}) | {} / {} |",
                 grouped(r.calldata_bytes as u64),
                 r.hashes,
                 grouped(r.hashed_bytes as u64),
@@ -268,6 +271,7 @@ fn rec_gas_report() {
                 grouped(d.report.execution),
                 d.contracts.len(),
                 grouped(r.transaction(0, 40)),
+                grouped(d.report.transaction(0, 40)),
             );
             print_report(name, &r);
         }

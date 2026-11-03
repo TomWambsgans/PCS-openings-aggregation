@@ -17,6 +17,7 @@ left unattested.
 | configuration | Flock | gas, straight | gas, deployed (contracts) | calldata |
 |---|---|---:|---:|---:|
 | main line, `Flock(FLOCK_MAIN)` | (a′): skip 3, the ring map in tower order | 182,104 | 192,392 (3) | 7,108 B |
+| π1-rec, `Flock(FLOCK_REC)` | (a′) with `FsShape::Rec` (`crates/leanvm_rec/SPEC-REC.md` §1.4) | 181,019 | 191,296 (3) | 7,108 B |
 | extension B, `Flock(FLOCK_BIT_SLICE)` | (a): skip 4, the slices' combination a bit-slice claim | 90,996 | 95,955 (2) | 5,716 B |
 | `Flock(FLOCK_LEANVM_SKIP)` | leanVM's skip 6, the slices sent | 251,276 | 263,557 (4) | 8,308 B |
 | `Blake2s::Omitted` | none | 66,206 | 70,019 (2) | 3,508 B |
@@ -29,7 +30,8 @@ committed `q_flock` directly. Extension W (weighted claims) has no opening prove
 The same holds at 32 signatures, where the contract binds that shape's own `F` (`4845a2c7…`), and at review M1's tiny
 executions (`prove_tiny`), where the stream is the review's independent prover's, byte for byte.
 
-**Rust→EVM test vectors** (milestone 3): `tests/vectors/*.txt` hold the four real proofs' calldata, the `PCS_OPEN`
+**Rust→EVM test vectors** (milestone 3): `tests/vectors/*.txt` hold the five real proofs' calldata (π1-rec's,
+`main_line_rec.txt`, among them), the `PCS_OPEN`
 inputs the contract calls with, the verdict and the gas, straight and deployed. `tests/evm_vectors.rs` replays them
 on both builds, with no prover and no trace. Both accept at the recorded gas, call `PCS_OPEN` with exactly the
 recorded inputs, and revert on 13 to 17 mutations each:
@@ -90,7 +92,9 @@ recorded inputs, and revert on 13 to 17 mutations each:
    straight into the stack (the polynomials keep their novel coefficients only); the counter inverses
    `z_T = 1/Π c_j` on every row; `q_flock` as values; leanVM's WHIR commit.
 2. **Setup `F`**: the bytecode's 16 tuple slots interleaved and the addresses (`setup.rs`).
-3. **The challenges** `α, β, γ`.
+3. **The challenges** `α, β, γ`; with π1-rec (`FsShape::Rec`) `α = (c, c², c⁴, c⁸)`, squared in `E` as the verifier
+   squares it, and in Flock the zerocheck's eq coordinates after the seven fixed ones are successive squares of one
+   challenge (`lv42_flock::zerocheck::skip::EqPoint::Squares`, the skip module's zerocheck at any skip).
 4. **Flock** (`flock.rs`, behind one call): the zerocheck, the lincheck, the 64 slices (sent but with extension B),
    then the ring map's six challenges at once (lever 4a). The matrices' reduction's three tables are kept for the
    batching sumcheck ([`flock::Pending`]).
@@ -196,7 +200,8 @@ Other agents' Lean jobs shared h1 (four `lean` processes at full load; the runs 
 - **Proof.** The main line's stream is 7,108 bytes of calldata with the public input; the contract runs 182,104 gas
   (192,392 deployed in 3 contracts). The stream keccaks: main line `6b03217e…`, extension B `790270fb…`, leanVM's
   skip `68669d93…`, Flock omitted `04568de0…`; unchanged by the quotients' work, and the vectors' calldata,
-  `PCS_OPEN` inputs and gas are the committed ones.
+  `PCS_OPEN` inputs and gas are the committed ones. π1-rec (`leanvm-rec-pi1`): `53c06ada…`, 4.86 s and 10.4 GB, the
+  main line's `6b03217e…` and vector unchanged by it.
 
 **leanVM 42422001's own prover, same workload, same machine** (`leanvm --tracing gas-dump --xmss 1000`, jemalloc):
 2.13 s for the whole proof, peak RSS 10.1 GB. This prover's main line is about 2.9× that, at about the same memory.
