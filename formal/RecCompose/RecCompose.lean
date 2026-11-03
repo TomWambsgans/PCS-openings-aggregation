@@ -17,6 +17,7 @@ import RecCompose.CallsPure
 import RecCompose.Rpm
 import RecCompose.Couplings
 import RecCompose.RunShape
+import RecCompose.OpeningsAgree
 
 /-!
 # RecCompose: the recursive verifier's end theorems
