@@ -193,6 +193,95 @@ theorem whirOp_ok_tree {σ : Type} (S : WhirShape) (cl : UPf → List (List E) �
   exact extract_wiringSetup _ _ _ (LeanVM.Protocol.Whir.Complete.wellShaped_stackWord _ q₀) T H
     (fun x hx => hsub x (hlog T x hx)) hinj v hv
 
+/-! ## The bound -/
+
+theorem openingBoundAt_mono {QV QA QV' QA' : ℕ} (h : QA + QV ≤ QA' + QV') :
+    openingBoundAt QV QA ≤ openingBoundAt QV' QA' := by
+  unfold openingBoundAt
+  exact mul_le_mul' (Nat.cast_le.mpr h) (add_le_add le_rfl
+    (ENNReal.div_le_div_right (Nat.cast_le.mpr (Nat.mul_le_mul_left 5 h)) _))
+
+theorem doomSum_le {Pf F M : Type} (b : ℕ) (B : ℝ≥0∞) : ∀ (ops : List (WhirOp Pf F M)) (X : ℕ),
+    (∀ o ∈ ops, ∀ QA, QA + o.S.QO ≤ b → o.S.bnd QA ≤ B) →
+      X + (ops.map fun o => o.S.QO).sum ≤ b → doomSum ops X ≤ ops.length * B
+  | [], _, _, _ => by simp [doomSum]
+  | o :: os, X, h, hX => by
+    simp only [List.map_cons, List.sum_cons] at hX
+    have h1 := h o List.mem_cons_self X (by omega)
+    have h2 := doomSum_le b B os (X + o.S.QO) (fun o' ho' => h o' (List.mem_cons_of_mem _ ho'))
+      (by omega)
+    calc doomSum (o :: os) X = o.S.bnd X + doomSum os (X + o.S.QO) := rfl
+      _ ≤ B + os.length * B := add_le_add h1 h2
+      _ = ((o :: os).length : ℝ≥0∞) * B := by
+        rw [List.length_cons, Nat.cast_succ]
+        ring
+
+theorem facL_le_pow {M : Type} (C : ℕ → ListCommit M) (b : ℕ) (hb : ∀ k, (C k).bound ≤ b) :
+    ∀ (i : ℕ) (rs : List RoundSpec), facL C i rs ≤ b ^ (rs.countP fun r => r.root)
+  | _, [] => by simp [facL]
+  | i, s :: rs => by
+    have ih := facL_le_pow C b hb (i + 1) rs
+    cases hs : s.root
+    · simp only [facL, List.countP_cons, hs, Bool.false_eq_true, ↓reduceIte, one_mul,
+        Nat.add_zero]
+      exact ih
+    · simp only [facL, List.countP_cons, hs, ↓reduceIte, pow_succ]
+      exact (Nat.mul_le_mul (hb i) ih).trans (le_of_eq (mul_comm _ _))
+
+theorem countP_root_uniRounds (fr : List RoundSpec) (hfr : ∀ r ∈ fr, r.root = false) (nV V : ℕ) :
+    (uniRounds fr nV V).countP (fun r => r.root) = 2 := by
+  have h0 : fr.countP (fun r => r.root) = 0 :=
+    List.countP_eq_zero.mpr fun r hr => by simp [hfr r hr]
+  simp [uniRounds, List.countP_append, h0]
+
+theorem uniTc_bound {D : Deployment} (hs : UniShapes D) (i : ℕ) :
+    (uniTc hs i).commit.bound ≤ 9952 := by
+  unfold uniTc
+  split_ifs
+  · exact (tableCode_bound_large (wv D 0) (wv D 0) (wv D 0) [(0, 2 ^ wv D 0)]
+      (newOK_plain _ (hs.lo 0 (by decide)) (hs.hi 0 (by decide))) (hs.lo 0 (by decide))
+      (hs.hi 0 (by decide)) rdTab).le.trans
+      (largeList_le _ (hs.lo 0 (by decide)) (hs.hi 0 (by decide)))
+  · exact (tableCode_bound_large (wv D 1) (wv D 1) (wv D 1) [(0, 2 ^ wv D 1)]
+      (newOK_plain _ (hs.lo 1 (by decide)) (hs.hi 1 (by decide))) (hs.lo 1 (by decide))
+      (hs.hi 1 (by decide)) rdTab).le.trans
+      (largeList_le _ (hs.lo 1 (by decide)) (hs.hi 1 (by decide)))
+
+/-- **The composed bound is at most `uniBound`**: the doom terms at most `openingBoundAt 10122 N`,
+the list term at most `9952² e`, the tag's `2^-128`, at most `8 N` references a query, the
+permutation's calls below `2^81 + Q`. -/
+theorem le_uniBound (e : ℝ≥0∞) (Q QS nQ SQO nRf : ℕ) (hQS : QS ≤ 3 * 2 ^ 24) (hnQ : nQ ≤ 2 ^ 10)
+    (hSQO : SQO ≤ 5 * 10122) (hr : nRf ≤ 6) (d m t : ℝ≥0∞)
+    (hd : d ≤ 5 * openingBoundAt 10122 (uniN Q)) (hm : m ≤ ((9952 ^ 2 : ℕ) : ℝ≥0∞) * e)
+    (ht : t = ((256 ^ 16 : ℕ) : ℝ≥0∞) / 2 ^ 256) :
+    d + ((QS + (QS + (Q + 8)) + nQ + SQO : ℕ) : ℝ≥0∞) *
+        (m + t + (((nRf + 2) * (QS + (QS + (Q + 8)) + nQ + SQO) : ℕ) : ℝ≥0∞) / 2 ^ 256) +
+      ((QS * 2 ^ 32 + (Q + 8) + 2 ^ 80 : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508 ≤ uniBound e Q := by
+  unfold uniBound
+  have hN : QS + (QS + (Q + 8)) + nQ + SQO ≤ uniN Q := by
+    unfold uniN
+    have : (2 : ℕ) ^ 33 = 8589934592 := by norm_num
+    have : (2 : ℕ) ^ 24 = 16777216 := by norm_num
+    have : (2 : ℕ) ^ 10 = 1024 := by norm_num
+    omega
+  refine add_le_add (add_le_add hd (mul_le_mul' (Nat.cast_le.mpr hN) ?_)) ?_
+  · rw [add_assoc]
+    refine add_le_add hm ?_
+    rw [ht, ENNReal.div_add_div_same, ← Nat.cast_add]
+    refine ENNReal.div_le_div_right (Nat.cast_le.mpr ?_) _
+    have h7 : (nRf + 2) * (QS + (QS + (Q + 8)) + nQ + SQO) ≤ 8 * uniN Q :=
+      Nat.mul_le_mul (by omega) hN
+    have h256 : (256 : ℕ) ^ 16 = 2 ^ 128 := by norm_num
+    rw [h256]
+    exact Nat.add_le_add_left h7 _
+  · rw [← Nat.cast_pow, ← Nat.cast_pow]
+    refine ENNReal.div_le_div_right (Nat.cast_le.mpr (Nat.pow_le_pow_left ?_ 2)) _
+    have h32 : QS * 2 ^ 32 ≤ 3 * 2 ^ 24 * 2 ^ 32 := Nat.mul_le_mul_right _ hQS
+    have h81 : (3 : ℕ) * 2 ^ 24 * 2 ^ 32 + 8 + 2 ^ 80 ≤ 2 ^ 81 := by norm_num
+    calc QS * 2 ^ 32 + (Q + 8) + 2 ^ 80 = (QS * 2 ^ 32 + 8 + 2 ^ 80) + Q := by ring
+      _ ≤ 2 ^ 81 + Q := Nat.add_le_add_right
+          ((Nat.add_le_add_right (Nat.add_le_add_right h32 8) (2 ^ 80)).trans h81) Q
+
 /-! ## The composition's facts -/
 
 section Facts
@@ -502,6 +591,84 @@ theorem breaksOK_of_rel (R : RbrPiop (uRounds Fl nV V) USt Stk)
   simp only [extractorK, optC, hr, List.mem_map] at hc'
   obtain ⟨q, -, rfl⟩ := hc'
   exact h3 _ hc q rfl (hpre _ _ _ hpre')
+
+/-! ### The numbers -/
+
+include hs in
+theorem setupQS_le : setupQS (D := D) ≤ 3 * 2 ^ 24 := by
+  unfold setupQS rootHeight laneFold logInvRate
+  have h2 := hs.hi 2 (by decide)
+  have h3 := hs.hi 3 (by decide)
+  have h4 := hs.hi 4 (by decide)
+  have e2 : 2 ^ (wv D 2 - 6 + 1 + 1) ≤ 2 ^ 24 := Nat.pow_le_pow_right (by norm_num) (by omega)
+  have e3 : 2 ^ (wv D 3 - 6 + 1 + 1) ≤ 2 ^ 24 := Nat.pow_le_pow_right (by norm_num) (by omega)
+  have e4 : 2 ^ (wv D 4 - 6 + 1 + 1) ≤ 2 ^ 24 := Nat.pow_le_pow_right (by norm_num) (by omega)
+  have : (2 : ℕ) ^ 24 = 16777216 := by norm_num
+  omega
+
+theorem sumQO_le : ((uOps D Fl nV V C hs).map fun o => o.S.QO).sum ≤ 5 * 10122 := by
+  have q : ∀ k (hk : k < 5), largeQueries (wv D k) ≤ 10122 := fun k hk =>
+    (largeQueries_le (wv D k) (hs.lo k hk) (hs.hi k hk)).trans_eq variantQueries_eq
+  have q0 := q 0 (by decide)
+  have q1 := q 1 (by decide)
+  have q2 := q 2 (by decide)
+  have q3 := q 3 (by decide)
+  have q4 := q 4 (by decide)
+  simp only [uOps, uniOps, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil]
+  try dsimp only [shapeK, plainShape, WhirShape.large]
+  omega
+
+theorem doom_le (Q X : ℕ) (hX : X + ((uOps D Fl nV V C hs).map fun o => o.S.QO).sum ≤ uniN Q) :
+    doomSum (uOps D Fl nV V C hs) X ≤ 5 * openingBoundAt 10122 (uniN Q) := by
+  refine (doomSum_le (uniN Q) (openingBoundAt 10122 (uniN Q)) _ X (fun o ho QA hQA => ?_) hX).trans
+    (le_of_eq (by simp [uOps, uniOps]))
+  simp only [uOps, uniOps, List.mem_cons, List.mem_nil_iff, or_false] at ho
+  rcases ho with rfl | rfl | rfl | rfl | rfl
+  all_goals
+    dsimp only [shapeK, plainShape, WhirShape.large] at hQA ⊢
+    exact openingBoundAt_mono (by omega)
+
+theorem maxErrK_uni (R : RbrPiop (uRounds Fl nV V) USt Stk) (e : ℝ≥0∞) (herr : ∀ j, R.err j ≤ e) :
+    maxErrK (uSpec Fl nV V).K (fun i => (uniTc hs i).commit) (liftPiop (uSpec Fl nV V).K R rfl) ≤
+      ((9952 ^ 2 : ℕ) : ℝ≥0∞) * e := by
+  unfold maxErrK
+  refine Finset.sup_le fun j _ => mul_le_mul' (Nat.cast_le.mpr ?_) (herr j)
+  refine (facL_le_pow _ 9952 (fun k => uniTc_bound hs k) 0 _).trans
+    (Nat.pow_le_pow_right (by norm_num) ?_)
+  exact (List.take_sublist _ _).countP_le.trans
+    (le_of_eq (countP_root_uniRounds Fl.prog.rounds Fl.rounds_root nV V))
+
+/-! ## The Fiat–Shamir layer -/
+
+/-- **The Fiat–Shamir layer from the composed game**: `FsLayer` for a deployment whose five layout
+words name `24 … 28` variables (`hs`), from its numbers (`UniNumbers`: the chain's `< 2^10`
+queries, the verifier's `< 2^80` calls of `π`) and the game bridge (`UniGameLe`). -/
+theorem fsLayer_of_game (hN : UniNumbers D Fl nV V C hs) (hG : UniGameLe D Fl nV V C hs) :
+    FsLayer D Fl nV V C := by
+  intro R e herr hpre hFin A Q hQ
+  obtain ⟨A', hA', hle⟩ := hG A Q hQ
+  have hmain := knowledgeSoundness_listChainU_closed_rpm (uSpec Fl nV V)
+    (liftPiop (uSpec Fl nV V).K R rfl) (uView (uRounds Fl nV V)) (uOps D Fl nV V C hs)
+    (fun i => uniTc hs i) (uniCheck D Fl nV V C) (uniGood D Fl nV V C) (uniGoodS D Fl nV V C)
+    (uSetup D hs) (hOnly_setupK3 hs _ _ _) setupQS (setupQS * 2 ^ 32)
+    (isTotalQueryBound_setupK3 hs _ _ _) (cost_setupK3 hs _ _ _) uFix A' (Q + 8) hA' (2 ^ 80)
+    hN.verifier (hok_uni D Fl nV V C hs) (hcov_uni D Fl nV V C hs) (hS_uni D Fl nV V C hs)
+    (fun π _ _ => fitsAll_uView _ π)
+    (fun π ch cs hc hl hg hn hgS => hlink_uni D Fl nV V C R hFin π ch cs hc hl hg hn hgS)
+  refine hle.trans ((prEvent_mono _ _ _ fun z hz =>
+    breaksOK_of_rel D Fl nV V C hs R hpre _ hz).trans (hmain.trans ?_))
+  have hS := setupQS_le D hs
+  have hn := hN.chain
+  have hq := sumQO_le D Fl nV V C hs
+  exact le_uniBound e Q setupQS (uSpec Fl nV V).K.nQ _ (uSpec Fl nV V).nRf hS hn hq
+    (show (5 : ℕ) ≤ 6 by decide) _ _ _
+    (doom_le D Fl nV V C hs Q _ (by
+      unfold uniN
+      have : (2 : ℕ) ^ 33 = 8589934592 := by norm_num
+      have : (2 : ℕ) ^ 24 = 16777216 := by norm_num
+      have : (2 : ℕ) ^ 10 = 1024 := by norm_num
+      omega)) (maxErrK_uni D Fl nV V hs R e herr)
+    (uniSpec_tagBound _)
 
 end Facts
 

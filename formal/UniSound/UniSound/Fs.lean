@@ -32,11 +32,13 @@ the chain's list term with both roots' lists at most `9952` (`largeList` at `2^2
 of `2^24 … 2^28`), and the random-permutation term, with `N = 2^33 + Q` bounding every count (the
 setup's `< 2^26` Keccak-256 calls, twice, the chain's `< 2^10`, the openings' `5 · 10122`):
 
-`5 · openingBoundAt 10122 N + N · (9952² e + 8 N / 2^256) + (2^81 + Q)² / 2^508`.
+`5 · openingBoundAt 10122 N + N · (9952² e + (2^128 + 8 N) / 2^256) + (2^81 + Q)² / 2^508`.
 
-The constants are generous so that the statement holds of the port (`ListChainK`'s `5 N` becomes
-`8 N` for the univariate root's fourth reading in `Refers` and the seed's prefix as a bad answer;
-`QVπ ≤ 2^80` the verifier's calls of `π`).
+The port (`FsProof.lean`'s `fsLayer_of_game`, through `Compose.ListChainU`) separates the seed
+`name ‖ iv ‖ input` from a step's input by its 16-byte tag `name`: a fresh answer starting with it is
+a bad event, `2^-128` a query (the `2^128 / 2^256` term, `≈ 2^-64` at `Q = 2^64`); an input refers
+to at most five digests (`Refers`' three, and a root after a state or after the row counts), so
+`ListChainK`'s `5 N` becomes `(5 + 2) N ≤ 8 N`; `QVπ ≤ 2^80` the verifier's calls of `π`.
 -/
 
 namespace UniSound
@@ -162,7 +164,7 @@ def uniN (Q : ℕ) : ℕ := 2 ^ 33 + Q
 /-- **The univariate verifier's bound** at `Q` adversary calls, rounds' errors at most `e`. -/
 noncomputable def uniBound (e : ℝ≥0∞) (Q : ℕ) : ℝ≥0∞ :=
   5 * openingBoundAt 10122 (uniN Q) +
-    (uniN Q : ℝ≥0∞) * (((9952 ^ 2 : ℕ) : ℝ≥0∞) * e + 8 * (uniN Q : ℝ≥0∞) / 2 ^ 256) +
+    (uniN Q : ℝ≥0∞) * (((9952 ^ 2 : ℕ) : ℝ≥0∞) * e + ((2 ^ 128 + 8 * uniN Q : ℕ) : ℝ≥0∞) / 2 ^ 256) +
       ((2 ^ 81 + Q : ℕ) : ℝ≥0∞) ^ 2 / 2 ^ 508
 
 /-- **The Fiat–Shamir layer** (the port of `knowledgeSoundness_listChainK_closed_rpm` to the
