@@ -2,6 +2,7 @@
 import UniComplete.Prover
 import UniComplete.Whir
 import UniComplete.Reference
+import UniComplete.AlgHCols
 
 /-!
 # The honest prover's run at a pure hash (`proveWith` in `Id`)
@@ -25,11 +26,13 @@ import UniComplete.Reference
   bound value a variable: no term grows (a `simp` of the whole program takes minutes and overflows the kernel);
 * **`prover_none_pow`**: at the reference shape with Flock, if `proveWith` returns `none`, one of the five openings
   reached WHIR's `17`-bit proof of work at a sponge where every nonce below `fuel` fails (`pcsOpen_fails_only_at_pow`,
-  each opening at `27, 27, 24, 28, 28` variables, `reference_wordVars`). Under two hypotheses, stated as definitions:
-  `C2ColumnsHonest tr` (the prover's `atTOf` lists `C2`'s columns as `Shape.c2Columns` does, so that `C2`'s claim
-  has `27` coordinates: the batch cuts it to `layouts shape a.c2Columns`, the commitment uses `layoutsOf shape`), and
-  `FlockMatrixPoint flock 27 28` (Flock's prover, a parameter of `proveWith`, leaves a matrices' claim of `28`
-  coordinates at the batch's `27`-coordinate point).
+  each opening at `27, 27, 24, 28, 28` variables, `reference_wordVars`), for an honest trace (`TraceHonest`) and
+  under one hypothesis, `FlockMatrixPoint flock 27 28` (Flock's prover, a parameter of `proveWith`, leaves a
+  matrices' claim of `28` coordinates at the batch's `27`-coordinate point). The trace's honesty gives
+  `C2ColumnsHonest tr` (`c2ColumnsHonest_of_traceHonest`: the prover's `atTOf` lists `C2`'s columns as
+  `Shape.c2Columns` does, whatever Flock's output, `AlgH.atTOf_c2Columns_eq` and `atTOf_c2Columns_fo`), so that
+  `C2`'s claim has `27` coordinates: the batch cuts it to `layouts shape a.c2Columns`, the commitment uses
+  `layoutsOf shape`.
 -/
 
 open UniStatement LeanVM LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash
@@ -236,6 +239,21 @@ theorem combined_fst (rels : List Relation) (rho : E) (h : ∀ c, ∃ r ∈ rels
 every challenge. -/
 def C2ColumnsHonest (tr : Trace) : Prop :=
   ∀ c2 alphas beta gamma t fo, (atTOf tr c2 alphas beta gamma t fo).c2Columns = tr.shape.c2Columns
+
+set_option maxHeartbeats 1000000 in
+/-- **`C2`'s columns do not depend on Flock's output** (they are listed before its relation). -/
+theorem atTOf_c2Columns_fo (tr : Trace) (c2 : C2Data) (alphas : List E) (beta gamma t : E) (fo : Option FlockOut) :
+    (atTOf tr c2 alphas beta gamma t fo).c2Columns = (atTOf tr c2 alphas beta gamma t none).c2Columns := by
+  unfold atTOf
+  simp only [Id.run, idBind, idPure]
+  rcases fo with _ | ⟨point, end_, pending, tabs⟩
+  · rfl
+  · cases end_ <;> rfl
+
+/-- **An honest trace's `C2` columns are the shape's**, for every challenge and Flock output. -/
+theorem c2ColumnsHonest_of_traceHonest {tr : Trace} (hon : TraceHonest tr) : C2ColumnsHonest tr :=
+  fun c2 alphas beta gamma t fo ↦
+    (atTOf_c2Columns_fo tr c2 alphas beta gamma t fo).trans (AlgH.atTOf_c2Columns_eq hon c2 alphas beta gamma t)
 
 /-- **What the openings read off the stream's output** `out`. -/
 structure StreamFacts (commit : Commitment → ℕ → Array K → Id Committed) (flock : FlockProver Id)
@@ -532,12 +550,12 @@ def FlockMatrixPoint (flock : FlockProver Id) (rounds vars : ℕ) : Prop :=
   ∀ logN v q w (r : List E) ma mb, r.length = rounds →
     (((flock logN v q).run w).1.pending.matrixClaim r ma mb).point.length = vars
 
-/-- **The honest prover fails only at a proof of work**, at the reference shape with Flock: if `proveWith` returns
-`none`, one of the five openings (at `24 ≤ vars ≤ 28` variables) reached WHIR's `17`-bit proof of work at a sponge
-where every nonce below `fuel` fails. Given that `C2`'s columns are the shape's (`C2ColumnsHonest`) and that Flock's
-prover leaves a matrices' claim of `28` coordinates at the batch's `27`-coordinate point (`FlockMatrixPoint`). -/
+/-- **The honest prover fails only at a proof of work**, at the reference shape with Flock, for an honest trace: if
+`proveWith` returns `none`, one of the five openings (at `24 ≤ vars ≤ 28` variables) reached WHIR's `17`-bit proof
+of work at a sponge where every nonce below `fuel` fails. Given that Flock's prover leaves a matrices' claim of `28`
+coordinates at the batch's `27`-coordinate point (`FlockMatrixPoint`). -/
 theorem prover_none_pow (fuel : ℕ) (flock : FlockProver Id) (programIv : List UInt8) (tr : Trace)
-    (hshape : tr.shape = reference) (hC2 : C2ColumnsHonest tr) (hflock : FlockMatrixPoint flock 27 28)
+    (hshape : tr.shape = reference) (hon : TraceHonest tr) (hflock : FlockMatrixPoint flock 27 28)
     (h : proveWith (m := Id) H F fuel flock (.flock flockMain) programIv tr = none) :
     ∃ vars claims hist k sp, 24 ≤ vars ∧ vars ≤ 28 ∧
       (Whir.Complete.openingProgram vars PcsQuotient.logInvRate
@@ -547,6 +565,7 @@ theorem prover_none_pow (fuel : ℕ) (flock : FlockProver Id) (programIv : List 
   have hf : StreamFacts (commitReal (m := Id) H) flock (.flock flockMain) tr
       (streamRun H flock (.flock flockMain) programIv tr).1 :=
     streamRun_facts H (commitReal (m := Id) H) flock (.flock flockMain) tr _
+  have hC2 := c2ColumnsHonest_of_traceHonest hon
   have hpts := hf.points hC2
   rw [hshape] at hpts
   -- A claim found for `c` is `c`'s, with a point of its stack's variables.
@@ -622,6 +641,9 @@ end UniComplete.ProverRun
 
 /-- info: 'UniComplete.ProverRun.streamRun_facts' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms UniComplete.ProverRun.streamRun_facts
+
+/-- info: 'UniComplete.ProverRun.c2ColumnsHonest_of_traceHonest' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in #print axioms UniComplete.ProverRun.c2ColumnsHonest_of_traceHonest
 
 /-- info: 'UniComplete.ProverRun.prover_none_pow' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in #print axioms UniComplete.ProverRun.prover_none_pow
