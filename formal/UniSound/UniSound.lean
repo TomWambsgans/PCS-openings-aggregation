@@ -14,6 +14,8 @@ import UniSound.FsOps
 import UniSound.FsProof
 import UniSound.FinalFs
 import UniSound.FsCost
+import UniSound.FsGame
+import UniSound.FsCouple
 import UniSound.PendingLink
 import UniSound.CodeBase
 import UniSound.CodeTables
