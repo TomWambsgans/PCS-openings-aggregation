@@ -1743,6 +1743,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "leanvm_rec"
+version = "0.1.0"
+dependencies = [
+ "leanvm_flock_gas",
+ "leanvm_univariate",
+ "quotient",
+]
+
+[[package]]
 name = "leanvm_univariate"
 version = "0.1.0"
 dependencies = [
