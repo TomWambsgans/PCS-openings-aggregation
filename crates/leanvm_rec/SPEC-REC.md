@@ -858,3 +858,5 @@ in `PI2.md` §9.
 2. **π2's values 19 → 17** (π2's claims change; π1 unchanged). `ξ = κ(t) + βσ(t)` replaces `σ(t)`, `κ(t)` (the setup
    committed as `κ`, `κ + σ`, its claim at `β`); `h(t)` is no longer sent, `Q`'s claim being the identity's combination
    of `h(t)` and `q(t)`, with one inversion at the end. 1,844 → 1,796 B; execution 39,674 → 35,787; 73,550 → 71,630.
+3. **The fold's siblings** (π2's verifier only). The row's cells fold with half the products (`ω_{2k+1} = ω_{2k} + 1`).
+   Execution 35,787 → 35,212; the floor binds (71,630).

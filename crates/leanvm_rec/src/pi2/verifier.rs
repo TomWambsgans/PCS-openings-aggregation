@@ -324,21 +324,24 @@ pub fn reduce<S: Limbs, C: Channel<S>>(
         w
     };
 
-    // The row's cells: fold the top variable first, each fold splitting by the next bit of `c`.
+    // The row's cells: fold the top variable first, each fold splitting by the next bit of `c`. Siblings `2k`, `2k + 1`
+    // fold at `z` and `z + 1` (`ω_{2k+1} = ω_{2k} + β_0`, `β_0 = 1`): the odd one is the even one plus the difference
+    // `p_j + p_{j+half}`, no product (`PI2.md` §9, lever 3a): `r 2^(r-1)` products, not `r 2^r`.
     let cells = {
         let _phase = enter("pi2: the row's cells (fold)");
         let mut layer: Vec<Vec<S>> = vec![a.clone()];
         for l in (0..r).rev() {
             let half = 1 << l;
-            layer = (0..1usize << (r - l))
-                .map(|key| {
-                    let parent = &layer[key >> 1];
-                    let z = w[l] + base::<S>(point(key));
-                    (0..half)
-                        .map(|j| parent[j] + z * (parent[j] + parent[j + half]))
-                        .collect()
-                })
-                .collect();
+            let mut next: Vec<Vec<S>> = Vec::with_capacity(2 * layer.len());
+            for (k, parent) in layer.iter().enumerate() {
+                let z = w[l] + base::<S>(point(2 * k));
+                let d: Vec<S> = (0..half).map(|j| parent[j] + parent[j + half]).collect();
+                let even: Vec<S> = (0..half).map(|j| parent[j] + z * d[j]).collect();
+                let odd: Vec<S> = (0..half).map(|j| even[j] + d[j]).collect();
+                next.push(even);
+                next.push(odd);
+            }
+            layer = next;
         }
         layer.into_iter().map(|v| v[0]).collect::<Vec<S>>()
     };

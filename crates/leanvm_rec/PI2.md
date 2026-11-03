@@ -277,6 +277,12 @@ proof; transaction gas without the 21,000 base, `c = 0`. Each row is one commit.
 |---|---:|---:|---:|---:|---|
 | before (9d1bf46, and the review's fixes) | 1,844 B | 39,674 | 73,550 | 71,097 | |
 | **2: π2's values 19 → 17**, one final inversion | 1,796 B | 35,787 | 71,630 | 61,659 | `ξ = κ(t) + βσ(t)` sent for `σ(t)`, `κ(t)`; `h(t)` not sent |
+| **3a: the fold's siblings** | 1,796 B | 35,212 | 71,630 (floor) | 60,339 | `v_{2k+1} = v_{2k} + d`: 32 products, not 64 |
+
+**Lever 3a: the fold's siblings.** At every level of the row's fold, the cells `2k` and `2k + 1` fold their parent at
+`z = w_l + ω_{2k}` and `z + 1` (`ω_{2k+1} = ω_{2k} + β_0`, `β_0 = 1`), so the odd one is the even one plus the
+parent's difference `p_j + p_{j+half}`: `r 2^(r-1)` products instead of `r 2^r` (D16v 32 instead of 64). Measured
+2,967 → 2,331 gas for the fold. EIP-7623's floor binds here, so the transaction does not move yet.
 
 **Lever 2.**
 
