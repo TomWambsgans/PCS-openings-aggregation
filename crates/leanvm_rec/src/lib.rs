@@ -13,6 +13,7 @@
 //! - [`fs`]: `π1`'s Fiat–Shamir shapes, the graph `π1-rec` (`leanvm_univariate::FLOCK_REC`) must record.
 //! - [`circuit`]: `π2`'s circuit (D16v or D32v) and its witness, compiled from the graph; `circuit::spec` is the
 //!   PIOP's interface (SPEC-REC.md §10).
+//! - [`lean`]: π1-rec's graph as Lean data (`formal/RecGraph`), and the vectors of its differential runner.
 
 #![forbid(unsafe_code)]
 
@@ -20,6 +21,7 @@ pub mod circuit;
 pub mod count;
 pub mod eval;
 pub mod fs;
+pub mod lean;
 pub mod pi2;
 
 use leanvm_univariate::Shape;
