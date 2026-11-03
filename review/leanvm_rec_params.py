@@ -93,15 +93,18 @@ DESIGNS = {
 
 def other_positions(pi1, design):
     """Positions besides Keccak's rounds: E products and linear operations (K-limbs: a product 6 pulls, a sum 6),
-    the packings (64 bits a limb, 3 limbs an element, W - 1 bits a row), the public region and constants, and the
-    absorption XORs of the multi-block hashes' later blocks."""
+    the packings (64 bits a limb, 3 limbs an element, W - 1 bits a row), the public region and constants, the
+    absorption XORs of the multi-block hashes' later blocks, and the stream's free bits."""
     w = DESIGNS[design]["W"]
     per_row = max(1, w // 6)
     e_rows = (pi1["products"] + pi1["linear"]) / per_row
     packs = (pi1["reads"] + pi1["challenges"]) * 3 * math.ceil(65 / (w - 1)) * w
     public = 3 * (pi1["coords"] + pi1["values"] + 14) + 3 * 461
     absorb = (pi1["perms"] - pi1["calls"]) * 1088 * 2  # the XOR of a later block into the state, 2 pulls a bit
-    return e_rows * w + packs + public + absorb
+    # the stream's bits are free cells: a free cell (a self-loop pushing b^2: b is a bit) and the slot that produces it
+    # into its segment, 2 positions a bit (the public input's 256 bits likewise)
+    inputs = 2 * 8 * (pi1["stream"] + 32)
+    return e_rows * w + packs + public + absorb + inputs
 
 
 def size(pi1_name, design):
@@ -146,17 +149,22 @@ def pi1_rec_rounds(xmss=1000, derived=True):
     return out
 
 
-def pi2_rounds(s, split=False):
+def pi2_rounds(s, split=False, design="D16v"):
     """pi2's rounds: the copy argument's (alpha, beta) after W; t after Q; the fold and claim combination. With
     `split`, Q is two commitments (h, then q and the gate quotient), and the caller multiplies in h's list."""
     q = 2.0 ** LOGQ
     q_words = s["quotient"] - 3 * s["n"] if split else s["quotient"]
     lw, lq = CERTIFIED_L0[stack(s["witness"])], CERTIFIED_L0[stack(q_words)]
     n = s["n"]
+    if design.startswith("D"):
+        t = ("t: the copy identity h · d_pull · d_push, degree ≤ 5N (d_push's selectors and quadratic pushes)", 5 * n)
+    else:
+        w = DESIGNS[design]["W"]
+        t = (f"t: the copy identity h · d · d' (3N) and the gate's (2N/{w})", 3 * n + 2 * n // w)
     return lw, lq, [
         ("copy argument (α, β): 2N fractions, unique tags both sides, and no vanishing denominator", 4 * n / q, lw),
-        ("public weight's batching (γ): ≤ 128 public words", 128 / q, lw),
-        ("t: the copy identity, degree ≤ 5N (h · d_pull · d_push)", 5 * n / q, lw * lq),
+        ("γ: the public elements' limb fingerprints c0 + γ c1 + γ² c2 (≤ 128)", 2 * 128 / q, lw),
+        (t[0], t[1] / q, lw * lq),
         ("ρ: the row's fold and the claims' combination", 64 / q, lw * lq),
     ]
 
@@ -172,23 +180,35 @@ def calldata(pi1, values, pi2_roots=2, extra=0):
     return b, zero
 
 
+# The (region block, role) pairs whose push is an expression, each one indicator at t: a coset of a Cantor subspace
+# (roles in the position's high 4 bits, regions aligned blocks of rows), w_m(t) / ((w_s(t) + u) κ), one division.
+# D16v: K0a, K0b (13 expression roles, 2 blocks each), K1 (10, 3), KD (8, 2), Kprep (3, 2), XOR (8, 2), 5 packing
+# types (1, 2), E products (6, 2), E sums (6, 2), squares (5, 2), free bits (16, 2), public fingerprints (4, 1).
+# D32v: the slice rows (30 roles: 2 RC types x 2 blocks, the prep 1) and the same others with 32-wide rows.
+EXPRESSION_PAIRS = {"D16v": 26 + 26 + 30 + 16 + 6 + 16 + 10 + 12 + 12 + 10 + 32 + 4, "D32v": 120 + 30 + 100}
+
+
 def verifier_ops(design, values):
-    """The pi2 verifier's E operations at t (SPEC-REC.md §4.2): digits, role and region selectors, the row's values
-    from its fold, the push formulas and their selection, the copy identity, the public target."""
+    """The pi2 verifier's E operations at t (SPEC-REC.md §4, §6): digits, the row's values from its fold, the push
+    formulas, their selection (one indicator a region block and expression role, batch-inverted), the copy
+    identity, the public side."""
     w = DESIGNS[design]["W"]
     lw = int(math.log2(w))
     digits = 2 * 25
-    roles = 61 + 10 + 7 * w + 70
-    regions = 4 * 40
-    fold = 2 * sum((1 << j) * (1 << (lw - j)) for j in range(lw)) // 1 + 2 * w + 20
+    fold = 2 * sum((1 << j) * (1 << (lw - j)) for j in range(lw)) + 2 * w + 20
     formulas = {"B4": 8, "C16": 120, "C64": 400, "D16v": 345, "D32v": 450}[design]
-    selection = 2 * (15 * w + w) if design.startswith("D") else 4 * w
+    if design.startswith("D"):
+        # each pair: its denominator (1 add, 1 mul by κ), 3 muls of the batch inversion, the product with its
+        # formula's value minus the forward's, and the sum; one inversion for all
+        selection = 6 * EXPRESSION_PAIRS[design] + 70
+    else:
+        selection = 61 + 10 + 7 * w + 70 + 4 * 40 + 4 * w
     identity = 100
     # the public side of the copy argument: one fraction 1/(α + c0 + γ c1 + γ² c2 + β τ_J) an element (57: pi1's
     # 51 claims' elements, 2 roots, the public input, the counts) and a check (13), batch-inverted
     publics = 57 + 13
     public = publics * (4 + 3) + 70
-    return digits + roles + regions + fold + formulas + selection + identity + public
+    return digits + fold + formulas + selection + identity + public
 
 
 def execution(pi1, design, values, claims_pi2=4, calls_pi2=3, pi2_words=123):
@@ -250,7 +270,7 @@ def main():
     for design in ["D16v", "D32v", "C16"]:
         p = "pi1-rec (skip 3; alpha, zerocheck point derived)" if design == "D16v" else "main line (skip 3)"
         s = size(p, design)
-        lw, lq, rs = pi2_rounds(s, split=design == "C16")
+        lw, lq, rs = pi2_rounds(s, split=design == "C16", design=design)
         extra = ""
         if design == "C16":
             # two quotient commitments (h, then q and the gate quotient) in one round: t pays three lists
