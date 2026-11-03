@@ -721,3 +721,60 @@ theorem wPoly_bCoefficients {m : ℕ} (hm : m ≤ 28) (v : Array K) (hv : v.size
   rw [UniComplete.AlgC.take_digits_getD _ (le_refl m) (Finset.mem_range.mp hl), wP_eval_sq]
 
 end RecCompose
+
+namespace RecCompose
+
+open RecStatement LeanVM.Parameters LeanVM.Protocol Finset Polynomial
+open scoped ENNReal
+
+theorem wPoly_congr {m : ℕ} {T T' : ℕ → K} (h : ∀ i < 2 ^ m, T i = T' i) : wPoly m T = wPoly m T' :=
+  Finset.sum_congr rfl fun i hi ↦ by rw [h i (Finset.mem_range.mp hi)]
+
+/-- **The setup's claim** at `(w_0(t), …, w_{m−1}(t), β)`: `κ(t) + β σ(t)` for the table's first half and the sum
+of its halves. -/
+theorem claim_setup (T : ℕ → K) (m : ℕ) (t β : E) :
+    ∑ i ∈ range (2 ^ (m + 1)), PcsQuotient.eqBits ((digitsList t (m + 3)).take m ++ [β]) i * ofK (T i) =
+      (wPoly m T).eval t + β * (wPoly m fun k ↦ T k + T (k + 2 ^ m)).eval t := by
+  have hlen : ((digitsList t (m + 3)).take m).length = m := by simp [digitsList]; omega
+  rw [sum_range_two_pow_add m _ 1, wPoly_eval, wPoly_eval, Finset.mul_sum, ← Finset.sum_add_distrib]
+  refine Finset.sum_congr rfl fun k hk ↦ ?_
+  have hk' : k < 2 ^ ((digitsList t (m + 3)).take m).length := by rw [hlen]; exact Finset.mem_range.mp hk
+  have e : ∀ b, PcsQuotient.eqBits ((digitsList t (m + 3)).take m ++ [β]) (k + 2 ^ m * b) =
+      PcsQuotient.eqBits ((digitsList t (m + 3)).take m) k * PcsQuotient.eqBits [β] b := fun b ↦ by
+    have := eqBits_append ((digitsList t (m + 3)).take m) [β] hk' b
+    rw [hlen] at this
+    exact this
+  have hw : PcsQuotient.eqBits ((digitsList t (m + 3)).take m) k =
+      ∏ l ∈ range m, if k.testBit l then QuotientSecurity.sq^[l] t else 1 + QuotientSecurity.sq^[l] t := by
+    rw [eqBits_eq_prod, hlen]
+    refine Finset.prod_congr rfl fun l hl ↦ ?_
+    have hl' := Finset.mem_range.mp hl
+    rw [List.getD_eq_getElem?_getD, List.getElem?_take, if_pos hl', ← List.getD_eq_getElem?_getD,
+      digitsList_getD t (by omega)]
+  simp only [pow_one, Finset.sum_range_succ, Finset.sum_range_zero, zero_add, e, hw, mul_zero, add_zero, mul_one]
+  rw [eqBits_eq_prod, eqBits_eq_prod]
+  simp only [List.length_cons, List.length_nil, Finset.prod_range_succ, Finset.prod_range_zero, one_mul]
+  simp only [List.getD_cons_zero, show (0 : ℕ).testBit 0 = false from rfl, show (1 : ℕ).testBit 0 = true from rfl,
+    ite_true, Bool.false_eq_true, ite_false, UniSound.Ids.ofK_add]
+  ring
+
+/-- The setup stack's halves: `κ`'s basis-`B` coefficients, then those of `κ + σ`. -/
+theorem setupStack_getD (c : Pi2Circuit) {k : ℕ} (hk : k < 2 ^ c.circuit.logN) :
+    c.setupStack.getD k 0 = (UniStatement.bCoefficients c.circuit.logN
+        (Array.ofFn (n := 2 ^ c.circuit.logN) fun i ↦ c.kappa i.val)).getD k 0 ∧
+      c.setupStack.getD (k + 2 ^ c.circuit.logN) 0 = (UniStatement.bCoefficients c.circuit.logN
+          (Array.ofFn (n := 2 ^ c.circuit.logN) fun i ↦ c.kappa i.val)).getD k 0 +
+        (UniStatement.bCoefficients c.circuit.logN
+          (Array.ofFn (n := 2 ^ c.circuit.logN) fun i ↦ UniStatement.point (c.sigma i.val))).getD k 0 := by
+  have hs : (UniStatement.bCoefficients c.circuit.logN
+      (Array.ofFn (n := 2 ^ c.circuit.logN) fun i ↦ c.kappa i.val)).size = 2 ^ c.circuit.logN := by
+    rw [UniComplete.AlgC.bCoefficients_size, Array.size_ofFn]
+  unfold Pi2Circuit.setupStack
+  simp only
+  constructor
+  · rw [Array.getD_eq_getD_getElem?, Array.getElem?_append_left (by rw [hs]; exact hk), ← Array.getD_eq_getD_getElem?]
+  · rw [Array.getD_eq_getD_getElem?, Array.getElem?_append_right (by rw [hs]; omega), hs, Nat.add_sub_cancel,
+      Array.getElem?_ofFn]
+    simp [hk]
+
+end RecCompose
