@@ -2296,6 +2296,92 @@ theorem ev_leafQ (hC : ChunksFit D.shape) (b : Block) (i : ℕ)
   rw [hv] at hl
   exact (wtake_getD D Fl s ch fd t vals _ he.le l hl).symm
 
+/-- **The memory's values at `t`**: the final count and the pull fingerprint. -/
+theorem mem_facts (hold : HoldAll D Fl s c1 ch fd c2 t vals) :
+    (inpOf D Fl s ch fd t vals).memoryFinalCount = (c1P D.shape c1 (.memory 3)).eval t ∧
+      (inpOf D Fl s ch fd t vals).memoryPull =
+        (memPullP D.shape c1 (stackFor D c1 c2 .setup) (inpOf D Fl s ch fd t vals).weights
+          (inpOf D Fl s ch fd t vals).beta).eval t := by
+  have hlm := lm_lt_nDigits D
+  have m1 := mem_rels_mem D Fl s ch fd t vals (List.mem_cons_self ..)
+  have m2 := mem_rels_mem D Fl s ch fd t vals (List.mem_cons_of_mem _ (List.mem_cons_self ..))
+  have m3 := mem_rels_mem D Fl s ch fd t vals
+    (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_self ..)))
+  have hs : (inpOf D Fl s ch fd t vals).shape = D.shape := rfl
+  rw [hs] at m1 m2 m3
+  have hpt : IsPt D Fl s ch fd t vals .c1 ((inpOf D Fl s ch fd t vals).w.take D.shape.logMemory) :=
+    ⟨_, m1, rfl, _, List.mem_singleton_self _, rfl⟩
+  have h1 := holds_equal (hold _ m1 .c1 (by simp [Relation.equal, term, Column.commitment]))
+  have h2 := holds_equal (hold _ m2 .setup (by simp [Relation.equal, term, Column.commitment]))
+  have h3 := hold _ m3 .c1 fun tm htm ↦ by
+    obtain ⟨k, -, rfl⟩ := List.mem_map.mp htm
+    exact ⟨rfl, rfl⟩
+  have ek : ∀ k, evOf D Fl s c1 ch fd c2 t vals (.memory k) ((inpOf D Fl s ch fd t vals).w.take D.shape.logMemory) =
+      (c1P D.shape c1 (.memory k)).eval t := fun k ↦
+    ev_c1 D Fl s c1 ch fd c2 t vals (.memory k) rfl (fun j h ↦ by cases h) _ hlm.le le_rfl hpt
+  have ea := ev_setup D Fl s c1 ch fd c2 t vals .address rfl
+    ((inpOf D Fl s ch fd t vals).w.take D.shape.logMemory) digitP ⟨_, m2, rfl, _, List.mem_singleton_self _, rfl⟩
+    (fun b hb ↦ by rw [(setup_limbs D.shape _ b hb).2.1 rfl, wtake_length D Fl s ch fd t vals _ hlm.le])
+    (fun b hb l hl ↦ by
+      rw [(setup_limbs D.shape _ b hb).2.1 rfl] at hl
+      rw [wtake_getD D Fl s ch fd t vals _ hlm.le l hl])
+  rw [ek] at h1
+  rw [ea] at h2
+  refine ⟨h1.symm, ?_⟩
+  unfold RelHolds at h3
+  simp only [List.map_map, Function.comp_def, term, ek] at h3
+  unfold memPullP
+  simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C, eval_listSum, List.map_map,
+    Function.comp_def]
+  rw [h2, h1]
+  rw [← add_eq_zero_iff']
+  linear_combination h3
+
+/-- **The bytecode's values at `t`**: the final count and the pull fingerprint. -/
+theorem bc_facts (hLb : LbFits D.shape) (hold : HoldAll D Fl s c1 ch fd c2 t vals) :
+    (inpOf D Fl s ch fd t vals).bytecodeFinalCount = (c1P D.shape c1 .bytecodeFinal).eval t ∧
+      (inpOf D Fl s ch fd t vals).bytecodePull =
+        (bcPullP D.shape c1 (stackFor D c1 c2 .setup) (alphasOf ch) (inpOf D Fl s ch fd t vals).weights
+          (inpOf D Fl s ch fd t vals).beta).eval t := by
+  have hlb : D.shape.logBytecode < nDigits D.shape := by
+    have := h_lt_nDigits D
+    unfold LbFits at hLb
+    omega
+  have m1 := mem_rels_bc D Fl s ch fd t vals (List.mem_cons_self ..)
+  have m2 := mem_rels_bc D Fl s ch fd t vals (List.mem_cons_of_mem _ (List.mem_cons_self ..))
+  have hs : (inpOf D Fl s ch fd t vals).shape = D.shape := rfl
+  rw [hs] at m1 m2
+  have h1 := holds_equal (hold _ m1 .c1 (by simp [Relation.equal, term, Column.commitment]))
+  have h2 := holds_equal (hold _ m2 .setup (by simp [Relation.equal, term, Column.commitment]))
+  have e1 := ev_c1 D Fl s c1 ch fd c2 t vals .bytecodeFinal rfl (fun j h ↦ by cases h) _ hlb.le le_rfl
+    ⟨_, m1, rfl, _, List.mem_singleton_self _, rfl⟩
+  have halen : (alphasOf ch).length = 4 := by simp [alphasOf]
+  have e2 := ev_setup D Fl s c1 ch fd c2 t vals .bytecodeTuple rfl
+    ((inpOf D Fl s ch fd t vals).alphas ++ (inpOf D Fl s ch fd t vals).w.take D.shape.logBytecode)
+    (fun l ↦ if l < 4 then Polynomial.C ((alphasOf ch).getD l 0) else digitP (l - 4))
+    ⟨_, m2, rfl, _, List.mem_singleton_self _, rfl⟩
+    (fun b hb ↦ by
+      rw [(setup_limbs D.shape _ b hb).1 rfl, List.length_append,
+        wtake_length D Fl s ch fd t vals _ hlb.le]
+      show _ ≤ (alphasOf ch).length + _
+      rw [halen]; omega)
+    (fun b hb l hl ↦ by
+      rw [(setup_limbs D.shape _ b hb).1 rfl] at hl
+      show _ = ((alphasOf ch) ++ _).getD l 0
+      by_cases h4 : l < 4
+      · rw [ite_eq_left h4, Polynomial.eval_C, List.getD_append _ _ _ _ (by rw [halen]; exact h4)]
+      · rw [ite_eq_right h4, List.getD_append_right _ _ _ _ (by rw [halen]; omega), halen,
+          wtake_getD D Fl s ch fd t vals _ hlb.le _ (by omega)])
+  rw [e1] at h1
+  rw [e2] at h2
+  refine ⟨h1.symm, ?_⟩
+  unfold bcPullP
+  simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C]
+  rw [h2, h1]
+  have two : (2 : E) = 0 := CharTwo.two_eq_zero
+  linear_combination (-(inpOf D Fl s ch fd t vals).beta -
+    (inpOf D Fl s ch fd t vals).weights.getD 2 0 * (inpOf D Fl s ch fd t vals).bytecodeFinalCount) * two
+
 end Ctx
 
 end UniSound.Ids.Eval
