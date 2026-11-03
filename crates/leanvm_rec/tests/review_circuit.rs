@@ -343,6 +343,65 @@ fn review_free_inputs() {
         assert!(bad.is_empty(), "{} unexpected free inputs in the ports' closure", bad.len());
         let bits = in_closure.get("bit").copied().unwrap_or(0);
         assert_eq!(bits, c.free_bits[0] + c.free_bits[1], "every free bit, and only those, reaches a port");
+
+        // Booleanity, for every satisfying witness: a cell is a bit if it is on a `b = b²` cycle, a forward of a bit,
+        // or the push of a formula with coefficients 1 on bits plus κ ∈ {0, 1} (GF(2)'s operations stay in GF(2)).
+        // Tarjan numbers a component after every component it reads: increasing ids are a topological order.
+        let kappa = circuit.kappa_column();
+        let mut order: Vec<u32> = (0..n as u32).collect();
+        order.sort_unstable_by_key(|&i| comp[i as usize]);
+        let mut bit = vec![false; n];
+        for &j in &order {
+            let j = j as usize;
+            bit[j] = match &kinds[comp[j] as usize] {
+                Some(Kind::Bit) => true,
+                Some(_) => false,
+                None => match d.def[j] {
+                    Def::Hole => false,
+                    Def::Forward => bit[d.edges[d.offsets[j] as usize] as usize],
+                    Def::Expr(p) => {
+                        let Formula::Expr(poly) = circuit.formula(&row_regions, p as usize) else { unreachable!() };
+                        kappa[p as usize].0 <= 1
+                            && poly.linear.iter().all(|&(_, k)| k == K(1))
+                            && poly.quadratic.iter().all(|&(_, _, k)| k == K(1))
+                            && d.edges[d.offsets[j] as usize..d.offsets[j + 1] as usize]
+                                .iter()
+                                .all(|&u| bit[u as usize])
+                    }
+                },
+            };
+        }
+        // Every slot in the closure whose formula is meant for bits reads bits: Keccak rows, XORs, the bits' copies,
+        // and a packing's window cells (every linear term but the accumulator's `x^15`).
+        let mut checked: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut not_bits: Vec<String> = Vec::new();
+        for p in 0..n {
+            let target = circuit.sigma[p] as usize;
+            if target >= n || !relevant[target] {
+                continue;
+            }
+            let Formula::Expr(poly) = circuit.formula(&row_regions, p) else { continue };
+            let (region, role) = name_of(p as u32);
+            let row = p & !(w - 1);
+            let cells: Vec<usize> = if region.starts_with("keccak") || region == "xor" || region == "bit+copy" {
+                poly.reads().map(|c| c as usize).collect()
+            } else if region == "pack" || region.starts_with("pack-top") {
+                poly.linear.iter().filter(|&&(_, k)| k.0 < 1 << 15).map(|&(c, _)| c as usize).collect()
+            } else {
+                continue;
+            };
+            *checked.entry(region.clone()).or_default() += 1;
+            for c in cells {
+                if !bit[row + c] {
+                    not_bits.push(format!("{region} role {role} at {p} reads cell {c}, not a bit"));
+                }
+            }
+        }
+        println!("booleanity: slots checked by region {checked:?}; {} reads not bits", not_bits.len());
+        for b in not_bits.iter().take(20) {
+            println!("  BAD: {b}");
+        }
+        assert!(not_bits.is_empty(), "a bit formula reads a cell that may hold a non-bit");
     });
 }
 
