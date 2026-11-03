@@ -853,24 +853,21 @@ theorem numerator_natDegree_le (tr : Trace) (gamma : E) (words : List E) :
     exact tableItems_deg tr htab it hit'
   · exact publicItems_deg tr words it h
 
-/-- **The constraint quotient's degree is at most `Shape.constraintDegree`.** -/
-theorem constraintQuotient_natDegree_le {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
-    (hC : Domain.CoordinateFunctionalsBasis (tr.height opBlake2s)) (gamma : E) :
-    (constraintQuotient tr gamma (publicWordsOf tr.publicInput)).toPoly.natDegree ≤ tr.shape.constraintDegree := by
-  have hmul := constraintQuotient_mul hH hS hC gamma
-  have hN := numerator_natDegree_le tr gamma (publicWordsOf tr.publicInput)
-  by_cases hQ : (constraintQuotient tr gamma (publicWordsOf tr.publicInput)).toPoly = 0
-  · rw [hQ, natDegree_zero]
-    exact Nat.zero_le _
-  · rw [← hmul, mul_comm, (Domain.wP_monic _).natDegree_mul' hQ, Domain.wP_natDegree] at hN
-    omega
+/-- **The constraint quotient's degree is at most `Shape.constraintDegree`**, for every trace and every
+`γ`, `words` (`/ₘ` lowers the degree by `2^{r_W}` whether or not it divides). -/
+theorem constraintQuotient_natDegree_le (tr : Trace) (gamma : E) (words : List E) :
+    (constraintQuotient tr gamma words).toPoly.natDegree ≤ tr.shape.constraintDegree := by
+  have hN := numerator_natDegree_le tr gamma words
+  unfold constraintQuotient
+  rw [toPoly_divM _ _ (wPoly_monic _), wPoly_toPoly, natDegree_divByMonic _ (Domain.wP_monic _),
+    Domain.wP_natDegree]
+  omega
 
-/-- **The constraint quotient fits its chunks** `chunks (D + 1)`: its degree is below `Σ 2^e`. -/
-theorem constraintQuotient_fits {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
-    (hC : Domain.CoordinateFunctionalsBasis (tr.height opBlake2s)) (gamma : E) :
-    (constraintQuotient tr gamma (publicWordsOf tr.publicInput)).toPoly.natDegree <
+/-- **The constraint quotient fits its chunks** `chunks (D + 1)`: its degree is below `Σ 2^e` (every trace). -/
+theorem constraintQuotient_fits (tr : Trace) (gamma : E) (words : List E) :
+    (constraintQuotient tr gamma words).toPoly.natDegree <
       ((chunks (tr.shape.constraintDegree + 1)).map (2 ^ ·)).sum := by
-  have h1 := constraintQuotient_natDegree_le hH hS hC gamma
+  have h1 := constraintQuotient_natDegree_le tr gamma words
   have h2 := (chunks_spec (n := tr.shape.constraintDegree + 1) (by omega)).2.1
   omega
 
