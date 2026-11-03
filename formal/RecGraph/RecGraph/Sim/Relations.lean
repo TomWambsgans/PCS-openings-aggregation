@@ -461,4 +461,29 @@ theorem heapRelations_phc {st : RecState} (hg : Good st) {active : List Nat} {ac
 
 end Rel
 
+/-! ## `Compose`'s interface: the heap -/
+
+/-- **The parts' representation** for `Compose` (`RpPart`). -/
+def partR : PartRep := fun π iv publicInput stream st p u ↦ RpPart π iv publicInput stream st p u
+
+theorem partR_grows : PartRepGrows partR :=
+  fun π iv publicInput stream _ _ _ _ hk hgr h ↦ RpPart.grow π iv publicInput stream hk hgr h
+
+/-- **The heap's output, its shape**: `UniStatement`'s `heapRelations` at π1-rec3's shape, at some inputs (six tables'
+parts and active factors, sixteen weights) and the digits `wE`. -/
+def heapShape (wE : List E) (b : List Relation × List (Column × ℕ × Bool)) : Prop :=
+  ∃ (activeE : List E) (partsE : List TablePart) (weightsE : Array E) (betaE hvE cvE mplE mpsE bplE bpsE : E),
+    activeE.length = 6 ∧ partsE.length = 6 ∧ weightsE.size = 16 ∧
+      b = UniStatement.heapRelations reference activeE partsE weightsE betaE hvE cvE mplE mpsE bplE bpsE wE
+        (chunks (reference.constraintDegree + 1))
+
+/-- **`HeapSpec`**, `Compose`'s interface for the heap's relations. -/
+theorem heapSpec : HeapSpec partR heapShape := by
+  intro π iv publicInput stream st active activeE parts partsE weights weightsE beta hv cv mpl mps bpl bps betaE hvE
+    cvE mplE mpsE bplE bpsE w wE hg hseed ha ha6 hp hp6 hw hw16 hbeta hhv hcv hmpl hmps hbpl hbps hwE _
+  have h0 := rp_zero_of_seed π iv publicInput stream hg hseed
+  have h := heapRelations_phc π iv publicInput stream hg ⟨h0, ha, hp, hw, hwE⟩ hp6 hbeta hhv hcv hmpl hmps hbpl hbps
+    (chunks (reference.constraintDegree + 1))
+  exact ⟨h.1, h.2.1, h.2.2, activeE, partsE, weightsE, betaE, hvE, cvE, mplE, mpsE, bplE, bpsE, ha6, hp6, hw16, rfl⟩
+
 end RecGraph.Sim
