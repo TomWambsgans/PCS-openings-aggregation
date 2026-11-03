@@ -1822,6 +1822,185 @@ theorem treeP_eval (hold : HoldAll D Fl s c1 ch fd c2 t vals) : (treeP D.shape c
   simp only [Polynomial.eval_add, Polynomial.eval_mul]
   linear_combination hRtree
 
+/-- **The root's identity at `t`.** -/
+theorem rootP_eval (hold : HoldAll D Fl s c1 ch fd c2 t vals) :
+    (rootP D.shape c2 (eqKernel (alphasOf ch)) (betaOf ch)).eval t = 0 := by
+  have hh := heap_fst D Fl s ch fd t vals
+  have mR := mem_rels_heap D Fl s ch fd t vals (by
+    rw [hh]; exact List.mem_append_left _ (List.mem_append_left _
+      (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_self ..)))))
+  have hR := hold _ mR .c2 (by simp [term, Column.commitment])
+  unfold RelHolds at hR
+  simp only [term, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero] at hR
+  have e1 := ev_c2 D Fl s c1 ch fd c2 t vals .heap rfl
+    ((List.range D.shape.heap.h).map fun l ↦ if l = 0 then (1 : E) else 0)
+    (fun l ↦ if l = 0 then 1 else 0) ⟨_, mR, rfl, _, List.mem_singleton_self _, rfl⟩
+    (by simp [c2Vars])
+    (fun l hl ↦ by
+      change l < D.shape.heap.h at hl
+      rw [getD_map_range _ hl]
+      split_ifs <;> simp)
+  rw [e1] at hR
+  unfold rootP
+  simp only [Polynomial.eval_add, Polynomial.eval_mul, Polynomial.eval_C]
+  exact hR
+
+end Ctx
+
+/-! ## The tables' parts, the `C1` points -/
+
+theorem sentColumns_ne_nil (tab : Table) : sentColumns tab ≠ [] := by
+  unfold sentColumns factorColumns
+  split_ifs <;> simp
+
+theorem tablePartOf_equal_mem (tab : Table) (lh : ℕ) (weights : Array E) (beta : E) (w vals : List E)
+    (p : ℕ) (hp : p < (sentColumns tab).length) :
+    Relation.equal (.table tab.opcode ((sentColumns tab).getD p 0)) (w.take lh) (vals.getD p 0) ∈
+      (tablePartOf tab lh weights beta w vals).2.1 := by
+  unfold tablePartOf
+  dsimp only
+  obtain ⟨X, hX⟩ := rels_flushFold (fun c ↦ .table tab.opcode c) (w.take lh) weights beta
+    (sentOf tab vals) (tab.flushes.pull.zip tab.flushes.push)
+    ⟨1, 1, 1, 0, ((sentColumns tab).zip (List.range (sentColumns tab).length)).map fun p ↦
+      Relation.equal (.table tab.opcode p.1) (w.take lh) (vals.getD p.2 0), vals.drop (sentColumns tab).length⟩
+  rw [hX]
+  refine List.mem_append_left _ (List.mem_map.mpr ⟨((sentColumns tab).getD p 0, p), ?_, rfl⟩)
+  have hz : p < ((sentColumns tab).zip (List.range (sentColumns tab).length)).length := by simp [hp]
+  have := List.getElem_mem hz
+  rwa [List.getElem_zip, List.getElem_range, ← List.getD_eq_getElem _ 0] at this
+
+theorem tables_length : tables.length = 6 := rfl
+
+theorem jumpSent (tab : Table) (h : tab.opcode = opJump) :
+    colIdx tab.columns "b" ∈ sentColumns tab ∧ colIdx tab.columns "v_cond" ∈ sentColumns tab := by
+  unfold sentColumns factorColumns
+  rw [h]
+  simp [opJump, opMul, opDeref]
+
+/-- A relation whose terms are all on `C2` is on `C1` only if it has no terms. -/
+theorem terms_nil_of {r : Relation} (h : ∀ tm ∈ r.terms, tm.column.commitment = .c2)
+    (hc : r.commitment = .c1) : r.terms = [] := by
+  unfold Relation.commitment at hc
+  rcases hr : r.terms with _ | ⟨tm0, rest⟩
+  · rfl
+  · rw [hr] at hc
+    have := h tm0 (by rw [hr]; exact List.mem_cons_self ..)
+    simp only at hc
+    rw [this] at hc
+    exact absurd hc (by decide)
+
+theorem qTerms_c2 (column : ℕ → Column) (hcol : ∀ c, (column c).commitment = .c2) (w : List E) :
+    ∀ (l : List ℕ) (k : ℕ) (sc : E), ∀ tm ∈ qTerms column w l k sc, tm.column.commitment = .c2 ∧ tm.twist = 0 :=
+  fun l k sc tm htm ↦ by
+    obtain ⟨c, -, h1, -, h3⟩ := qTerms_mem column w l k sc tm htm
+    exact ⟨by rw [h1]; exact hcol _, h3⟩
+
+theorem qTerms_pt (column : ℕ → Column) (w : List E) : ∀ (l : List ℕ) (k : ℕ) (sc : E), ∀ c < l.length,
+    ∃ tm ∈ qTerms column w l k sc, tm.point = w.take (l.getD c 0)
+  | [], _, _, c, hc => by simp at hc
+  | e :: rest, k, sc, 0, _ => ⟨_, List.mem_cons_self .., rfl⟩
+  | e :: rest, k, sc, c + 1, hc => by
+    obtain ⟨tm, htm, hp⟩ := qTerms_pt column w rest (k + 1) (sc * w.getD e 0) c (by simpa using hc)
+    exact ⟨tm, List.mem_cons_of_mem _ htm, by simpa using hp⟩
+
+/-- Every relation of the heap's is on `C2` (or has no terms), untwisted. -/
+theorem heap_terms (S : Shape) (active : List E) (parts : List TablePart) (weights : Array E)
+    (beta hv cv mpull mpush bpull bpush : E) (w : List E) (cc : List ℕ) :
+    ∀ r ∈ (heapRelations S active parts weights beta hv cv mpull mpush bpull bpush w cc).1, ∀ tm ∈ r.terms,
+      tm.column.commitment = .c2 ∧ tm.twist = 0 := by
+  rw [heapRelations_fst]
+  intro r hr tm htm
+  simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with ((rfl | rfl | rfl) | hr) | rfl
+  · simp only [Relation.equal, term, List.mem_singleton] at htm; subst htm; exact ⟨rfl, rfl⟩
+  · simp only [term, List.mem_cons, List.not_mem_nil, or_false] at htm
+    rcases htm with rfl | rfl | rfl | rfl <;> exact ⟨rfl, rfl⟩
+  · simp only [term, List.mem_singleton] at htm; subst htm; exact ⟨rfl, rfl⟩
+  · obtain ⟨x, -, rfl⟩ := List.mem_map.mp hr
+    unfold blockRel at htm
+    dsimp only at htm
+    split at htm
+    · simp only [term, List.mem_singleton] at htm; subst htm; exact ⟨rfl, rfl⟩
+    all_goals
+      rw [List.mem_append] at htm
+      rcases htm with htm | htm
+      · simp only [term, List.mem_singleton] at htm; subst htm; exact ⟨rfl, rfl⟩
+      · rw [quotientTerms_eq] at htm
+        exact qTerms_c2 _ (fun _ ↦ rfl) w _ 0 _ tm htm
+  · rw [quotientTerms_eq] at htm
+    exact qTerms_c2 _ (fun _ ↦ rfl) w _ 0 _ tm htm
+
+section Ctx
+
+variable (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (s : USt) (c1 : Stk) (ch : List E) (fd : Done)
+  (c2 : Stk) (t : E) (vals : List E)
+
+/-- `y(t)`, `BLAKE2S`'s coordinates of `t`. -/
+def yOf : List E := coordinatesAt t (coordinateFunctionals (D.shape.heights.getD opBlake2s 0))
+
+/-- **Every `C1` point**: a prefix of the digits, `y(t)`, or Flock's point. -/
+theorem c1_points : ∀ r ∈ relsAt D Fl s ch fd t vals, r.commitment = .c1 → ∀ tm ∈ r.terms,
+    (∃ k, tm.point = (inpOf D Fl s ch fd t vals).w.take k) ∨ tm.point = yOf D t ∨
+      tm.point = (inpOf D Fl s ch fd t vals).flockPoint := by
+  intro r hr hc tm htm
+  unfold relsAt relsOf at hr
+  simp only [List.mem_append, List.mem_singleton] at hr
+  rcases hr with ((((hr | hr) | hr) | rfl) | hr) | hr
+  · obtain ⟨tab, -, v', hv⟩ := tablesPart_rels _ _ _ _ _ _ r hr
+    exact Or.inl ⟨_, (tablePartOf_terms tab _ _ _ _ v' r hv tm htm).2.1⟩
+  · simp only [RelInput.memRels, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl
+    · simp only [Relation.equal, term, List.mem_singleton] at htm; subst htm; exact Or.inl ⟨_, rfl⟩
+    · simp only [Relation.equal, term, List.mem_singleton] at htm; subst htm; exact Or.inl ⟨_, rfl⟩
+    · obtain ⟨k, -, rfl⟩ := List.mem_map.mp htm
+      exact Or.inl ⟨_, rfl⟩
+  · simp only [RelInput.bcRels, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl
+    · simp only [Relation.equal, term, List.mem_singleton] at htm; subst htm; exact Or.inl ⟨_, rfl⟩
+    · simp [Relation.equal, Relation.commitment, term, Column.commitment] at hc
+  · have := crOf_terms _ _ _ _ _ _ _ tm (by rw [← constraintRelation_eq]; exact htm)
+    rcases this.2.2 with h | h
+    · exact Or.inl h
+    · exact Or.inr (Or.inl h)
+  · have := terms_nil_of (fun tm' htm' ↦ (heap_terms _ _ _ _ _ _ _ _ _ _ _ _ _ r hr tm' htm').1) hc
+    rw [this] at htm
+    simp at htm
+  · unfold RelInput.ringRels at hr
+    split at hr
+    · simp only [List.mem_singleton] at hr
+      subst hr
+      simp only [List.mem_singleton] at htm
+      subst htm
+      exact Or.inr (Or.inr rfl)
+    · simp at hr
+
+/-- **No longer `C1` point extends `y(t)`** where `Z_bad(t) ≠ 0`. -/
+theorem y_self (h2 : 1 ≤ D.shape.heights.getD opBlake2s 0)
+    (hz : (zBad D.shape ((Fl.prog.out fd []).1.getD 0 0)).eval t ≠ 0) :
+    ∀ r ∈ relsAt D Fl s ch fd t vals, r.commitment = .c1 → ∀ tm ∈ r.terms,
+      (yOf D t).length < tm.point.length → tm.point.take (yOf D t).length ≠ yOf D t := by
+  have hlen : (yOf D t).length = D.shape.heights.getD opBlake2s 0 := by
+    rw [yOf, coordinatesAt_length, coordinateFunctionals_size]
+  have hy0 : (yOf D t).getD 0 0 = (yP (coordinateFunctionals (D.shape.heights.getD opBlake2s 0)) 0).eval t := by
+    rw [yOf, coordinatesAt_getD _ _ _ (by rw [coordinateFunctionals_size]; omega)]
+  unfold zBad at hz
+  rw [Polynomial.eval_mul, Polynomial.eval_add, Polynomial.eval_add, Polynomial.eval_X, Polynomial.eval_C,
+    ← hy0] at hz
+  have hne1 : (yOf D t).getD 0 0 ≠ t := fun h ↦ hz (by rw [h, CharTwo.add_self_eq_zero, zero_mul])
+  have hne2 : (yOf D t).getD 0 0 ≠ (Fl.prog.out fd []).1.getD 0 0 :=
+    fun h ↦ hz (by rw [h, CharTwo.add_self_eq_zero, mul_zero])
+  intro r hr hc tm htm hlt heq
+  have h0 : (tm.point.take (yOf D t).length).getD 0 0 = (yOf D t).getD 0 0 := by rw [heq]
+  rw [take_getD _ (by omega)] at h0
+  rcases c1_points D Fl s ch fd t vals r hr hc tm htm with ⟨k, hk⟩ | hk | hk
+  · rw [hk] at h0 hlt
+    rw [take_getD _ (by rw [List.length_take] at hlt; omega), w_getD D Fl s ch fd t vals 0 (by unfold nDigits; omega)] at h0
+    exact hne1 (by rw [← h0]; simp [digitP])
+  · rw [hk] at hlt
+    exact lt_irrefl _ hlt
+  · rw [hk] at h0
+    exact hne2 h0.symm
+
 end Ctx
 
 end UniSound.Ids.Eval
