@@ -29,19 +29,39 @@ namespace UniSound
 open LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol UniStatement Finset WhirBridge
 open scoped ENNReal
 
+/-- **What the verdict and the chain read of a run, at π1-rec3**: `obsOf` without the channel's list of challenges.
+Decision (recorded): π1-rec3's batch draws through `sampleNarrow`, which records the narrow challenge `narrowE x` in
+`Chan.challenges` where a chain program's `samples` records the raw `x`; the verdict, the result, the stream, the
+cursor, the absorbed bytes and the state are the same, so the link is stated up to them (`obsOf3`), and the
+challenges are read off the states (`challengeOf`), as the Fiat–Shamir layer does. -/
+def obsOf3 {α : Type} (x : Except UniError α × Chan) :
+    Except UniError α × Option (Array UInt8 × ℕ × ℕ × Digest × Bool) :=
+  (x.1, match x.1 with
+    | .ok _ => some (x.2.data, x.2.cursor, x.2.absorbed, x.2.state, x.2.zeros.all (· == 0))
+    | .error _ => none)
+
+/-- `obsOf3` is a function of `obsOf`. -/
+theorem obsOf3_eq_of_obsOf {α : Type} {x y : Except UniError α × Chan} (h : obsOf x = obsOf y) :
+    obsOf3 x = obsOf3 y := by
+  unfold obsOf at h
+  unfold obsOf3
+  obtain ⟨h1, h2⟩ := Prod.mk.inj h
+  rw [h1]
+  rcases hx : x.1 with _ | _ <;> rcases hy : y.1 with _ | _ <;> simp_all
+
 /-- **π1-rec3 as a chain program** (code-level link), for its Flock phase `F3`, with `nV` values at `t` and `np` pair
 rounds: after the row counts, for each public input and counts, the chain program `prog input rows` on
 `rec3Rounds F3.prog.rounds nV np`, with a tail of three (the stacks' values), runs as `reduceWithFs` at the
-deployment's shape, π1-rec3 with the walk, point claims, up to what the verdict and the chain read (`obsOf`). -/
+deployment's shape, π1-rec3 with the walk, point claims, up to what the verdict and the chain read (`obsOf3`). -/
 structure UniCode3 (D : Deployment) {κ : ℕ} (F3 : FlockSound3 κ) (nV np : ℕ) where
   prog : Vector UInt8 32 → List ℕ → ChainProg Reduced
   rounds_eq : ∀ input rows, (prog input rows).rounds = rec3Rounds F3.prog.rounds nV np
   tail_eq : ∀ input rows, (prog input rows).tail = 3
   link : ∀ (input : Vector UInt8 32) {m : Type → Type} [Monad m] [LawfulMonad m]
     (F : KeccakState → m KeccakState) (c₀ : Chan),
-    obsOf <$> ((reduceWithFs F D.shape (publicWordsOf input.toList) (.flock flockMain) .point .rec3
+    obsOf3 <$> ((reduceWithFs F D.shape (publicWordsOf input.toList) (.flock flockMain) .point .rec3
         true).run.run c₀) =
-      obsOf <$> ((readCounts D.shape.heights >>= fun rows => (prog input rows).run F).run.run c₀)
+      obsOf3 <$> ((readCounts D.shape.heights >>= fun rows => (prog input rows).run F).run.run c₀)
 
 /-- **π1-rec3's last link**: the verifier's checks with true claims make the pending claim its sum (the walk) and
 the batch's last state hold at its point, unless `t` is a root of the merge polynomial. -/
