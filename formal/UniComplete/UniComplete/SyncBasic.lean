@@ -31,6 +31,10 @@ what the prover wrote and draws the same challenges.
   `sendScalar`, `nextScalars`/`sendScalars`, `nextRoot`/`sendRoot`, `nextInteger 4`/`sendInteger n 4`,
   `sampleH`/`sampleW`, `samplesH`/`samplesW`, `requireZero`; `finish` succeeds when the data is the writer's
   stream (`finish_synced`).
+* **The two steps stated as hypotheses** (proved elsewhere; `SyncVerifier.lean` takes them): `FlockSyncs` (Flock's
+  prover against `Flock.verifyDeferredH`: the verifier returns the prover's point, end and pending matrices, collects
+  nothing) and `BatchSyncs` (the batching sumcheck's prover, `batchProver`, against `batchH`: the verifier returns
+  the prover's point claims, `pointOpening`, and its matrices' claim, and collects one value, `terminal w`).
 
 Decisions:
 
@@ -899,7 +903,9 @@ def pointOpening (claim : Commitment × List E × E) : Commitment × Opening := 
 verifier reads the rounds, the stacks' values and `a`, `b`, draws `λ` and the rounds' challenges, returns the
 prover's point claims (`pointOpening`, in order) and its matrices' claim, and collects one value, the batch's
 terminal `terminal w` (a function of the writer at `λ`, which fixes every challenge of the batch; zero for an
-honest trace, the algebra's part). -/
+honest trace, the algebra's part). It holds for pending matrices with the slices (`Pending.hasSlices`, the main
+line's: `flock_hasSlices`, `SyncVerifier.lean`) or none (`Blake2s.omitted`); without the slices `batchH` returns
+the bit-slice combination on `C1`'s opening instead. -/
 def BatchSyncs (H : List UInt8 → Digest) (combined : List (Commitment × Combined))
     (stackLayouts : List (Commitment × StackLayout)) (stackOf : Commitment → Array K) (ringMap : Option (List E))
     (tables : Option PendingTables) (pending : Option (Flock.Pending × List E)) (terminal : Wr → E) : Prop :=

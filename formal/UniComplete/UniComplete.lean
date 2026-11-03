@@ -33,3 +33,4 @@ import UniComplete.AlgCQuot
 import UniComplete.AlgCConstraint
 import UniComplete.AlgCRel
 import UniComplete.AlgH
+import UniComplete.SyncVerifier
