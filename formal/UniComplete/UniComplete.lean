@@ -58,6 +58,7 @@ import UniComplete.ProbHyp
 import UniComplete.ProbExp
 import UniComplete.ProbGrind
 import UniComplete.Prob
+import UniComplete.ProbTFresh
 import UniComplete.ProverSim
 import UniComplete.ProverDuplex
 import UniComplete.ProverBounds
