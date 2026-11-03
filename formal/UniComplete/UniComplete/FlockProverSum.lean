@@ -247,4 +247,83 @@ theorem zc_values (H : List UInt8 → Id LeanVM.Protocol.Digest) (κ k : ℕ) (h
   · rw [hzc3.2.1, vb]
   · rw [hzc3.2.2, ← vc, add_comm, ← add_assoc, add_self_E, zero_add]
 
+/-! ## The pending sum -/
+
+/-- **`PendingSumHolds` of `assemble`**, the front built from the zerocheck's split point and a lincheck output
+whose last claim is its tables' sum. -/
+theorem pendingSum_assemble (variant : Variant) (hk : variant.skip ≤ 6) (zSkip : Option E)
+    (low chiIn chiRest : List E) (va vb vc alpha : E) (lc : LcOut) (e : End)
+    (hsk : (rowLowWeights zSkip low).1.length = 2 ^ variant.skip) (hlow : low.length = 6 - variant.skip)
+    (hin : chiIn.length = 8) (hχ : lc.challenges.length = 8) (hs : lc.z.toList.length = 64)
+    (hc : variant.slices ≠ .claim)
+    (hrLc : lc.claim = ∑ y ∈ range 64,
+      (lc.challenges.foldl foldHigh (lincheckWeights (rowWeightsOf (rowLowWeights zSkip low).2 chiIn) alpha)).getD y 0 *
+        lc.z.toList.getD y 0) :
+    PendingSumHolds (assemble (frontOf variant (zSkip, low ++ chiIn ++ chiRest, va, vb, vc) alpha lc
+      (if variant.slices = .claim then none else some lc.z.toList)).1
+      (frontOf variant (zSkip, low ++ chiIn ++ chiRest, va, vb, vc) alpha lc
+        (if variant.slices = .claim then none else some lc.z.toList)).2 e) := by
+  have hpk : packing - variant.skip = low.length := by rw [hlow]; unfold packing; rfl
+  have h1 : (low ++ chiIn ++ chiRest).take (packing - variant.skip) = low := by
+    rw [hpk, List.append_assoc, List.take_left' rfl]
+  have h2 : ((low ++ chiIn ++ chiRest).drop (packing - variant.skip)).take lincheckRounds = chiIn := by
+    rw [hpk, List.append_assoc, List.drop_left' rfl, List.take_left' (by rw [hin]; rfl)]
+  have hsl : (if variant.slices = .claim then none else some lc.z.toList) = some lc.z.toList := by simp [hc]
+  have hk' : packing - low.length = variant.skip := by rw [hlow]; unfold packing; omega
+  unfold PendingSumHolds assemble frontOf
+  simp only [h1, h2, hsl, hk']
+  exact pendingSum_pure variant.skip hk zSkip low chiIn lc.challenges alpha lc.claim lc.z.toList hsk hlow hin hχ hs
+    hrLc
+
+/-- **`PendingSumHolds` of the honest prover**: at a pure Keccak-256, `log_n = 14 + κ`, any skip `k ≤ 6`, the
+slices sent, every writer (any challenges), given Flock's relation on `q_flock` and, for `k > 0`, the univariate
+skip's completeness (`SkipComplete k`). -/
+theorem pendingSumHolds (H : List UInt8 → Id LeanVM.Protocol.Digest) (κ : ℕ) (variant : Variant) (q : Array K)
+    (w : Wr) (hk : variant.skip ≤ 6) (hc : variant.slices ≠ .claim) (hF : FlockHolds κ q)
+    (hskipC : 0 < variant.skip → SkipComplete variant.skip) :
+    PendingSumHolds ((flockProve H (14 + κ) variant q).run w).1 := by
+  obtain ⟨frs, e, hfrs, hout⟩ := flockProve_eq H (14 + κ) variant q w
+  obtain ⟨zc, alpha, lc, hzc, ⟨w2, hlc⟩, hfr⟩ := frontW_eq H (14 + κ) variant q w
+  rw [← hfrs] at hfr
+  obtain ⟨zSkip, low, chiIn, chiRest, va, vb, vc, hzeq, hlow, hin, hcr, hsk, hva, hvb, hvc⟩ :=
+    zc_values H κ variant.skip hk q hF hskipC w
+  rw [← hzc] at hzeq
+  subst hzeq
+  rw [hout, hfr]
+  have hχ : lc.challenges.length = 8 := by rw [hlc, lcRounds_length]; rfl
+  have hpk : packing - variant.skip = low.length := by rw [hlow]; unfold packing; rfl
+  have h1 : (low ++ chiIn ++ chiRest).take (packing - variant.skip) = low := by
+    rw [hpk, List.append_assoc, List.take_left' rfl]
+  have h2 : ((low ++ chiIn ++ chiRest).drop (packing - variant.skip)).take lincheckRounds = chiIn := by
+    rw [hpk, List.append_assoc, List.drop_left' rfl, List.take_left' (by rw [hin]; rfl)]
+  have h3 : ((low ++ chiIn ++ chiRest).drop (packing - variant.skip)).drop lincheckRounds = chiRest := by
+    rw [hpk, List.append_assoc, List.drop_left' rfl, List.drop_left' (by rw [hin]; rfl)]
+  have hW : lcWeightsOf variant.skip (zSkip, low ++ chiIn ++ chiRest, va, vb, vc) alpha =
+      lincheckWeights (rowWeightsOf (rowLowWeights zSkip low).2 chiIn) alpha := by
+    unfold lcWeightsOf; rw [h1, h2]
+  have hZ : lcWitnessOf variant.skip q (zSkip, low ++ chiIn ++ chiRest, va, vb, vc) = lincheckWitness q chiRest := by
+    unfold lcWitnessOf; rw [h3]
+  rw [hW, hZ] at hlc
+  have hWs : (lincheckWeights (rowWeightsOf (rowLowWeights zSkip low).2 chiIn) alpha).size =
+      2 ^ (lincheckRounds + 6) := by simp [lincheckWeights, lincheckRounds, blake2sR1csLogSize]
+  have hZs : (lincheckWitness q chiRest).size = 2 ^ (lincheckRounds + 6) := by
+    simp [lincheckWitness, lincheckRounds, blake2sR1csLogSize]
+  have hinit : lcClaim (zSkip, low ++ chiIn ++ chiRest, va, vb, vc) alpha =
+      ∑ i ∈ range (2 ^ (lincheckRounds + 6)),
+        (lincheckWeights (rowWeightsOf (rowLowWeights zSkip low).2 chiIn) alpha).getD i 0 *
+          (lincheckWitness q chiRest).getD i 0 := by
+    rw [show (2 : ℕ) ^ (lincheckRounds + 6) = 2 ^ 14 from rfl, lincheck_init,
+      lincheckWitness_pin κ q hF chiRest hcr, mul_one, ← hva, ← hvb, ← hvc]
+    rfl
+  have hcomp := lcRounds_complete H lincheckRounds 6 _ _ _ w2 hWs hZs hinit
+  rw [← hlc] at hcomp
+  have hz : lc.z = lc.challenges.foldl foldHigh (lincheckWitness q chiRest) := by rw [hlc, lcRounds_z]
+  have hs : lc.z.toList.length = 64 := by
+    rw [Array.length_toList, hz]
+    exact foldl_foldHigh_size _ 6 _ (by rw [hχ]; simp [lincheckWitness, blake2sR1csLogSize])
+  refine pendingSum_assemble variant hk zSkip low chiIn chiRest va vb vc alpha lc e hsk hlow hin hχ hs hc ?_
+  rw [hcomp, show (2 : ℕ) ^ 6 = 64 from rfl]
+  refine sum_congr rfl fun y _ ↦ ?_
+  rw [toList_getD, hz]
+
 end UniComplete.FlockP

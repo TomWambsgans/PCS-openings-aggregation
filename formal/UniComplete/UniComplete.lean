@@ -25,3 +25,6 @@ import UniComplete.FlockProverRing
 import UniComplete.FlockProverMain
 import UniComplete.FlockProverRounds
 import UniComplete.FlockProverSumBasic
+import UniComplete.FlockProverSumPure
+import UniComplete.FlockProverSumZc
+import UniComplete.FlockProverSum
