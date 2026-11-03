@@ -37,7 +37,7 @@ named inputs; the files:
 | `Numbers.lean` | **`pi2Bound`** (`ε2`), `pi2_rounds_le` (RecPiop's three rounds times their lists, at most `2^-140.60`), **`pi2Bound_le_bits`** (`≤ 2^-64` for `Q ≤ 2^64`). |
 | `Part2.lean` | the derived adversaries (`hazardAdversary`, `pi1Adversary`), the three events, `ExperimentsAgree`, `HazardCoupling`, `Pi1Coupling`; **`recKnowledgeSoundness_of_part1`**. |
 | `Complete.lean` | `CompletenessAgree`, `CompletenessPi1Coupling`; **`recCompleteness_of_part1`**. |
-| `Layers.lean` | `Pi2FsLayer` (π2's Fiat–Shamir layer, open), `Pi2Tables` (the tables' layer, open), `Pi2Circuits`, `Pi2Facts`; `pi2Piop` (`RecPiop.piop` per setup), `hbind_of`, `indep_K`, `satisfies_congr`; **`pi2Extraction_of_layers`**, `pi2Layers_of`. |
+| `Layers.lean` | `Pi2FsLayer` (π2's Fiat–Shamir layer, proved in `FsClosed.lean`), `Pi2Tables` (the tables' layer, open), `Pi2Circuits`, `Pi2Facts`; `pi2Piop` (`RecPiop.piop` per setup), `hbind_of`, `indep_K`, `satisfies_congr`; **`pi2Extraction_of_layers`**, `pi2Layers_of`. |
 | `Holds.lean`, `Chan.lean`, `Pi2Run.lean`, `CallsPure.lean` | postconditions in any lawful monad (`Holds`), the channel's reads (`Reads`), π2's run's public data independent of the permutation (`runWith_post`); **`callsPure`**. |
 | `Rpm.lean`, `Couplings.lean` | the logging lemmas, eager comparisons per permutation; **`experimentsAgree`**, **`hazardCoupling`**, **`pi1Coupling`** (under `Pi1OpeningsAgree`). |
 | `OpeningsAgree.lean`, `RunOpenings.lean` | **`pi1OpeningsAgree`** (from `pi1RunShape`, `pi1RunOpenings`, `pi1CallsShape_data`), **`pi1RunOpenings`**. |
@@ -46,6 +46,11 @@ named inputs; the files:
 | `Bridge.lean` | **`circuitBridge`** (from `StatementPortMeaning`, `ZeroPortsMeaning`, `CallWordsAgree`, `Pi1CallsLayouts`). |
 | `End.lean` | `recKnowledgeSoundness2_real`, **`recKnowledgeSoundness_end`**, `recKnowledgeSoundness_end_real`, **`recCompleteness_end`**, **`recKnowledgeSoundness_end_fs`**, **`recCompleteness_end_fs`**. |
 | `Final.lean` | **`recKnowledgeSoundness2_final`**, **`recKnowledgeSoundness_final`**, **`recKnowledgeSoundness_final_fs`**: the end theorems from the named inputs left. |
+| `FsDefs.lean` | π2's Fiat–Shamir layer's objects: the chain `pi2Spec` (`ChainSpecU` over π2's transcript: the label `name ‖ iv ‖ input`, the public data's 472 bytes before `W`'s root), the proof `P2Pf` and its view, the six openings `p2Ops` (π1's `C1`, `C2`, `F`, π2's `W`, the setup, `Q`), the setup's stacks `p2Stk`, the composed setup `p2Setup`, the IV `p2IvKC4`, the composed verifier `p2Ver`, the bridge facts' Props. |
+| `FsOps.lean` | the openings' `OKP`, coverage, `hS_p2` (the setup's claim), `ClaimOn` as F2's `tableEval` on public layouts (`claimOn_iff`, `readEntry_public`), the shapes at once (`p2Shapes`), `maxErrK_p2`. |
+| `FsSetup.lean`, `FsExtract.lean`, `FsWalk.lean` | **`pi2SetupBridge`**, the setup's facts and `okp_setupOp`; **`pi2ExtractBridge`**; **`pi2Walk`** (π2's run is the chain), **`pi2WalkReject`**, `pi2Scalars_real`. |
+| `FsVerifier.lean`, `FsCouple.lean`, `FsCost.lean` | **`pi2VerifierBridge`** (the contract's six calls below the composed openings), **`pi2GameLeV`** (the coupling), the composed verifier's cost, the IV moved into the adversary (`expU_p2IvAdv`), `hlab_p2`. |
+| `FsGame.lean`, `FsClosed.lean` | **`pi2FsLayer_of`** (through `Compose.knowledgeSoundness_listChainU_closed128S`, `prEvent_doomF_le`, `prEvent_pairTr_expL_le`, `le_pi2BoundE`); **`pi2FsLayer_real`** (`Pi2FsLayer D` proved at the real deployment); **`recKnowledgeSoundness2_closed`**, **`recKnowledgeSoundness_closed`**, **`recKnowledgeSoundness_closed_fs`**: `Final.lean`'s end theorems without `hfs`. |
 
 ## The statements' fixes (in `RecStatement/Security.lean`, found by this composition)
 
