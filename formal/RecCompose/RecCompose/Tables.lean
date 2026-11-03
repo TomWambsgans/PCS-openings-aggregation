@@ -491,3 +491,121 @@ theorem sum_eqBits_zeros : ∀ (n : ℕ) (g : ℕ → E),
       mul_zero]
 
 end RecCompose
+
+namespace RecCompose
+
+open RecStatement LeanVM.Parameters LeanVM.Protocol Finset Polynomial
+open scoped ENNReal
+
+/-! ### `Q`'s claims -/
+
+theorem qCoef_zero_of {T : ℕ → K} {m kind pd : ℕ} (h : ∀ l < 3, T (pd + 2 ^ (m + 2) * (kind + 2 * l)) = 0) :
+    qCoef T m kind pd = 0 := by
+  unfold qCoef
+  refine Finset.sum_eq_zero fun l hl ↦ ?_
+  rw [h l (Finset.mem_range.mp hl), UniSound.Ids.ofK_zero, mul_zero]
+
+/-- `h`'s coefficients at the novel indices below `4N`: only those below `N`. -/
+theorem sum_qc0 {T : ℕ → K} {m : ℕ} (hz : QZero T m) (w : ℕ → E) :
+    ∑ pd ∈ range (2 ^ (m + 2)), qCoef T m 0 pd * UniComplete.AlgC.novX (m + 2) pd w =
+      ∑ k ∈ range (2 ^ m), qCoef T m 0 k * UniComplete.AlgC.novX m k w := by
+  rw [sum_range_two_pow_add m _ 2]
+  refine Finset.sum_congr rfl fun k hk ↦ ?_
+  have hk' := Finset.mem_range.mp hk
+  have hz' : ∀ j, 1 ≤ j → j < 4 → qCoef T m 0 (k + 2 ^ m * j) = 0 := fun j h1 h4 ↦
+    qCoef_zero_of fun l hl ↦ hz.h_high _ (by nlinarith) (by rw [pow_add]; nlinarith) l hl
+  simp only [show (2 : ℕ) ^ 2 = 4 from rfl, Finset.sum_range_succ, Finset.sum_range_zero, zero_add,
+    hz' 1 (by norm_num) (by norm_num), hz' 2 (by norm_num) (by norm_num), hz' 3 (by norm_num) (by norm_num),
+    zero_mul, add_zero, mul_zero]
+  rw [UniComplete.AlgC.novX_low (by rw [pow_succ]; omega), UniComplete.AlgC.novX_low hk']
+
+/-- A point's weight at `u_l = w_l/(1 + w_l)`: the novel monomial times `Π_l (1 + w_l)⁻¹`. -/
+theorem eqBits_digits {u : List E} {n : ℕ} (hu : u.length = n) {w : ℕ → E} (hw : ∀ l < n, 1 + w l ≠ 0)
+    (huw : ∀ l < n, u.getD l 0 = w l / (1 + w l)) (pd : ℕ) :
+    PcsQuotient.eqBits u pd = UniComplete.AlgC.novX n pd w * ∏ l ∈ range n, (1 + w l)⁻¹ := by
+  rw [eqBits_eq_prod, hu, UniComplete.AlgC.novX, ← Finset.prod_mul_distrib]
+  refine Finset.prod_congr rfl fun l hl ↦ ?_
+  have hl' := Finset.mem_range.mp hl
+  rw [huw l hl', digit_weight (hw l hl')]
+
+/-- **`Q`'s first claim** at `(u, ρ', y₀, y₁)`, `u_l = w_l/(1 + w_l)`: the scale, `Π_l (1 + w_l)⁻¹`, and the combination
+`(1 + ρ') h + ρ' q` at the digits `w`. -/
+theorem claim_quotient {T : ℕ → K} {m : ℕ} (hz : QZero T m) {u : List E} (hu : u.length = m + 2) {w : ℕ → E}
+    (hw : ∀ l < m + 2, 1 + w l ≠ 0) (huw : ∀ l < m + 2, u.getD l 0 = w l / (1 + w l)) (ρ' : E) :
+    ∑ i ∈ range (2 ^ (m + 5)), PcsQuotient.eqBits (u ++ [ρ', extension.1.1, extension.1.2]) i * ofK (T i) =
+      extension.2 * (∏ l ∈ range (m + 2), (1 + w l)⁻¹) *
+        ((1 + ρ') * ∑ k ∈ range (2 ^ m), qCoef T m 0 k * UniComplete.AlgC.novX m k w +
+          ρ' * ∑ k ∈ range (2 ^ (m + 2)), qCoef T m 1 k * UniComplete.AlgC.novX (m + 2) k w) := by
+  rw [show m + 5 = (m + 2) + 3 by ring, sum_range_two_pow_add (m + 2) _ 3, ← sum_qc0 hz w]
+  have hinner : ∀ pd < 2 ^ (m + 2), ∑ kd ∈ range (2 ^ 3), PcsQuotient.eqBits (u ++ [ρ', extension.1.1, extension.1.2])
+      (pd + 2 ^ (m + 2) * kd) * ofK (T (pd + 2 ^ (m + 2) * kd)) =
+      UniComplete.AlgC.novX (m + 2) pd w * (∏ l ∈ range (m + 2), (1 + w l)⁻¹) *
+        (extension.2 * ((1 + ρ') * qCoef T m 0 pd + ρ' * qCoef T m 1 pd)) := by
+    intro pd hpd
+    have hpd' : pd < 2 ^ u.length := by rw [hu]; exact hpd
+    have happ : ∀ kd, PcsQuotient.eqBits (u ++ [ρ', extension.1.1, extension.1.2]) (pd + 2 ^ (m + 2) * kd) =
+        PcsQuotient.eqBits u pd * PcsQuotient.eqBits [ρ', extension.1.1, extension.1.2] kd := fun kd ↦ by
+      have := eqBits_append u [ρ', extension.1.1, extension.1.2] hpd' kd
+      rw [hu] at this
+      exact this
+    simp only [happ, mul_assoc]
+    rw [← Finset.mul_sum, eqBits_digits hu hw huw pd]
+    have hc := sum_eqBits_cons ρ' [extension.1.1, extension.1.2] (fun kd ↦ ofK (T (pd + 2 ^ (m + 2) * kd)))
+    simp only [List.length_cons, List.length_nil] at hc
+    rw [show (2 : ℕ) ^ 3 = 2 ^ (0 + 1 + 1 + 1) from rfl, hc]
+    have h0 := limbs_sum (fun l ↦ ofK (T (pd + 2 ^ (m + 2) * (2 * l))))
+      (by show ofK (T (pd + 2 ^ (m + 2) * (2 * 3))) = 0
+          rw [show 2 * 3 = 0 + 2 * 3 by rfl, hz.limb3 pd hpd 0 (by norm_num), UniSound.Ids.ofK_zero])
+    have h1 := limbs_sum (fun l ↦ ofK (T (pd + 2 ^ (m + 2) * (1 + 2 * l))))
+      (by show ofK (T (pd + 2 ^ (m + 2) * (1 + 2 * 3))) = 0
+          rw [hz.limb3 pd hpd 1 (by norm_num), UniSound.Ids.ofK_zero])
+    rw [show (2 : ℕ) ^ (0 + 1 + 1) = 4 from rfl, h0, h1]
+    unfold qCoef
+    simp only [zero_add]
+    ring
+  rw [Finset.sum_congr rfl fun pd hpd ↦ hinner pd (Finset.mem_range.mp hpd), Finset.mul_sum, Finset.mul_sum,
+    ← Finset.sum_add_distrib, Finset.mul_sum]
+  refine Finset.sum_congr rfl fun k _ ↦ ?_
+  ring
+
+/-- **`Q`'s second claim** at `(1^m, 0, 0, 0, y₀, y₁)`: the scale times `h`'s top coefficient. -/
+theorem claim_sum {T : ℕ → K} {m : ℕ} (hz : QZero T m) :
+    ∑ i ∈ range (2 ^ (m + 5)), PcsQuotient.eqBits (List.replicate m 1 ++ [0, 0, 0] ++ [extension.1.1, extension.1.2])
+      i * ofK (T i) = extension.2 * qCoef T m 0 (2 ^ m - 1) := by
+  have hrep : (List.replicate m (1 : E)).length = m := List.length_replicate
+  rw [List.append_assoc, sum_range_two_pow_add m _ 5]
+  have happ : ∀ pos < 2 ^ m, ∀ c, PcsQuotient.eqBits (List.replicate m 1 ++ ([0, 0, 0] ++ [extension.1.1,
+      extension.1.2])) (pos + 2 ^ m * c) = PcsQuotient.eqBits (List.replicate m 1) pos *
+        PcsQuotient.eqBits ([0, 0, 0] ++ [extension.1.1, extension.1.2]) c := fun pos hpos c ↦ by
+    have := eqBits_append (List.replicate m (1 : E)) ([0, 0, 0] ++ [extension.1.1, extension.1.2])
+      (by rw [hrep]; exact hpos) c
+    rw [hrep] at this
+    exact this
+  rw [Finset.sum_congr rfl fun pos hpos ↦ Finset.sum_congr rfl fun c _ ↦ by
+    rw [happ pos (Finset.mem_range.mp hpos) c, mul_assoc]]
+  simp only [← Finset.mul_sum]
+  rw [sum_eqBits_ones m (fun pos ↦ ∑ c ∈ range (2 ^ 5), PcsQuotient.eqBits ([0, 0, 0] ++ [extension.1.1,
+    extension.1.2]) c * ofK (T (pos + 2 ^ m * c)))]
+  have hz3 : ([0, 0, 0] : List E) = List.replicate 3 0 := rfl
+  rw [show (5 : ℕ) = 3 + 2 by rfl, sum_range_two_pow_add 3 _ 2]
+  have happ2 : ∀ d < 2 ^ 3, ∀ l, PcsQuotient.eqBits ([0, 0, 0] ++ [extension.1.1, extension.1.2]) (d + 2 ^ 3 * l) =
+      PcsQuotient.eqBits [0, 0, 0] d * PcsQuotient.eqBits [extension.1.1, extension.1.2] l := fun d hd l ↦
+    eqBits_append [0, 0, 0] [extension.1.1, extension.1.2] (by simpa using hd) l
+  rw [Finset.sum_congr rfl fun d hd ↦ Finset.sum_congr rfl fun l _ ↦ by
+    rw [happ2 d (Finset.mem_range.mp hd) l, mul_assoc]]
+  simp only [← Finset.mul_sum]
+  rw [hz3, sum_eqBits_zeros 3 (fun d ↦ ∑ l ∈ range (2 ^ 2), PcsQuotient.eqBits [extension.1.1, extension.1.2] l *
+    ofK (T (2 ^ m - 1 + 2 ^ m * (d + 2 ^ 3 * l))))]
+  have hidx : ∀ l, 2 ^ m - 1 + 2 ^ m * (0 + 2 ^ 3 * l) = 2 ^ m - 1 + 2 ^ (m + 2) * (0 + 2 * l) := fun l ↦ by
+    rw [pow_add]; ring
+  simp only [hidx]
+  have hpd : 2 ^ m - 1 < 2 ^ (m + 2) := by
+    have : 2 ^ m ≤ 2 ^ (m + 2) := Nat.pow_le_pow_right (by norm_num) (by omega)
+    have : 1 ≤ 2 ^ m := Nat.one_le_two_pow
+    omega
+  rw [show (2 : ℕ) ^ 2 = 4 from rfl, limbs_sum _ (by
+    show ofK (T (2 ^ m - 1 + 2 ^ (m + 2) * (0 + 2 * 3))) = 0
+    rw [hz.limb3 _ hpd 0 (by norm_num), UniSound.Ids.ofK_zero])]
+  rfl
+
+end RecCompose
