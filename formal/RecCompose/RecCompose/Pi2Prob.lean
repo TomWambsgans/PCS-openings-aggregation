@@ -161,8 +161,195 @@ theorem prEvent_staged3_le {α ρ γ : Type} (chal : Digest → E) (hreg : Regul
     (fun v ↦ bad1 v.1 v.2.1 ∨ bad2 v.1 v.2.1 v.2.2.1 ∨ bad3 v.1 v.2.1 v.2.2.1 v.2.2.2)).trans ?_
   by_cases hb3 : bad3 P (chal s₁) (chal s₂) (chal s₃) <;> simp [hb1, hb2, hb3]
 
+/-! ## `t` -/
+
+/-- **The point challenge `t` in the random-oracle model** (`UniComplete.Prob.prEvent_tquery_le` for a prior of any
+type): an event forcing `t = chal(answer)` into a bad set of at most `ct` values for each prior has probability at most
+the probability that `t`'s input is already cached, plus `ct / 2^192`. -/
+theorem prEvent_tquery_le' {β γ ω τ : Type} (chal : Digest → E) (hreg : Regular chal) (badT : τ → E → Prop)
+    (ct : ℕ) (hct : ∀ fp, ∃ T : Finset E, T.card ≤ ct ∧ ∀ b, badT fp b → b ∈ T)
+    (X : OracleComp KeccakCalls β) (tin : β → Bytes) (pr : β → τ)
+    (K : β → Digest → OracleComp KeccakCalls γ) (h : β → Digest → γ → ω) (ev : ω → Prop)
+    (hev : ∀ x st z, ev (h x st z) → badT (pr x) (chal st)) (c₀ : Cache) :
+    Pr{let z ← (simulateQ ro (X >>= fun x ↦ callKeccak256 (tin x) >>= fun st ↦ K x st >>= fun z ↦
+        pure (h x st z))).run c₀}[ev z.1] ≤
+      Pr{let p ← (simulateQ ro X).run c₀}[p.2 (.inl (tin p.1)) ≠ none] + (ct : ℝ≥0∞) / 2 ^ 192 := by
+  classical
+  simp only [simulateQ_bind, simulateQ_callKeccak256, simulateQ_pure, StateT.run_bind, StateT.run_pure]
+  refine prEvent_bind_le_prEvent_add_of_support _ _ _ _ fun p _ hp ↦ ?_
+  have hfresh : p.2 (.inl (tin p.1)) = none := not_not.mp hp
+  rw [prEvent_fresh _ _ hfresh]
+  refine le_trans (ENNReal.div_le_div_right (Finset.sum_le_sum fun u _ ↦ ?_) _)
+    (sum_bad_le chal hreg (badT (pr p.1)) ct (hct _))
+  by_cases hb : badT (pr p.1) (chal u)
+  · simp only [hb, ↓reduceIte]
+    exact prEvent_le_one _
+  · simp only [hb, ↓reduceIte]
+    refine le_of_eq (prEvent_eq_zero_of_forall_mem_support _ _ fun z hz ↦ ?_)
+    rw [mem_support_bind_iff] at hz
+    obtain ⟨w, -, hz⟩ := hz
+    rw [support_pure, Set.mem_singleton_iff] at hz
+    subst hz
+    exact fun he ↦ hb (hev _ _ _ he)
+
+/-! ## The staged experiment -/
+
+/-- The challenge map of π2's transcript (`UniStatement.sample`, `PcsQuotient.Transcript.challengeOf`). -/
+abbrev chalP (d : Digest) : E := PcsQuotient.Transcript.challengeOf d
+
+/-- **π2's completeness experiment's stages** (no coins): `A` up to `α`'s input (`inp`; the setup, π1's prover,
+π1-rec3's graph's check, π2's prover up to `W`'s root; `pr` the prior the copy argument's bad sets depend on), the
+three chained answers, `B` up to `t`'s input (`tin`; `prT` the prior `t`'s bad set depends on), `t`'s answer, `C` the
+rest (π2's tail and openings, the contract), its output the experiment's pair: π1-rec3's graph's verdict, the
+contract's. -/
+structure Pi2Staged where
+  α : Type
+  β : Type
+  ρ : Type
+  τ : Type
+  inp : α → Bytes
+  pr : α → ρ
+  A : OracleComp KeccakCalls α
+  B : α → Digest → Digest → Digest → OracleComp KeccakCalls β
+  tin : β → Bytes
+  prT : β → τ
+  C : β → Digest → OracleComp KeccakCalls (Bool × Bool)
+
+/-- After `α, β, γ`: `B`, `t`'s query, `C`; the pair and `(prT b, t)`. -/
+def Pi2Staged.tail (S : Pi2Staged) (a : S.α) (s₁ s₂ s₃ : Digest) :
+    OracleComp KeccakCalls ((Bool × Bool) × (S.τ × E)) := do
+  let b ← S.B a s₁ s₂ s₃
+  let st ← callKeccak256 (S.tin b)
+  let z ← S.C b st
+  return (z, (S.prT b, chalP st))
+
+/-- The two-call run: the pair with `t`'s stage, and `(pr a, α, β, γ)`. -/
+def Pi2Staged.run (S : Pi2Staged) :
+    OracleComp KeccakCalls (((Bool × Bool) × (S.τ × E)) × (S.ρ × E × E × E)) :=
+  staged3 chalP S.inp S.pr S.A S.tail
+
+/-- **The run up to `t`'s query**: `B`'s output and `(pr a, α, β, γ)`. -/
+def Pi2Staged.pre (S : Pi2Staged) : OracleComp KeccakCalls (S.β × (S.ρ × E × E × E)) := do
+  let a ← S.A
+  let s₁ ← callKeccak256 (S.inp a)
+  let s₂ ← callKeccak256 (digestBytes s₁)
+  let s₃ ← callKeccak256 (digestBytes s₂)
+  let b ← S.B a s₁ s₂ s₃
+  return (b, (S.pr a, chalP s₁, chalP s₂, chalP s₃))
+
+/-- **The run, cut at `t`.** -/
+theorem Pi2Staged.run_eq_pre (S : Pi2Staged) :
+    S.run = S.pre >>= fun x ↦ callKeccak256 (S.tin x.1) >>= fun st ↦ S.C x.1 st >>= fun z ↦
+      pure ((z, (S.prT x.1, chalP st)), x.2) := by
+  simp only [Pi2Staged.run, staged3, Pi2Staged.tail, Pi2Staged.pre, bind_assoc, pure_bind]
+
+/-- The copy argument's bad event on `(pr, α, β, γ)`. -/
+def BadABG {ρ : Type} (bad1 : ρ → E → Prop) (bad2 : ρ → E → E → Prop) (bad3 : ρ → E → E → E → Prop)
+    (v : ρ × E × E × E) : Prop :=
+  bad1 v.1 v.2.1 ∨ bad2 v.1 v.2.1 v.2.2.1 ∨ bad3 v.1 v.2.1 v.2.2.1 v.2.2.2
+
+/-- **The code-level bridge** of π2's completeness experiment for `(input, rows, q)`: `α`'s input of `L ≠ 32` bytes,
+bad sets of `α` (at most `N₁`), `β` (`N₂` per `α`), `γ` (`N₃` per `α, β`), `t` (`ct` per prior), `N` block calls,
+`t`'s cache-hit probability `εt` and the rejection at good challenges `εpow`. -/
+structure Pi2Staged.Holds (S : Pi2Staged) (D : RecStatement.RecDeployment) (P1 : RecStatement.Pi1Prover D)
+    (P2 : RecStatement.Pi2Prover) (input : Vector UInt8 32) (rows : List ℕ) (q : D.pi1.Stack rows)
+    (L : ℕ) (bad1 : S.ρ → E → Prop) (bad2 : S.ρ → E → E → Prop) (bad3 : S.ρ → E → E → E → Prop)
+    (badT : S.τ → E → Prop) (N₁ N₂ N₃ ct N : ℕ) (εt εpow : ℝ≥0∞) : Prop where
+  /-- The experiment is the pair of the two-call run against the random permutation. -/
+  experiment : RecStatement.recCompletenessExperiment2 D P1 P2 input rows q =
+    (fun z ↦ z.1.1) <$> (simulateQ keccakCallsOverRandomPermutation S.run).run' []
+  /-- Every permutation call continues a duplex or starts one (`DuplexVm`). -/
+  duplex : DuplexVm S.run []
+  /-- At most `N` block calls (`hashBlocks`). -/
+  cost : Common.QueryCostAtMost S.run hashBlocks N
+  /-- `α`'s input has `L` bytes, `L ≠ 32`. -/
+  L_ne : L ≠ 32
+  inp_length : ∀ a, (S.inp a).length = L
+  /-- Before it, nothing of the chain's lengths (`32`, `L`) is hashed. -/
+  hashA : HashOK (GoodL L) S.A
+  /-- The copy argument's bad sets' counts. -/
+  badCard1 : ∀ p, ∃ T : Finset E, T.card ≤ N₁ ∧ ∀ a, bad1 p a → a ∈ T
+  badCard2 : ∀ p a, ∃ T : Finset E, T.card ≤ N₂ ∧ ∀ b, bad2 p a b → b ∈ T
+  badCard3 : ∀ p a b, ∃ T : Finset E, T.card ≤ N₃ ∧ ∀ c, bad3 p a b c → c ∈ T
+  /-- At most `ct` bad values of `t` for each prior. -/
+  badTCard : ∀ fp, ∃ T : Finset E, T.card ≤ ct ∧ ∀ t, badT fp t → t ∈ T
+  /-- `t`'s input is already hashed before its query with probability at most `εt`. -/
+  tFresh : Pr{let p ← (simulateQ ro S.pre).run ∅}[p.2 (.inl (S.tin p.1.1)) ≠ none] ≤ εt
+  /-- **Grinding**: in the two-call random-oracle model, π1-rec3's graph accepting, the contract rejects π2's honest
+  proof at good challenges with probability at most `εpow`. -/
+  rejectGood : Pr{let z ← (simulateQ ro S.run).run' ∅}[
+    z.1.1.1 = true ∧ z.1.1.2 = false ∧ ¬ BadABG bad1 bad2 bad3 z.2 ∧ ¬ badT z.1.2.1 z.1.2.2] ≤ εpow
+
+/-- π2's completeness error from the staged experiment's numbers. -/
+noncomputable def deltaStaged (N₁ N₂ N₃ ct N : ℕ) (εt εpow : ℝ≥0∞) : ℝ≥0∞ :=
+  (1 / 2 ^ 256 + ((N₁ + N₂ + N₃ : ℕ) : ℝ≥0∞) / 2 ^ 192) + (εt + (ct : ℝ≥0∞) / 2 ^ 192) + εpow + rpmError N
+
+/-- **One statement**: the graph accepting and the contract rejecting has probability at most the copy argument's,
+`t`'s, the grinding's and the transfer's errors. -/
+theorem prEvent_staged_bad_le (S : Pi2Staged) {D : RecStatement.RecDeployment} {P1 : RecStatement.Pi1Prover D}
+    {P2 : RecStatement.Pi2Prover} {input : Vector UInt8 32} {rows : List ℕ} {q : D.pi1.Stack rows} {L : ℕ}
+    {bad1 : S.ρ → E → Prop} {bad2 : S.ρ → E → E → Prop} {bad3 : S.ρ → E → E → E → Prop} {badT : S.τ → E → Prop}
+    {N₁ N₂ N₃ ct N : ℕ} {εt εpow : ℝ≥0∞}
+    (h : S.Holds D P1 P2 input rows q L bad1 bad2 bad3 badT N₁ N₂ N₃ ct N εt εpow) :
+    Pr{let z ← (simulateQ keccakCallsOverRandomPermutation S.run).run' []}[z.1.1.1 = true ∧ z.1.1.2 = false] ≤
+      deltaStaged N₁ N₂ N₃ ct N εt εpow := by
+  refine E2ECompleteness.rpm_le_rom S.run h.duplex h.cost (fun z ↦ z.1.1.1 = true ∧ z.1.1.2 = false) ?_
+  -- `α, β, γ`.
+  have hab : Pr{let z ← (simulateQ ro S.run).run' ∅}[BadABG bad1 bad2 bad3 z.2] ≤
+      1 / 2 ^ 256 + ((N₁ + N₂ + N₃ : ℕ) : ℝ≥0∞) / 2 ^ 192 := by
+    rw [StateT.run'_eq, prEvent_map]
+    exact prEvent_staged3_le chalP E2ECompleteness.challengeOf_regular h.L_ne bad1 bad2 bad3 N₁ N₂ N₃ h.badCard1
+      h.badCard2 h.badCard3 S.inp h.inp_length S.pr S.A S.tail h.hashA ∅ fun m hm ↦ absurd rfl hm
+  -- `t`.
+  have ht : Pr{let z ← (simulateQ ro S.run).run' ∅}[badT z.1.2.1 z.1.2.2] ≤ εt + (ct : ℝ≥0∞) / 2 ^ 192 := by
+    rw [StateT.run'_eq, prEvent_map, S.run_eq_pre]
+    refine (prEvent_tquery_le' chalP E2ECompleteness.challengeOf_regular badT ct h.badTCard S.pre
+      (fun x ↦ S.tin x.1) (fun x ↦ S.prT x.1) (fun x st ↦ S.C x.1 st)
+      (fun x st z ↦ ((z, (S.prT x.1, chalP st)), x.2)) (fun w ↦ badT w.1.2.1 w.1.2.2) (fun _ _ _ hw ↦ hw)
+      ∅).trans ?_
+    exact add_le_add h.tFresh le_rfl
+  have hsplit : Pr{let z ← (simulateQ ro S.run).run' ∅}[z.1.1.1 = true ∧ z.1.1.2 = false] ≤
+      Pr{let z ← (simulateQ ro S.run).run' ∅}[BadABG bad1 bad2 bad3 z.2] +
+        (Pr{let z ← (simulateQ ro S.run).run' ∅}[badT z.1.2.1 z.1.2.2] +
+          Pr{let z ← (simulateQ ro S.run).run' ∅}[
+            z.1.1.1 = true ∧ z.1.1.2 = false ∧ ¬ BadABG bad1 bad2 bad3 z.2 ∧ ¬ badT z.1.2.1 z.1.2.2]) := by
+    refine (prEvent_le_prEvent_add_prEvent_and_not _ _
+      (fun z : ((Bool × Bool) × (S.τ × E)) × (S.ρ × E × E × E) ↦ BadABG bad1 bad2 bad3 z.2)).trans
+        (add_le_add le_rfl ?_)
+    refine (prEvent_le_prEvent_add_prEvent_and_not _ _
+      (fun z : ((Bool × Bool) × (S.τ × E)) × (S.ρ × E × E × E) ↦ badT z.1.2.1 z.1.2.2)).trans
+        (add_le_add le_rfl (le_of_eq ?_))
+    simp only [and_assoc]
+  refine hsplit.trans ?_
+  calc _ ≤ (1 / 2 ^ 256 + ((N₁ + N₂ + N₃ : ℕ) : ℝ≥0∞) / 2 ^ 192) + ((εt + (ct : ℝ≥0∞) / 2 ^ 192) + εpow) :=
+        add_le_add hab (add_le_add ht h.rejectGood)
+    _ = _ := by ac_rfl
+
+/-- **`RecCompleteness2` in the random-permutation model, from the staged experiment**: if for every honest statement
+π2's completeness experiment is the pair of a two-call computation of `α, β, γ`'s and `t`'s shape (`Pi2Staged.Holds`),
+then `RecCompleteness2 D P1 P2 (deltaStaged …)`. -/
+theorem recCompleteness2_of_staged {D : RecStatement.RecDeployment} {P1 : RecStatement.Pi1Prover D}
+    {P2 : RecStatement.Pi2Prover} {L N₁ N₂ N₃ ct N : ℕ} {εt εpow : ℝ≥0∞}
+    (hS : ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.pi1.Stack rows), D.pi1.shape.RowsFit rows →
+      D.pi1.HonestRelation rows input q →
+      ∃ (S : Pi2Staged) (bad1 : S.ρ → E → Prop) (bad2 : S.ρ → E → E → Prop) (bad3 : S.ρ → E → E → E → Prop)
+        (badT : S.τ → E → Prop), S.Holds D P1 P2 input rows q L bad1 bad2 bad3 badT N₁ N₂ N₃ ct N εt εpow) :
+    RecStatement.RecCompleteness2 D P1 P2 (deltaStaged N₁ N₂ N₃ ct N εt εpow) := by
+  intro input rows q hfit hrel
+  obtain ⟨S, bad1, bad2, bad3, badT, h⟩ := hS input rows q hfit hrel
+  rw [h.experiment, prEvent_map]
+  exact prEvent_staged_bad_le S h
+
 end RecCompose.Pi2P
 
 /-- info: 'RecCompose.Pi2P.prEvent_staged3_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.Pi2P.prEvent_staged3_le
+
+/-- info: 'RecCompose.Pi2P.prEvent_staged_bad_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi2P.prEvent_staged_bad_le
+
+/-- info: 'RecCompose.Pi2P.recCompleteness2_of_staged' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi2P.recCompleteness2_of_staged
