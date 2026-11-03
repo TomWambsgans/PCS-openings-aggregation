@@ -16,3 +16,10 @@ import UniComplete.VerifierH
 import UniComplete.VerifierHSim
 import UniComplete.VerifierHDuplex
 import UniComplete.VerifierHCost
+import UniComplete.ProbChain
+import UniComplete.ProbStaged
+import UniComplete.ProbSplit
+import UniComplete.ProbHyp
+import UniComplete.ProbExp
+import UniComplete.ProbGrind
+import UniComplete.Prob
