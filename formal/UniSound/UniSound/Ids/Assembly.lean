@@ -41,7 +41,8 @@ theorem layoutVars_le (S : Shape) (c : Commitment) : (layoutOf S c).vars ≤ bat
 def NoMerge (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (fd : Done) (t : E) : Prop :=
   (zBad D.shape ((Fl.prog.out fd []).1.getD 0 0)).eval t ≠ 0
 
-/-- **What remains** (named hypotheses not proved in this library). -/
+/-- **What remains** (named hypotheses; at the reference shape all four are proved in `Remaining.lean`,
+`idsRemainingRef`). -/
 structure IdsRemaining (D : Deployment) {κ : ℕ} (Fl : FlockSound κ) (d n : ℕ) : Prop where
   degBound : DegBoundP D Fl d
   relCount : RelCountP D Fl n
