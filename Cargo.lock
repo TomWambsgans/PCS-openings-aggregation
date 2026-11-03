@@ -1746,9 +1746,15 @@ dependencies = [
 name = "leanvm_rec"
 version = "0.1.0"
 dependencies = [
+ "bench",
+ "fiat_shamir",
  "leanvm_flock_gas",
  "leanvm_univariate",
+ "parallel",
+ "pcs",
+ "primitives",
  "quotient",
+ "verifier",
 ]
 
 [[package]]
