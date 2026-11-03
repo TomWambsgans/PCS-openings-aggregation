@@ -123,18 +123,18 @@ theorem foldl_add_range (f : ℕ → E) (b : E) : ∀ n : ℕ,
 
 /-- **A term's value on its commitment's stack**, at the layouts the verifier states (no ring map: Flock's
 relation is not among these). -/
-def evOf (tr : Trace) (c2 : C2Data) (cols : List (Column × ℕ × Bool)) (x : Term) : E :=
-  termEval (layoutIn (layouts tr.shape cols) x.column.commitment) (stackOfTr tr c2 x.column.commitment) none x
+def evOf (tr : Trace) (c2 : C2Data) (cols : List (Column × ℕ × Bool)) (rm : Option (List E)) (x : Term) : E :=
+  termEval (layoutIn (layouts tr.shape cols) x.column.commitment) (stackOfTr tr c2 x.column.commitment) rm x
 
-theorem evOf_c1 (tr : Trace) (c2 : C2Data) (cols : List (Column × ℕ × Bool)) (x : Term)
-    (hx : x.column.commitment = .c1) : evOf tr c2 cols x = termEval (c1Layout tr.shape) (c1Stack tr) none x := by
+theorem evOf_c1 (tr : Trace) (c2 : C2Data) (cols : List (Column × ℕ × Bool)) (rm : Option (List E)) (x : Term)
+    (hx : x.column.commitment = .c1) : evOf tr c2 cols rm x = termEval (c1Layout tr.shape) (c1Stack tr) rm x := by
   unfold evOf
   rw [hx]
   rfl
 
-theorem evOf_setup (tr : Trace) (c2 : C2Data) (cols : List (Column × ℕ × Bool)) (x : Term)
+theorem evOf_setup (tr : Trace) (c2 : C2Data) (cols : List (Column × ℕ × Bool)) (rm : Option (List E)) (x : Term)
     (hx : x.column.commitment = .setup) :
-    evOf tr c2 cols x = termEval (setupLayout tr.shape) (setupStackOf tr) none x := by
+    evOf tr c2 cols rm x = termEval (setupLayout tr.shape) (setupStackOf tr) rm x := by
   unfold evOf
   rw [hx]
   rfl
@@ -177,8 +177,8 @@ theorem coordinatesAt_eq_map_comp (t : E) (r : ℕ) :
 
 /-- **Every table, its part and its terms read at `t` on the prover's stacks** (`TableAt`). -/
 theorem tableAt_of {tr : Trace} (hH : TraceHonest tr) (c2 : C2Data) (cols : List (Column × ℕ × Bool))
-    (weights : Array E) (beta t : E) {table : Table} (htab : table ∈ tables) :
-    TableAt tr t (atW tr t) (evOf tr c2 cols) (table, (atPart tr weights beta (atW tr t) table).1) := by
+    (rm : Option (List E)) (weights : Array E) (beta t : E) {table : Table} (htab : table ∈ tables) :
+    TableAt tr t (atW tr t) (evOf tr c2 cols rm) (table, (atPart tr weights beta (atW tr t) table).1) := by
   obtain ⟨ht, hget⟩ := mem_tables htab
   have hr := height_le_constraintVars tr table.opcode
   have hlen := take_atW_length tr t hr
@@ -188,21 +188,21 @@ theorem tableAt_of {tr : Trace} (hH : TraceHonest tr) (c2 : C2Data) (cols : List
     rw [tablePartOf_sent htab (tr.shape.heights.getD table.opcode 0) weights beta (atW tr t)
       (atColumn tr (atW tr t) table) i hi, atColumn_eq hH t htab (sentColumns_lt htab hi)]
   · have hc' : c < (tables.getD table.opcode default).width := by rw [hget]; exact hc
-    have h1 := termEval_c1_table tr none ht hc' ((hH.tablesSize.2 _ ht).2 c hc') hlen k
+    have h1 := termEval_c1_table tr rm ht hc' ((hH.tablesSize.2 _ ht).2 c hc') hlen k
     have h2 := mle_atW tr t hr _ ((hH.tablesSize.2 _ ht).2 c hc')
-    rw [evOf_c1 _ _ _ _ rfl, tablePolys_getD tr _ hc']
+    rw [evOf_c1 _ _ _ _ _ rfl, tablePolys_getD tr _ hc']
     exact h1.trans (congrArg (k * ·) h2)
-  · have h1 := termEval_c1_inverse tr none ht hlen k
+  · have h1 := termEval_c1_inverse tr rm ht hlen k
     have h2 := mle_atW tr t hr _ (inverseColumn_size tr table.opcode)
-    rw [evOf_c1 _ _ _ _ rfl]
+    rw [evOf_c1 _ _ _ _ _ rfl]
     exact h1.trans (congrArg (k * ·) h2)
   · obtain ⟨hB, hs⟩ := qflockSlot_spec htab hc hslot
     have hF : (coordinatesAt t (coordinateFunctionals (tr.shape.heights.getD table.opcode 0))).length =
         tr.height 5 := by
       rw [coordinatesAt_eq_map, List.length_map, List.length_range, hB]
       rfl
-    have h1 := termEval_c1_qflockSlot tr none (by omega : slot < 256) hF k
-    rw [evOf_c1 _ _ _ _ rfl, h1, pEval_mleP, List.map_map, map_pEval_slotVals, ← coordinatesAt_eq_map_comp, hB]
+    have h1 := termEval_c1_qflockSlot tr rm (by omega : slot < 256) hF k
+    rw [evOf_c1 _ _ _ _ _ rfl, h1, pEval_mleP, List.map_map, map_pEval_slotVals, ← coordinatesAt_eq_map_comp, hB]
     rfl
   · exact (pEval_liftP t _ (by omega)).symm
 
@@ -242,10 +242,11 @@ theorem logBytecode_lt_heap (s : Shape) : s.logBytecode < s.heap.h := by
 
 /-! ### The memory's and the bytecode's relations -/
 
-theorem evOf_memory {tr : Trace} (hH : TraceHonest tr) (c2 : C2Data) (cols : List (Column × ℕ × Bool)) (t : E)
+theorem evOf_memory {tr : Trace} (hH : TraceHonest tr) (c2 : C2Data) (cols : List (Column × ℕ × Bool))
+    (rm : Option (List E)) (t : E)
     {k : ℕ} (hk : k < 4) (c : E) :
-    evOf tr c2 cols (term (.memory k) ((atW tr t).take tr.shape.logMemory) c) = c * atMem tr (atW tr t) k := by
-  rw [evOf_c1 _ _ _ _ rfl, termEval_c1_memory tr none hk (hH.memorySize.2 k hk)
+    evOf tr c2 cols rm (term (.memory k) ((atW tr t).take tr.shape.logMemory) c) = c * atMem tr (atW tr t) k := by
+  rw [evOf_c1 _ _ _ _ _ rfl, termEval_c1_memory tr rm hk (hH.memorySize.2 k hk)
     (take_atW_length tr t (logMemory_le_constraintVars tr))]
   unfold atMem evalB
   rw [Array.toList_map]
@@ -253,22 +254,22 @@ theorem evOf_memory {tr : Trace} (hH : TraceHonest tr) (c2 : C2Data) (cols : Lis
 /-- **The memory's three relations hold**: its final counts and its addresses at `w(t)` (the latter on the
 setup), its limbs' fingerprint. -/
 theorem memoryRels_hold {tr : Trace} (hH : TraceHonest tr) (c2 : C2Data) (cols : List (Column × ℕ × Bool))
-    (weights : Array E) (beta t : E) :
-    ∀ rel ∈ atMemoryRels tr weights beta (atW tr t), (rel.terms.map (evOf tr c2 cols)).sum = rel.value := by
+    (rm : Option (List E)) (weights : Array E) (beta t : E) :
+    ∀ rel ∈ atMemoryRels tr weights beta (atW tr t), (rel.terms.map (evOf tr c2 cols rm)).sum = rel.value := by
   have hlen := take_atW_length tr t (logMemory_le_constraintVars tr)
   intro rel hrel
   simp only [atMemoryRels, List.mem_cons, List.not_mem_nil, or_false] at hrel
   rcases hrel with rfl | rfl | rfl
   · simp only [Relation.equal, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
-    rw [evOf_memory hH c2 cols t (by norm_num), one_mul]
+    rw [evOf_memory hH c2 cols rm t (by norm_num), one_mul]
   · simp only [Relation.equal, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
-    rw [evOf_setup _ _ _ _ rfl, termEval_setup_address tr none hlen, one_mul]
+    rw [evOf_setup _ _ _ _ _ rfl, termEval_setup_address tr rm hlen, one_mul]
     unfold atAddress evalB
     rw [Array.toList_map]
   · simp only [show List.range 3 = [0, 1, 2] from rfl, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil,
       add_zero]
-    rw [evOf_memory hH c2 cols t (by norm_num), evOf_memory hH c2 cols t (by norm_num),
-      evOf_memory hH c2 cols t (by norm_num)]
+    rw [evOf_memory hH c2 cols rm t (by norm_num), evOf_memory hH c2 cols rm t (by norm_num),
+      evOf_memory hH c2 cols rm t (by norm_num)]
     unfold atMemoryPull memoryFp
     simp only [show List.range 3 = [0, 1, 2] from rfl, List.foldl_cons, List.foldl_nil, List.map_cons,
       List.map_nil, List.getD_cons_zero, List.getD_cons_succ]
@@ -278,8 +279,8 @@ theorem memoryRels_hold {tr : Trace} (hH : TraceHonest tr) (c2 : C2Data) (cols :
 /-- **The bytecode's two relations hold**: its final counts at `w(t)`, its tuple on the setup at `(α, w(t))` (slot
 `2` zero, so the sent pull's slot `2` is the final count's). -/
 theorem bytecodeRels_hold {tr : Trace} (hH : TraceHonest tr) (c2 : C2Data) (cols : List (Column × ℕ × Bool))
-    {alphas : List E} (hα : alphas.length = 4) (beta t : E) :
-    ∀ rel ∈ atBytecodeRels tr alphas beta (atW tr t), (rel.terms.map (evOf tr c2 cols)).sum = rel.value := by
+    (rm : Option (List E)) {alphas : List E} (hα : alphas.length = 4) (beta t : E) :
+    ∀ rel ∈ atBytecodeRels tr alphas beta (atW tr t), (rel.terms.map (evOf tr c2 cols rm)).sum = rel.value := by
   have hlb := logBytecode_lt_heap tr.shape
   have hlen : ((atW tr t).take tr.shape.logBytecode).length = tr.shape.logBytecode := by
     rw [List.length_take, atW_length]
@@ -288,11 +289,11 @@ theorem bytecodeRels_hold {tr : Trace} (hH : TraceHonest tr) (c2 : C2Data) (cols
   simp only [atBytecodeRels, List.mem_cons, List.not_mem_nil, or_false] at hrel
   rcases hrel with rfl | rfl
   · simp only [Relation.equal, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
-    rw [evOf_c1 _ _ _ _ rfl, termEval_c1_bytecodeFinal tr none hH.bytecodeSize hlen, one_mul]
+    rw [evOf_c1 _ _ _ _ _ rfl, termEval_c1_bytecodeFinal tr rm hH.bytecodeSize hlen, one_mul]
     unfold atBytecodeFinal evalB
     rw [Array.toList_map]
   · simp only [Relation.equal, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
-    rw [evOf_setup _ _ _ _ rfl, termEval_setup_bytecodeTuple tr none hα hlen hH.slotsSize.2, one_mul]
+    rw [evOf_setup _ _ _ _ _ rfl, termEval_setup_bytecodeTuple tr rm hα hlen hH.slotsSize.2, one_mul]
     have hslot : ∀ s, multilinearEval ((bCoefficients tr.shape.logBytecode (tr.slots.getD s #[])).toList.map ofK)
         ((atW tr t).take tr.shape.logBytecode) = atSlot tr (atW tr t) s := fun s ↦ by
       unfold atSlot evalB
@@ -388,22 +389,22 @@ theorem atConstraintValue_eq {tr : Trace} (hS : Small tr) (weights : Array E) (b
 /-- **The constraint quotient's identity holds**: `Σ_i γ^i lift_i M_i(t) = Q_W(t) w_{r_W}(t)` on `C1`. -/
 theorem constraintRel_hold {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
     (hC : Domain.CoordinateFunctionalsBasis (tr.height opBlake2s)) (cols : List (Column × ℕ × Bool))
-    (alphas : List E) (beta gamma t : E) (c2 : C2Data) (hc2 : c2 = c2DataOf tr (eqKernel alphas) beta gamma) :
-    ((atConstraint tr c2 alphas beta gamma t).1.terms.map (evOf tr c2 cols)).sum =
+    (rm : Option (List E)) (alphas : List E) (beta gamma t : E) (c2 : C2Data) (hc2 : c2 = c2DataOf tr (eqKernel alphas) beta gamma) :
+    ((atConstraint tr c2 alphas beta gamma t).1.terms.map (evOf tr c2 cols rm)).sum =
       (atConstraint tr c2 alphas beta gamma t).1.value := by
   have hrW : tr.shape.constraintVars < max tr.shape.heap.h (tr.shape.constraintVars + 4) + 2 := by omega
-  have hmem : ∀ k c, k < 3 → evOf tr c2 cols (term (.memory k) ((atW tr t).take tr.shape.logMemory) c) =
+  have hmem : ∀ k c, k < 3 → evOf tr c2 cols rm (term (.memory k) ((atW tr t).take tr.shape.logMemory) c) =
       c * pEval t (colPolyK tr.shape.logMemory (tr.memory.getD k #[])) := fun k c hk ↦ by
-    rw [evOf_memory hH c2 cols t (by omega)]
+    rw [evOf_memory hH c2 cols rm t (by omega)]
     unfold atMem evalB
     rw [Array.toList_map, mle_atW tr t (logMemory_le_constraintVars tr) _ (hH.memorySize.2 k (by omega))]
   have hparts : ∀ x ∈ tables.zip (atParts tr (eqKernel alphas) beta (atW tr t)),
-      TableAt tr t (atW tr t) (evOf tr c2 cols) x := fun x hx ↦ by
+      TableAt tr t (atW tr t) (evOf tr c2 cols rm) x := fun x hx ↦ by
     obtain ⟨h2, h1⟩ := mem_zip_map _ tables x hx
-    have := tableAt_of hH c2 cols (eqKernel alphas) beta t h1
+    have := tableAt_of hH c2 cols rm (eqKernel alphas) beta t h1
     rw [← h2] at this
     exact this
-  have h := constraintRelation_eval tr gamma t (atConstraintValue c2 (atW tr t)) (atW tr t) (evOf tr c2 cols)
+  have h := constraintRelation_eval tr gamma t (atConstraintValue c2 (atW tr t)) (atW tr t) (evOf tr c2 cols rm)
     (atParts tr (eqKernel alphas) beta (atW tr t)) (publicWordsOf tr.publicInput)
     (by unfold atParts; rw [List.length_map]) hparts hmem (pEval_liftP t 1 hrW.le).symm
   have hQ : atConstraintValue c2 (atW tr t) * (atW tr t).getD tr.shape.constraintVars 0 =
@@ -419,10 +420,35 @@ theorem constraintRel_hold {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
   generalize constraintRelation tr.shape (atParts tr (eqKernel alphas) beta (atW tr t))
     (publicWordsOf tr.publicInput) gamma t (atConstraintValue c2 (atW tr t)) (atW tr t) = R at h ⊢
   generalize pEval t (constraintNumerator tr gamma (publicWordsOf tr.publicInput)) = N at h
-  generalize (R.1.terms.map (evOf tr c2 cols)).sum = S at h ⊢
+  generalize (R.1.terms.map (evOf tr c2 cols rm)).sum = S at h ⊢
   linear_combination h.1 - (R.1.value - N) * Domain.two_eq_zero_E
 
 /-! ### The headline -/
+
+/-- **Every relation the verifier states at `t` off `C2` holds on the honest prover's stacks, whatever the ring
+map and `C2`'s column list** (none of these relations has a ring-switch term, and `C1`'s and the setup's layouts do
+not depend on `C2`'s columns). -/
+theorem relations_hold_rm {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
+    (hC : Domain.CoordinateFunctionalsBasis (tr.height opBlake2s)) {alphas : List E} (hα : alphas.length = 4)
+    (beta gamma t : E) (cols : List (Column × ℕ × Bool)) (rm : Option (List E)) :
+    ∀ rel ∈ (atTOf tr (c2DataOf tr (eqKernel alphas) beta gamma) alphas beta gamma t none).relations,
+      rel.commitment ≠ .c2 →
+      UniComplete.Relation.Holds (layoutIn (layouts tr.shape cols))
+        (stackOfTr tr (c2DataOf tr (eqKernel alphas) beta gamma)) rm rel := by
+  intro rel hrel hc2
+  show (rel.terms.map (evOf tr (c2DataOf tr (eqKernel alphas) beta gamma) cols rm)).sum = rel.value
+  rw [atTOf_relations] at hrel
+  simp only [List.mem_append, List.mem_singleton] at hrel
+  rcases hrel with (((h | h) | h) | h) | h
+  · obtain ⟨table, htab, h'⟩ := List.mem_flatMap.mp h
+    refine tablePartOf_holds htab _ _ _ _ _ _ (fun c k hc ↦ ?_) rel h'
+    rw [(tableAt_of hH (c2DataOf tr (eqKernel alphas) beta gamma) _ rm (eqKernel alphas) beta t htab).col c k hc,
+      atColumn_eq hH t htab hc]
+  · exact memoryRels_hold hH _ _ rm _ beta t rel h
+  · exact bytecodeRels_hold hH _ _ rm hα beta t rel h
+  · subst h
+    exact constraintRel_hold hH hS hC _ rm alphas beta gamma t _ rfl
+  · exact absurd (heapRelations_c2 _ _ _ _ _ _ _ _ _ _ _ _ _ (chunks_succ_ne_nil _) rel h) hc2
 
 /-- **Every relation the verifier states at `t` off `C2` holds on the honest prover's stacks** (item 2): for an
 honest placed trace (heights and memory at most `28`, the coordinate functionals' basis property at BLAKE2S's
@@ -436,23 +462,8 @@ theorem relations_hold {tr : Trace} (hH : TraceHonest tr) (hS : Small tr)
       UniComplete.Relation.Holds (layoutIn (layouts tr.shape
           (atTOf tr (c2DataOf tr (eqKernel alphas) beta gamma) alphas beta gamma t none).c2Columns))
         (stackOfTr tr (c2DataOf tr (eqKernel alphas) beta gamma))
-        (atTOf tr (c2DataOf tr (eqKernel alphas) beta gamma) alphas beta gamma t none).ringMap rel := by
-  intro rel hrel hc2
-  rw [atTOf_ringMap]
-  show (rel.terms.map (evOf tr (c2DataOf tr (eqKernel alphas) beta gamma)
-    (atTOf tr (c2DataOf tr (eqKernel alphas) beta gamma) alphas beta gamma t none).c2Columns)).sum = rel.value
-  rw [atTOf_relations] at hrel
-  simp only [List.mem_append, List.mem_singleton] at hrel
-  rcases hrel with (((h | h) | h) | h) | h
-  · obtain ⟨table, htab, h'⟩ := List.mem_flatMap.mp h
-    refine tablePartOf_holds htab _ _ _ _ _ _ (fun c k hc ↦ ?_) rel h'
-    rw [(tableAt_of hH (c2DataOf tr (eqKernel alphas) beta gamma) _ (eqKernel alphas) beta t htab).col c k hc,
-      atColumn_eq hH t htab hc]
-  · exact memoryRels_hold hH _ _ _ beta t rel h
-  · exact bytecodeRels_hold hH _ _ hα beta t rel h
-  · subst h
-    exact constraintRel_hold hH hS hC _ alphas beta gamma t _ rfl
-  · exact absurd (heapRelations_c2 _ _ _ _ _ _ _ _ _ _ _ _ _ (chunks_succ_ne_nil _) rel h) hc2
+        (atTOf tr (c2DataOf tr (eqKernel alphas) beta gamma) alphas beta gamma t none).ringMap rel :=
+  relations_hold_rm hH hS hC hα beta gamma t _ _
 
 end UniComplete.AlgC
 

@@ -32,3 +32,4 @@ import UniComplete.AlgCTerm
 import UniComplete.AlgCQuot
 import UniComplete.AlgCConstraint
 import UniComplete.AlgCRel
+import UniComplete.AlgCSome
