@@ -132,7 +132,8 @@ structure Compiled where
 namespace Builder
 
 def constantBits (bytes : List UInt8) : Array Bit :=
-  (bytes.flatMap fun byte => (List.range 8).map fun j => if (byte.toNat >>> j) % 2 == 1 then Bit.one else Bit.zero).toArray
+  ((List.range (8 * bytes.length)).map fun i =>
+    if (bytes.getD (i / 8) 0).toNat.testBit (i % 8) then Bit.one else Bit.zero).toArray
 
 /-- **π2's circuit for `r` in D16v** (`compile(recorded, 4, D16::new, ·)`). -/
 def compileM (r : Recorded) (g : Array Node) (map : Array ℕ) : BM Compiled := do

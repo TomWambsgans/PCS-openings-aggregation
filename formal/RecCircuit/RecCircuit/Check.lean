@@ -264,7 +264,7 @@ def packOf : Array (Option ℕ) := Id.run do
 /-- `u` is the output of a packing of `bits`. -/
 def packIs (packOf : Array (Option ℕ)) (u : ℕ) (bits : List (ℕ × ℕ)) : Bool :=
   match packOf.getD u none with
-  | some t => (c.st.packs.getD t default).out == u && (c.st.packs.getD t default).bits == bits
+  | some t => t < c.st.packs.size && (c.st.packs.getD t default).out == u && (c.st.packs.getD t default).bits == bits
   | none => false
 
 def streamBit (i : ℕ) : ℕ := (c.bitSelf.getD i none).getD NONE
@@ -273,13 +273,9 @@ def limbsOf (id : ℕ) : Array ℕ := (c.limbs.getD id none).getD #[]
 
 /-- The message a hash node's sponge absorbs: the state's digest values, then the stream's bits `f..t` (a first
 block's through their copies). -/
-def hashMessage (s f t : ℕ) : Array Bit := Id.run do
-  let mut m : Array Bit := ((c.digests.getD s none).getD #[]).map Bit.v
-  for i in [f:t] do
-    for j in [0:8] do
-      let k := 8 * i + j
-      m := m.push (.v ((c.bitCopy.getD k none).getD (c.streamBit k)))
-  return m
+def hashMessage (s f t : ℕ) : Array Bit :=
+  ((c.digests.getD s none).getD #[]).map Bit.v ++
+    ((List.range (8 * (t - f))).map fun k => Bit.v ((c.bitCopy.getD (8 * f + k) none).getD (c.streamBit (8 * f + k)))).toArray
 
 def seedMessage (iv : List UInt8) : Array Bit :=
   Builder.constantBits NAME ++ Builder.constantBits iv ++ c.publicCopy.map Bit.v
@@ -306,6 +302,11 @@ def arithOk (X : Ctx) (op : Op) (out lx ly : Array ℕ) : Bool :=
         else (A == lx.toList && B == ly.toList) || (A == ly.toList && B == lx.toList)))
   out.size == 3 && lx.size == 3 && ly.size == 3 && (try_ 0 || try_ 6)
 
+/-- A node whose value is a Keccak state. -/
+def isStateNode : Node → Bool
+  | .seed | .hash .. => true
+  | _ => false
+
 /-- **A live node's limbs or digest.** -/
 def nodeOk (X : Ctx) (iv : List UInt8) (packOf : Array (Option ℕ)) (id : ℕ) : Bool :=
   let l := c.limbsOf id
@@ -326,10 +327,12 @@ def nodeOk (X : Ctx) (iv : List UInt8) (packOf : Array (Option ℕ)) (id : ℕ) 
        else len ≤ 8 && pk (L 0) (beBits sb off len) && X.constOk (L 1) 0 && X.constOk (L 2) 0))
   | .low h =>
     let d := (c.digests.getD h none).getD #[]
+    isStateNode (c.nodes.getD h default) &&
     let db := fun i => d.getD i NONE
     d.size == 256 && l.size == 3 && pk (L 0) (beBits db 24 8) && pk (L 1) (beBits db 16 8) && pk (L 2) (beBits db 8 8)
   | .narrow h =>
     let d := (c.digests.getD h none).getD #[]
+    isStateNode (c.nodes.getD h default) &&
     let db := fun i => d.getD i NONE
     d.size == 256 && l.size == 3 && pk (L 0) (beBits db 24 8) && pk (L 1) (beBits db 16 8) && pk (L 2) (beBits db 12 4)
   | .bits v shift width =>
@@ -353,6 +356,7 @@ def nodeOk (X : Ctx) (iv : List UInt8) (packOf : Array (Option ℕ)) (id : ℕ) 
   | .hash s f t =>
     match c.digests.getD id none with
     | some d => d.size == 256 && (c.limbs.getD id none).isNone && (c.digests.getD s none).isSome && f ≤ t &&
+      isStateNode (c.nodes.getD s default) &&
       (List.range (8 * (t - f))).all (fun k => (c.bitSelf.getD (8 * f + k) none).isSome) &&
       c.spongeIs d (c.hashMessage s f t)
     | none => false
