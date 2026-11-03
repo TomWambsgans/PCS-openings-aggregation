@@ -66,8 +66,20 @@ the bound in bits (`uniBound_le_bits`).
    relations at `t` (`diffs`, `diffs_eval`, `diffs_flock`, `diffs_pending`), the batch's products
    (`prod`, `target`, `batch_start`: `combine` and `weightAt` are the `ρ`- and `λ`-combinations).
 4. `C : UniCode D hFlock nV V` — the code-level link: `reduceWith` after the row counts is the
-   chain program on `uniRounds`.
+   chain program on `uniRounds`. **Constructed** (`CodeLink.lean`): `uniCode D hFlock hκ :
+   UniCode D hFlock valsCount (varsOf (layoutsOf D.shape))` for every deployment whose `BLAKE2S`
+   height is `κ`, Flock's segment by `hFlock.link`; `uniCodeAt` at the identity model's numbers.
 5. `hFin : UniFinal …` — the last link: the batch's terminal with true claims is the last state.
+   **Constructed** (`FinalLink.lean`): `uniFinal` for the identity model whose batch is the
+   verifier's (`prod = batchProd`, `target = batchTargetOf`), under three named hypotheses:
+   `WeightMle` (each claim's weight at the batch's point is the fold of its cube values; it fails
+   when a `q_flock` slot term's point `y(t)` is a proper prefix of another `C1` point, a polynomial
+   coincidence in `t`: `combine` then lengthens the point and `weightAt` reads the slot's row on
+   `8 + |point|` coordinates, overlapping the selector's), `LayoutVarsSmall` (fewer than `256`
+   variables per stack, the layout word's byte), `FlockPendingShaped` (discharged for
+   `flockSoundInstance`: `FlockSoundUni/PendingShape.lean`'s `flockPendingShaped`). The `λ³` term
+   is `pendingTerminalLink` (`PendingLink.lean`). `uniKnowledgeSoundness_code` (and, with Flock's
+   instance, `FlockSound.Uni.uniKnowledgeSoundness_flock`) is the end theorem with both in place.
 6. `hFs : FsLayer …` — the Fiat–Shamir layer: `ListChainK`'s closed random-permutation theorem
    ported to the univariate transcript, its five openings, its setup and `uniExtractor`.
 7. Numbers: `4 N + ncv ≤ 2^32`, Flock's rounds' errors at most `2^32 / |E|`, `degSum ≤ 2^32`,
