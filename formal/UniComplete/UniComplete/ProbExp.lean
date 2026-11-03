@@ -63,7 +63,7 @@ def expW (flock : FlockProver m) (D : Deployment) (input : Vector UInt8 32) (row
 
 end With
 
-variable (flock : PolyFlock) (D : Deployment)
+variable (flock : FlockProverH) (D : Deployment)
 
 /-- **The experiment over the two calls commutes with simulation.** -/
 theorem simulateQ_expW (hc : ProverCommutes flock D) {r : Type → Type} [Monad r] [LawfulMonad r]
@@ -155,7 +155,7 @@ theorem experiment_staged (hc : ProverCommutes flock D) (input : Vector UInt8 32
     Functor.map_map, Functor.map_map]
 
 /-- **`midB` over the two calls commutes with simulation**, given Flock's prover's. -/
-theorem simulateQ_midU (hf : FlockCommutes flock) {r : Type → Type} [Monad r] [LawfulMonad r]
+theorem simulateQ_midU (hf : FlockSimCommutes flock) {r : Type → Type} [Monad r] [LawfulMonad r]
     (impl : QueryImpl KeccakCalls r) (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) (a : ProverA)
     (s₁ s₂ s₃ s₄ s₅ : Digest) :
     simulateQ impl (midU flock D input rows q a s₁ s₂ s₃ s₄ s₅) =

@@ -13,12 +13,13 @@ import UniComplete.ProbGrind
   `δ = Nbad / 2^192 + 6 / 2^256 + (ct / 2^192 + εt) + N · (1 − 2^-17)^(2^25) + N² / 2^508`,
   `N = setupCost D + (NP + verifierCost D S)`,
 
-from the named hypotheses of `ProbHyp.lean` and `ProbExp.lean` (`ProverCommutes`, `FlockCommutes`, `ProverDuplex`,
+from the named hypotheses of `ProbHyp.lean` and `ProbExp.lean` (`ProverCommutes`, `FlockSimCommutes`, `ProverDuplex`,
 `ProverCost NP`, `ProverStreamSize S`, `CoreAccepts`, `CoreFailsOnlyAtPow`, `BadFpCard Nbad`, `BadTCard ct`,
 `TQueryFresh εt`): the staged experiment (`stagedU`, `UniStaged.Holds`: `experiment_staged`, `duplexVm_stagedU`,
 `cost_stagedU`, `firstInput_length`, `hashA_stagedU`, `rejectGood_uni`) and `uniCompleteness_of_staged`.
 
-**`uniCompleteness_reference`**: at the reference shape (`D.shape = reference`), with a program IV of at most `2^40`
+**`uniCompleteness_reference`**: at the reference shape (`D.shape = reference`), from `UniComplete.FlockCommutes`
+(which gives the first three, `ProverSim.lean`, `ProverDuplex.lean`), with a program IV of at most `2^40`
 bytes (the deployed one has `32`), `NP = 2^47` block calls for the prover, `S = 2^40` stream bytes, `Nbad < 2^24`
 bad `β` per `α`, `ct = 3 · 2^17` bad `t` per Flock point and `εt = 2^-200`:
 `UniCompleteness D (uniProverRP flock D) deltaUni`, where
@@ -42,12 +43,12 @@ set_option autoImplicit false
 
 namespace UniComplete.Prob
 
-variable (flock : PolyFlock) (D : Deployment)
+variable (flock : FlockProverH) (D : Deployment)
 
 /-! ## The staged experiment holds -/
 
 /-- **The univariate experiment's code-level bridge**, from the named hypotheses. -/
-theorem stagedU_holds {Nbad ct NP S : ℕ} {εt : ℝ≥0∞} (hc : ProverCommutes flock D) (hf : FlockCommutes flock)
+theorem stagedU_holds {Nbad ct NP S : ℕ} {εt : ℝ≥0∞} (hc : ProverCommutes flock D) (hf : FlockSimCommutes flock)
     (hdup : ProverDuplex flock D) (hcost : ProverCost flock D NP) (hstream : ProverStreamSize flock D S)
     (hacc : CoreAccepts D flock) (hpow : CoreFailsOnlyAtPow D flock) (hbad : BadFpCard D Nbad)
     (hbadT : BadTCard D.shape ct) (htf : TQueryFresh flock D εt) (input : Vector UInt8 32) (rows : List ℕ)
@@ -69,7 +70,7 @@ theorem stagedU_holds {Nbad ct NP S : ℕ} {εt : ℝ≥0∞} (hc : ProverCommut
 
 /-- **`UniCompleteness` from the named hypotheses**, for every deployment. -/
 theorem uniCompleteness_of_core {Nbad ct NP S : ℕ} {εt : ℝ≥0∞} (hc : ProverCommutes flock D)
-    (hf : FlockCommutes flock) (hdup : ProverDuplex flock D) (hcost : ProverCost flock D NP)
+    (hf : FlockSimCommutes flock) (hdup : ProverDuplex flock D) (hcost : ProverCost flock D NP)
     (hstream : ProverStreamSize flock D S) (hacc : CoreAccepts D flock) (hpow : CoreFailsOnlyAtPow D flock)
     (hbad : BadFpCard D Nbad) (hbadT : BadTCard D.shape ct) (htf : TQueryFresh flock D εt) :
     UniCompleteness D (uniProverRP flock D)
@@ -231,18 +232,20 @@ theorem deltaUni_lt : deltaUni < (2 : ℝ≥0∞)⁻¹ ^ 167 := by
 
 /-! ## The end theorem -/
 
-/-- **`UniCompleteness` at the reference shape**, `deltaUni < 2^-167`, from the named hypotheses at `NP = 2^47` prover
+/-- **`UniCompleteness` at the reference shape**, `deltaUni < 2^-167`, from the named hypotheses (Flock's prover's
+commutation `FlockCommutes` giving `ProverCommutes`, `ProverDuplex`, `FlockSimCommutes`) at `NP = 2^47` prover
 block calls, `S = 2^40` stream bytes, `Nbad = 2^24 − 1` bad `β` per `α`, `ct = 3 · 2^17` bad `t` per Flock point and
 `t`'s cache hit `εt = 2^-200`, for a program IV of at most `2^40` bytes. -/
 theorem uniCompleteness_reference (hD : D.shape = reference) (hiv : D.programIv.length ≤ 2 ^ 40)
-    (hc : ProverCommutes flock D) (hf : FlockCommutes flock) (hdup : ProverDuplex flock D)
-    (hcost : ProverCost flock D (2 ^ 47)) (hstream : ProverStreamSize flock D (2 ^ 40))
+    (hflock : FlockCommutes flock) (hcost : ProverCost flock D (2 ^ 47))
+    (hstream : ProverStreamSize flock D (2 ^ 40))
     (hacc : CoreAccepts D flock) (hpow : CoreFailsOnlyAtPow D flock) (hbad : BadFpCard D (2 ^ 24 - 1))
     (hbadT : BadTCard reference (3 * 2 ^ 17)) (htf : TQueryFresh flock D ((2 : ℝ≥0∞)⁻¹ ^ 200)) :
     UniCompleteness D (uniProverRP flock D) deltaUni := by
   rw [← hD] at hbadT
   refine UniCompletenessWith.mono D
-    (uniCompleteness_of_core flock D hc hf hdup hcost hstream hacc hpow hbad hbadT htf) ?_
+    (uniCompleteness_of_core flock D (proverCommutes_of_flock hflock D) (flockSimCommutes_of_commutes hflock)
+      (proverDuplex_of_flock hflock D) hcost hstream hacc hpow hbad hbadT htf) ?_
   have hN := totalCost_le D hD hiv
   set N := Cost.setupCost D + (2 ^ 47 + Cost.verifierCost D (2 ^ 40))
   unfold deltaUni

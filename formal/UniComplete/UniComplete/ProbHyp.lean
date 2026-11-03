@@ -3,6 +3,7 @@
 -- two calls `KeccakCalls`, their implementations' Keccak-256 and permutation (`implH`, `implF`), the block cost
 -- `hashBlocks`; and `formal/EndToEnd/Completeness/E2ECompleteness/Duplex.lean`'s discipline `Disc`.
 import UniComplete.ProbSplit
+import UniComplete.ProverDuplex
 import UniComplete.Honest
 import UniComplete.VerifierH
 import E2ECompleteness.Duplex
@@ -13,7 +14,7 @@ import E2ECompleteness.Duplex
 The probability layer (`Prob*.lean`) proves `UniCompleteness D (uniProverRP flock D) δ` from these propositions, which
 are about the honest prover and the PIOP at **pure** functions or about the prover's code over the two calls, and
 are proved elsewhere (the prover's staging, branch `lean-uni-pstagec`; the PIOP's completeness; the bad set's count).
-`flock : PolyFlock` is Flock's prover, polymorphic in the monad and in Keccak-256.
+`flock : FlockProverH` is Flock's prover, polymorphic in the monad and in Keccak-256.
 
 **The prover over the two calls** (`m := OracleComp KeccakCalls`, `H := callKeccak256`, `F := callKeccakF1600`):
 
@@ -22,7 +23,11 @@ are proved elsewhere (the prover's staging, branch `lean-uni-pstagec`; the PIOP'
 * `ProverDuplex flock D`: it follows the duplex discipline from any earlier answers (`E2ECompleteness.Disc`);
 * `ProverCost flock D N`: at most `N` block calls (`hashBlocks`) on every path;
 * `ProverStreamSize flock D S`: every proof it can output has a stream of at most `S` bytes;
-* `FlockCommutes flock`: Flock's prover commutes with every simulation.
+* `FlockSimCommutes flock`: Flock's prover commutes with every simulation.
+
+`ProverCommutes`, `ProverDuplex` and `FlockSimCommutes` follow from `UniComplete.FlockCommutes` (Flock's prover
+commutes with every monad morphism; branch `lean-uni-pstagec`'s `ProverSim.lean`, `ProverDuplex.lean`):
+`proverCommutes_of_flock`, `proverDuplex_of_flock`, `flockSimCommutes_of_commutes`.
 
 **The deterministic core** (at every pure `H : List UInt8 → Digest`, `F : KeccakState → KeccakState`, the prover at
 `m := Id`, i.e. `pure ∘ H`, `pure ∘ F`):
@@ -38,7 +43,7 @@ are proved elsewhere (the prover's staging, branch `lean-uni-pstagec`; the PIOP'
 **The bad sets' counts**: `BadFpCard D Nbad`: for every `α`, at most `Nbad` values of `β` are bad;
 `BadTCard s ct`: for every Flock point, at most `ct` values of `t` are bad (`BadT`).
 
-**Flock's prover** (`FlockCommutes flock`): it commutes with simulation. **`t`'s freshness** (`TQueryFresh`, stated in
+**Flock's prover** (`FlockSimCommutes flock`): it commutes with simulation. **`t`'s freshness** (`TQueryFresh`, stated in
 `ProbExp.lean` on the staged run): `t`'s input was hashed before its query with probability at most `εt`.
 
 Each hypothesis is asked only for an honest witness at row counts that fit (`RowsFit`, `HonestRelation`), but for
@@ -54,51 +59,68 @@ set_option autoImplicit false
 
 namespace UniComplete.Prob
 
-/-- **Flock's prover**, for every monad and every Keccak-256. -/
-abbrev PolyFlock : Type 1 := ∀ {m : Type → Type} [Monad m], (List UInt8 → m Digest) → FlockProver m
-
 /-- **The honest prover in the random-permutation model**: `uniProverWith` over `π`, Keccak-256 the sponge over `π`
 (`keccak256With queryPermutation`), Flock's prover at the same Keccak-256. -/
-def uniProverRP (flock : PolyFlock) (D : Deployment) : UniProver D :=
+def uniProverRP (flock : FlockProverH) (D : Deployment) : UniProver D :=
   uniProverWith (keccak256With Common.queryPermutation) Common.queryPermutation
     (flock (keccak256With Common.queryPermutation)) D
 
 /-! ## The prover over the two calls -/
 
 /-- **The prover commutes with simulation.** -/
-def ProverCommutes (flock : PolyFlock) (D : Deployment) : Prop :=
+def ProverCommutes (flock : FlockProverH) (D : Deployment) : Prop :=
   ∀ {r : Type → Type} [Monad r] [LawfulMonad r] (impl : QueryImpl KeccakCalls r) (input : Vector UInt8 32)
     (rows : List ℕ) (q : D.Stack rows),
     simulateQ impl (uniProverWith callKeccak256 callKeccakF1600 (flock callKeccak256) D input rows q) =
       uniProverWith (implH impl) (implF impl) (flock (implH impl)) D input rows q
 
 /-- **The prover follows the duplex discipline**, from any earlier answers. -/
-def ProverDuplex (flock : PolyFlock) (D : Deployment) : Prop :=
+def ProverDuplex (flock : FlockProverH) (D : Deployment) : Prop :=
   ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows), D.shape.RowsFit rows →
     D.HonestRelation rows input q →
     E2ECompleteness.Disc (uniProverWith callKeccak256 callKeccakF1600 (flock callKeccak256) D input rows q)
 
 /-- **The prover makes at most `N` block calls.** -/
-def ProverCost (flock : PolyFlock) (D : Deployment) (N : ℕ) : Prop :=
+def ProverCost (flock : FlockProverH) (D : Deployment) (N : ℕ) : Prop :=
   ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows), D.shape.RowsFit rows →
     D.HonestRelation rows input q →
     Common.QueryCostAtMost (uniProverWith callKeccak256 callKeccakF1600 (flock callKeccak256) D input rows q)
       hashBlocks N
 
 /-- **The prover's streams have at most `S` bytes**, on every path. -/
-def ProverStreamSize (flock : PolyFlock) (D : Deployment) (S : ℕ) : Prop :=
+def ProverStreamSize (flock : FlockProverH) (D : Deployment) (S : ℕ) : Prop :=
   ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows), D.shape.RowsFit rows →
     D.HonestRelation rows input q → ∀ π : UniProof,
     some π ∈ support (uniProverWith callKeccak256 callKeccakF1600 (flock callKeccak256) D input rows q) →
       π.stream.size ≤ S
 
-/-- **Flock's prover commutes with simulation** (what `ProverCommutes` needs of it; the probability layer also uses it
-alone, for the prover's stage between `γ` and `t`). -/
-def FlockCommutes (flock : PolyFlock) : Prop :=
+/-- **Flock's prover commutes with simulation** (the probability layer uses it for the prover's stage between `γ` and
+`t`; `flockSimCommutes_of_commutes` derives it from `UniComplete.FlockCommutes`, every monad morphism). -/
+def FlockSimCommutes (flock : FlockProverH) : Prop :=
   ∀ {r : Type → Type} [Monad r] [LawfulMonad r] (impl : QueryImpl KeccakCalls r) (logN : ℕ)
     (variant : UniStatement.Flock.Variant) (qflock : Array K) (w : Wr),
     simulateQ impl ((flock callKeccak256 logN variant qflock).run w) =
       (flock (implH impl) logN variant qflock).run w
+
+/-! ## From Flock's prover's commutation (`ProverSim.lean`, `ProverDuplex.lean`) -/
+
+/-- **`ProverCommutes` from `FlockCommutes`** (`simulateQ_uniProverWith`). -/
+theorem proverCommutes_of_flock {flock : FlockProverH} (h : FlockCommutes flock) (D : Deployment) :
+    ProverCommutes flock D :=
+  fun impl input rows q ↦ simulateQ_uniProverWith impl flock h D input rows q
+
+/-- **`ProverDuplex` from `FlockCommutes`** (`disc_uniProverWith`, through `flockHashOnly_of_commutes`). -/
+theorem proverDuplex_of_flock {flock : FlockProverH} (h : FlockCommutes flock) (D : Deployment) :
+    ProverDuplex flock D :=
+  fun input rows q _ _ ↦ disc_uniProverWith flock (flockHashOnly_of_commutes flock h) D input rows q
+
+/-- **`FlockSimCommutes` from `FlockCommutes`**: `simulateQ impl` is a monad morphism (`Morph.sim`). -/
+theorem flockSimCommutes_of_commutes {flock : FlockProverH} (h : FlockCommutes flock) : FlockSimCommutes flock := by
+  intro r _ _ impl logN variant qflock w
+  have e := h (Morph.sim impl) callKeccak256 logN variant qflock
+  rw [Morph.sim_H] at e
+  rw [← e, Morph.wr_run]
+  rfl
 
 /-! ## The bad point challenges -/
 
@@ -119,7 +141,7 @@ def BadTCard (s : UniStatement.Shape) (ct : ℕ) : Prop :=
 /-! ## The deterministic core -/
 
 /-- **The PIOP's completeness at a pure hash and permutation**: at good bus challenges, the honest proof is accepted. -/
-def CoreAccepts (D : Deployment) (flock : PolyFlock) : Prop :=
+def CoreAccepts (D : Deployment) (flock : FlockProverH) : Prop :=
   ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows), D.shape.RowsFit rows →
     D.HonestRelation rows input q →
     ∀ (H : List UInt8 → Digest) (F : KeccakState → KeccakState) (π : UniProof),
@@ -131,7 +153,7 @@ def CoreAccepts (D : Deployment) (flock : PolyFlock) : Prop :=
       Deployment.verifierWithH (m := Id) H F D (setupTreesWithH (m := Id) H F D).roots input π = true
 
 /-- **The prover fails only at an opening**, at a pure hash and permutation and good bus challenges. -/
-def CoreFailsOnlyAtPow (D : Deployment) (flock : PolyFlock) : Prop :=
+def CoreFailsOnlyAtPow (D : Deployment) (flock : FlockProverH) : Prop :=
   ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows), D.shape.RowsFit rows →
     D.HonestRelation rows input q →
     ∀ (H : List UInt8 → Digest) (F : KeccakState → KeccakState),

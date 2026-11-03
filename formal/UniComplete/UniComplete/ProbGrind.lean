@@ -14,7 +14,7 @@ import E2ECompleteness.Grinding
 
 **`rejectGood_uni`**: in the two-call random-oracle model the staged univariate run (`stagedU`) is rejected while its
 bus challenges avoid `BadFp` of the honest trace and its point challenge avoids `BadT` with probability at most
-`Q · (1 − 2^-17)^(2^25)`, `Q` its block count, from the named hypotheses `ProverCommutes`, `FlockCommutes`,
+`Q · (1 − 2^-17)^(2^25)`, `Q` its block count, from the named hypotheses `ProverCommutes`, `FlockSimCommutes`,
 `CoreAccepts`, `CoreFailsOnlyAtPow` (at every pure `H`, `F`).
 
 ## The proof (`E2ECompleteness.Grinding`'s)
@@ -176,7 +176,7 @@ theorem one_le_powPot_of_opening_none (ℓ : Log) (Ht : Bytes → Digest) {L : P
 
 /-! ## The staged run at a hash function and a permutation -/
 
-variable (flock : PolyFlock) (D : Deployment)
+variable (flock : FlockProverH) (D : Deployment)
 
 /-- The good outcomes: neither the bus challenges nor `t` bad. -/
 abbrev GoodU (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows)
@@ -185,7 +185,7 @@ abbrev GoodU (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows)
 
 /-- **The staged run at a pure `(H, F)`**: the experiment at `Id` (the prover and the verifier at `H`, `F`), the
 prover's point challenge with Flock's point, and its bus challenges. -/
-theorem runAt_stagedU (hc : ProverCommutes flock D) (hf : FlockCommutes flock) (H : Bytes → Digest)
+theorem runAt_stagedU (hc : ProverCommutes flock D) (hf : FlockSimCommutes flock) (H : Bytes → Digest)
     (F : KeccakState → KeccakState) (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) :
     runAt H F (stagedU flock D input rows q).run =
       ((expW (m := Id) H F (flock H) D input rows q, proverTChallenge H (flock H) D input rows q),
@@ -202,7 +202,7 @@ theorem runAt_stagedU (hc : ProverCommutes flock D) (hf : FlockCommutes flock) (
     rfl
 
 /-- **A run rejected at good challenges puts the potential at one.** -/
-theorem one_le_powPot_of_rejectedU (hc : ProverCommutes flock D) (hf : FlockCommutes flock)
+theorem one_le_powPot_of_rejectedU (hc : ProverCommutes flock D) (hf : FlockSimCommutes flock)
     (hacc : CoreAccepts D flock) (hpow : CoreFailsOnlyAtPow D flock) (input : Vector UInt8 32) (rows : List ℕ)
     (q : D.Stack rows) (hfit : D.shape.RowsFit rows) (hrel : D.HonestRelation rows input q) {ℓ : Log}
     {z : (Bool × (List E × E)) × (List E × E)}
@@ -238,7 +238,7 @@ theorem one_le_powPot_of_rejectedU (hc : ProverCommutes flock D) (hf : FlockComm
 /-- **The grinding at good challenges**: in the two-call random-oracle model the staged run is rejected while its bus
 challenges avoid `BadFp` and `t` avoids `BadT` with probability at most `Q · (1 − 2^-17)^(2^25)`, `Q` its block
 count. -/
-theorem rejectGood_uni (hc : ProverCommutes flock D) (hf : FlockCommutes flock) (hacc : CoreAccepts D flock)
+theorem rejectGood_uni (hc : ProverCommutes flock D) (hf : FlockSimCommutes flock) (hacc : CoreAccepts D flock)
     (hpow : CoreFailsOnlyAtPow D flock) (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows)
     (hfit : D.shape.RowsFit rows) (hrel : D.HonestRelation rows input q) {Q : ℕ}
     (hQ : Common.QueryCostAtMost (stagedU flock D input rows q).run hashBlocks Q) :
