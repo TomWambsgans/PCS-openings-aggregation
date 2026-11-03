@@ -11,7 +11,8 @@ import UniSound.PendingLink
 **`walkZero3_eq_zero`**: given the walk's lemma's converse (`WalkLemmaConverse`, a named hypothesis until
 `walk_zero_iff` lands), for `q_flock` satisfying Flock's relation (`FlockP.FlockHolds κ q`), at `log_n = 14 + κ`,
 `flockMain`, every writer (any challenges), the value π1-rec3's walked verifier collects on the honest front
-(`walkZero3`, `requireZero (walkedTerminal … + r_lc)`) is `0`. So `flockSyncs3`'s one collected value vanishes.
+(`walkZero3`, `requireZero (walkedTerminal … + r_lc)`) is `0`. So `flockSyncs3`'s one collected value vanishes
+(**`flockSyncs3_zero`**: the Flock step synchronises, collecting `[0]`).
 
 The route: the honest pending reduction `Pending.new fr.zSkip fr.rowLow fr.chiIn fr.chiInPrime fr.alpha fr.rLc
 fr.slices` of `frontW3`'s front `fr` satisfies `UniSound.PendingHolds` (`pendingHolds_front3`: `p.claim =
@@ -206,6 +207,14 @@ theorem walkZero3_eq_zero (H : List UInt8 → LeanVM.Protocol.Digest) (hW : Walk
   rw [hz, hsl] at hP
   exact hW z _ _ _ _ _ _ (by rw [h1]; rfl) h2 h3 h4 hP
 
+/-- **π1-rec3's Flock step on the honest transcript** (`flockSyncs3` with `walkZero3_eq_zero`): given the walk's
+lemma's converse and Flock's relation on `q_flock`, at `log_n = 14 + κ`, `flockMain`, from every writer the walked
+verifier synchronises with the honest prover and the one value it collects is `0`. -/
+theorem flockSyncs3_zero (H : List UInt8 → LeanVM.Protocol.Digest) (hW : WalkLemmaConverse) (κ : ℕ) (q : Array K)
+    (hF : FlockP.FlockHolds κ q) :
+    FlockSyncs3 H (flockProve3 (m := Id) (Pure.pure ∘ H)) (14 + κ) flockMain q fun _ ↦ 0 := fun w ↦
+  syncs_congr_zs (flockSyncs3 H (14 + κ) flockMain q (by decide) w) (by rw [walkZero3_eq_zero H hW κ q hF w])
+
 end UniComplete.Rec3
 
 /-! ## Axioms -/
@@ -217,3 +226,7 @@ end UniComplete.Rec3
 /-- info: 'UniComplete.Rec3.walkZero3_eq_zero' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms UniComplete.Rec3.walkZero3_eq_zero
+
+/-- info: 'UniComplete.Rec3.flockSyncs3_zero' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms UniComplete.Rec3.flockSyncs3_zero
