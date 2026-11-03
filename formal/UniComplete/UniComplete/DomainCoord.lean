@@ -15,17 +15,11 @@ import UniComplete.DomainBasis
   `coordinatesAt_pointE_of_basis` gives the bits of `i` from `CoordinateFunctionalsBasis r`, the hypothesis at
   `coordinateFunctionals r`.
 
-**The instance `r = 18`** (the reference BLAKE2S height) is left as the named proposition
-`CoordinateFunctionalsBasis 18`, not proved here. The evidence: `crates/leanvm_univariate`'s unit test
-`coordinate_functionals_read_bits` (`domain.rs`: `y_l(ω_i) = i_l` at `r = 18` for 100 random `i`), and an
-independent recomputation when this file was written (Python over `GF(2^64)`: the Gauss–Jordan inverse of
-`M[j][m] = β_j^(2^m)` and the check `Σ_m a_{l,m} β_j^(2^m) = δ_{lj}` for all `l, j < 18`). The kernel does not
-do it in a few minutes: `decide +kernel` of `coordinateFunctionals 8` against its `64` words takes 28 s (about
-`1,700` products in `K`, each a CompPoly carry-less product evaluated on `BitVec`s, about 16 ms), and of
-`coordinateFunctionals 18` against its `324` words ran for 30 minutes at more than 10 GB without finishing (about
-`13,000` products for the elimination alone, plus about `6,000` for the check itself; the elimination's entries
-stay unevaluated terms that the kernel re-reads). A proof would cut the elimination into its `18` column steps,
-each checked against literal words.
+**The instance `r = 18`** (the reference BLAKE2S height), `CoordinateFunctionalsBasis 18`, is proved in
+`DomainCoord18` (`coordinateFunctionalsBasis_18`, `coordinatesAt_pointE_18`): one `decide +kernel` of
+`coordinateFunctionals 18` does not finish (it ran for 30 minutes at more than 10 GB: the elimination's entries
+stay unevaluated terms that the kernel re-reads), so there the elimination is cut into its column steps, each
+checked by the kernel against literal words.
 -/
 
 namespace UniComplete.Domain
@@ -177,8 +171,8 @@ theorem coordinateFunctionals_size (r : ℕ) : (coordinateFunctionals r).size = 
   exact Array.size_ofFn
 
 /-- **The hypothesis of `coordinatesAt_pointE` at the verifier's functionals** `coordinateFunctionals r`:
-`y_l(ω_{2^j}) = [l = j]` for `j, l < r`. At the reference height `r = 18` it is the Rust's unit test and a
-recomputation (see the module docstring), not a kernel proof. -/
+`y_l(ω_{2^j}) = [l = j]` for `j, l < r`. At the reference height `r = 18`: `coordinateFunctionalsBasis_18`
+(`DomainCoord18`). -/
 def CoordinateFunctionalsBasis (r : ℕ) : Prop :=
   ∀ j < r, coordinatesAt (pointE (2 ^ j)) (coordinateFunctionals r) =
     (List.range r).map fun l ↦ if l = j then (1 : E) else 0

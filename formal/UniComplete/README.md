@@ -1,0 +1,48 @@
+<!-- Part of this repository. MIT OR Apache-2.0; see NOTICE.md. -->
+
+# UniComplete
+
+Milestone 4's completeness half for the univariate PIOP of leanVM 42422001 (`crates/leanvm_univariate`,
+`SPEC.md` §13 for iteration 2): **a Lean honest prover** (`uniProverWith`, `proveWith`) following SPEC.md and the
+Rust prover's message order, **its differential test** against the Rust (the review's honest prover and, through
+its own cross-check, `prove_tiny`), and **the proof layers of `UniCompleteness D (uniProver D) δ`**
+(`formal/UniStatement/UniStatement/Security.lean`). A library of `formal/EndToEnd` (`UniComplete`,
+`srcDir = "../UniComplete"`), plain (non-`module`) Lean files, since it imports `E2ECompleteness`.
+
+```sh
+cd formal/EndToEnd
+systemd-run --scope -p MemoryMax=10G lake build UniComplete     # every layer; the axiom guards
+UNI_HONEST=<vectors> lake env lean ../UniComplete/UniCompleteTest/Runner.lean   # the differential test
+```
+
+## The prover (`UniComplete/`)
+
+| module | what |
+|---|---|
+| `Basic.lean` | the writer `Wr`/`WrM` (`KeccakWriter`: `sendScalar`, `sendRoot`, `sendInteger`, `sampleW`), polynomials (`Poly` = CompPoly's computable `CPolynomial E`), the digits' `w_l`, the novel basis (`ofNovel`), subset sums |
+| `Div.lean` | exact division by a monic polynomial in quadratic time (`longDiv`, `divM`, `modM`, `toNovel`), proved equal to Mathlib's `/ₘ`, `%ₘ` and CompPoly's `divByMonic` (`toPoly_divM`, `divM_eq`) |
+| `Trace.lean` | the placed trace (`Trace`), `C1`'s and the setup's stacks (`c1Stack`, `setupStackOf`, `placeStack`), `z_T`, the fingerprints |
+| `Bus.lean` | the leaves and the product heap (`tableLeaves`, `memoryLeaves`, `bytecodeLeaves`, `heapValues`) |
+| `Quotients.lean` | the quotients as exact divisions of their numerators (tree, each block's leaf, the constraints), their chunks in basis `B` (`chunksB`) |
+| `Batch.lean` | the batching sumcheck's prover (`denseWeight`, `batchRound`, `batchRounds`, the `λ³` matrices term) |
+| `Prover.lean` | `C2` (`c2DataOf`), the values and relations at `t` (`atTOf`, the verifier's own `tablePart` on the values sent), `proveStreamWith` (the stream), `proveWith` (setup trees, IV, seed, stream, the five WHIR openings) |
+| `Witness.lean` | `honestTrace D input rows q` (the placed trace read off Lv42's stack through `LeanIsa.cell`, rows moved by `rowPosition`, padding counters `1`), `uniProverWith` |
+| `Claims.lean` | what a relation and a combined claim mean on the stacks (`termEval`, `Relation.Holds`, `Combined.Holds`) |
+| `Honest.lean` | `TraceHonest` (what an honest placed trace satisfies) and `BadFp` (the bus challenges at which a divided fingerprint vanishes) |
+| `FlockProver*.lean` | leanVM's Flock prover as a function (zerocheck with skip, lincheck, slices, ring map) |
+
+The prover is mathematical, not an FFT implementation: columns are interpolated by the additive transform
+(`PcsQuotient.Domain.coefficients`), numerators are products of CompPoly polynomials, quotients exact divisions.
+
+## The differential test
+
+`UniCompleteTest/Runner.lean`, interpreted, on the review's four honest point-claim proofs (Flock omitted, memory
+and bytecode `2^4`/`2^5`, all six tables): the trace read back from the vector's `C1`, the Lean prover with the
+review's stand-in roots writes **the same stream byte for byte (2,896 bytes each) and the same three stacks word
+for word**; the Lean verifier accepts it. 4/4, about 6.5 minutes. For the three executions whose stream the Rust
+prover's `prove_tiny` (branch `leanvm-univariate-prover2`) records, by the first 8 bytes of its Keccak-256 (memory
+and bytecode `2^5, 2^4`, `2^4, 2^5`, `2^5, 2^5`), the Lean prover's stream has the same: 3/3.
+
+## The proof layers
+
+See `UniComplete.lean` for the modules and `End.lean` for the end theorem and what it assumes.
