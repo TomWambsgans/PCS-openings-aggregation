@@ -91,26 +91,22 @@ theorem avg_hit_le {K K' : ℕ} (h : K' ≤ K + 4) (S : ℝ≥0∞) (hS : S ≤ 
 
 /-! ## The last link: `W`'s tree after a fresh seed -/
 
-/-- **After the seed**: a computation `Tr` hashing nothing of `536` bytes, then an output whose `α` input, when of
-`536` bytes, begins with the seed's: from the cache with the seed's query added, the input is cached only if a cached
-`536`-byte input began with the seed (a hit). -/
-theorem chain_last {β γ : Type} (xs : Bytes) (hxs : xs.length ≠ 536) (Tr : Digest → OracleComp KeccakCalls γ)
-    (out : Digest → γ → β) (inpOf : β → Bytes) (hTr : ∀ s, HashOK (fun m ↦ m.length ≠ 536) (Tr s))
-    (hout : ∀ s t, (inpOf (out s t)).length = 536 → (inpOf (out s t)).take 32 = digestBytes s) (c : Cache)
+/-- **After the seed**: a computation `T` hashing nothing of `536` bytes whose `α` input, when of `536` bytes, begins
+with the seed's: from the cache with the seed's query added, the input is cached only if a cached `536`-byte input began
+with the seed (a hit). -/
+theorem chain_last {β : Type} (xs : Bytes) (hxs : xs.length ≠ 536) (T : Digest → OracleComp KeccakCalls β)
+    (inpOf : β → Bytes) (hT : ∀ s, HashOK (fun m ↦ m.length ≠ 536) (T s))
+    (hTinp : ∀ s (c : Cache) (z : β × Cache), z ∈ support ((simulateQ ro (T s)).run c) →
+      (inpOf z.1).length = 536 → (inpOf z.1).take 32 = digestBytes s) (c : Cache)
     (s : Digest) (hnh : ¬ HitAt 536 0 c s) :
-    Pr{let z ← (simulateQ ro (Tr s >>= fun t ↦ pure (out s t))).run (c.cacheQuery (.inl xs) s)}[
+    Pr{let z ← (simulateQ ro (T s)).run (c.cacheQuery (.inl xs) s)}[
       z.2 (.inl (inpOf z.1)) ≠ none ∧ (inpOf z.1).length = 536] = 0 := by
   refine prEvent_eq_zero_of_forall_mem_support _ _ fun z hz hev ↦ hnh ?_
-  have hok : HashOK (fun m ↦ m.length ≠ 536) (Tr s >>= fun t ↦ pure (out s t)) :=
-    E2ECompleteness.HashOK.bind (hTr s) fun _ ↦ E2ECompleteness.HashOK.pure _ _
-  rcases cache_of_hashOK hok _ hz _ hev.1 with h | h
+  rcases cache_of_hashOK (hT s) _ hz _ hev.1 with h | h
   · have hne : (Sum.inl (inpOf z.1) : Bytes ⊕ KeccakState) ≠ .inl xs := fun e ↦
       hxs ((congrArg List.length (Sum.inl_injective e)).symm.trans hev.2)
     rw [QueryCache.cacheQuery_of_ne _ _ hne] at h
-    simp only [simulateQ_bind, simulateQ_pure, StateT.run_bind, StateT.run_pure, mem_support_bind_iff,
-      support_pure, Set.mem_singleton_iff] at hz
-    obtain ⟨p, -, rfl⟩ := hz
-    exact ⟨_, h, hev.2, by rw [List.drop_zero]; exact hout s p.1 hev.2⟩
+    exact ⟨_, h, hev.2, by rw [List.drop_zero]; exact hTinp s _ z hz hev.2⟩
   · exact absurd hev.2 h
 
 /-! ## The chain -/
@@ -120,18 +116,18 @@ set_option maxHeartbeats 800000 in
 the digest's, the IV's and the seed's hashes (each later input holding the previous answer at its offset), then a
 computation hashing nothing of `536` bytes whose `α` input of `536` bytes begins with the seed, caches that input with
 probability at most `4 · (K + 4) / 2^256`. -/
-theorem chain_le {β γ : Type} (xσ xκ : Bytes) (fd : Digest → Digest → Bytes) (fiv fs : Digest → Bytes)
+theorem chain_le {β : Type} (xσ xκ : Bytes) (fd : Digest → Digest → Bytes) (fiv fs : Digest → Bytes)
     (hκ : xκ.length ≠ 25248) (hσ : xσ.length ≠ 25248)
     (hfd : ∀ σ κ, (fd σ κ).length = 25248 ∧ ((fd σ κ).drop 25184).take 32 = digestBytes σ)
     (hfiv : ∀ d, (fiv d).length = 208 ∧ ((fiv d).drop 80).take 32 = digestBytes d)
     (hfs : ∀ iv, (fs iv).length = 80 ∧ ((fs iv).drop 16).take 32 = digestBytes iv)
-    (Tr : Digest → OracleComp KeccakCalls γ) (out : Digest → γ → β) (inpOf : β → Bytes)
-    (hTr : ∀ s, HashOK (fun m ↦ m.length ≠ 536) (Tr s))
-    (hout : ∀ s t, (inpOf (out s t)).length = 536 → (inpOf (out s t)).take 32 = digestBytes s)
+    (T : Digest → OracleComp KeccakCalls β) (inpOf : β → Bytes) (hT : ∀ s, HashOK (fun m ↦ m.length ≠ 536) (T s))
+    (hTinp : ∀ s (c : Cache) (z : β × Cache), z ∈ support ((simulateQ ro (T s)).run c) →
+      (inpOf z.1).length = 536 → (inpOf z.1).take 32 = digestBytes s)
     (c : Cache) {K : ℕ} (hc : CacheBound c K) (h0 : c (.inl xσ) = none) :
     Pr{let z ← (simulateQ ro (callKeccak256 xσ >>= fun σd ↦ callKeccak256 xκ >>= fun κd ↦
         callKeccak256 (fd σd κd) >>= fun d ↦ callKeccak256 (fiv d) >>= fun iv ↦
-        callKeccak256 (fs iv) >>= fun s ↦ Tr s >>= fun t ↦ pure (out s t))).run c}[
+        callKeccak256 (fs iv) >>= T)).run c}[
       z.2 (.inl (inpOf z.1)) ≠ none ∧ (inpOf z.1).length = 536] ≤
       4 * (((K + 4 : ℕ) : ℝ≥0∞) / 2 ^ 256) := by
   classical
@@ -217,7 +213,7 @@ theorem chain_le {β γ : Type} (xσ xκ : Bytes) (fd : Digest → Digest → By
     · simp only [hh, ↓reduceIte]
       exact prEvent_le_one _
     · simp only [hh, ↓reduceIte]
-      exact le_of_eq (chain_last (fs iv) (by rw [(hfs iv).1]; omega) Tr out inpOf hTr hout c₄ s hh)
+      exact le_of_eq (chain_last (fs iv) (by rw [(hfs iv).1]; omega) T inpOf hT hTinp c₄ s hh)
   · exact add_le_add le_rfl (avg_hit_le le_rfl _ (sum_hitAt_le _ _ hc₄b))
 
 /-! ## Outcomes are pure runs -/
