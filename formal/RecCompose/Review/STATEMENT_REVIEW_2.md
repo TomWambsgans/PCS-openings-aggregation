@@ -14,7 +14,7 @@ Evidence (this directory):
   `sorry`, on `propext`, `Classical.choice`, `Quot.sound` (`#guard_msgs`):
   `cd formal/EndToEnd && systemd-run --scope -q -p MemoryMax=12G lake env lean ../RecCompose/Review/StatementReview2.lean`.
 - [`IvSample.lean`](IvSample.lean). It was run as the executable `rec-iv-sample` in an h1 copy. Its `lean_exe` stanza
-  (`name = "rec-iv-sample"`, `srcDir = "../RecCompose"`, `root = "Review.IvSample"`) is not committed.
+  is now committed (`formal/EndToEnd/lakefile.toml`).
 
 **Verdict.** No statement is wrong in the sense of the first review: none is vacuous or trivially satisfied, and none
 has a bound that cannot apply. The first review's fixes close their findings. What remains:

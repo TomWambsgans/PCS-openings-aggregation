@@ -254,3 +254,10 @@ root = "RecComposeTest.ViewCheck"
 name = "rec-real-check"
 srcDir = "../RecCompose"
 root = "RecComposeTest.RealCheck"
+
+# The second statement review's IV sampling (`RecCompose/Review/IvSample.lean`, finding 2): `ivCheck` and the compiled
+# circuit's structure at sampled IVs against the reference IV's. Usage: `rec-iv-sample <count> <seed>`.
+[[lean_exe]]
+name = "rec-iv-sample"
+srcDir = "../RecCompose"
+root = "Review.IvSample"

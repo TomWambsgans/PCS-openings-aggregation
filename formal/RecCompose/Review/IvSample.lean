@@ -4,8 +4,7 @@ import RecCompose.RealDeployment
 /-!
 # `IvChecked` at more IVs, and the compiled circuit's IV dependence (`STATEMENT_REVIEW_2.md`, finding 2)
 
-Built in an h1 copy as an executable `rec-iv-sample` (its `lean_exe` stanza is not committed:
-`name = "rec-iv-sample"`, `srcDir = "../RecCompose"`, `root = "Review.IvSample"`). `rec-iv-sample K i` evaluates, for
+Built as the executable `rec-iv-sample` (`formal/EndToEnd/lakefile.toml`). `rec-iv-sample K i` evaluates, for
 the IVs `ivAt i, …, ivAt (i + K − 1)` (pseudo-random 32-byte IVs of a fixed xorshift stream; at indices `1000`,
 `1001`, `1002` three structured ones):
 
