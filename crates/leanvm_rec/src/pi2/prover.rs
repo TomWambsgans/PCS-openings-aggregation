@@ -335,7 +335,8 @@ fn quotient_on_extension(
     w_novel: &[F64],
     h_novel: &[Vec<F64>; 3],
     [alpha, beta_, gamma]: [F192; 3],
-) -> [Vec<F64>; 3] {
+    [l0, l1, l2]: [&mut [F64]; 3],
+) {
     let (m, r, n) = (circuit.log_n, circuit.log_row, circuit.n());
     let big = 4 * n;
     let offset = beta()[m + 2];
@@ -425,9 +426,8 @@ fn quotient_on_extension(
     let one8 = Kx8::splat(F64::ONE);
     let zero8 = Kx8::splat(F64::ZERO);
 
-    let mut limbs: [Vec<F64>; 3] = std::array::from_fn(|_| parallel::map_collect(big, |_| F64::ZERO));
-    let [l0, l1, l2] = &mut limbs;
-    parallel::chunks_mut3(l0, l1, l2, run, |chunk, o0, o1, o2| {
+    assert!(l0.len() == big && l1.len() == big && l2.len() == big);
+    parallel::chunks_mut3(&mut *l0, &mut *l1, &mut *l2, run, |chunk, o0, o1, o2| {
         let start = chunk * run;
         let coset = start >> m;
         // The chunk's indicators: denominators, then one batched inversion, times `Z_V`.
@@ -533,11 +533,10 @@ fn quotient_on_extension(
     });
     lap("the numerator over Z_V");
     drop((wd, hd));
-    for limb in &mut limbs {
+    for limb in [l0, l1, l2] {
         ntt::coefficients(limb, offset);
     }
     lap("q's coefficients");
-    limbs
 }
 
 /// `f`'s values on `offset + V_{m+2}` from its novel coefficients (`2^m` of them: degree below `2^m`): one transform
@@ -695,23 +694,34 @@ pub fn prove_with(
     }
     lap("h on V_m, its coefficients", &mut timings);
 
-    let q_novel = quotient_on_extension(circuit, spec, setup, &w_novel, &h_novel, [alpha, beta_, gamma]);
-    lap("q on the extension coset, its coefficients", &mut timings);
-
+    // Q's stack, built in place: its lanes are the chunks in `quotient_chunks`'s order, so the stack is, limb by
+    // limb, `h`'s coefficients (`N` words) then `q`'s (`4N`, its four chunks in order). Checked lane by lane
+    // against the table's layout (lane `L` holds block `b`: chunk `c = b·lane >> m`, `8 limb + 4 kind + digit`).
     let qlane = 1usize << l.quotient.log_lane();
-    let quotient = Table::new(l.quotient, |_, block, out| {
-        let start = block * qlane;
+    assert_eq!(l.quotient.placed(), 15 * n);
+    for lane in 0..15 * n / qlane {
+        let start = l.quotient.block(lane) * qlane;
         let (c, within) = (start >> m, start & (n - 1));
         let (limb, kind, digit) = (c >> 3, (c >> 2) & 1, c & 3);
-        let src = if kind == 0 {
-            assert_eq!(digit, 0);
-            &h_novel[limb][within..within + qlane]
-        } else {
-            &q_novel[limb][digit * n + within..digit * n + within + qlane]
-        };
-        out.copy_from_slice(src);
-    });
-    drop(q_novel);
+        assert!(kind == 1 || digit == 0);
+        assert_eq!(5 * n * limb + kind * n + digit * n + within, lane * qlane, "Q's lane {lane}");
+    }
+    let mut stack: Vec<F64> = parallel::map_collect(15 * n, |_| F64::ZERO);
+    {
+        let mut parts = stack.chunks_exact_mut(5 * n).map(|limb| limb.split_at_mut(n));
+        let [(h0, q0), (h1, q1), (h2, q2)] = [(); 3].map(|_| parts.next().expect("three limbs"));
+        for (dst, src) in [h0, h1, h2].into_iter().zip(&h_novel) {
+            parallel::chunks_mut(dst, 1 << 16, |k, out| out.copy_from_slice(&src[k << 16..(k << 16) + out.len()]));
+        }
+        quotient_on_extension(circuit, spec, setup, &w_novel, &h_novel, [alpha, beta_, gamma], [q0, q1, q2]);
+    }
+    drop(h_novel);
+    lap("q on the extension coset, its coefficients", &mut timings);
+
+    let quotient = Table {
+        layout: l.quotient.clone(),
+        stack,
+    };
     let quotient_committed = opening::commit(&quotient);
     writer.send_root(root_scalars(&quotient_committed.root).map(to_e));
     let t = to_f192(writer.sample());
