@@ -19,7 +19,7 @@ Evidence (this directory):
 **Verdict.** No statement is wrong in the sense of the first review: none is vacuous or trivially satisfied, and none
 has a bound that cannot apply. The first review's fixes close their findings. What remains:
 
-- One universally quantified evaluated premise. `IvChecked` covers `2^256` IVs and is now evaluated at 3 + 9 of them.
+- One universally quantified evaluated premise. `IvChecked` covers `2^256` IVs and is evaluated at 3 of them, with 9 more running at hand-off.
   Code reading supports it strongly, but nothing proves it.
 - A completeness prover that is a Lean transcription. It has never been tested against the Rust prover.
 - An honest-hazard premise `δh` with no random-permutation reading.
