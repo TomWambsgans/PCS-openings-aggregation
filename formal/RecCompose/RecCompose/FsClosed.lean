@@ -17,7 +17,8 @@ import FlockSoundUni.GameNumbers
 reading `pi2ExtractBridge`) and the composed verifier's facts (FsCost.lean), π1's shape the reference
 (`uniShapes_reference`, `layoutVarsSmall_reference`).
 
-**`recKnowledgeSoundness2_closed`**, **`recKnowledgeSoundness_closed`**, **`recKnowledgeSoundness_closed_fs`**: `Final.lean`'s
+**`recKnowledgeSoundness_reduction`** (the headline end-to-end soundness theorem), **`recKnowledgeSoundness2_closed`**,
+**`recKnowledgeSoundness_closed`**, **`recKnowledgeSoundness_closed_fs`**: `Final.lean`'s
 end theorems without `hfs` (and, `lean-pi2-complete`, without `hcol`: `pi2SetupColumns_of_real`), and (`lean-pi2-facts`)
 without the circuit's facts and the ports' and calls' meaning: `Fa` is `pi2Facts hD C hchk` (`Facts.lean`), `hstmt`,
 `hzero`, `hcalls` are `statementPortMeaning`, `zeroPortsMeaning`, `callWordsAgree` (`Meanings.lean`), `hlay` is
@@ -55,7 +56,26 @@ theorem recKnowledgeSoundness2_closed (D : RecDeployment) (hD : D.Real) (C : Pi2
   recKnowledgeSoundness2_final D hD C (pi2Facts hD C hchk) (pi2FsLayer_real D hD) hroots hg
     (statementPortMeaning hD C hchk) (zeroPortsMeaning hD C hchk) (callWordsAgree hD C hchk) (pi1CallsLayouts_of_real hD)
 
-/-- **End to end, against Lv42's `M3Holds`, closed in π2's Fiat–Shamir layer and the circuit's facts**. -/
+/-- **The recursive verifier's knowledge soundness, end to end, as an explicit reduction** (against Lv42's `M3Holds`,
+closed in π2's Fiat–Shamir layer and the circuit's facts): `RecKnowledgeSoundnessReduction D pi2Bound`, and
+`pi2Bound Q ≤ 2^-64` for `Q ≤ 2^64`. For every adversary `A` of `Q` calls of `π` and `π⁻¹` against the recursive
+verifier, the derived adversaries `pi1Adversary D A` and `hazardAdversary D A` (`A`, then π2's explicit extractor)
+make at most `Q` calls, and
+
+`Pr[the contract accepts ∧ recExtractor fails] ≤ pi2Bound Q + Pr[pi1Adversary D A breaks π1-rec3 at Keccak-f[1600]]
+                                                    + Pr[hazardAdversary D A hits the merge hazard on an accepted stream]`.
+
+No Fiat–Shamir hypothesis: bounding the last two terms is the Fiat–Shamir heuristic for Keccak-f[1600], applied by the
+reader to two explicit adversaries that run in `A`'s time plus π2's extractor's. -/
+theorem recKnowledgeSoundness_reduction (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
+    (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hchk : Pi2ViewChecked C) :
+    RecKnowledgeSoundnessReduction D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 :=
+  ⟨recKnowledgeSoundnessReduction_final D hD C (pi2Facts hD C hchk) (pi2FsLayer_real D hD) hroots hg
+    (statementPortMeaning hD C hchk) (zeroPortsMeaning hD C hchk) (callWordsAgree hD C hchk) (pi1CallsLayouts_of_real hD),
+    pi2Bound_le_bits⟩
+
+/-- **End to end, against Lv42's `M3Holds`, closed in π2's Fiat–Shamir layer and the circuit's facts**, the Prop-premise
+corollary (`Pi1FsKeccak`, `Pi1HazardKeccak`: false as stated for unbounded adversaries). -/
 theorem recKnowledgeSoundness_closed (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
     (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hchk : Pi2ViewChecked C) (ε1 εh : ℕ → ℝ≥0∞) :
     RecKnowledgeSoundness D pi2Bound ε1 εh :=
@@ -63,8 +83,10 @@ theorem recKnowledgeSoundness_closed (D : RecDeployment) (hD : D.Real) (C : Pi2C
     (statementPortMeaning hD C hchk) (zeroPortsMeaning hD C hchk) (callWordsAgree hD C hchk) (pi1CallsLayouts_of_real hD)
     ε1 εh
 
-/-- **End to end under the Fiat–Shamir heuristic for Keccak-f[1600] alone, closed in π2's Fiat–Shamir layer and the
-circuit's facts**. -/
+/-- **End to end under `Pi1FsKeccak` and `Pi1HazardKeccak` alone, closed in π2's Fiat–Shamir layer and the circuit's
+facts**. The two premises are false as stated (they quantify over adversaries that grind Keccak-f[1600] offline for
+free): read them as the Fiat–Shamir heuristic for adversaries of bounded Keccak-f[1600] work, which Lean does not
+model. The statement without them is `recKnowledgeSoundness_reduction`. -/
 theorem recKnowledgeSoundness_closed_fs (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
     (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hchk : Pi2ViewChecked C) (ε1 εh : ℕ → ℝ≥0∞)
     (h1 : Pi1FsKeccak D ε1) (hh : Pi1HazardKeccak D εh) :
@@ -82,6 +104,10 @@ end RecCompose
 /-- info: 'RecCompose.recKnowledgeSoundness2_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.recKnowledgeSoundness2_closed
+
+/-- info: 'RecCompose.recKnowledgeSoundness_reduction' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.recKnowledgeSoundness_reduction
 
 /-- info: 'RecCompose.recKnowledgeSoundness_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
