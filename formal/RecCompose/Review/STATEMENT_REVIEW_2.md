@@ -134,7 +134,7 @@ of it is a `1`, and whether `κ`'s size moved by the popcount difference.
 | 1001 | not finished | | | | | | | |
 | 1002 | not finished | | | | | | | |
 
-**3 of 9 sampled IVs evaluated: all hold** (`ivCheck` true, the structure equal, the `κ` difference only `1`s of the expected size). Not finished at hand-off: indices [1, 2, 4, 5, 1001, 1002] (the three runs still going; `review2` kept).
+**3 of 9 sampled IVs evaluated: all hold** (`ivCheck` true, the structure equal, the `κ` difference only `1`s of the expected size). The union of the differences' positions over these IVs: 198 positions, all in `92175..96255` and `≡ 92175 mod 16` (yes), a set of at most 256 slots: the seed's IV constants, one slot a bit. Not finished at hand-off: indices [1, 2, 4, 5, 1001, 1002] (the three runs still going; `review2` kept).
 
 **Fix.**
 
