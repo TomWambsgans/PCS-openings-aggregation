@@ -40,6 +40,7 @@ import RecCompose.Meanings
 import RecCompose.Layouts
 import RecCompose.IvLength
 import RecCompose.RealDeployment
+import RecCompose.IvUniform
 
 /-!
 # RecCompose: the recursive verifier's end theorems

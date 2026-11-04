@@ -3,6 +3,7 @@
 -- `formal/EndToEnd` on h1, after `lake build RecCompose`:
 --   systemd-run --scope -q -p MemoryMax=10G lake env lean ../RecCompose/Review/NonVacuity.lean
 import RecCompose.RealDeployment
+import RecCompose.IvUniform
 import RecCompose.FsClosed
 import RecCompose.Pi2AlphaEnd
 import RecCompose.Pi2KFEnd
@@ -58,6 +59,15 @@ include hg hiv hd hs in
 theorem inhabited : ∃ (D : RecDeployment) (_ : D.Real) (C : Pi2Circuits D),
     C.rootsAt = RecGraph.Emitted.rootsAt ∧ GraphsAgree ∧ Pi2ViewChecked C :=
   ⟨D0, real hg hd hs, circuits hg hiv, rfl, hg, viewChecked hg hiv⟩
+
+include hg hd hs in
+/-- **The hypotheses are jointly inhabited, from the reduced premises** (`IvUniform.lean`): `IvChecked` replaced by
+the compiler's IV factorization `PatchChecked` and `ivCheck` at the all-ones and the zero IV (both evaluated,
+`rec-real-check`). -/
+theorem inhabited_of_patch (hp : PatchChecked) (h1 : ivCheck onesIv = true) (h0 : ivCheck zeroIv = true) :
+    ∃ (D : RecDeployment) (_ : D.Real) (C : Pi2Circuits D),
+      C.rootsAt = RecGraph.Emitted.rootsAt ∧ GraphsAgree ∧ Pi2ViewChecked C :=
+  inhabited hg (ivChecked_of_patchChecked hp h1 h0) hd hs
 
 include hg hiv hd hs in
 /-- **π2's part at `D0`**, from the evaluated inputs only. -/
@@ -122,6 +132,9 @@ end RecCompose.Pi2KF
 /-- info: 'RecCompose.NonVacuity.inhabited' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.NonVacuity.inhabited
+/-- info: 'RecCompose.NonVacuity.inhabited_of_patch' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.NonVacuity.inhabited_of_patch
 /-- info: 'RecCompose.NonVacuity.soundness2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.NonVacuity.soundness2
