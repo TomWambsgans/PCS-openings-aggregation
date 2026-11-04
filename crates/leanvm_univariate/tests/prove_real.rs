@@ -239,6 +239,14 @@ fn end_to_end(blake2s: Blake2s) {
         "  stream keccak {}",
         leanvm_univariate::prover::setup::hex(&leanvm_flock_gas::transcript::keccak256(&proof.stream))
     );
+    // The openings' fingerprint (their Debug form: the WHIR streams and Merkle paths), for prover changes that must
+    // keep the proof byte for byte.
+    println!(
+        "  openings keccak {}",
+        leanvm_univariate::prover::setup::hex(&leanvm_flock_gas::transcript::keccak256(
+            format!("{:?}", proof.openings.iter().map(|o| (&o.root, &o.proof)).collect::<Vec<_>>()).as_bytes()
+        ))
+    );
     assert!(report.checks.iter().all(|(_, ok)| *ok));
     let shape = trace.shape();
     let public = trace.public_input();

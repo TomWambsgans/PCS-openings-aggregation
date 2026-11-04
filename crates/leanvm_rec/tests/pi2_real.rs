@@ -171,6 +171,16 @@ fn real_end_to_end() {
         let (reduced, roots, openings) = open(proved, &setup);
         let opening = start.elapsed().as_secs_f64();
         println!("prove {proving:.1} s, open {opening:.1} s; {}", peak_memory());
+        // The proof's fingerprint: a change of the prover that keeps the proof keeps these lines.
+        let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02x}")).collect::<String>();
+        println!("pi2 stream keccak {}", hex(&primitives::hash::hash(&stream)));
+        println!("pi2 roots {} {}", hex(&roots[0]), hex(&roots[1]));
+        println!(
+            "pi2 openings keccak {}",
+            hex(&primitives::hash::hash(
+                format!("{:?}", (&openings.witness, &openings.quotient, &openings.setup)).as_bytes()
+            ))
+        );
         assert_eq!(
             verify_openings(circuit.log_n, &reduced, &roots, &setup.root(), &openings),
             Ok(())
@@ -198,6 +208,7 @@ fn real_end_to_end() {
             .chain(contract::openings(&inst, &reduced, &roots))
             .collect();
         let data = calldata(&public_input, &stream);
+        println!("pi2 calldata keccak {}", hex(&primitives::hash::hash(&data)));
         let (accepted, made) = contract::run(&inst, &recorded, &data, &block);
         assert!(accepted, "the contract accepts π2's proof of π1-rec's real proof");
         assert_eq!(made, expected, "the nine claims in eight calls");
