@@ -728,6 +728,36 @@ impl Mul for Kx8 {
     }
 }
 
+/// Eight K products, unreduced: a sum of them is reduced once ([`Kx8U::reduce`]).
+#[derive(Clone, Copy)]
+pub struct Kx8U(U);
+
+impl Kx8U {
+    #[inline(always)]
+    pub fn zero() -> Self {
+        Self(zero_u())
+    }
+
+    /// `a b`, unreduced.
+    #[inline(always)]
+    pub fn product(a: Kx8, b: Kx8) -> Self {
+        Self(clmul_u(a.0, b.0))
+    }
+
+    #[inline(always)]
+    pub fn reduce(self) -> Kx8 {
+        Kx8(reduce_u(self.0))
+    }
+}
+
+impl Add for Kx8U {
+    type Output = Self;
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self {
+        Self(xor_u(self.0, rhs.0))
+    }
+}
+
 /// Eight E elements in three registers, limb by limb.
 #[derive(Clone, Copy)]
 pub struct Ex8([V; 3]);

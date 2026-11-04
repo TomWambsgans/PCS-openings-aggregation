@@ -24,7 +24,7 @@ use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::transcript::{KeccakWriter, keccak_seed};
 use primitives::field::{F64, F192};
 use quotient::domain::{beta, chain, point};
-use quotient::ntt::{self, ESplat, Ex8, Kx8, MixedSum};
+use quotient::ntt::{self, ESplat, Ex8, Kx8, Kx8U, MixedSum};
 use quotient::opening::{self, Committed, Layout, Table};
 use quotient::transcript::root_scalars;
 
@@ -91,11 +91,11 @@ fn b_coefficients(novel: &[F64]) -> Vec<F64> {
     b
 }
 
-/// The setup: `σ` and `κ`, their novel coefficients (kept for the prover's extension coset) and the committed
-/// table of their `B` coefficients.
+/// The setup: `σ` and `κ` on the prover's extension coset `D = β_{m+2} + V_{m+2}` (fixed by the circuit, so computed
+/// once here, not per proof), and the committed table of their `B` coefficients.
 pub struct Setup {
-    pub sigma: Vec<F64>,
-    pub kappa: Vec<F64>,
+    pub sigma_on_d: Vec<F64>,
+    pub kappa_on_d: Vec<F64>,
     pub table: Table,
     pub committed: Committed,
 }
@@ -122,9 +122,11 @@ impl Setup {
             out.copy_from_slice(&src[start & (n - 1)..(start & (n - 1)) + lane]);
         });
         let committed = opening::commit(&table);
+        drop((kb, skb));
+        let offset = beta()[m + 2];
         Self {
-            sigma,
-            kappa,
+            sigma_on_d: on_extension(&sigma, m, offset),
+            kappa_on_d: on_extension(&kappa, m, offset),
             table,
             committed,
         }
@@ -240,31 +242,34 @@ fn batch_inverse_e(values: &mut [F192]) {
 
 /// A linear form in `K` on eight points, its cells' indices permuted by a role.
 struct KLin {
-    terms: Vec<(F64, usize)>,
+    /// The cells of coefficient 1, and the others with theirs (summed unreduced, one reduction).
+    ones: Vec<usize>,
+    scaled: Vec<(Kx8, usize)>,
     constant: F64,
 }
 
 impl KLin {
     fn new(l: &Lin, role: usize) -> Self {
+        let terms = l.terms.iter().map(|&(c, cell)| (F64(c.value[0]), cell as usize ^ role));
         Self {
-            terms: l
-                .terms
-                .iter()
-                .map(|&(c, cell)| (F64(c.value[0]), cell as usize ^ role))
-                .collect(),
+            ones: terms.clone().filter(|&(c, _)| c == F64::ONE).map(|(_, i)| i).collect(),
+            scaled: terms.filter(|&(c, _)| c != F64::ONE).map(|(c, i)| (Kx8::splat(c), i)).collect(),
             constant: l.constant.map_or(F64::ZERO, |c| F64(c.value[0])),
         }
     }
 
     #[inline(always)]
     fn eval(&self, cells: &[Kx8]) -> Kx8 {
-        self.terms.iter().fold(Kx8::splat(self.constant), |acc, &(c, i)| {
-            acc + if c == F64::ONE {
-                cells[i]
-            } else {
-                Kx8::splat(c) * cells[i]
-            }
-        })
+        let sum = self.ones.iter().fold(Kx8::splat(self.constant), |acc, &i| acc + cells[i]);
+        if self.scaled.is_empty() {
+            sum
+        } else {
+            sum + self
+                .scaled
+                .iter()
+                .fold(Kx8U::zero(), |acc, &(c, i)| acc + Kx8U::product(c, cells[i]))
+                .reduce()
+        }
     }
 }
 
@@ -359,7 +364,8 @@ fn quotient_on_extension(
         );
     }
     let on_d = |novel: &[F64]| on_extension(novel, m, offset);
-    let (wd, sd, kd) = (on_d(w_novel), on_d(&setup.sigma), on_d(&setup.kappa));
+    let wd = on_d(w_novel);
+    let (sd, kd) = (&setup.sigma_on_d, &setup.kappa_on_d);
     let hd = [on_d(&h_novel[0]), on_d(&h_novel[1]), on_d(&h_novel[2])];
     let gammas = primitives::field::powers(gamma, spec.max_gamma + 1);
     lap("w, σ, κ, h on D");
@@ -470,7 +476,8 @@ fn quotient_on_extension(
             }
             let w = cells[0];
             let mut selected = zero8;
-            let mut pushed_k = zero8;
+            // `Σ_g sum_g v_g` (and `w · selected`), unreduced until the row's end.
+            let mut pushed_k = Kx8U::zero();
             let mut pushed_e = Ex8::splat(F192::ZERO);
             for (g, (compiled, _, narrow)) in groups.iter().enumerate() {
                 let sum = narrow
@@ -479,11 +486,16 @@ fn quotient_on_extension(
                 selected = selected + sum;
                 match compiled {
                     Compiled::K { lin, products } => {
-                        let v = products.iter().fold(lin.eval(&cells), |acc, (c, a, b)| {
-                            let p = a.eval(&cells) * b.eval(&cells);
-                            acc + if *c == F64::ONE { p } else { Kx8::splat(*c) * p }
-                        });
-                        pushed_k = pushed_k + sum * v;
+                        let v = if products.is_empty() {
+                            lin.eval(&cells)
+                        } else {
+                            let p = products.iter().fold(Kx8U::zero(), |acc, (c, a, b)| {
+                                let (x, y) = (a.eval(&cells), b.eval(&cells));
+                                acc + Kx8U::product(if *c == F64::ONE { x } else { Kx8::splat(*c) * x }, y)
+                            });
+                            lin.eval(&cells) + p.reduce()
+                        };
+                        pushed_k = pushed_k + Kx8U::product(sum, v);
                     }
                     Compiled::ELinear { terms, constant } => {
                         let mut v = MixedSum::default();
@@ -506,7 +518,8 @@ fn quotient_on_extension(
             let one_s = pull_less_narrow
                 .iter()
                 .fold(pull_less_wide[jw], |acc, &p| acc + table[at[p] + j]);
-            let p_t = Ex8::from_k(w + w * selected + pushed_k + Kx8::load(&kd[i..])) + pushed_e;
+            let pushed_k = (pushed_k + Kx8U::product(w, selected)).reduce();
+            let p_t = Ex8::from_k(w + pushed_k + Kx8::load(&kd[i..])) + pushed_e;
             let x = Kx8::splat(offset + point(i)) + points8;
             let d_pull = alpha8 + Ex8::from_k(w) + beta8.mul_k(x);
             let d_push = alpha8 + p_t + beta8.mul_k(Kx8::load(&sd[i..]));
@@ -519,7 +532,7 @@ fn quotient_on_extension(
         }
     });
     lap("the numerator over Z_V");
-    drop((wd, sd, kd, hd));
+    drop((wd, hd));
     for limb in &mut limbs {
         ntt::coefficients(limb, offset);
     }
