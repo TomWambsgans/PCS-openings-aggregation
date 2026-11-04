@@ -306,6 +306,7 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
             Leaves::Unused => continue,
             other => &leaves.iter().find(|(l, _)| *l == other).expect("leaves").1,
         };
+        let leaf_clock = std::time::Instant::now();
         let r_novel = novel_limbs(values);
         let (name, q) = match block.leaves {
             Leaves::Memory => ("leaf: memory".to_string(), quotients::memory_leaf(trace, &c1, &setup, &bus, &r_novel, n - 1)),
@@ -322,6 +323,9 @@ pub fn prove(trace: &Trace, flock: Option<FlockWitness>, iv: &[u8; 32], config: 
             }
             Leaves::Unused => unreachable!(),
         };
+        if std::env::var("PI1_PROFILE").is_ok() {
+            eprintln!("    {name} (2^{} rows): {:.4} s", block.r, leaf_clock.elapsed().as_secs_f64());
+        }
         report
             .quotients
             .push((name, q.degree, q.count, quotients::extension_vars(q.count, block.r)));
