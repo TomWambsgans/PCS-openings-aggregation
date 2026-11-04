@@ -613,6 +613,258 @@ impl Weight {
         (a, b)
     }
 
+    /// A pair round's sums in one read of the words (π1-rec3's paired batch, `batch::prove_pairs`): at round `j`
+    /// (variables `j` and `j + 1`), `[plain, at 0, at 1, at β]`: `plain` is [`Weight::round`]'s, and `at x` is
+    /// [`Weight::round`]'s on the weight folded at `x` with `e ⊗ (1 + x, x)`, the next variable's sums with this
+    /// one bound to `x`. With the folded weight `W` and stack `C` in groups of four (`W_ab` at `4 g + a + 2 b`), the
+    /// sums are nine: `Σ W_00 C_00`, `Σ W_01 C_01`, `Σ W_10 C_10`, `Σ (W_00 + W_10)(C_00 + C_10)`,
+    /// `Σ (W_01 + W_11)(C_01 + C_11)`, `Σ (W_00 + W_01)(C_00 + C_01)`, `Σ (W_10 + W_11)(C_10 + C_11)`,
+    /// `Σ W_β0 C_β0`, `Σ (W_β0 + W_β1)(C_β0 + C_β1)` (`X_βb = X_0b + β (X_0b + X_1b)`). `None` if a block is two
+    /// words or a factored piece's `low` below four (the caller then folds clones).
+    pub fn round_pair(&self, words: &[F64], e: &[F192], beta: F192) -> Option<[(F192, F192); 4]> {
+        let j = self.round;
+        assert_eq!(e.len(), 1 << j);
+        for shape in &self.shapes {
+            let len = shape.len();
+            if len == 2 || len == 3 {
+                return None;
+            }
+            if let Shape::Factored { low, .. } = shape {
+                if len > 1 && low.len() < 4 {
+                    return None;
+                }
+            }
+        }
+        let one_beta = F192::ONE + beta;
+        let folded = Table::new(e.to_vec());
+        let span = 1usize << j;
+        // The nine products of a group, from its four weights and four stack values.
+        let nine = |w: [F192; 4], c: [F192; 4]| -> [F192; 9] {
+            let [w00, w10, w01, w11] = w;
+            let [c00, c10, c01, c11] = c;
+            let wb0 = w00 + beta * (w00 + w10);
+            let wb1 = w01 + beta * (w01 + w11);
+            let cb0 = c00 + beta * (c00 + c10);
+            let cb1 = c01 + beta * (c01 + c11);
+            [
+                w00 * c00,
+                w01 * c01,
+                w10 * c10,
+                (w00 + w10) * (c00 + c10),
+                (w01 + w11) * (c01 + c11),
+                (w00 + w01) * (c00 + c01),
+                (w10 + w11) * (c10 + c11),
+                wb0 * cb0,
+                (wb0 + wb1) * (cb0 + cb1),
+            ]
+        };
+        // Per shape: the factored pieces' nine tables over `low.len() << j` words (the coefficient of the word at
+        // `(l << j) + y` in each sum, times `e(y)`), cut to their last nonzero entry.
+        enum Prep2 {
+            Factored { coefficients: Vec<[F192; 9]>, span: usize },
+            Dense,
+            Twisted { lo: Vec<F192>, hi: Vec<F192>, bits: usize, map: Linear<2> },
+            Scalar(F192),
+        }
+        let preps: Vec<Prep2> = self
+            .shapes
+            .iter()
+            .map(|shape| {
+                if shape.len() == 1 {
+                    return Prep2::Scalar(shape.scalar());
+                }
+                match shape {
+                    Shape::Factored { low, .. } => {
+                        let unit = low.len() << j;
+                        let mut t: Vec<Vec<F192>> = vec![vec![F192::ZERO; unit]; 9];
+                        for q in 0..low.len() / 4 {
+                            let [l0, l1, l2, l3] = std::array::from_fn(|k| low[4 * q + k]);
+                            let a = l0 + beta * (l0 + l1);
+                            let s = (l0 + l2) + beta * ((l0 + l1) + (l2 + l3));
+                            // (sum, position k in the group, coefficient)
+                            let entries: [(usize, usize, F192); 16] = [
+                                (0, 0, l0),
+                                (1, 2, l2),
+                                (2, 1, l1),
+                                (3, 0, l0 + l1),
+                                (3, 1, l0 + l1),
+                                (4, 2, l2 + l3),
+                                (4, 3, l2 + l3),
+                                (5, 0, l0 + l2),
+                                (5, 2, l0 + l2),
+                                (6, 1, l1 + l3),
+                                (6, 3, l1 + l3),
+                                (7, 0, a * one_beta),
+                                (7, 1, a * beta),
+                                (8, 0, s * one_beta),
+                                (8, 1, s * beta),
+                                (8, 2, s * one_beta),
+                            ];
+                            for &(sum, k, coefficient) in entries.iter().chain(&[(8, 3, s * beta)]) {
+                                let base = (4 * q + k) << j;
+                                for (y, &ey) in e.iter().enumerate() {
+                                    t[sum][base + y] = coefficient * ey;
+                                }
+                            }
+                        }
+                        let used = t
+                            .iter()
+                            .map(|g| g.iter().rposition(|x| !x.is_zero()).map_or(0, |i| i + 1))
+                            .max()
+                            .unwrap_or(0);
+                        Prep2::Factored {
+                            coefficients: (0..used).map(|i| std::array::from_fn(|s| t[s][i])).collect(),
+                            span: unit,
+                        }
+                    }
+                    Shape::Dense { .. } => Prep2::Dense,
+                    Shape::Twisted { c, point, bound } => {
+                        let p = point[*bound];
+                        let mut power = F192::ONE + p;
+                        let a: Vec<F192> = c
+                            .iter()
+                            .map(|&ck| {
+                                let x = ck * power;
+                                power = power.square();
+                                x
+                            })
+                            .collect();
+                        let (lo, hi, bits) = split_eq(&point[bound + 1..]);
+                        Prep2::Twisted {
+                            lo,
+                            hi,
+                            bits,
+                            map: Linear::new([&a, c]),
+                        }
+                    }
+                }
+            })
+            .collect();
+        let mut of_shape: Vec<Vec<&Piece>> = vec![Vec::new(); self.shapes.len()];
+        for piece in &self.pieces {
+            of_shape[piece.shape].push(piece);
+        }
+        let tasks = self.tasks(|piece| match &preps[piece.shape] {
+            Prep2::Factored { span, .. } => (self.shape_units(piece.shape, *span), (4 * TASK_WORDS / span).max(1)),
+            Prep2::Dense if !std::ptr::eq(of_shape[piece.shape][0], piece) => (0, 1),
+            Prep2::Dense => (1 << (piece.vars - j - 2), (TASK_WORDS >> (j + 2)).max(1)),
+            Prep2::Twisted { .. } => (1 << (piece.vars - j - 1), (TASK_WORDS >> (j + 1)).max(8)),
+            Prep2::Scalar(_) => (1, 1),
+        });
+        // A group's four weights against the stack's words, by the offset `y` in their `2^j`-word runs: the nine
+        // sums' accumulators `at[9 y + s]`, one or two mixed products a sum a word.
+        let group = |at: &mut [F192Unreduced], piece: &Piece, g: usize, w: [F192; 4]| {
+            let [w00, w10, w01, w11] = w;
+            let wb0 = w00 + beta * (w00 + w10);
+            let wb1 = w01 + beta * (w01 + w11);
+            let sb = wb0 + wb1;
+            let (bwb0, bsb) = (beta * wb0, beta * sb);
+            let (wb0, sb) = (wb0 * one_beta, sb * one_beta);
+            let (d0, d1, e0, e1) = (w00 + w10, w01 + w11, w00 + w01, w10 + w11);
+            let base = piece.offset + ((4 * g) << j);
+            let run = &words[base..base + 4 * span];
+            for y in 0..span {
+                let (c00, c10, c01, c11) = (run[y], run[span + y], run[2 * span + y], run[3 * span + y]);
+                let a = &mut at[9 * y..9 * y + 9];
+                a[0] ^= w00.mul_base_unreduced(c00);
+                a[1] ^= w01.mul_base_unreduced(c01);
+                a[2] ^= w10.mul_base_unreduced(c10);
+                a[3] ^= d0.mul_base_unreduced(c00 + c10);
+                a[4] ^= d1.mul_base_unreduced(c01 + c11);
+                a[5] ^= e0.mul_base_unreduced(c00 + c01);
+                a[6] ^= e1.mul_base_unreduced(c10 + c11);
+                // C_β0 = (1 + β) C_00 + β C_10; C_β0 + C_β1 = (1 + β)(C_00 + C_01) + β (C_10 + C_11).
+                a[7] ^= wb0.mul_base_unreduced(c00) ^ bwb0.mul_base_unreduced(c10);
+                a[8] ^= sb.mul_base_unreduced(c00 + c01) ^ bsb.mul_base_unreduced(c10 + c11);
+            }
+        };
+        let weigh = |at: &[F192Unreduced]| -> [F192; 9] {
+            let mut out = [F192Unreduced::ZERO; 9];
+            for (y, &ey) in e.iter().enumerate() {
+                for s in 0..9 {
+                    out[s] ^= ey.mul_unreduced(at[9 * y + s].reduce());
+                }
+            }
+            out.map(|x| x.reduce())
+        };
+        let add = |x: [F192; 9], y: [F192; 9]| -> [F192; 9] { std::array::from_fn(|s| x[s] + y[s]) };
+        let p = parallel::map_reduce(
+            tasks.len(),
+            || [F192::ZERO; 9],
+            |t| {
+                let (index, start, end) = tasks[t];
+                let piece = &self.pieces[index];
+                match (&preps[piece.shape], &self.shapes[piece.shape]) {
+                    (Prep2::Factored { coefficients, span }, Shape::Factored { h, .. }) => {
+                        // `Σ_u h[u] word(u span + i)` first (one mixed product a word), then the nine sums of it.
+                        let keep = coefficients.len();
+                        let mut folded_h = vec![F192Unreduced::ZERO; keep];
+                        for u in start..end {
+                            let at = piece.offset + u * span;
+                            if at >= words.len() {
+                                break;
+                            }
+                            let (hu, avail) = (h[u], (words.len() - at).min(keep));
+                            for (acc, &k) in folded_h[..avail].iter_mut().zip(&words[at..at + avail]) {
+                                *acc ^= hu.mul_base_unreduced(k);
+                            }
+                        }
+                        let mut acc = [F192Unreduced::ZERO; 9];
+                        for (c, x) in coefficients.iter().zip(&folded_h) {
+                            let x = x.reduce();
+                            for s in 0..9 {
+                                if !c[s].is_zero() {
+                                    acc[s] ^= c[s].mul_unreduced(x);
+                                }
+                            }
+                        }
+                        acc.map(|x| piece.scale * x.reduce())
+                    }
+                    (Prep2::Dense, Shape::Dense { table, .. }) => {
+                        let limbs = &of_shape[piece.shape];
+                        let mut out = [F192::ZERO; 9];
+                        let mut at = vec![F192Unreduced::ZERO; 9 * span];
+                        for limb in limbs {
+                            at.fill(F192Unreduced::ZERO);
+                            for g in start..end {
+                                let w: [F192; 4] = std::array::from_fn(|k| table[4 * g + k]);
+                                group(&mut at, limb, g, w);
+                            }
+                            let sums = weigh(&at);
+                            out = add(out, sums.map(|x| limb.scale * x));
+                        }
+                        out
+                    }
+                    (Prep2::Twisted { lo, hi, bits, map }, _) => {
+                        let mut at = vec![F192Unreduced::ZERO; 9 * span];
+                        for first in (start..end).step_by(8) {
+                            let [w0, dw] = map.at8(&eq8(lo, hi, *bits, first, end));
+                            for k in (0..(end - first).min(8)).step_by(2) {
+                                let w = [w0[k], w0[k] + dw[k], w0[k + 1], w0[k + 1] + dw[k + 1]];
+                                group(&mut at, piece, (first + k) / 2, w);
+                            }
+                        }
+                        weigh(&at).map(|x| piece.scale * x)
+                    }
+                    (Prep2::Scalar(value), _) => {
+                        // The block is one word of the folded stack, at its offset's position in its group.
+                        let position = piece.offset >> j;
+                        let g = position >> 2;
+                        let c: [F192; 4] =
+                            std::array::from_fn(|k| folded.dot_clipped(words, ((4 * g) + k) << j));
+                        let s = piece.scale * *value;
+                        let w: [F192; 4] =
+                            std::array::from_fn(|k| if k == position & 3 { s } else { F192::ZERO });
+                        nine(w, c)
+                    }
+                    _ => unreachable!(),
+                }
+            },
+            add,
+        );
+        Some([(p[0] + p[1], p[3] + p[4]), (p[0], p[5]), (p[2], p[6]), (p[7], p[8])])
+    }
+
     /// A factored shape's units (entries of `h`) in a round of `span` words per unit.
     fn shape_units(&self, shape: usize, span: usize) -> usize {
         match &self.shapes[shape] {
@@ -834,6 +1086,80 @@ mod tests {
         })
     }
 
+    /// `round_pair` (when it applies) is the plain round and the rounds of clones folded at 0, 1 and a random `β`.
+    /// Returns whether it applied.
+    fn check_round_pair(weight: &Weight, words: &[F64], e: &[F192], rng: &mut Rng) -> bool {
+        let beta = rng.e();
+        let Some(p) = weight.round_pair(words, e, beta) else {
+            return false;
+        };
+        assert_eq!(p[0], weight.round(words, e), "the plain round");
+        for (k, x) in [F192::ZERO, F192::ONE, beta].into_iter().enumerate() {
+            let mut w = weight.clone();
+            w.fold(x);
+            let e2: Vec<F192> = e.iter().map(|&y| y * (F192::ONE + x)).chain(e.iter().map(|&y| y * x)).collect();
+            assert_eq!(p[1 + k], w.round(words, &e2), "the clone at {k}");
+        }
+        true
+    }
+
+    /// `round_pair` on blocks that stay at least four words through the rounds that read the words: every shape.
+    #[test]
+    fn pair_rounds_are_the_clones_rounds() {
+        parallel::init();
+        let mut rng = Rng(0xFA12);
+        let columns = vec![
+            (Column::Qflock, 13, false),
+            (Column::Table { table: 0, column: 0 }, 10, false),
+            (Column::Heap, 9, true),
+            (Column::LeafQuotient { block: 0, chunk: 0 }, 8, true),
+            (Column::Memory(0), 7, false),
+            (Column::TreeQuotient(1), 0, true),
+        ];
+        let layout = StackLayout::new(&columns);
+        let lane = 1usize << (layout.vars - super::super::opening::LANE_FOLD);
+        let len = (layout.words() as usize).div_ceil(lane) * lane;
+        let points: Vec<Vec<E>> = (0..5)
+            .map(|_| (0..13).map(|_| super::super::poly::to_v(rng.e())).collect())
+            .collect();
+        let mut terms = Vec::new();
+        let mut term =
+            |column: Column, p: usize, twist: u8| terms.push((column, p, twist, super::super::poly::to_v(rng.e())));
+        term(Column::Table { table: 0, column: 0 }, 0, 0);
+        for p in 0..3 {
+            term(Column::Heap, p, 0);
+        }
+        term(Column::LeafQuotient { block: 0, chunk: 0 }, 0, 0);
+        term(Column::Memory(0), 1, 0);
+        term(Column::TreeQuotient(1), 0, 0);
+        for j in [0, 3, 17, 255] {
+            term(Column::QflockSlot(j), 3, 0);
+        }
+        for k in 0..6 {
+            term(Column::Qflock, 4, k);
+        }
+        let claim = Combined {
+            points,
+            terms,
+            value: E::default(),
+            relations: 1,
+        };
+        let words: Vec<F64> = (0..len).map(|_| F64(rng.u64())).collect();
+        let words = &words[..];
+        let mut weight = Weight::new(&claim, &layout);
+        let mut e = vec![F192::ONE];
+        for j in 0..6 {
+            assert!(check_round_pair(&weight, words, &e, &mut rng), "round {j} pairs");
+            let r = rng.e();
+            weight.fold(r);
+            e = e
+                .iter()
+                .map(|&x| x * (F192::ONE + r))
+                .chain(e.iter().map(|&x| x * r))
+                .collect();
+        }
+    }
+
     #[test]
     fn pieces_are_the_written_out_weight() {
         parallel::init();
@@ -887,6 +1213,7 @@ mod tests {
         let mut e = vec![F192::ONE];
         for j in 0..LOW_VARS {
             assert_eq!(weight.round(&words, &e), sums(&dense, &stack), "round {j}");
+            check_round_pair(&weight, &words, &e, &mut rng);
             let full = 1usize << (layout.vars - j);
             let mut written = weight.dense(full);
             assert!(written[dense.len()..].iter().all(|x| x.is_zero()));

@@ -380,8 +380,32 @@ pub fn prove_pairs(
             weights = Vec::new();
             lap("written out", round);
         }
+        // While the rounds read the words: the plain round's sums and the three clones' in one read
+        // (`Weight::round_pair`), when every weight's blocks allow it.
+        let paired: Option<[(F192, F192); 4]> = if folded.is_empty() && std::env::var("PI1_NO_PAIR_ROUND").is_err() {
+            stacks
+                .iter()
+                .zip(&weights)
+                .map(|(&(words, _), w)| w.round_pair(words, &e, beta1))
+                .collect::<Option<Vec<_>>>()
+                .map(|per| {
+                    std::array::from_fn(|s| {
+                        per.iter().zip(&scales).fold((F192::ZERO, F192::ZERO), |acc, (p, &scale)| {
+                            (acc.0 + scale * p[s].0, acc.1 + scale * p[s].1)
+                        })
+                    })
+                })
+        } else {
+            None
+        };
+        if prof {
+            eprintln!("    batch r{round}: paired {}", paired.is_some());
+        }
         // h(u_0) = Σ G̃(u_0, ·): c_0 and c_2 from the round, c_1 from the claim (h(0) + h(1) = claim).
-        let (a0, a2) = sums(&weights, &folded, &e, None);
+        let (a0, a2) = match paired {
+            Some(p) => p[0],
+            None => sums(&weights, &folded, &e, None),
+        };
         lap("sums", round);
         let a1 = claim + a2;
         let h = |x: F192| a0 + a1 * x + a2 * x * x;
@@ -389,8 +413,12 @@ pub fn prove_pairs(
         let at = [F192::ZERO, F192::ONE, beta1];
         let g_at: Vec<[F192; 3]> = at
             .iter()
-            .map(|&a| {
-                let (b0, b2) = sums(&weights, &folded, &e, Some(a));
+            .enumerate()
+            .map(|(i, &a)| {
+                let (b0, b2) = match paired {
+                    Some(p) => p[1 + i],
+                    None => sums(&weights, &folded, &e, Some(a)),
+                };
                 [b0, h(a) + b2, b2]
             })
             .collect();
