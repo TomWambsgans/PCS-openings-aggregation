@@ -368,6 +368,24 @@ where
     });
 }
 
+/// Parallel `a.chunks_mut(chunk)` zipped with `b`'s and `c`'s, for a kernel that
+/// writes three tables (an extension element's limbs) in lockstep. The three must
+/// have equal length.
+pub fn chunks_mut3<A: Send, B: Send, C: Send, F>(a: &mut [A], b: &mut [B], c: &mut [C], chunk: usize, f: F)
+where
+    F: Fn(usize, &mut [A], &mut [B], &mut [C]) + Sync,
+{
+    assert_eq!(a.len(), c.len(), "chunks_mut3: slices differ in length");
+    let c_ptr = SendPtr(c.as_mut_ptr());
+    chunks_mut2(a, b, chunk, |i, sub_a, sub_b| {
+        let start = i * chunk;
+        // SAFETY: `c` has the same length as `a`, so chunk `i` of `c` is the same
+        // in-bounds range that chunk `i` of `a` just proved disjoint.
+        let sub_c = unsafe { c_ptr.slice(start, sub_a.len()) };
+        f(i, sub_a, sub_b, sub_c);
+    });
+}
+
 /// A `chunks_mut` view that can be handed to tasks: `chunk(i)` is item `i`'s
 /// slice. Composes to any number of buffers, which the zip-based helpers do not:
 /// a kernel writing four tables at two different widths builds one of these per

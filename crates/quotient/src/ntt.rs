@@ -687,6 +687,22 @@ impl Kx8 {
         Self(splat(x.0))
     }
 
+    /// Lane `l` is lane `l ^ x`'s (`x < 8`).
+    #[inline(always)]
+    pub fn xor_lanes(self, x: usize) -> Self {
+        let mut v = self.0;
+        if x & 1 != 0 {
+            v = swap::<1>(v);
+        }
+        if x & 2 != 0 {
+            v = swap::<2>(v);
+        }
+        if x & 4 != 0 {
+            v = swap::<4>(v);
+        }
+        Self(v)
+    }
+
     #[inline(always)]
     pub fn to_row(self) -> K8 {
         let mut out = K8::ZERO;
