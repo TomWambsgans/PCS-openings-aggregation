@@ -250,8 +250,14 @@ def RecCompleteness (D : RecDeployment) (P1 : Pi1Prover D) (P2 : Pi2Prover) (δ1
   reads π1's stream off each candidate's witness values (`D.pi1Stream`), the first on which π1-rec3's graph's checks hold
   at Keccak-f[1600]; `recExtractor` then runs π1-rec3's own extractor (`UniStatement.uniExtractor`) on that stream and
   the proof's three π1 openings, its row counts the stream's. The extractors take the setup's roots.
-* `RecDeployment.Real`: `∀ iv, (D.pi2 iv).circuit = Data.circuit`, π1's calls, the reference shape and program IV, and at
-  π1's reference IV (`Data.pi1Iv`) the digest and setup root the Rust computed (which bind `σ`, `κ`).
+* `RecDeployment.Real`: `∀ iv, (D.pi2 iv).circuit = Data.circuit`, π1's calls, the reference shape and program IV, at
+  π1's reference IV (`Data.pi1Iv`) the digest and setup root the Rust computed (which bind `σ`, `κ`), and
+  `SetupFromCompiler` (σ, κ the Lean compiler's at every **32-byte** IV; π1's contract IV is a Keccak-256 digest,
+  `RecDeployment.pi1IvAt_length`). The program `D.pi1.prog` is not pinned. **Inhabited**: `RecCompose.realDeployment`
+  (`RecCompose/RealDeployment.lean`, `realDeployment_real`), given `GraphsAgree` and the evaluated `DigestChecked`,
+  `SetupRootChecked` (`rec-real-check`).
+* **The deployed bytecode** is linked to this model by transcription and test (`contract.rs`'s `parity`,
+  `parity_deployable`, and the differential runner below), not by a Lean proof.
 
 ## The verifier-arithmetic lemmas (`Lemmas/`, proved)
 
@@ -307,9 +313,10 @@ truncated and extended streams); about 85 s.
 The flipped, other-input and random streams are accepted by both: the contract's only check before `PCS_OPEN` is the
 one inversion (`all ≠ 0`), which fails only on a degenerate challenge; everything else rests on the openings.
 
-**Defined, not tested**: `PCS_OPEN`'s WHIR (the Rust has a mock), the setup's commitment (`setupTreeWith`) and the
-circuit's digest over `F` (`σ` is not in Lean: `RecDeployment.Real` binds them to the Rust's values), the extractor,
-the experiments, the Props.
+**Defined, not tested here**: `PCS_OPEN`'s WHIR (the Rust has a mock), the extractor, the experiments, the Props. The
+setup's commitment (`setupTreeWith`) and the circuit's digest over Keccak-f[1600], of the Lean compiler's `σ`, `κ` at
+π1's reference IV, are evaluated against the Rust's values by `rec-real-check` (`RecCompose.DigestChecked`,
+`SetupRootChecked`).
 
 ## Open points
 

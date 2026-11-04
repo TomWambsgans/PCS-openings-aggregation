@@ -283,13 +283,12 @@ python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|
 
 ## The recursive verifier: end theorems (`RecCompose/`)
 
-> **Status (2026-11-05): the statements below are under repair.** An adversarial review of the statements
-> ([`RecCompose/Review/STATEMENT_REVIEW.md`](RecCompose/Review/STATEMENT_REVIEW.md)) found that, as stated, the end
-> theorems are vacuous or carry no bound, though their proofs are valid:
-> - `Pi2Circuits` asks the compiler to accept π1-rec3's graph at IVs of every length, and it rejects long ones, so no
->   `Pi2Circuits` exists;
->
-> The fixes are in progress. Until they land, read the theorems below as proved implications, not as end results.
+> **Status (2026-11-05): the review's findings are addressed.** An adversarial review of the statements
+> ([`RecCompose/Review/STATEMENT_REVIEW.md`](RecCompose/Review/STATEMENT_REVIEW.md)) found the end theorems vacuous or
+> without a bound as stated. Each finding is fixed there (its **Fixed** paragraph). For finding 1 (IVs of every
+> length), the per-IV premises are stated for every 32-byte IV, **evaluated at three** (`rec-real-check`) and assumed at
+> the others (IV uniformity is not proved). The hypotheses are inhabited given the evaluations
+> (`RecCompose/Review/NonVacuity.lean`).
 
 The recursive EVM verifier (`crates/leanvm_rec`) runs π2's verifier, then six `PCS_OPEN` calls. Its statements are
 [`RecStatement`](RecStatement/README.md)'s. They come in two parts, because π2's circuit computes π1-rec3's Fiat–Shamir
@@ -312,6 +311,65 @@ theorem RecCompose.recCompleteness_end_fs (D : RecDeployment) (hD : D.Real) (P1 
     (δ2 : ℝ≥0∞) (h2 : RecCompleteness2 D P1 P2 δ2) (δ1 δh : ℝ≥0∞) (h1 : Pi1CompletenessKeccak D P1 δ1)
     (hh : Pi1HazardKeccakHonest D P1 δh) : RecCompletenessWith D (composeProver D P1 P2) (δ1 + δh + δ2)
 ```
+
+**The premises, at 32-byte IVs, and the real deployment** (`RecCompose/IvLength.lean`, `RealDeployment.lean`). π1's
+contract IV `D.pi1IvAt roots` is a Keccak-256 digest, 32 bytes (`RecDeployment.pi1IvAt_length`), and the per-IV
+premises ask for nothing more:
+
+```lean
+structure Pi2Circuits (D : RecDeployment) where
+  rootsAt : List ℕ
+  compiled : List UInt8 → RecCircuit.Compiled
+  compile_ok : ∀ iv, iv.length = 32 →
+    RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) = .ok (compiled iv)
+  stream_eq : ∀ iv, iv.length = 32 → ∀ (w : ℕ → K),
+    D.pi1Stream w = ((compiled iv).streamW (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) w).toArray
+def Pi2ViewChecked {D : RecDeployment} (C : Pi2Circuits D) : Prop :=
+  ∀ iv, iv.length = 32 → viewCheck (C.compiled iv) = true
+def RecDeployment.SetupFromCompiler (D : RecDeployment) : Prop :=
+  ∀ (iv : List UInt8), iv.length = 32 → ∀ (c : RecCircuit.Compiled),
+    RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph RecGraph.Emitted.rootsAt iv) = .ok c →
+      (D.pi2 iv).sigma = c.circuit.sigmaAt ∧ (D.pi2 iv).kappa = c.circuit.kappaAt
+```
+
+A concrete deployment has them all, from four `Prop`s about compiled values, each **checked by evaluation**:
+
+```lean
+def RecCompose.realDeployment (prog : Lv42.Semantics.Program)
+    (hprog : UniStatement.reference.logBytecode = prog.logSize) : RecDeployment
+theorem RecCompose.realDeployment_real (hg : GraphsAgree) (hd : DigestChecked) (hs : SetupRootChecked) :
+    (realDeployment prog hprog).Real
+def RecCompose.pi2Circuits_real (hg : GraphsAgree) (h : IvChecked) : Pi2Circuits (realDeployment prog hprog)
+theorem RecCompose.pi2ViewChecked_real (hg : GraphsAgree) (h : IvChecked) :
+    Pi2ViewChecked (pi2Circuits_real prog hprog hg h)
+def RecCompose.IvChecked : Prop := ∀ iv : List UInt8, iv.length = 32 → ivCheck iv = true
+```
+
+* `realDeployment`: π2's circuit at each IV is the Lean compiler's there (`compiledAt iv`), so `σ`, `κ` are the
+  compiler's by construction (`SetupFromCompiler` is proved). π1's stream is `streamW` of the reference IV's circuit.
+  The program is a parameter: `Real` does not pin `D.pi1.prog`, and the end theorems hold for every program of the
+  reference shape. leanVM 42422001's program is not transcribed in Lean.
+* `DigestChecked`, `SetupRootChecked`: the digest and the setup root of the Lean compiler's `σ`, `κ` at π1's reference
+  IV are the Rust's (`Data.digest`, `Data.setupRoot`). They are `Real`'s two clauses that no proof uses. They link the
+  model's σ, κ (from which the model's contract derives π2's IV) to the deployed contract's constant IV, which the Rust
+  computed from them.
+* `IvChecked`: one `Bool` per 32-byte IV, `ivCheck iv`. It says the compiler accepts π1-rec3's emitted graph at `iv`,
+  the circuit passes `viewCheck`, and `streamAgree` holds with the reference IV's circuit (the same free bits and free
+  reads, each read off the witness the same way). From it, `stream_eq` at every IV is proved
+  (`streamW_eq_of_streamAgree`); it was a functional equation that no evaluation checked. **`IvChecked` is stated for
+  every 32-byte IV, evaluated at three** (π1's reference IV, the zero IV, the all-ones IV; together they set each of
+  the 256 IV constants both ways) and assumed at the others.
+* **IV uniformity is not proved.** The IV enters the compiler only through the seed's message: 256 constants
+  `fresh 0`/`fresh 1` in the seed's Keccak-f input, plus the seed sponge's traces. A `0` is not stored in the sparse
+  `κ`, so `κ` has one entry per IV one-bit more: 19,143 entries at the reference IV (146 one-bits) against 18,997 at the
+  zero IV. Proving that nothing else in the run depends on those constants is a relational simulation of the builder
+  (about 1,200 lines of monadic code) and of the checker (680 lines). That is not done
+  (`RealDeployment.lean`'s docstring).
+* The recursive contract's EVM bytecode is linked to the model **by transcription and test** (`contract.rs`'s parity
+  tests and `RecStatement`'s differential runner), not by Lean. The membership verifier, by contrast, has
+  `Evm.evm_accepts_iff_verifyWith`.
+
+`rec-real-check` (h1, `RecComposeTest/RealCheck.lean`): RESULTS
 
 **The headline is `recKnowledgeSoundness_reduction`**, with no Fiat–Shamir premise. `RecKnowledgeSoundnessReduction D
 pi2Bound` (`RecStatement/Reduction.lean`) says: for every adversary `A` of `Q` calls of `π`, `π⁻¹` against the recursive
@@ -454,7 +512,7 @@ and `recCompleteness_pi2_rec3_final_fs` (with `Pi1CompletenessKeccak D (pi1Rec3P
 
 * `Pi2WitnessComplete`: **proved** (`Pi2W.pi2WitnessComplete`, `RecCircuit/Complete.lean`): the honest witness in value
   order, from four completeness checks added to the compiler's checker (`completeSlots`, `completeValues`,
-  `completeGiven`, `completeCover`; the real graph passes them at both IVs, `rec-view-check`, now about 20 minutes).
+  `completeGiven`, `completeCover`; the real graph passes them at the evaluated IVs, `rec-view-check` and `rec-real-check`, about 9.3 minutes an IV).
 * `Pi2ExperimentLe`: **proved** (`Pi2SimExp.pi2ExperimentLe_p1k`): π2's code commutes with simulation
   (`Pi2SimMorph`), the eager model per permutation (`perm_kc`), the staged run at pure functions (`Pi2SimAt`).
 * `Pi2RunAt`: **not provable as stated** (on a π1 proof with no honest witness the staged run hashes `fixLen 536`'s
@@ -471,8 +529,8 @@ and `recCompleteness_pi2_rec3_final_fs` (with `Pi1CompletenessKeccak D (pi1Rec3P
 
 | Input | What | Who closes it |
 |---|---|---|
-| `Pi2Circuits D`, `hroots`, `GraphsAgree` | the Lean compiler (with its completeness checks) accepts π1-rec3's graph at every π1 IV; `recordedGraph pi1Rec3 = Emitted.graph` | **checked by evaluation**, not by the kernel (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
-| `Pi2ViewChecked C` | at every π1 IV the compiled circuit passes `viewCheck` | **checked by evaluation** (`rec-view-check`) |
+| `D.Real`, `Pi2Circuits D`, `hroots`, `GraphsAgree` | at `realDeployment`: the Lean compiler (with its completeness checks) accepts π1-rec3's graph at every 32-byte π1 IV and decodes π1's stream alike (`IvChecked`); the digest and setup root at the reference IV are the Rust's (`DigestChecked`, `SetupRootChecked`); `recordedGraph pi1Rec3 = Emitted.graph` | **checked by evaluation**, not by the kernel: `IvChecked` at three IVs and assumed at the others (`rec-real-check`), `GraphsAgree` (`RecGraphTest/Pi1Check.lean`) |
+| `Pi2ViewChecked C` | at every 32-byte π1 IV the compiled circuit passes `viewCheck` | from `IvChecked` (`pi2ViewChecked_real`) |
 | `Pi2AlphaFresh D C Fa (p1k D) εα` | `α`'s 536-byte input is not hashed before its query but with probability `εα` (`εα ≤ 2^-201` for `2^-164`) | **proved where the graph accepts** (`lean-pi2-alpha`, below); not needed |
 | `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest` (end to end only) | π1-rec3 at Keccak-f[1600] | the Fiat–Shamir heuristic (π1-rec3's random-permutation theorems) |
 
@@ -569,7 +627,10 @@ theorem RecCompose.Pi1KF.pi1CompletenessFs_rpm (D : RecDeployment) (hsh : D.pi1.
 ```sh
 cd formal/EndToEnd   # on h1
 systemd-run --scope -p MemoryMax=10G lake build RecCompose
-systemd-run --scope -p MemoryMax=12G lake exe rec-view-check   # Pi2ViewChecked, evaluated
+systemd-run --scope -p MemoryMax=12G lake exe rec-view-check   # viewCheck at two IVs, evaluated
+systemd-run --scope -p MemoryMax=16G lake exe rec-real-check   # DigestChecked, IvChecked at three IVs
+systemd-run --scope -p MemoryMax=16G lake exe rec-real-check --setup-only   # SetupRootChecked
+lake env lean ../RecCompose/Review/NonVacuity.lean            # the hypotheses inhabited
 python3 -I Review/RecSoundnessNumbers.py     # pi2Bound in exact rationals
 ```
 

@@ -5,6 +5,7 @@
 import RecCompose.RealDeployment
 import RecCompose.FsClosed
 import RecCompose.Pi2AlphaEnd
+import RecCompose.Pi2KFEnd
 import UniSound.Ids.Deployed
 
 /-!
@@ -18,8 +19,9 @@ about compiled values, checked by evaluation: `RecGraphTest/Pi1Check.lean`, `rec
   `Pi2ViewChecked`, with `hroots` by `rfl`;
 * `inhabited`: so the premises of `recKnowledgeSoundness_reduction`, `recKnowledgeSoundness2_closed`,
   `recKnowledgeSoundness_closed(_fs)`,
-  `Pi2Alpha.recCompleteness2_pi2_rec3_closed` and `_fs` are jointly satisfiable;
-* `reduction`, `soundness2`, `Pi2Alpha.nonVacuity_completeness2`: those end theorems at this deployment, with no
+  `Pi2KF.recCompleteness2_pi2_rec3_kf`, `Pi2Alpha.recCompleteness2_pi2_rec3_closed` and the `_fs` forms are jointly
+  satisfiable;
+* `reduction`, `soundness2`, `Pi2KF.nonVacuity_completeness2_kf` (and `Pi2Alpha.nonVacuity_completeness2`): those end theorems at this deployment, with no
   hypothesis left but the four evaluated ones.
 
 `prog0` is any program of the reference shape's size (`2^19` instructions, all `xor 0 0 0`): `Real` does not pin the
@@ -72,6 +74,9 @@ end RecCompose.NonVacuity
 namespace RecCompose.Pi2Alpha
 
 open RecStatement LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash
+open OracleComp OracleSpec
+open LeanVM LeanVM.Rpm
+open LeanVM.Protocol.Compile LeanVM.Protocol.Compile.Rom
 open Pi2S Pi2K Pi2P Pi2E Pi2G Pi2O
 open scoped ENNReal
 
@@ -89,7 +94,43 @@ theorem nonVacuity_completeness2 (hg : GraphsAgree) (hiv : IvChecked) (hd : Dige
 
 end RecCompose.Pi2Alpha
 
+namespace RecCompose.Pi2KF
+
+open RecStatement LeanVM.Parameters LeanVM.Semantics LeanVM.Protocol LeanVM.Protocol.KeccakHash
+open OracleComp OracleSpec Common
+open LeanVM LeanVM.Rpm
+open LeanVM.Protocol.Compile LeanVM.Protocol.Compile.Rom
+open Pi2S Pi2K Pi2P Pi2E Pi2G Pi2O Pi2Sim
+open Pi1KF (pi1Rec3ProverKF)
+open scoped ENNReal
+
+/-- **π2's completeness at `D0`, the headline form** (π1's prover with its Fiat–Shamir over Keccak-f[1600]), from the
+evaluated inputs only. -/
+theorem nonVacuity_completeness2_kf (hg : GraphsAgree) (hiv : IvChecked) (hd : DigestChecked)
+    (hs : SetupRootChecked) :
+    RecCompleteness2 NonVacuity.D0 (pi1Rec3ProverKF NonVacuity.D0)
+      (pi2Prover NonVacuity.D0 (NonVacuity.circuits hg hiv)
+        (pi2Facts (NonVacuity.real hg hd hs) (NonVacuity.circuits hg hiv) (NonVacuity.viewChecked hg hiv))
+        PcsQuotient.nonceFuel)
+      (delta2' Cost2.pi2RunN alphaBound (tFreshBound2 Cost2.pi2RunN alphaBound)
+        ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel)) :=
+  recCompleteness2_pi2_rec3_kf (NonVacuity.real hg hd hs) (NonVacuity.circuits hg hiv)
+    (NonVacuity.viewChecked hg hiv) rfl hg
+
+end RecCompose.Pi2KF
+
+/-- info: 'RecCompose.NonVacuity.inhabited' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms RecCompose.NonVacuity.inhabited
+/-- info: 'RecCompose.NonVacuity.soundness2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms RecCompose.NonVacuity.soundness2
+/-- info: 'RecCompose.NonVacuity.reduction' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms RecCompose.NonVacuity.reduction
+/-- info: 'RecCompose.Pi2Alpha.nonVacuity_completeness2' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
 #print axioms RecCompose.Pi2Alpha.nonVacuity_completeness2
+/-- info: 'RecCompose.Pi2KF.nonVacuity_completeness2_kf' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi2KF.nonVacuity_completeness2_kf

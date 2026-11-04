@@ -57,6 +57,25 @@ the IVs in the range of `pi1IvAt`). (b) Prove the IV-uniformity of the compiler.
 blocks, ports, `viewOf`, `callsOf`, `validB`, `streamW`) does not depend on those values, and that κ's values do in the
 way `SetupFromCompiler` takes. Until (b) is done, call the premise "evaluated at two IVs, assumed at the others".
 
+**Fixed, (a) only** (`fix-rec-iv`). `Pi2Circuits.compile_ok`, `stream_eq`, `Pi2Layers`' fields, `Pi2ViewChecked` and
+`RecDeployment.SetupFromCompiler` take `iv.length = 32`. Their consumers reach `pi1IvAt` through
+`RecDeployment.pi1IvAt_length` (`RecCompose/IvLength.lean`; π1's contract IV is `digestBytes` of a Keccak-256 output)
+and `Pi2Circuits.compile_okAt`, `stream_eqAt`. The checker itself rejects every other length (`graphOk`:
+`r.iv.length == 32`), which is the "graph" rejection of the 49,152-byte run. At the real deployment
+(`RecCompose/RealDeployment.lean`) the per-IV premises reduce to one `Bool` per IV, **`IvChecked`**: `ivCheck iv` is the
+compile, `viewCheck`, and `streamAgree` with the reference IV's circuit. `stream_eq` follows from `streamAgree` at every
+IV (`streamW_eq_of_streamAgree`), so it is no longer an unchecked functional equation. `SetupFromCompiler` holds by
+construction. `IvChecked` is **stated for every 32-byte IV, evaluated at three** (π1's reference IV, the zero IV, the
+all-ones IV: `rec-real-check`) and assumed at the others.
+
+(b) is **not done**. The κ difference is accounted for. The IV's 256 bits are the seed's permutation-input constants,
+`fresh 0`/`fresh 1`, and a `0` is not stored in the sparse `κ`. So 19,143 − 18,997 = 146 = the reference IV's one-bits.
+Besides `κ`, the IV is in the seed sponge's message and block-0 input traces, in `nodeOk`'s `seedMessage iv` and in
+`graphOk`'s length check. Proving (b) means a relational simulation of the builder (`compileM`, the templates,
+`finish`: about 1,200 lines of monadic code, `κ` being write-only until `finish`) and a transfer of the checker
+(680 lines) and of `validB`. The 256 IV positions also have to be shown to be expression slots that no other gate
+reads `κ` at. That was out of reach here. The three evaluated IVs set each IV constant both ways.
+
 ### 2. The end-to-end knowledge-soundness bound is at least 1 (statement wrong, proved)
 
 `Pi1HazardKeccak D εh` cannot hold with `εh Q < 1` for any `Q`, so `recKnowledgeSoundness_closed_fs` (and the Prop
@@ -213,6 +232,16 @@ circuit at `Data.pi1Iv` give `Data.digest` and `Data.setupRoot`. Construct `real
 `pi1Stream := streamW` at the reference IV) and state `realDeployment.Real` as evaluated. Or drop the unused clauses
 from `Real` and say plainly that the deployed IV constant is the Rust's, linked by test.
 
+**Fixed** (`fix-rec-iv`). `RecCompose.realDeployment prog hprog` (`RealDeployment.lean`) is a concrete deployment.
+π2's circuit at each IV is `pi2CircuitOf` of the Lean compiler's (`compiledAt iv`), π1's stream is `streamW` at the
+reference IV, and the program is a parameter. `realDeployment_real : (realDeployment prog hprog).Real` follows from
+`GraphsAgree` and two run-checked `Prop`s, `DigestChecked` and `SetupRootChecked` (Real's two clauses, as expressions at
+`realPi2 Data.pi1Iv`), evaluated by `rec-real-check` (RESULTS5). `Review/NonVacuity.lean` builds `Pi2Circuits`,
+`Pi2ViewChecked` and `Real` for `realDeployment prog0 rfl` from the evaluated `Prop`s and instantiates
+`recKnowledgeSoundness_reduction`, `recKnowledgeSoundness2_closed` and `Pi2Alpha.recCompleteness2_pi2_rec3_closed`
+there. The two clauses are still used by no proof; their role (the link to the deployed contract's constant IV) is
+documented in `Real`'s docstring.
+
 ### 6. Documentation drift (misleading doc / cosmetic)
 
 - `Security.lean:41–42` and the `RecKnowledgeSoundness` docstring still call `Pi1GraphIsVerifier` "provable, not yet
@@ -229,6 +258,12 @@ from `Real` and say plainly that the deployed IV constant is the Rust's, linked 
   witness-selection function satisfying `Pi2Good` would cover the deployed generator literally.
 - `D.pi1.prog` is not pinned by `Real`. The theorems are for every program of the reference shape. That is a strength,
   but "leanVM 42422001's relation" should say "for the deployment's program".
+
+**Fixed** (`fix-rec-iv`), except the `pi2Prover` item. `Pi1GraphIsVerifier` is called proved in `Security.lean`.
+`rec-view-check`'s timing is about 9.3 minutes an IV in `RecCompose/README.md` and `formal/README.md`. The bytecode's
+link "by transcription and test" is stated in `Security.lean`, `RecStatement/README.md` and `formal/README.md`. `D.pi1.prog`
+is deliberately not pinned (`Real`'s docstring, `realDeployment`'s parameter): the theorems are for the deployment's
+program, any program of the reference shape.
 
 ## Checked and found sound
 

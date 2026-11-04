@@ -45,11 +45,17 @@ open RecCircuit (NONE)
 
 /-! ## The compiler's circuit at an IV, as the deployment's -/
 
-/-- **The Lean compiler on π1-rec3's emitted graph at `iv`** (the default circuit if it rejects). -/
-def compiledAt (iv : List UInt8) : RecCircuit.Compiled :=
-  match RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) with
+/-- A compiler's result's circuit (the default one if it rejects). -/
+def okOr (e : Except String RecCircuit.Compiled) : RecCircuit.Compiled :=
+  match e with
   | .ok c => c
   | .error _ => default
+
+/-- **The Lean compiler on π1-rec3's emitted graph at `iv`** (the default circuit if it rejects). The proofs never
+unfold it into a `match` on the compiler's run (that would make the elaborator evaluate the run): they go through
+`okOr`'s lemmas. -/
+def compiledAt (iv : List UInt8) : RecCircuit.Compiled :=
+  okOr (RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv))
 
 /-- The compiled circuit at π1's reference IV. -/
 def refCompiled : RecCircuit.Compiled := compiledAt Data.pi1Iv
@@ -124,12 +130,16 @@ def streamAgree (c c0 : RecCircuit.Compiled) : Bool :=
       | none => true) &&
     c.freeReads.all (fun e ↦ e.2.all (valAgree X Y))
 
+/-- A compiler's result is a circuit that passes the view check and decodes π1's stream as `c0` does. -/
+def checkOk (c0 : RecCircuit.Compiled) (e : Except String RecCircuit.Compiled) : Bool :=
+  match e with
+  | .ok c => viewCheck c && streamAgree c c0
+  | .error _ => false
+
 /-- **The per-IV check**: the compiler accepts π1-rec3's emitted graph at `iv`, the circuit passes the view check, and
 it decodes π1's stream as the reference IV's circuit does. -/
 def ivCheck (iv : List UInt8) : Bool :=
-  match RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) with
-  | .ok c => viewCheck c && streamAgree c refCompiled
-  | .error _ => false
+  checkOk refCompiled (RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv))
 
 /-- **The per-IV check holds at every 32-byte IV.** Stated for every 32-byte IV, **checked by evaluation at three**
 (π1's reference IV, the zero IV, the all-ones IV: `rec-real-check`), assumed at the others (IV uniformity is not
@@ -138,17 +148,19 @@ def IvChecked : Prop := ∀ iv : List UInt8, iv.length = 32 → ivCheck iv = tru
 
 /-! ## From the checks -/
 
+theorem checkOk_spec {c0 : RecCircuit.Compiled} {e : Except String RecCircuit.Compiled} (h : checkOk c0 e = true) :
+    e = .ok (okOr e) ∧ viewCheck (okOr e) = true ∧ streamAgree (okOr e) c0 = true := by
+  cases e with
+  | error m => exact absurd h Bool.false_ne_true
+  | ok c =>
+    change (viewCheck c && streamAgree c c0) = true at h
+    rw [Bool.and_eq_true] at h
+    exact ⟨rfl, h.1, h.2⟩
+
 theorem ivCheck_spec {iv : List UInt8} (h : ivCheck iv = true) :
     RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) = .ok (compiledAt iv) ∧
       viewCheck (compiledAt iv) = true ∧ streamAgree (compiledAt iv) refCompiled = true := by
-  unfold ivCheck at h
-  unfold compiledAt
-  split at h
-  · next c hc =>
-    rw [hc]
-    simp only [Bool.and_eq_true] at h
-    exact ⟨rfl, h.1, h.2⟩
-  · exact absurd h (by simp)
+  exact checkOk_spec h
 
 theorem val_eq_of_valAgree {X Y : RecCircuit.Ctx} (hX : X.kd = RecCircuit.denseKappa X.C)
     (hY : Y.kd = RecCircuit.denseKappa Y.C) {v : ℕ} (h : valAgree X Y v = true) (w : ℕ → K) :
@@ -215,10 +227,15 @@ theorem streamW_eq_of_streamAgree {c c0 : RecCircuit.Compiled} (h : streamAgree 
   · intro e he i
     apply hv
     rcases getD_mem_or (a := e.2) (i := i) with hm | hm
-    · exact Array.all_eq_true_iff_forall_mem.mp (hreads e he) _ hm
+    · exact hreads e he _ hm
     · rw [hm]; exact hN
 
 /-! ## The real deployment's circuits and `Real` -/
+
+/-- (Generic in the graph, so that no proof compares `RecGraph.Pi1.pi1Graph`'s fields by reduction: the kernel would
+run the recorder.) -/
+theorem ofRG_streamLen' (g : RecGraph.Graph) (rootsAt : List ℕ) (iv : List UInt8) :
+    (RecCircuit.ofRG g rootsAt iv).graph.streamLen = g.streamLen := rfl
 
 variable (prog : Lv42.Semantics.Program) (hprog : UniStatement.reference.logBytecode = prog.logSize)
 
@@ -227,8 +244,7 @@ theorem compiledAt_of_compile {iv : List UInt8} {c : RecCircuit.Compiled} (hg : 
     compiledAt iv = c := by
   unfold GraphsAgree at hg
   rw [hg] at hc
-  unfold compiledAt
-  rw [hc]
+  exact (congrArg okOr hc).trans rfl
 
 /-- **The real deployment is `Real`**, from `GraphsAgree` and the two evaluated checks (`DigestChecked`,
 `SetupRootChecked`). The circuit, the calls, the shape, the program IV and the setup columns hold by construction. -/
@@ -251,13 +267,11 @@ def pi2Circuits_real (hg : GraphsAgree) (h : IvChecked) : Pi2Circuits (realDeplo
     rw [hg]
     exact (ivCheck_spec (h iv hiv)).1
   stream_eq iv hiv w := by
-    show realStream w = _
-    unfold realStream
+    show (refCompiled.streamW (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt Data.pi1Iv) w).toArray = _
     exact congrArg List.toArray (streamW_eq_of_streamAgree (ivCheck_spec (h iv hiv)).2.2
       (RecCircuit.ofRG RecGraph.Pi1.pi1Graph RecGraph.Emitted.rootsAt iv)
       (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt Data.pi1Iv)
-      (by show RecGraph.Pi1.pi1Graph.streamLen = RecGraph.Emitted.graph.streamLen
-          unfold GraphsAgree at hg; rw [hg]) w).symm
+      (by unfold GraphsAgree at hg; rw [ofRG_streamLen', ofRG_streamLen', hg]) w).symm
 
 /-- **The real deployment's circuits pass the view check** at every 32-byte IV, from `IvChecked`. -/
 theorem pi2ViewChecked_real (hg : GraphsAgree) (h : IvChecked) : Pi2ViewChecked (pi2Circuits_real prog hprog hg h) :=
