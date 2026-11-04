@@ -786,10 +786,28 @@ pub fn open(proved: Proved, setup: &Setup) -> (Reduced<E>, [Hash; 2], Openings) 
         reduced,
         ..
     } = proved;
+    let profile = std::env::var_os("PI2_PROFILE").is_some();
+    let timed = |name: &str, f: &mut dyn FnMut() -> fiat_shamir::transcript::Proof| {
+        let clock = Instant::now();
+        let proof = f();
+        if profile {
+            eprintln!("    open: {:7.3} s  {name}", clock.elapsed().as_secs_f64());
+        }
+        proof
+    };
+    let (mut w, mut q) = (Some(witness), Some(quotient));
     let openings = Openings {
-        witness: opening::open_owned(witness.0, witness.1, &[claim(&reduced.witness)]),
-        quotient: opening::open_owned(quotient.0, quotient.1, &[claim(&reduced.quotient), claim(&reduced.sum)]),
-        setup: opening::open(&setup.table, &setup.committed, &[claim(&reduced.setup)]),
+        witness: timed("W", &mut || {
+            let (table, committed) = w.take().expect("once");
+            opening::open_owned(table, committed, &[claim(&reduced.witness)])
+        }),
+        quotient: timed("Q", &mut || {
+            let (table, committed) = q.take().expect("once");
+            opening::open_owned(table, committed, &[claim(&reduced.quotient), claim(&reduced.sum)])
+        }),
+        setup: timed("setup", &mut || {
+            opening::open(&setup.table, &setup.committed, &[claim(&reduced.setup)])
+        }),
     };
     (reduced, roots, openings)
 }
