@@ -118,7 +118,8 @@ the EVM one, which holds at the real Keccak-f[1600]"):
    adversaries are `def`s: `A`, its queries logged, then π2's explicit extractor; they make `A`'s queries (at most `Q`,
    a conjunct of the Prop) and run in `A`'s time plus the extractor's (preimage replay, `W`'s inversion and decoding,
    Guruswami–Sudan at `2^24`, π1's graph's checks: polynomial; Lean does not model time). The Fiat–Shamir heuristic is
-   applied by the reader to these two adversaries.
+   applied by the reader to these two adversaries, in their Keccak-f[1600] work (`A`'s offline evaluations plus the
+   extractor's graph checks per candidate), the resource it bounds and `Q` does not count.
 3. **The Prop-premise corollaries**, under named hypotheses about π1-rec3 **at Keccak-f[1600]**, motivated by π1-rec3's
    random-permutation theorems, and RecGraph's target `Pi1GraphIsVerifier` (graph = verifier off the merge hazard,
    proved). `Pi1FsKeccak` and `Pi1HazardKeccak` quantify over every `OracleComp` adversary and count only its calls of
@@ -320,13 +321,20 @@ setup's commitment (`setupTreeWith`) and the circuit's digest over Keccak-f[1600
 
 ## Open points
 
-1. **The Props are not proved** (the composition's). π2's part (`RecKnowledgeSoundness2`, `RecCompleteness2`) needs
-   `SpecOf` for the real circuit (from the circuit compiler, `RecCircuit`, and `SpecLink`), the tables' layer (`W`'s and
-   `Q`'s claims as their tables' values: `run_u`, `run_digitsScale`, `RecPiop.sum_tablePoly_omega`), the Fiat–Shamir layer
+1. **The Props are proved in [`RecCompose`](../RecCompose/README.md)**, not here: π2's part by
+   `RecCompose.recKnowledgeSoundness2_closed` and `RecCompose.Pi2KF.recCompleteness2_pi2_rec3_kf`, end to end by the
+   reduction `RecCompose.recKnowledgeSoundness_reduction` and the `_fs` corollaries, at the real deployment from its
+   evaluated premises (`formal/README.md`, "The recursive verifier: end theorems"). π2's part (`RecKnowledgeSoundness2`,
+   `RecCompleteness2`) is proved there from `SpecOf` for the real circuit (from the circuit compiler, `RecCircuit`,
+   and `SpecLink`), the tables' layer (`W`'s and `Q`'s claims as their tables' values: `run_u`, `run_digitsScale`,
+   `RecPiop.sum_tablePoly_omega`), the Fiat–Shamir layer
    and the openings, and π2's circuit computing π1-rec3's graph (`RecCircuit.compile_sound`, and `call_inputs`: π2's calls
    rebuild π1's from the ports). The end-to-end corollaries add RecGraph's `Pi1GraphIsVerifier` and the hypotheses.
-2. **The random-permutation theorems do not formally compose with the circuit's Keccak-f[1600]**. For soundness the
-   meeting point is the reduction `RecKnowledgeSoundnessReduction`: the reader applies the Fiat–Shamir heuristic to
+2. **The random-permutation theorems do not formally compose with the circuit's Keccak-f[1600]**. The Props at
+   Keccak-f[1600] are premises whose readings are heuristic, not theorems; `Pi1CompletenessKeccak` at the recursion's
+   prover has a proved random-permutation reading (`RecCompose.Pi1KF.pi1CompletenessFs_rpm`, `deltaRec3 < 2^-167`).
+   For soundness the meeting point is the reduction `RecKnowledgeSoundnessReduction`: the reader applies the
+   Fiat–Shamir heuristic to
    its two explicit derived adversaries (motivated by `uniKnowledgeSoundness_closed_rec3` and `hazard_prob`). The Props
    `Pi1FsKeccak`, `Pi1HazardKeccak` are false as stated for unbounded adversaries (they grind Keccak-f[1600] offline for
    free); `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest` (about the honest prover, justified by

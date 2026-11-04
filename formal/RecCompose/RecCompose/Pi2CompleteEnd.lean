@@ -52,8 +52,10 @@ def Pi2Good (D : RecDeployment) (C : Pi2Circuits D) (Fa : Pi2Facts D C) (roots :
     (C.G roots).Satisfies (Fa.pubOf roots (publicScalarsOf input.toList vw.1)) (RecCircuit.emb vw.2) ∧
     D.pi1Stream vw.2 = s
 
-/-- **Named input: the circuit compiler's completeness** (not transcribed; the Rust's witness generation and
-`Circuit::check` establish it on the real vector): on a stream π1-rec3's graph accepts, an honest witness exists. -/
+/-- **The circuit compiler's completeness**: on a stream whose π1-rec3 graph checks hold, an honest witness exists.
+Proved at the real deployment (`Pi2W.pi2WitnessComplete`, from the compiler's completeness checks `completeSlots`,
+`completeValues`, `completeGiven`, `completeCover`), which the end theorems use; here it is the input of the
+`Pi2Sim` forms that take it as an argument. -/
 def Pi2WitnessComplete (D : RecDeployment) (C : Pi2Circuits D) (Fa : Pi2Facts D C) : Prop :=
   ∀ (roots : RecSetupRoots) (input : Vector UInt8 32) (s : Array UInt8),
     pi1GraphChecks (D.pi1IvAt roots.pi1) input s = true → ∃ vw, Pi2Good D C Fa roots input s vw

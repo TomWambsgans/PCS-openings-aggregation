@@ -27,6 +27,12 @@ plus π2's extractor's: preimage replay of the log, inversion under `W`'s root, 
 Guruswami–Sudan list decoding at `W`'s `2^24` words, rate `1/2`, and π1-rec3's graph's checks at Keccak-f[1600] on each
 candidate, a polynomial in the log's and the setup's sizes. Lean states the query count; it does not model time.
 
+**The resource the heuristic bounds is their Keccak-f[1600] work**, not `Q`: `A`'s own offline evaluations of
+Keccak-f[1600] (free in the model, uncounted by `Q`), plus the extractor's, chiefly π1-rec3's graph's checks at
+Keccak-f[1600] on each candidate stream (its Fiat–Shamir: IV, seed, the stream's challenges, Flock's draws). The reader's
+Fiat–Shamir premise about these adversaries is a bound in that work; the reduction's `Q` counts only the calls of `π`
+and `π⁻¹` (STATEMENT_REVIEW_2.md, finding 6).
+
 The Fiat–Shamir heuristic for Keccak-f[1600] is applied by the reader, to these two adversaries: π1-rec3's
 random-permutation theorem (`UniSound.Rec3Ref.uniKnowledgeSoundness_closed_rec3`) for the first, `RecGraph.hazard_prob`
 (`2^19/|E|` a uniform `t`) for the second.

@@ -397,7 +397,8 @@ Pr[contract accepts ∧ recExtractor fails] ≤ pi2Bound Q
 The derived adversaries are `def`s: `A`, its queries logged, then π2's explicit extractor `recExtractor2` (preimage
 replay, `W`'s inversion, the fast path, unique and Guruswami–Sudan decoding at `2^24`, π1's graph's checks), which makes
 no query. They run in `A`'s time plus the extractor's, a polynomial; Lean does not model time. The reader applies the
-Fiat–Shamir heuristic for Keccak-f[1600] to these two adversaries. The merge hazard (`RecGraph.MergeHazard`) asks that
+Fiat–Shamir heuristic for Keccak-f[1600] to these two adversaries, in the resource it bounds and `Q` does not: their
+Keccak-f[1600] work, `A`'s offline evaluations plus the extractor's graph checks at Keccak-f[1600] per candidate. The merge hazard (`RecGraph.MergeHazard`) asks that
 π1-rec3's run draw `t` (challenge 49), and `Pi1HazardAccepted` that π1-rec3's graph accept the stream, so the empty
 stream is off it (`RecCompose/Review/StatementReview.lean`: `not_mergeHazard_empty`, `emptyAdversary_hazard_zero`).
 

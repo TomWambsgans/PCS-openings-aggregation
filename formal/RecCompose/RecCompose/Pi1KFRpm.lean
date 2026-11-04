@@ -246,7 +246,9 @@ theorem pi1CompletenessFs_rpm (D : RecDeployment) (hsh : D.pi1.shape = reference
   refine prEvent_bind_mono_of_forall_le _ _ _ _ _ fun o ↦ ?_
   cases o with
   | none => exact le_rfl
-  | some p1 => exact le_of_eq (by rw [verifierFs_eq _ D.pi1 hsh])
+  | some p1 =>
+    exact le_of_eq (congrArg (fun X ↦ Pr{let v ← simulateQ (permImpl π) X}[v = false])
+      (verifierFs_eq queryPermutation D.pi1 hsh t1.roots input p1))
 
 end RecCompose.Pi1KF
 
