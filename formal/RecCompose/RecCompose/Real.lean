@@ -6,7 +6,7 @@ import RecCompose.Bridge
 # The real deployment's inputs that follow from `RecDeployment.Real`
 
 * **`pi2SetupColumns_of_real`**: `Pi2SetupColumns D C`. `RecDeployment.Real` now says how the deployment builds its
-  setup columns (`RecDeployment.SetupFromCompiler`: at every π1 IV, `σ` and `κ` are the Lean compiler's on π1-rec3's
+  setup columns (`RecDeployment.SetupFromCompiler`: at every 32-byte π1 IV, `σ` and `κ` are the Lean compiler's on π1-rec3's
   recorded graph at the emitted graph's roots), so at every setup they are the compiled circuit's that `Pi2Circuits`
   holds (`compile` is a function: `C.compile_ok` names the same circuit).
 -/

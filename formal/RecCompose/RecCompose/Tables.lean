@@ -822,7 +822,7 @@ theorem one_add_digit_ne_zero {t : F} {n : ℕ} (h : QuotientSecurity.sq^[n] t �
 
 end Gen
 
-/-- **The deployment's setup columns are the compiled circuit's**, at every setup (every π1 IV): `κ` and `σ` of
+/-- **The deployment's setup columns are the compiled circuit's**, at every setup (every 32-byte π1 IV): `κ` and `σ` of
 `D.circuitAt roots.pi1` (which the setup's table commits) are `C.G roots`'s (which the PIOP reads). At π1's reference
 IV, `RecDeployment.Real` pins `D`'s `σ`, `κ` by the circuit's digest and the setup's root (the Rust's), and
 `RecCircuitTest/Main.lean` compares the Lean compiler's `σ` (a hash of all `2^24` positions) and `κ` with the Rust's

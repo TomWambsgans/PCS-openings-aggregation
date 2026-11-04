@@ -369,7 +369,20 @@ def RecCompose.IvChecked : Prop := ∀ iv : List UInt8, iv.length = 32 → ivChe
   tests and `RecStatement`'s differential runner), not by Lean. The membership verifier, by contrast, has
   `Evm.evm_accepts_iff_verifyWith`.
 
-`rec-real-check` (h1, `RecComposeTest/RealCheck.lean`): RESULTS
+`rec-real-check` on h1 (2026-11-04, `RecComposeTest/RealCheck.lean`, compiled code). Its output:
+
+```
+reference IV: 19143 kappa entries, 36 ports, logN 24
+DigestChecked: true (digest 6fbe9c1cf44e6a12fc8c2bb23477347a97807ec37f97956e05c5922b9387e96c, Data.digest 6fbe9c1c…e96c)
+IvChecked at the pi1 reference IV (32 bytes): ivCheck true
+IvChecked at the zero IV (32 bytes): ivCheck true
+IvChecked at the all-ones IV (32 bytes): ivCheck true
+SetupRootChecked: true (root 792968e91e97b69f7d2a303474962e9217ac405720ec9900b43dc24fbe07d870, Data.setupRoot 792968e9…d870)
+```
+
+The main run took 41 minutes and 9.2 GB: four compiles of about 9.5 minutes each (the reference IV, then each checked IV). `--setup-only` took 22 minutes and 7.2 GB, and its setup root
+(the WHIR commitment of `2^25` words) took about 13 minutes of that. The runner's per-step millisecond counts are not
+meaningful, because the compiler computes the pure values outside the timed `IO` steps.
 
 **The headline is `recKnowledgeSoundness_reduction`**, with no Fiat–Shamir premise. `RecKnowledgeSoundnessReduction D
 pi2Bound` (`RecStatement/Reduction.lean`) says: for every adversary `A` of `Q` calls of `π`, `π⁻¹` against the recursive

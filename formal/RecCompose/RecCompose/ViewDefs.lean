@@ -22,7 +22,8 @@ links them:
 * **`validB`**: `RecPiop.Circuit.Valid` of `toPiop`, decided by loops over the positions, the blocks and the ports
   (`RecCompose.Valid`: `validB_sound`).
 * **`viewCheck`**: the three, against `Data.circuit` and `Data.pi1Calls`; `Pi2ViewChecked` (`Facts.lean`) is it at
-  every π1 IV, **checked by evaluation** (`RecComposeTest/ViewCheck.lean`).
+  every 32-byte π1 IV, **checked by evaluation at three IVs** (`RecComposeTest/ViewCheck.lean`, `RealCheck.lean`) and
+  assumed at the others.
 -/
 
 namespace RecCompose

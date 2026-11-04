@@ -61,7 +61,7 @@ theorem recKnowledgeSoundness2_of_real (D : RecDeployment) (_hD : D.Real) (L : P
   ⟨recKnowledgeSoundness2_of_layers L (callsPure D), pi2Bound_le_bits⟩
 
 /-- **π2's part at the real deployment, from its named inputs**: the compiled circuit (`C`: the Lean compiler's run on
-π1-rec3's graph at every π1 IV, at the emitted graph's roots; `hg`, the graphs agree, a run), its facts (`Fa`: `SpecOf`,
+π1-rec3's graph at every 32-byte π1 IV, at the emitted graph's roots; `hg`, the graphs agree, a run), its facts (`Fa`: `SpecOf`,
 validity, the shape, the ports), the tables' layer (`T`, open), π2's Fiat–Shamir layer (`hfs`, open), the bridge from
 RecCircuit's end theorem (`hb`: `circuitBridge`, `Bridge.lean`, with the root-word fix `pi1RootWordOk`); the calldata's π1 openings are the contract's (`callsPure`, proved):
 `RecKnowledgeSoundness2 D pi2Bound`,

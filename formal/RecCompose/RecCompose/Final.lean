@@ -11,10 +11,10 @@ The end statements at the real deployment with every proved layer in place, thei
 * π2's Fiat–Shamir layer `Pi2FsLayer D` (proved at the real deployment, `pi2FsLayer_real`: `FsClosed.lean` restates
   these theorems without it);
 * the setup's columns are proved: `RecDeployment.Real` says how the deployment builds them (`SetupFromCompiler`: σ, κ
-  the compiled circuit's at every π1 IV), so `Pi2SetupColumns D C` is `pi2SetupColumns_of_real` and the tables' layer is
+  the compiled circuit's at every 32-byte π1 IV), so `Pi2SetupColumns D C` is `pi2SetupColumns_of_real` and the tables' layer is
   `pi2Tables`;
-* the compiled circuit `C : Pi2Circuits D` (the Lean compiler accepts π1-rec3's graph at every π1 IV, **checked by
-  evaluation**: `rec-circuit-emitted`), at the emitted graph's roots (`hroots`), the Lean recording being the emitted
+* the compiled circuit `C : Pi2Circuits D` (the Lean compiler accepts π1-rec3's graph at every 32-byte π1 IV,
+  **checked by evaluation at three IVs** and assumed at the others: `rec-real-check`, `RecCompose.IvChecked`), at the emitted graph's roots (`hroots`), the Lean recording being the emitted
   graph (`GraphsAgree`, **checked by evaluation**: `RecGraphTest/Pi1Check.lean`);
 * the circuit's facts `Fa : Pi2Facts D C` and the ports' and calls' meaning in the contract's terms
   (`StatementPortMeaning`, `ZeroPortsMeaning`, `CallWordsAgree`, `Pi1CallsLayouts`), kept here as hypotheses; proved for

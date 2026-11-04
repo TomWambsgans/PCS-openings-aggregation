@@ -236,7 +236,7 @@ from `Real` and say plainly that the deployed IV constant is the Rust's, linked 
 π2's circuit at each IV is `pi2CircuitOf` of the Lean compiler's (`compiledAt iv`), π1's stream is `streamW` at the
 reference IV, and the program is a parameter. `realDeployment_real : (realDeployment prog hprog).Real` follows from
 `GraphsAgree` and two run-checked `Prop`s, `DigestChecked` and `SetupRootChecked` (Real's two clauses, as expressions at
-`realPi2 Data.pi1Iv`), evaluated by `rec-real-check` (RESULTS5). `Review/NonVacuity.lean` builds `Pi2Circuits`,
+`realPi2 Data.pi1Iv`), evaluated by `rec-real-check` (both `true` on h1: the digest `6fbe9c1c…e96c` and the root `792968e9…d870` are the Rust's; `IvChecked` at the reference, zero and all-ones IVs: `true`, `true`, `true`). `Review/NonVacuity.lean` builds `Pi2Circuits`,
 `Pi2ViewChecked` and `Real` for `realDeployment prog0 rfl` from the evaluated `Prop`s and instantiates
 `recKnowledgeSoundness_reduction`, `recKnowledgeSoundness2_closed` and `Pi2Alpha.recCompleteness2_pi2_rec3_closed`
 there. The two clauses are still used by no proof; their role (the link to the deployed contract's constant IV) is
