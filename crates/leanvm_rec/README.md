@@ -38,7 +38,7 @@ attack found).
 | statement | leanVM 42422001: 1,000 signatures, 1,023,109 cycles; tables of `2^17`–`2^18` rows, memory `2^21`, bytecode `2^19` | π1's verifier accepts on its public data, minus π1's openings |
 | commitments | C1, C2 (`2^27`-word stacks), setup F, A0, B0 | W (`2^24`), Q (`2^27.91` words), setup (σ, κ) |
 | size | Keccak-f in its verifier: 107 | `2^24` positions, 94.9% used |
-| prover (h1, 16 threads, `-C target-cpu=native`, jemalloc) | 5.9 s, 10.4 GB | 8.0 s + 1.3 s openings, 11.9 GB |
+| prover (h1, 16 threads, `-C target-cpu=native`, jemalloc) | 4.8 s, 10.4 GB | 3.2 s + 1.3 s openings, 9.5 GB |
 | soundness after the union bounds (modelled, `review/leanvm_rec_params.py`) | PIOP 129.0 bits | copy argument 152.7, `t` 140.6 |
 
 WHIR's six openings are about 129 bits in the query-bounded model, or 126.4 by a plain union. These figures are
