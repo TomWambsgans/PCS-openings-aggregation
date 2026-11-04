@@ -71,6 +71,12 @@ theorem pi2CircuitOf_kappa (C : RecCircuit.Circuit) : (pi2CircuitOf C).kappa = C
 def realStream (w : ℕ → K) : Array UInt8 :=
   (refCompiled.streamW (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt Data.pi1Iv) w).toArray
 
+/-- π2's circuit at each IV: the compiler's there. -/
+def realPi2 (iv : List UInt8) : Pi2Circuit := pi2CircuitOf (compiledAt iv).circuit
+
+/-- At π1's reference IV, π2's circuit is the reference compile's (what `rec-real-check` evaluates). -/
+theorem realPi2_ref : realPi2 Data.pi1Iv = pi2CircuitOf refCompiled.circuit := rfl
+
 /-- π1's deployment at the reference shape and leanVM's program IV, for the program `prog`. -/
 def realPi1 (prog : Lv42.Semantics.Program) (hprog : UniStatement.reference.logBytecode = prog.logSize) :
     UniStatement.Deployment :=
@@ -81,28 +87,23 @@ theorems hold for every program of the reference shape). -/
 def realDeployment (prog : Lv42.Semantics.Program) (hprog : UniStatement.reference.logBytecode = prog.logSize) :
     RecDeployment where
   pi1 := realPi1 prog hprog
-  pi2 iv := pi2CircuitOf (compiledAt iv).circuit
+  pi2 := realPi2
   pi1Calls := Data.pi1Calls
   pi1Stream := realStream
 
 /-! ## The evaluated checks -/
 
-/-- The digest of π2's circuit from a compiled one, over Keccak-f[1600] (`Real`'s expression at `Data.pi1Iv`). -/
-def digestOf (C : RecCircuit.Circuit) : List UInt8 :=
-  Id.run ((pi2CircuitOf C).digestWith (m := Id) fun x ↦ pure (LeanVM.Semantics.keccakF1600 x))
-
-/-- The setup root of π2's circuit from a compiled one, over Keccak-f[1600] (`Real`'s expression at `Data.pi1Iv`). -/
-def setupRootOf (C : RecCircuit.Circuit) : List UInt8 :=
-  digestBytes (Id.run ((pi2CircuitOf C).setupTreeWith (m := Id) fun x ↦ pure (LeanVM.Semantics.keccakF1600 x))).root
-
 /-- **The digest of the Lean compiler's `σ`, `κ` at π1's reference IV is the Rust's** (`Circuit::digest`, the constant
 from which the Rust computes the deployed contract's π2 IV). A `Prop` about one value: **checked by evaluation**
 (`rec-real-check`). -/
-def DigestChecked : Prop := digestOf refCompiled.circuit = Data.digest
+def DigestChecked : Prop :=
+  Id.run ((realPi2 Data.pi1Iv).digestWith (m := Id) fun x ↦ pure (LeanVM.Semantics.keccakF1600 x)) = Data.digest
 
 /-- **The setup root of the Lean compiler's `σ`, `κ` at π1's reference IV is the Rust's** (`Setup::new(circuit).root()`,
 a WHIR commitment of `2^25` words). A `Prop` about one value: **checked by evaluation** (`rec-real-check --setup`). -/
-def SetupRootChecked : Prop := setupRootOf refCompiled.circuit = Data.setupRoot
+def SetupRootChecked : Prop :=
+  digestBytes (Id.run ((realPi2 Data.pi1Iv).setupTreeWith (m := Id)
+    fun x ↦ pure (LeanVM.Semantics.keccakF1600 x))).root = Data.setupRoot
 
 /-- A value is read off the witness the same way in two circuits' views (`Ctx.val`): the same producer, then the same
 first forward (a free value) or the same formula, width and `κ` at the producer. -/
@@ -252,9 +253,11 @@ def pi2Circuits_real (hg : GraphsAgree) (h : IvChecked) : Pi2Circuits (realDeplo
   stream_eq iv hiv w := by
     show realStream w = _
     unfold realStream
-    rw [streamW_eq_of_streamAgree (ivCheck_spec (h iv hiv)).2.2 _ (RecCircuit.ofRG RecGraph.Emitted.graph
-      RecGraph.Emitted.rootsAt Data.pi1Iv) (by unfold GraphsAgree at hg; rw [hg]; rfl) w]
-    rfl
+    exact congrArg List.toArray (streamW_eq_of_streamAgree (ivCheck_spec (h iv hiv)).2.2
+      (RecCircuit.ofRG RecGraph.Pi1.pi1Graph RecGraph.Emitted.rootsAt iv)
+      (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt Data.pi1Iv)
+      (by show RecGraph.Pi1.pi1Graph.streamLen = RecGraph.Emitted.graph.streamLen
+          unfold GraphsAgree at hg; rw [hg]) w).symm
 
 /-- **The real deployment's circuits pass the view check** at every 32-byte IV, from `IvChecked`. -/
 theorem pi2ViewChecked_real (hg : GraphsAgree) (h : IvChecked) : Pi2ViewChecked (pi2Circuits_real prog hprog hg h) :=

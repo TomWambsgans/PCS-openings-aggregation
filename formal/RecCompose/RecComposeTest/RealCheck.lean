@@ -7,19 +7,20 @@ import RecCompose.RealDeployment
 `rec-real-check` (compiled code; no kernel evaluation) evaluates the run-checked `Prop`s of
 `RecCompose/RealDeployment.lean`, each as the very expression it names:
 
-* `DigestChecked`: `digestOf refCompiled.circuit` (the digest `RecDeployment.Real` names, of the Lean compiler's `σ`,
-  `κ` at π1's reference IV) against `Data.digest`;
+* `DigestChecked`: its left side at `pi2CircuitOf refCompiled.circuit`, which is `realPi2 Data.pi1Iv` (`realPi2_ref`,
+  `rfl`; the digest `RecDeployment.Real` names, of the Lean compiler's `σ`, `κ` at π1's reference IV), against
+  `Data.digest`;
 * `IvChecked` at three 32-byte IVs: `ivCheck iv` at π1's reference IV (`Data.pi1Iv`), the zero IV and the all-ones IV
   (the compile, `viewCheck`, `streamAgree` with the reference IV's circuit);
-* with `--setup`: also `SetupRootChecked`, `setupRootOf refCompiled.circuit` (the WHIR commitment of the
-  `2^25`-word setup table) against `Data.setupRoot`; with `--setup-only`, that alone.
+* with `--setup`: also `SetupRootChecked`, its left side likewise (the WHIR commitment of the `2^25`-word setup
+  table) against `Data.setupRoot`; with `--setup-only`, that alone.
 
 Closed-term extraction is off, so that nothing is computed at initialization but `refCompiled`.
 -/
 
 set_option compiler.extract_closed false
 
-open RecCompose RecStatement
+open RecCompose RecStatement LeanVM.Protocol.KeccakHash
 
 def hexOf (b : List UInt8) : String :=
   String.join (b.map fun x ↦
@@ -41,10 +42,10 @@ def main (args : List String) : IO UInt32 := do
   flush
   if !only then
     let t ← IO.monoMsNow
-    let d := digestOf refCompiled.circuit
+    let d := Id.run ((pi2CircuitOf refCompiled.circuit).digestWith (m := Id) fun x ↦ pure (LeanVM.Semantics.keccakF1600 x))
     let b := decide (d = Data.digest)
     let t' ← IO.monoMsNow
-    IO.println s!"DigestChecked: {b} (digestOf {hexOf d}, Data.digest {hexOf Data.digest}; {t' - t} ms)"
+    IO.println s!"DigestChecked: {b} (digest {hexOf d}, Data.digest {hexOf Data.digest}; {t' - t} ms)"
     flush
     ok := ok && b
     for (label, iv) in ivs do
@@ -55,10 +56,11 @@ def main (args : List String) : IO UInt32 := do
       ok := ok && v
   if setup then
     let t ← IO.monoMsNow
-    let r := setupRootOf refCompiled.circuit
+    let r := digestBytes (Id.run ((pi2CircuitOf refCompiled.circuit).setupTreeWith (m := Id)
+      fun x ↦ pure (LeanVM.Semantics.keccakF1600 x))).root
     let b := decide (r = Data.setupRoot)
     let t' ← IO.monoMsNow
-    IO.println s!"SetupRootChecked: {b} (setupRootOf {hexOf r}, Data.setupRoot {hexOf Data.setupRoot}; {t' - t} ms)"
+    IO.println s!"SetupRootChecked: {b} (root {hexOf r}, Data.setupRoot {hexOf Data.setupRoot}; {t' - t} ms)"
     flush
     ok := ok && b
   IO.println s!"rec-real-check: {if ok then "every check evaluated holds" else "a check FAILS"}"

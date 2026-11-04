@@ -34,7 +34,9 @@ This library proves part 1 from π2's layers, its bound in bits, and part 1 ⇒ 
 ```sh
 cd formal/EndToEnd   # on h1, under /root/pcs-quotient-fv/ only
 systemd-run --scope -p MemoryMax=10G lake build RecCompose     # the theorems; #guard_msgs checks their axioms
-systemd-run --scope -p MemoryMax=12G lake exe rec-view-check   # Pi2ViewChecked at two IVs (about 3 minutes, 3 GB)
+systemd-run --scope -p MemoryMax=12G lake exe rec-view-check   # viewCheck at two IVs (about 9.3 minutes an IV)
+systemd-run --scope -p MemoryMax=16G lake exe rec-real-check   # DigestChecked, IvChecked at three IVs (RealDeployment.lean)
+systemd-run --scope -p MemoryMax=16G lake exe rec-real-check --setup-only   # SetupRootChecked
 python3 -I Review/RecSoundnessNumbers.py                        # ε2 = pi2Bound in exact rationals
 ```
 
@@ -63,6 +65,8 @@ named inputs; the files:
 | `Valid.lean` | **`validB_sound`**: `validB` gives `RecPiop.Circuit.Valid` of `toPiop`. |
 | `FactsAlg.lean`, `FactsSpec.lean`, `FactsSpecOf.lean` | the formulas' and terms' values, `pubOfC`; `Data`'s facts by kernel decision; **`specOf_data`**. |
 | `Facts.lean` | `Pi2ViewChecked`; **`pi2Facts`** (`Pi2Facts D C`), `pubOfC_canon`, `pi2Facts_pubOf`. |
+| `IvLength.lean` | **`RecDeployment.pi1IvAt_length`**: π1's contract IV has 32 bytes (a Keccak-256 digest); the per-IV premises are stated at 32-byte IVs and reach `pi1IvAt` through it (`Pi2Circuits.compile_okAt`, `stream_eqAt`). |
+| `RealDeployment.lean` | **`realDeployment prog hprog`** (σ, κ the Lean compiler's at every IV, π1's stream its `streamW`), **`realDeployment_real`** (`Real`, from `GraphsAgree`, `DigestChecked`, `SetupRootChecked`), **`pi2Circuits_real`**, **`pi2ViewChecked_real`** (from `GraphsAgree`, `IvChecked`); `ivCheck` (compile, `viewCheck`, `streamAgree`), `streamW_eq_of_streamAgree`. Why IV uniformity is not proved: the module docstring. |
 | `Meanings.lean` | **`statementPortMeaning`**, **`zeroPortsMeaning`**, **`callWordsAgree`** for `pi2Facts`. |
 | `Layouts.lean` | **`pi1CallsLayouts_of_real`** (`stackLayout_words`). |
 | `Final.lean` | **`recKnowledgeSoundness2_final`**, **`recKnowledgeSoundnessReduction_final`**, **`recKnowledgeSoundness_final`**, **`recKnowledgeSoundness_final_fs`**: the end theorems from the named inputs left. |

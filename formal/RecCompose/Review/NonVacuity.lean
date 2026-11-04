@@ -16,10 +16,11 @@ about compiled values, checked by evaluation: `RecGraphTest/Pi1Check.lean`, `rec
 * `real`: `RecDeployment.Real` of a concrete deployment, `realDeployment prog0 rfl`;
 * `circuits`, `viewChecked`: a `Pi2Circuits` of it (the Lean compiler's circuits at every 32-byte IV) and its
   `Pi2ViewChecked`, with `hroots` by `rfl`;
-* `inhabited`: so the premises of `recKnowledgeSoundness2_closed`, `recKnowledgeSoundness_closed(_fs)`,
+* `inhabited`: so the premises of `recKnowledgeSoundness_reduction`, `recKnowledgeSoundness2_closed`,
+  `recKnowledgeSoundness_closed(_fs)`,
   `Pi2Alpha.recCompleteness2_pi2_rec3_closed` and `_fs` are jointly satisfiable;
-* `soundness2`, `Pi2Alpha.nonVacuity_completeness2`: those end theorems at this deployment, with no hypothesis left but the four
-  evaluated ones.
+* `reduction`, `soundness2`, `Pi2Alpha.nonVacuity_completeness2`: those end theorems at this deployment, with no
+  hypothesis left but the four evaluated ones.
 
 `prog0` is any program of the reference shape's size (`2^19` instructions, all `xor 0 0 0`): `Real` does not pin the
 program, and every program of that size gives a real deployment.
@@ -61,6 +62,11 @@ include hg hiv hd hs in
 theorem soundness2 : RecKnowledgeSoundness2 D0 pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 :=
   recKnowledgeSoundness2_closed D0 (real hg hd hs) (circuits hg hiv) rfl hg (viewChecked hg hiv)
 
+include hg hiv hd hs in
+/-- **The end-to-end reduction at `D0`** (the headline knowledge-soundness theorem), from the evaluated inputs only. -/
+theorem reduction : RecKnowledgeSoundnessReduction D0 pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 :=
+  recKnowledgeSoundness_reduction D0 (real hg hd hs) (circuits hg hiv) rfl hg (viewChecked hg hiv)
+
 end RecCompose.NonVacuity
 
 namespace RecCompose.Pi2Alpha
@@ -85,4 +91,5 @@ end RecCompose.Pi2Alpha
 
 #print axioms RecCompose.NonVacuity.inhabited
 #print axioms RecCompose.NonVacuity.soundness2
+#print axioms RecCompose.NonVacuity.reduction
 #print axioms RecCompose.Pi2Alpha.nonVacuity_completeness2
