@@ -75,6 +75,14 @@ foresaw: 21K more execution than the model.
 
 SPEC-REC §7 modelled 5–8 s and about 3 GB beyond π1's prover.
 
+*Branch `prover-perf` (the same proof byte for byte: stream, roots, openings and calldata keccaks unchanged), on
+π1-rec3's real proof, D16v:* prove 7.8 → **3.2 s**, open 1.3 s, peak 11.9 → 9.5 GB. `W` 0.11 s; `h` 0.22 s; `q`
+1.86 s (`w`, `h` on `D` 0.48, the numerator 0.96, `q`'s coefficients 0.26); `Q` 1.00 s; the openings `W` 0.07, `Q`
+1.09, setup 0.12 s (`PI2_PROFILE=1` prints these). The changes: the indicators a chunk of 4,096 points at a time (a
+pair whose block spans the chunk is periodic in it: 16 values a chunk, one batched inversion); `D`'s values as four
+transforms of `2^m`; `σ`, `κ` on `D` with the setup (fixed by the circuit); lazy reductions; `h`'s pulls and pushes
+without the circuit's serial tables; `Q`'s stack built in place (no 2 GB table copy).
+
 **End to end** (`real_end_to_end`, both layouts): π1-rec's real proof → its circuit and witness → π2's proof → its
 three openings verify (`quotient::opening::verify`, what `PCS_OPEN` checks) → the contract accepts, `PCS_OPEN`
 attesting exactly its nine claims in eight calls (π1's five are the vector's inputs, which π1's openings prove) → 18
