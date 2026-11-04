@@ -5,6 +5,8 @@
 import RecCompose.Pi2SimCore
 import RecCompose.Pi2TFreshPi2
 import RecCompose.Pi2CallsOpen
+import RecCompose.Pi2RunCost
+import RecCompose.Pi2RunDuplex
 
 /-!
 # π2's completeness at π1-rec3's honest prover, the staged run's experiment and analysis proved
@@ -80,6 +82,37 @@ theorem recCompleteness_pi2_rec3_fs {D : RecDeployment} (hD : D.Real) (C : Pi2Ci
   recCompleteness_end_fs D hD (pi1Rec3Prover D) _ _
     (recCompleteness2_pi2_rec3 hD C hchk hroots hg hdup hcost hal hwc) δ1 δh h1 hh
 
+/-! ## The duplex shape and the cost proved -/
+
+/-- **π2's completeness at π1-rec3's honest prover**, the staged run's duplex shape (`pi2RunDuplex_p1k`) and block count
+(`pi2RunCost_p1k`, `N = pi2RunN ≤ 2^50`) proved: from `α`'s freshness and the witness's completeness. -/
+theorem recCompleteness2_pi2_rec3_closed {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
+    (hchk : Pi2ViewChecked C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) {εα : ℝ≥0∞}
+    (hal : Pi2AlphaFresh D C (pi2Facts hD C hchk) (p1k D) εα) (hwc : Pi2WitnessComplete D C (pi2Facts hD C hchk)) :
+    RecCompleteness2 D (pi1Rec3Prover D) (pi2Prover D C (pi2Facts hD C hchk) PcsQuotient.nonceFuel)
+      (delta2' Cost2.pi2RunN εα (tFreshBound2 Cost2.pi2RunN εα)
+        ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel)) :=
+  recCompleteness2_pi2_rec3 hD C hchk hroots hg (pi2RunDuplex_p1k D C _) (pi2RunCost_p1k hD hg C _) hal hwc
+
+/-- **δ2 in bits**: below `2^-164` at `εα ≤ 2^-201`. -/
+theorem delta2_rec3_le {εα : ℝ≥0∞} (ha : εα ≤ (2 : ℝ≥0∞)⁻¹ ^ 201) :
+    delta2' Cost2.pi2RunN εα (tFreshBound2 Cost2.pi2RunN εα)
+      ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel) ≤ (2 : ℝ≥0∞)⁻¹ ^ 164 :=
+  delta2_pi2_le2 Cost2.pi2RunN_le ha
+
+/-- **The recursive verifier's completeness end to end** at π1-rec3's honest prover, the duplex shape and the cost
+proved. -/
+theorem recCompleteness_pi2_rec3_closed_fs {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
+    (hchk : Pi2ViewChecked C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) {εα : ℝ≥0∞}
+    (hal : Pi2AlphaFresh D C (pi2Facts hD C hchk) (p1k D) εα) (hwc : Pi2WitnessComplete D C (pi2Facts hD C hchk))
+    (δ1 δh : ℝ≥0∞) (h1 : Pi1CompletenessKeccak D (pi1Rec3Prover D) δ1)
+    (hh : Pi1HazardKeccakHonest D (pi1Rec3Prover D) δh) :
+    RecCompletenessWith D (composeProver D (pi1Rec3Prover D) (pi2Prover D C (pi2Facts hD C hchk) PcsQuotient.nonceFuel))
+      (δ1 + δh + delta2' Cost2.pi2RunN εα (tFreshBound2 Cost2.pi2RunN εα)
+        ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel)) :=
+  recCompleteness_pi2_rec3_fs hD C hchk hroots hg (pi2RunDuplex_p1k D C _) (pi2RunCost_p1k hD hg C _) hal hwc δ1 δh
+    h1 hh
+
 end RecCompose.Pi2Sim
 
 /-- info: 'RecCompose.Pi2Sim.recCompleteness2_pi2_rec3' depends on axioms: [propext, Classical.choice, Quot.sound] -/
@@ -89,3 +122,15 @@ end RecCompose.Pi2Sim
 /-- info: 'RecCompose.Pi2Sim.recCompleteness_pi2_rec3_fs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.Pi2Sim.recCompleteness_pi2_rec3_fs
+
+/-- info: 'RecCompose.Pi2Sim.recCompleteness2_pi2_rec3_closed' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi2Sim.recCompleteness2_pi2_rec3_closed
+
+/-- info: 'RecCompose.Pi2Sim.delta2_rec3_le' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi2Sim.delta2_rec3_le
+
+/-- info: 'RecCompose.Pi2Sim.recCompleteness_pi2_rec3_closed_fs' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi2Sim.recCompleteness_pi2_rec3_closed_fs
