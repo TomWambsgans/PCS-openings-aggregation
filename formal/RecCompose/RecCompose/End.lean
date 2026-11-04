@@ -19,9 +19,13 @@ import RecGraph.Sim.End
 * **`recKnowledgeSoundness2_real`** (π2's part, in the random-permutation model): at a real deployment, with π2's layers
   and the calldata's π1 openings, `RecKnowledgeSoundness2 D pi2Bound`, and `pi2Bound Q ≤ 2^-64` for `Q ≤ 2^64`
   (`2^-64.93` at `2^64`: 128.93 bits as `Q / ε2`).
-* **`recKnowledgeSoundness_end`** (end to end, against Lv42's `M3Holds`): `RecKnowledgeSoundness D pi2Bound ε1 εh` for
-  every `ε1`, `εh` (the Props' own hypotheses: `Pi1GraphIsVerifier`, `Pi1FsKeccak ε1`, `Pi1HazardKeccak εh`), from Part 1
-  and the couplings.
+* **`recKnowledgeSoundnessReduction_end`** (end to end, against Lv42's `M3Holds`, as an explicit reduction):
+  `RecKnowledgeSoundnessReduction D pi2Bound`, from Part 1, the couplings and `RecGraph.Pi1.pi1GraphIsVerifier`. No
+  Fiat–Shamir hypothesis: the bound is `pi2Bound Q` plus π1-rec3's and the hazard's experiments for the derived
+  adversaries `pi1Adversary A`, `hazardAdversary A`.
+* **`recKnowledgeSoundness_end`** (its Prop-premise corollary): `RecKnowledgeSoundness D pi2Bound ε1 εh` for every
+  `ε1`, `εh` (the Props' own hypotheses: `Pi1GraphIsVerifier`, `Pi1FsKeccak ε1`, `Pi1HazardKeccak εh`, the last two
+  false as stated for unbounded adversaries), from Part 1 and the couplings.
 * **`recCompleteness_end`**: `RecCompleteness D P1 P2 δ1 δh δ2` for every `δ1`, `δh` (the Props' own hypotheses:
   `Pi1GraphIsVerifier`, `Pi1CompletenessKeccak δ1`, `Pi1HazardKeccakHonest δh`), from π2's completeness
   `RecCompleteness2 D P1 P2 δ2` (π2's honest prover is not transcribed: a named hypothesis) and the couplings.
@@ -68,8 +72,22 @@ theorem recKnowledgeSoundness2_real (D : RecDeployment) (hD : D.Real) (C : Pi2Ci
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64 :=
   recKnowledgeSoundness2_of_real D hD (pi2Layers_of C Fa T hfs (pi2CircuitAccepts_of_bridge C Fa hroots hg hb))
 
-/-- **The recursive verifier is knowledge sound end to end**, against leanVM 42422001's relation, at the real
-deployment: `RecKnowledgeSoundness D pi2Bound ε1 εh` for every `ε1`, `εh`, i.e. under `Pi1GraphIsVerifier`,
+/-- **The recursive verifier is knowledge sound end to end, as an explicit reduction**, against leanVM 42422001's
+relation, at the real deployment: `RecKnowledgeSoundnessReduction D pi2Bound`. For every adversary `A` of `Q` queries,
+the derived adversaries `pi1Adversary D A`, `hazardAdversary D A` make at most `Q` queries, and the contract accepts
+while `recExtractor` fails with probability at most `pi2Bound Q` plus the probability that `pi1Adversary D A` breaks
+π1-rec3 at Keccak-f[1600] plus the probability that `hazardAdversary D A` hits the merge hazard on a stream π1-rec3's
+graph accepts. The couplings and graph = verifier are proved; the only inputs are π2's layers `L`. -/
+theorem recKnowledgeSoundnessReduction_end (D : RecDeployment) (hD : D.Real) (L : Pi2Layers D pi2Bound) :
+    RecKnowledgeSoundnessReduction D pi2Bound :=
+  recKnowledgeSoundnessReduction_of_part1 (recKnowledgeSoundness2_of_real D hD L).1 (experimentsAgree D)
+    (hazardCoupling D)
+    (pi1Coupling D (callsPure D)
+      (pi1OpeningsAgree D hD.2.2.1 pi1RunShape pi1RunOpenings (pi1CallsShape_data D hD.2.1)))
+    RecGraph.Pi1.pi1GraphIsVerifier
+
+/-- **The recursive verifier is knowledge sound end to end, the Prop-premise corollary**, against leanVM 42422001's
+relation, at the real deployment: `RecKnowledgeSoundness D pi2Bound ε1 εh` for every `ε1`, `εh`, i.e. under `Pi1GraphIsVerifier`,
 `Pi1FsKeccak ε1` and `Pi1HazardKeccak εh`, error `pi2Bound Q + ε1 Q + εh Q`. The couplings are proved
 (`experimentsAgree`, `hazardCoupling`, `pi1Coupling`, `callsPure`, `pi1OpeningsAgree` with `pi1RunShape` and
 `pi1CallsShape_data`, `pi1RunShape`, `pi1RunOpenings`): the only inputs are π2's layers `L`. -/
@@ -106,9 +124,10 @@ theorem recCompleteness_end (D : RecDeployment) (hD : D.Real) (P1 : Pi1Prover D)
 /-! ## With `Pi1GraphIsVerifier` proved (`RecGraph.Pi1.pi1GraphIsVerifier`, `lean-rec-graph` 614fbe0) -/
 
 /-- **The recursive verifier is knowledge sound end to end, the graph being π1-rec3's verifier off the hazard proved**:
-for every `ε1`, `εh`, under the Fiat–Shamir heuristic for Keccak-f[1600] (`Pi1FsKeccak ε1`, `Pi1HazardKeccak εh`) only,
-the explicit extractor `recExtractor` fails while the contract accepts with probability at most
-`pi2Bound Q + ε1 Q + εh Q`. -/
+for every `ε1`, `εh`, under `Pi1FsKeccak ε1`, `Pi1HazardKeccak εh` only (false as stated for unbounded adversaries: the
+Fiat–Shamir heuristic for adversaries of bounded Keccak-f[1600] work, which Lean does not model; the statement without
+them is `recKnowledgeSoundnessReduction_end`), the explicit extractor `recExtractor` fails while the contract accepts
+with probability at most `pi2Bound Q + ε1 Q + εh Q`. -/
 theorem recKnowledgeSoundness_end_fs (D : RecDeployment) (hD : D.Real) (L : Pi2Layers D pi2Bound)
     (ε1 εh : ℕ → ℝ≥0∞) (h1 : Pi1FsKeccak D ε1) (hh : Pi1HazardKeccak D εh) :
     RecKnowledgeSoundnessWith D (recExtractor D) fun Q ↦ pi2Bound Q + ε1 Q + εh Q :=
@@ -133,6 +152,10 @@ end RecCompose
 /-- info: 'RecCompose.recKnowledgeSoundness2_real' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.recKnowledgeSoundness2_real
+
+/-- info: 'RecCompose.recKnowledgeSoundnessReduction_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.recKnowledgeSoundnessReduction_end
 
 /-- info: 'RecCompose.recKnowledgeSoundness_end' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

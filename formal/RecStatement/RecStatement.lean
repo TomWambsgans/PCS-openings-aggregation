@@ -6,6 +6,7 @@ import RecStatement.Core
 import RecStatement.Verifier
 import RecStatement.Calls
 import RecStatement.Security
+import RecStatement.Reduction
 import RecStatement.Lemmas.Main
 import RecStatement.Lemmas.SpecLink
 
@@ -25,12 +26,15 @@ import RecStatement.Lemmas.SpecLink
   (`push_side`), the public side (`publicSide_eq`), the one inversion's two nonzero conditions (`all_ne_zero_iff`), and
   **`checks_claims_iff`**/**`checks_claims_iff_post2`**: the checks pass and the claims hold iff `t ∉ V_{m+2}`,
   `c_h + c_q ≠ 0` and `RecPiop.Post2`;
-* **the end statements** (`Security`), in two parts: π2's, in the random-permutation model (`RecKnowledgeSoundness2`,
+* **the end statements** (`Security`, `Reduction`): π2's, in the random-permutation model (`RecKnowledgeSoundness2`,
   `RecCompleteness2`: the contract accepts only if π1-rec3's recorded graph, run with Keccak-f[1600], accepts a stream
-  π2's extractor outputs, its calls the contract's), and the end-to-end corollaries against leanVM 42422001's relation
-  (`RecKnowledgeSoundness`, `RecCompleteness`, `Lv42.Protocol.M3Holds`) under named hypotheses about π1-rec3 at
-  Keccak-f[1600] (`Pi1FsKeccak`, `Pi1HazardKeccak`, `Pi1CompletenessKeccak`: the Fiat–Shamir heuristic, justified by
-  π1-rec3's random-permutation theorems) and RecGraph's target (`Pi1GraphIsVerifier`); stated, not proved.
+  π2's extractor outputs, its calls the contract's); end-to-end knowledge soundness against leanVM 42422001's relation
+  as an **explicit reduction** (`RecKnowledgeSoundnessReduction`: the break is bounded by π2's error plus π1-rec3's and
+  the merge hazard's experiments at Keccak-f[1600] for two explicit derived adversaries, `pi1Adversary`,
+  `hazardAdversary`, of `A`'s queries); and the end-to-end corollaries (`RecKnowledgeSoundness`, `RecCompleteness`,
+  `Lv42.Protocol.M3Holds`) under named hypotheses about π1-rec3 at Keccak-f[1600] (`Pi1FsKeccak`, `Pi1HazardKeccak`,
+  false as stated for unbounded adversaries: the Fiat–Shamir heuristic for bounded ones; `Pi1CompletenessKeccak`) and
+  RecGraph's target (`Pi1GraphIsVerifier`); stated, not proved.
 
 The build fails if a headline definition or theorem uses an axiom beyond Lean's three standard ones.
 -/
@@ -70,6 +74,22 @@ The build fails if a headline definition or theorem uses an axiom beyond Lean's 
 /-- info: 'RecStatement.Pi1HazardKeccak' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecStatement.Pi1HazardKeccak
+
+/-- info: 'RecStatement.Pi1HazardAccepted' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.Pi1HazardAccepted
+
+/-- info: 'RecStatement.pi1Adversary' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.pi1Adversary
+
+/-- info: 'RecStatement.hazardAdversary' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.hazardAdversary
+
+/-- info: 'RecStatement.RecKnowledgeSoundnessReduction' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecStatement.RecKnowledgeSoundnessReduction
 
 /-- info: 'RecStatement.RecKnowledgeSoundness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
