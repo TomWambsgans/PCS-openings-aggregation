@@ -83,3 +83,16 @@ So `Pi1GraphAccepts`'s roots disagreed on honest proofs, and the contract opened
 The fix (`fix-pi1-root`, merged at `leanvm-rec` 613b2fa) is in π1's prover: it now writes each root as its root word
 (`hash_to_scalars`), as π2's prover and UniComplete's honest prover do. `RecCircuit.pcsWord` passes stream roots as
 they are, so `Pi1RootWordOk` is `pi1RootWordOk` (`rfl`).
+
+## π2's completeness, closed (`lean-pi2-run`)
+
+| File | What |
+|---|---|
+| `Pi2P1.lean` | `p1k D` (π1-rec3's honest prover over the two calls), `pi1Rec3Prover D`. |
+| `Pi2SimMorph.lean` | π2's code (setup, IV, graph verifier, run, contract, prover, `expW2`, stages) commutes with monad morphisms; `sim_expW2`, `sim_stageA/B/C`. |
+| `Pi2SimAt.lean` | `stream_split`, `tInput_pre2_length` (`536` bytes), `stagedAt`, `runAt_staged`, **`stagedAt_good`**. |
+| `Pi2SimExp.lean` | `perm_kc`, `experiment_eq_kc`, **`pi2ExperimentLe_p1k`**; `Pi2RunAt` as stated is not provable (no honest witness). |
+| `Pi2SimCore.lean` | `rejects_at_good`, **`rejectGood_pi2_good`** (no `Pi2RunAt`). |
+| `Pi2Chain.lean`, `Pi2TFresh.lean`, `Pi2TFreshPi2.lean` | `Holds2` (`Pi2AlphaFresh` for the false `Pi2HashBeforeAlpha`), `recCompleteness2_of_staged2`, `delta2'`; **`pi2TFresh_of`**. |
+| `Pi2RunDuplex.lean`, `Pi2RunCost.lean` | **`pi2RunDuplex_p1k`**, **`pi2RunCost_p1k`** (`pi2RunN ≤ 2^50`). |
+| `Pi2SimEnd.lean`, `Pi2Closed.lean` | **`recCompleteness2_pi2_rec3_final`**, **`recCompleteness_pi2_rec3_final_fs`**, `delta2_rec3_le` (`≤ 2^-164`). |

@@ -398,14 +398,50 @@ and `recCompleteness_pi2_closed_fs` (the same inputs, `Pi1CompletenessKeccak D P
   independently), so π2's verifier, contract, IV, setup and graph verifier are restated with Keccak-256 an explicit call
   (`Pi2CompleteH.lean`, equal at the sponge); the experiment is an inequality, not an equality (P1 returning `none`).
 
+**Closed** (`lean-pi2-run`; `Pi2Closed.lean`): P1 is π1-rec3's honest prover (`pi1Rec3Prover D`, its two-call
+program `p1k D`, no more a parameter), and every provable input of `recCompleteness2_pi2_closed` is proved:
+
+```lean
+theorem RecCompose.Pi2Sim.recCompleteness2_pi2_rec3_final {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
+    (hchk : Pi2ViewChecked C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) {εα : ℝ≥0∞}
+    (hal : Pi2AlphaFresh D C (pi2Facts hD C hchk) (p1k D) εα) :
+    RecCompleteness2 D (pi1Rec3Prover D) (pi2Prover D C (pi2Facts hD C hchk) PcsQuotient.nonceFuel)
+      (delta2' Cost2.pi2RunN εα (tFreshBound2 Cost2.pi2RunN εα)
+        ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel))
+theorem RecCompose.Pi2Sim.delta2_rec3_le {εα : ℝ≥0∞} (ha : εα ≤ (2 : ℝ≥0∞)⁻¹ ^ 201) :
+    delta2' Cost2.pi2RunN εα (tFreshBound2 Cost2.pi2RunN εα)
+      ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel) ≤ (2 : ℝ≥0∞)⁻¹ ^ 164
+```
+
+and `recCompleteness_pi2_rec3_final_fs` (with `Pi1CompletenessKeccak D (pi1Rec3Prover D) δ1`,
+`Pi1HazardKeccakHonest D (pi1Rec3Prover D) δh`): `RecCompletenessWith D (composeProver D (pi1Rec3Prover D) (pi2Prover …))
+(δ1 + δh + delta2' …)`. How each input went:
+
+* `Pi2WitnessComplete`: **proved** (`Pi2W.pi2WitnessComplete`, `RecCircuit/Complete.lean`): the honest witness in value
+  order, from four completeness checks added to the compiler's checker (`completeSlots`, `completeValues`,
+  `completeGiven`, `completeCover`; the real graph passes them at both IVs, `rec-view-check`, now about 20 minutes).
+* `Pi2ExperimentLe`: **proved** (`Pi2SimExp.pi2ExperimentLe_p1k`): π2's code commutes with simulation
+  (`Pi2SimMorph`), the eager model per permutation (`perm_kc`), the staged run at pure functions (`Pi2SimAt`).
+* `Pi2RunAt`: **not provable as stated** (on a π1 proof with no honest witness the staged run hashes `fixLen 536`'s
+  zeros where the prover hashes its `64`-byte input), and **not needed**: `Pi2SimCore.rejectGood_pi2_good` uses the
+  staged run's verdict and priors where the graph accepts (`stagedAt_good`).
+* `Pi2RunDuplex`, `Pi2RunCost`: **proved** (`pi2RunDuplex_p1k`; `pi2RunCost_p1k`, `N = pi2RunN ≈ 2^47.9 ≤ 2^50`).
+* `Pi2HashBeforeAlpha`: **false** at π1-rec3's prover (it hashes `s₂ = H(s₁)`, 32 bytes, before `α`): replaced by
+  `Pi2AlphaFresh εα` (`Pi2Chain`: `Holds2`, `α`'s chain with stage A's 32-byte inputs counted, `(2N + 1)/2^256`).
+* `Pi2TFresh`: **proved** from `Pi2RunCost` and `Pi2AlphaFresh` (`pi2TFresh_of`, `tFreshBound2 ≤ 2^-200`; `Q`'s leaves
+  depend on `s₃`, so the argument counts 64-byte queries beginning with an answer, `Pi2TFresh.lean`).
+* `Pi2Pi1Openings`: proved (`pi2Pi1Openings`).
+
 **The named inputs left**:
 
 | Input | What | Who closes it |
 |---|---|---|
-| `Pi2Circuits D`, `hroots`, `GraphsAgree` | the Lean compiler accepts π1-rec3's graph at every π1 IV; `recordedGraph pi1Rec3 = Emitted.graph` | **checked by evaluation**, not by the kernel (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
-| `Pi2ViewChecked C` | at every π1 IV the compiled circuit passes `viewCheck`: its view (`viewOf`, the Rust's `adapt` transcribed) is `Data.circuit`, its calls `Data.pi1Calls`, `validB` (RecPiop's validity by loops) accepts it | **checked by evaluation** (`rec-view-check`, at π1's reference IV and the zero IV: `viewCheck true`); from it `pi2Facts` (`Facts.lean`: `SpecOf` by `specOf_data`, validity by `validB_sound`), the meanings (`Meanings.lean`) |
-| `Pi2WitnessComplete D C Fa` | the compiled circuit's completeness: on a π1 stream π1-rec3's graph accepts, a witness satisfies the circuit at the honest public limbs and holds the stream | the Rust's witness generation and `Circuit::check` (not transcribed) |
-| `Pi2ExperimentLe`, `Pi2RunAt`, `Pi2RunDuplex`, `Pi2RunCost N`, `Pi2HashBeforeAlpha`, `Pi2TFresh εt` | π2's completeness experiment as the explicit staged two-call run `pi2Staged` (P1 a two-call program `P1k`): the event's probability below the staged run's, the run at fixed functions the prover's, its duplex discipline, `N` block calls, nothing of `32` or `536` bytes hashed before `α`, `t`'s input fresh | open (`lean-pi2-complete`): the simulation-commutation, duplex, cost and freshness lemmas of the composed run, as UniComplete's `ProverSim`, `ProverDuplex`, `ProverCost`, `ProbTFresh` are for π1 |
+| `Pi2Circuits D`, `hroots`, `GraphsAgree` | the Lean compiler (with its completeness checks) accepts π1-rec3's graph at every π1 IV; `recordedGraph pi1Rec3 = Emitted.graph` | **checked by evaluation**, not by the kernel (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
+| `Pi2ViewChecked C` | at every π1 IV the compiled circuit passes `viewCheck` | **checked by evaluation** (`rec-view-check`) |
+| `Pi2AlphaFresh D C Fa (p1k D) εα` | `α`'s 536-byte input is not hashed before its query but with probability `εα` (`εα ≤ 2^-201` for `2^-164`) | open: needs a fresh base input in stage A (π1-rec3's prover, its WHIR openings, the graph's), by lengths or a chain from π2's seed |
+| `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest` (end to end only) | π1-rec3 at Keccak-f[1600] | the Fiat–Shamir heuristic (π1-rec3's random-permutation theorems) |
+
+The earlier form (`recCompleteness2_pi2_closed`, any `P1`, `P1k`, the named staged facts) is kept.
 
 ```sh
 cd formal/EndToEnd   # on h1
