@@ -130,11 +130,11 @@ of it is a `1`, and whether `κ`'s size moved by the popcount difference.
 | 4 | `d67b198881fb44078601544d3440f6bc91488c6fd62992a34bfa5d30716fbed9` | 123 | true | true | 19120 | +51 −74 | true | true |
 | 1000 | `b74dacfd5e63bf47f8601ef74de51666fa02acbd959fcf6500192f96d4d7fef9` | 147 | true | true | 19144 | +1 −0 | true | true |
 | 1001 | `0100000000000000000000000000000000000000000000000000000000000000` | 1 | true | true | 18998 | +1 −146 | true | true |
-| 2 | not finished | | | | | | | |
-| 5 | not finished | | | | | | | |
-| 1002 | not finished | | | | | | | |
+| 2 | `d829b325dcf86381d36326630dfa5802d68e9b94f7dee3cce7ab1c2064ee65dd` | 133 | true | true | 19130 | +52 −65 | true | true |
+| 5 | `a653a850c0156230dabd4dc3627ebf2ba538ef7e83cc840778022c3aa37e4875` | 123 | true | true | 19120 | +53 −76 | true | true |
+| 1002 | `0000000000000000000000000000000000000000000000000000000000000080` | 1 | true | true | 18998 | +0 −145 | true | true |
 
-**6 of 9 sampled IVs evaluated: all hold** (`ivCheck` true, the structure equal, the `κ` difference only `1`s of the expected size). The union of the differences' positions over these IVs: 252 positions, all in `92175..96255` and `≡ 92175 mod 16` (yes), a set of at most 256 slots: the seed's IV constants, one slot a bit. Not finished at hand-off: indices [2, 5, 1002] (the three runs still going; `review2` kept).
+**9 of 9 sampled IVs evaluated: all hold** (`ivCheck` true, the structure equal, the `κ` difference only `1`s of the expected size). The union of the differences' positions over the first six IVs: 252 positions, all in `92175..96255` and `≡ 92175 mod 16` (yes), a set of at most 256 slots: the seed's IV constants, one slot a bit. The last three (indices 2, 5, 1002) were added by the coordinator from the same runs' logs; `review2` is deleted.
 
 **Fix.**
 
