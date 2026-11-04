@@ -438,10 +438,46 @@ and `recCompleteness_pi2_rec3_final_fs` (with `Pi1CompletenessKeccak D (pi1Rec3P
 |---|---|---|
 | `Pi2Circuits D`, `hroots`, `GraphsAgree` | the Lean compiler (with its completeness checks) accepts π1-rec3's graph at every π1 IV; `recordedGraph pi1Rec3 = Emitted.graph` | **checked by evaluation**, not by the kernel (`rec-circuit-emitted`, `RecGraphTest/Pi1Check.lean`) |
 | `Pi2ViewChecked C` | at every π1 IV the compiled circuit passes `viewCheck` | **checked by evaluation** (`rec-view-check`) |
-| `Pi2AlphaFresh D C Fa (p1k D) εα` | `α`'s 536-byte input is not hashed before its query but with probability `εα` (`εα ≤ 2^-201` for `2^-164`) | open: needs a fresh base input in stage A (π1-rec3's prover, its WHIR openings, the graph's), by lengths or a chain from π2's seed |
+| `Pi2AlphaFresh D C Fa (p1k D) εα` | `α`'s 536-byte input is not hashed before its query but with probability `εα` (`εα ≤ 2^-201` for `2^-164`) | **proved where the graph accepts** (`lean-pi2-alpha`, below); not needed |
 | `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest` (end to end only) | π1-rec3 at Keccak-f[1600] | the Fiat–Shamir heuristic (π1-rec3's random-permutation theorems) |
 
 The earlier form (`recCompleteness2_pi2_closed`, any `P1`, `P1k`, the named staged facts) is kept.
+
+**`α`'s freshness** (`lean-pi2-alpha`; `RecCompose/Pi2Alpha*.lean`, see [`RecCompose/README.md`](RecCompose/README.md)):
+the only inputs left are the run-checked ones (and, end to end, the Fiat–Shamir premises):
+
+```lean
+theorem RecCompose.Pi2Alpha.recCompleteness2_pi2_rec3_closed {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
+    (hchk : Pi2ViewChecked C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) :
+    RecCompleteness2 D (pi1Rec3Prover D) (pi2Prover D C (pi2Facts hD C hchk) PcsQuotient.nonceFuel)
+      (delta2' Cost2.pi2RunN Pi2Sim.alphaBound (tFreshBound2 Cost2.pi2RunN Pi2Sim.alphaBound)
+        ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel))
+theorem RecCompose.Pi2Alpha.delta2_alpha_le :
+    delta2' Cost2.pi2RunN Pi2Sim.alphaBound (tFreshBound2 Cost2.pi2RunN Pi2Sim.alphaBound)
+      ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel) ≤ (2 : ℝ≥0∞)⁻¹ ^ 164
+theorem RecCompose.Pi2Alpha.recCompleteness_pi2_rec3_closed_fs {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
+    (hchk : Pi2ViewChecked C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
+    (δ1 δh : ℝ≥0∞) (h1 : Pi1CompletenessKeccak D (pi1Rec3Prover D) δ1)
+    (hh : Pi1HazardKeccakHonest D (pi1Rec3Prover D) δh) :
+    RecCompletenessWith D (composeProver D (pi1Rec3Prover D) (pi2Prover D C (pi2Facts hD C hchk) PcsQuotient.nonceFuel))
+      (δ1 + δh + delta2' Cost2.pi2RunN Pi2Sim.alphaBound (tFreshBound2 Cost2.pi2RunN Pi2Sim.alphaBound)
+        ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel))
+```
+
+* **`εα = alphaBound = 4 · (2 · setupR + 2^47 + 3 · gOpen + 4) / 2^256 ≈ 2^-207.0`** (`alphaBound_le`: `≤ 2^-204`);
+  `εt = tFreshBound2 pi2RunN εα ≤ 2^-200`; **δ2 ≤ 2^-164** (about `2^-164.7`, as before: the copy argument's and `t`'s
+  terms dominate).
+* **Found**: `Pi2AlphaFresh` as stated (every outcome of stage A) is not what the proof can give: where π1-rec3's graph
+  does not accept (π1's prover returning none, or public values not matching the reads), `pi2Staged`'s `α` input is
+  `fixLen`'s `536` zeros, and nothing shows π1-rec3's prover (which may hash `536`-byte inputs) does not hash those.
+  Those outcomes are rejected, so the staged bounds ask `α`'s and `t`'s freshness only where the graph accepted
+  (`Pi2AlphaG.Holds3`); there it is proved.
+* **How**: π2's IV starts by hashing `σ`'s `4 · 2^24 = 2^26` bytes, longer than every Keccak-256 input before it
+  (`Pi2AlphaLen`: π1-rec3's prover, its WHIR openings, the graph's openings, the setup twice), so its answer is uniform;
+  each later hash (the circuit digest, the IV, the seed, `α`'s input) holds the previous answer at a fixed offset, so
+  it is fresh but with probability `(K + 4) / 2^256`, `K ≤ 2^47.01` the inputs hashed before `σ` (`Pi2AlphaChain`).
+* `Pi2WitnessComplete` is no more an argument (proved, `Pi2W.pi2WitnessComplete`); the `Pi2Sim` forms with `hal` are
+  kept.
 
 ```sh
 cd formal/EndToEnd   # on h1

@@ -96,3 +96,24 @@ they are, so `Pi1RootWordOk` is `pi1RootWordOk` (`rfl`).
 | `Pi2Chain.lean`, `Pi2TFresh.lean`, `Pi2TFreshPi2.lean` | `Holds2` (`Pi2AlphaFresh` for the false `Pi2HashBeforeAlpha`), `recCompleteness2_of_staged2`, `delta2'`; **`pi2TFresh_of`**. |
 | `Pi2RunDuplex.lean`, `Pi2RunCost.lean` | **`pi2RunDuplex_p1k`**, **`pi2RunCost_p1k`** (`pi2RunN ≤ 2^50`). |
 | `Pi2SimEnd.lean`, `Pi2Closed.lean` | **`recCompleteness2_pi2_rec3_final`**, **`recCompleteness_pi2_rec3_final_fs`**, `delta2_rec3_le` (`≤ 2^-164`). |
+
+## `α`'s freshness, proved (`lean-pi2-alpha`)
+
+`Pi2AlphaFresh εα` asked `α`'s input to be fresh on every outcome of stage A. Where π1-rec3's graph does not accept
+(π1's prover returning none, or public values not matching the reads) `pi2Staged`'s `α` input is `fixLen`'s `536`
+zeros, which nothing here shows π1-rec3's prover does not hash; those outcomes are rejected (the verdict's first
+component is the graph's). So the staged bounds now ask `α`'s and `t`'s freshness only where the graph accepted
+(`GAcc`), and there `α`'s is proved by a chain from π2's `σ` hash (`4 · 2^24 = 2^26` bytes, longer than every input
+hashed before it): `σd`, the circuit digest (`σd` at byte `25184` of `25248`), the IV (the digest at `80` of `208`),
+the seed (the IV at `16` of `80`), `α`'s input (the seed at `0` of `536`), each fresh but with probability
+`(K + 4) / 2^256`, `K` the inputs hashed before `σ`. No length census of π1-rec3's prover is needed beyond "shorter than
+`2^26` bytes" (its inputs reach `1568` bytes in its stream, `1536` in its WHIR leaves, and possibly `536`).
+
+| File | What |
+|---|---|
+| `Pi2AlphaLen.lean` | **the census**: every Keccak-256 input before `σ`'s is shorter than `2^26` bytes: **`hashOK_setupTreesWithH2`**, **`hashOK_p1k`** (π1-rec3's honest prover: its trees, IV, seed, its stream by a writer calculus `WS` whose small pieces are read off `Cost.WC`'s budgets, its three WHIR openings by `Prog` induction), **`hashOK_graph`** (the graph's openings, from their `3 · gOpen` blocks: `136 · 3 · gOpen ≈ 49.5 MB < 2^26 ≈ 67.1 MB`). |
+| `Pi2AlphaChain.lean` | **`chain_le`** (from a cache of `K` inputs not holding `σ`'s, the chain caches `α`'s `536`-byte input with probability at most `4 · (K + 4) / 2^256`; `HitAt`, `sum_hitAt_le`), **`runAt_read`** (an outcome of the lazy oracles' run is the pure run at its final cache). |
+| `Pi2AlphaSupport.lean` | `GAcc`; **`gAcc_length`** (with `GAcc`, `α`'s input has `536` bytes and `fixLen` keeps it: `Pi2WitnessComplete`, `fixLen_aAt`), **`accA_pi2`**, **`accB_pi2`** (off `GAcc` the verdict's first component is `false`). |
+| `Pi2AlphaFresh.lean` | **`alphaFresh_p1k`**: `α`'s input cached while the graph accepted, at most **`alphaBound = 4 · (2 · setupR + 2^47 + 3 · gOpen + 4) / 2^256`**, **`alphaBound_le`** (`≤ 2^-204`); `prA_le`. |
+| `Pi2AlphaG.lean` | `Holds2` conditioned on `G`: **`Pi2Staged.Holds3`** (`alphaFresh`, `tFresh` with `G`; `accA`, `accB`), `prEvent_staged3_triple_leG`, `prEvent_tquery_leG`, `prEvent_staged_bad_le3`, **`recCompleteness2_of_staged3`**, `tFresh_ofG`, **`pi2TFresh_ofG`**. |
+| `Pi2AlphaEnd.lean` | **`holds3_pi2_p1k`**; **`Pi2Alpha.recCompleteness2_pi2_rec3_closed`**, **`Pi2Alpha.recCompleteness_pi2_rec3_closed_fs`** (the run-checked inputs only, and for the end-to-end form the Fiat–Shamir premises), **`delta2_alpha_le`** (`δ2 ≤ 2^-164`). |
