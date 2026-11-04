@@ -65,7 +65,9 @@ theorem holds3_pi2_p1k {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D) (hc
     (pi2Pi1Openings hD C hchk hroots hg) (p1k D input rows q) input (pi2RunCost_p1k hD hg C _ input rows q hfit hrel)
 
 /-- **π2's completeness at π1-rec3's honest prover**, from the run-checked inputs only (`Pi2Circuits D`, `hroots`,
-`GraphsAgree`, `Pi2ViewChecked C`). -/
+`GraphsAgree`, `Pi2ViewChecked C`). **Superseded** by `Pi2KF.recCompleteness2_pi2_rec3_kf`: `Pi2G.pi1Rec3Prover` hashes
+its Fiat–Shamir over `π`, not over Keccak-f[1600] as the graph does, so "the graph accepts" is rare here
+(`Review/STATEMENT_REVIEW.md`, finding 4). -/
 theorem recCompleteness2_pi2_rec3_closed {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
     (hchk : Pi2ViewChecked C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) :
     RecCompleteness2 D (pi1Rec3Prover D) (pi2Prover D C (pi2Facts hD C hchk) PcsQuotient.nonceFuel)
@@ -81,7 +83,8 @@ theorem delta2_alpha_le :
   Pi2Sim.delta2_rec3_le Pi2Sim.alphaBound_le201
 
 /-- **The recursive verifier's completeness end to end** at π1-rec3's honest prover, from the run-checked inputs and
-the Fiat–Shamir premises. -/
+the Fiat–Shamir premises. **Superseded** by `Pi2KF.recCompleteness_pi2_rec3_kf_fs`: at `Pi2G.pi1Rec3Prover`
+`Pi1CompletenessKeccak` holds only for `δ1 ≈ 1` (finding 4). -/
 theorem recCompleteness_pi2_rec3_closed_fs {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
     (hchk : Pi2ViewChecked C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
     (δ1 δh : ℝ≥0∞) (h1 : Pi1CompletenessKeccak D (pi1Rec3Prover D) δ1)

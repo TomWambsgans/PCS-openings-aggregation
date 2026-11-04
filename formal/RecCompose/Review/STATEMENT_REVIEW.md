@@ -172,6 +172,26 @@ Merkle hash for `commitReal`. Restate `RecCompleteness2` and the `_fs` theorems 
 "Graph accepts" becomes the likely event, and δ2's analysis must be redone for it: α's chain counted π1's prover's
 hashes as `π` queries, and they would no longer be.
 
+**Fixed** (`fix-rec-pi1prover`). `RecCompose.Pi1KF.pi1Rec3ProverKF D` (`Pi1KF.lean`) is `uniProverRec3With2 hKF
+(keccak256With queryPermutation) queryPermutation (flockProve3H hKF) D.pi1`: `proveRec3With2 Hfs Hm F` splits
+UniComplete's hash into the Fiat–Shamir `Hfs` (IV, seed, stream, Flock's draws) and the trees' `Hm` (setup, commitments,
+WHIR), `hKF = pure ∘ keccak256` (no query); `proveRec3With2 H H F = proveRec3With H F` by `rfl`. The theorems at it
+are `Pi2KF.recCompleteness2_pi2_rec3_kf`, `recCompleteness_pi2_rec3_kf_fs` (`Pi2KFEnd.lean`), same δ2
+(`εα = alphaBound ≈ 2^-207`, `εt ≤ 2^-200`, `δ2 ≤ 2^-164`): every count bounds the new prover's, whose Fiat–Shamir is
+no oracle call (the old and new provers are two simulations of one three-call program, so the discipline, the block
+count `2^47` and the census transfer, `Pi1KFTransfer.lean`). The old theorems are kept, marked superseded.
+Non-vacuity (`Review/Pi1ProverReview.lean`, elaborated on h1): the prover's Fiat–Shamir is `keccak256` by `rfl`; off
+π1-rec3's completeness bad events at its own challenges (`BadKF`) the Keccak-f[1600] verifier's run on its stream
+draws its challenges (`pi1KF_challenges`) and `pi1KeccakVerifierWith` accepts its proof at every permutation
+(`pi1KF_accepts`, `Pi1KFCore.lean`); `contract_rejects_le`: the contract's rejection is at most π1's completeness at
+Keccak-f[1600] plus the honest hazard plus the bounded event. `Pi1CompletenessKeccak D (pi1Rec3ProverKF D) δ1` is
+`Pi1CompletenessFs D (pure ∘ keccakF1600) δ1` (`pi1CompletenessKeccak_iff`), whose random-permutation reading
+`Pi1CompletenessFs D queryPermutation deltaRec3` is proved (`pi1CompletenessFs_rpm`, `deltaRec3 < 2^-167`,
+`Pi1KFRpm.lean`); the Keccak reading stays a heuristic premise. Not done: the graph form of `pi1KF_accepts` at a fixed
+permutation (it holds in probability through `completenessPi1Coupling`). Found: `pi1KeccakVerifierWith` does not check
+`r.matrices = none`, unlike `verifyWithFs` with the walk, so it accepts at least what π1-rec3's verifier accepts
+(harmless for completeness; `verifierFs_le`).
+
 ### 5. `RecDeployment.Real` pins the Rust's digest and setup root, but nothing checks them against the Lean compiler, and no proof uses them (misleading; vacuity risk)
 
 `Real` contains `digestWith (D.pi2 Data.pi1Iv) = Data.digest` and `setupTreeWith … .root = Data.setupRoot`, together
