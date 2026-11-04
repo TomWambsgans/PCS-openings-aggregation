@@ -59,6 +59,13 @@ tested); the deployed Rust prover is trusted for completeness". Better, add a re
 `streamRunKF` against the Rust `prove` at a small shape, comparing stream bytes as UniComplete's runner does for the
 main line.
 
+**Caveat added, no test** (`fix-rec-docs2`). The rec3 differential test was started and then dropped for time; it is
+still to do. The docs now carry the membership side's caveat, "the deployed Rust prover is trusted for completeness;
+the Lean prover is a transcription", for π1 (`Pi1KF.lean`'s module docstring and `pi1ProverFs`, `Pi2KFEnd.lean`,
+`formal/README.md`'s "The recursion's π1 prover") and for π2 (`Pi2CompleteEnd.pi2Prover`, compared with the Rust on
+`spec::example()` at `2^9`, `2^10` only, its witness `Classical.choose`; `formal/README.md`'s "π2's honest prover").
+The status note of `formal/README.md` lists it as open.
+
 ### 2. `IvChecked` is a universal over `2^256` IVs. No counterexample exists by code reading or by 9 more evaluations, but it is unproved, and one bad IV would void every end theorem (open premise; docs honest, but the risk is understated)
 
 Every headline theorem takes `C : Pi2Circuits D` and `Pi2ViewChecked C`. At `realDeployment` these come from

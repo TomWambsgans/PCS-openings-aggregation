@@ -503,7 +503,9 @@ and `recCompleteness_pi2_closed_fs` (the same inputs, `Pi1CompletenessKeccak D P
   Keccak-256 and permutation; `pi2Prover`, `Pi2CompleteEnd.lean`: the setup, the IVs, a witness by `Classical.choose`,
   π1's three openings then π2's). **Differential test** (`RecComposeTest/Pi2Prover.lean`, vectors from
   `crates/leanvm_rec/tests/lean_pi2_prover.rs`, `spec::example()` padded to `2^9`, `2^10` positions): the setup's,
-  `W`'s and `Q`'s roots and the stream byte for byte, 2/2.
+  `W`'s and `Q`'s roots and the stream byte for byte, 2/2. **The deployed Rust prover is trusted for completeness**:
+  the Lean prover is a transcription, compared with the Rust on that example only (not on π2's real circuit), and its
+  witness is `Classical.choose` among the honest ones, not the Rust's witness generation.
 * **The algebra** (`Pi2Honest*.lean`, `pi2_honest`): a satisfying witness's honest stacks satisfy π2's four claims and
   `all ≠ 0` off `BadCopy` (a copy denominator zero: at most `2N·|E|²` triples, `card_badCopy_le`) and `BadT`
   (`t ∈ V_{m+2}` or `c_h + c_q = 0` at `t`: at most `8N` values, `card_badT_le`), from `Σ_V h = T` (`sum_hValues`)
@@ -605,9 +607,13 @@ theorem RecCompose.Pi2Alpha.recCompleteness_pi2_rec3_closed_fs {D : RecDeploymen
 `Pi2KFEnd.lean`). The theorems above are at `Pi2G.pi1Rec3Prover D`, whose Fiat–Shamir (IV, seed, stream) is Keccak-256
 over the random permutation `π`. π1-rec3's graph and `pi1KeccakVerifierWith` hash it over the real Keccak-f[1600], so
 there "the graph accepts" has probability about `2^-180` and `Pi1CompletenessKeccak D (pi1Rec3Prover D) δ1` holds only
-at `δ1 ≈ 1`. They are kept, **superseded** by the same theorems at the prover the recursion runs,
+at `δ1 ≈ 1`. They are kept, **superseded** by the same theorems at the Lean prover with the recursion's hashes,
 `Pi1KF.pi1Rec3ProverKF D`: its Fiat–Shamir the pure `keccak256` (Keccak-256 over Keccak-f[1600], the graph's), its
-Merkle trees and three WHIR openings over `π`:
+Merkle trees and three WHIR openings over `π`. As on the membership side, the deployed Rust prover is trusted for completeness; the Lean prover is a transcription of `prove.rs` and `batch.rs`
+at `FLOCK_REC3`, not differentially tested against the Rust π1-rec3 prover (UniComplete's runner compares the main
+line only, Flock omitted, at `2^4`/`2^5`; the Rust π1-rec3 prover is linked to Lean only by the Lean verifier accepting
+one real proof). So the completeness theorems are
+about this Lean prover (and π2's Lean prover, above), not the deployed Rust one:
 
 ```lean
 def RecCompose.Pi1KF.pi1Rec3ProverKF (D : RecDeployment) : Pi1Prover D := pi1ProverFs hKF D

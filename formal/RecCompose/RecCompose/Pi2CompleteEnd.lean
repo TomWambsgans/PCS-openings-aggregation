@@ -11,13 +11,14 @@ import RecCompose.End
 /-!
 # π2's completeness, and the recursive verifier's end to end
 
-* **`pi2Prover D C Fa fuel : Pi2Prover`**, π2's honest prover as the recursion runs it: the setup's trees and π1's and
-  π2's IVs recomputed over `π`, the circuit's witness and public values for π1's stream (`pi2Choice`: a choice of one
-  satisfying the compiled circuit at the values' public limbs and holding π1's stream, `Pi2Good`), then
+* **`pi2Prover D C Fa fuel : Pi2Prover`**, π2's honest prover as the recursion runs it (a Lean transcription; the
+  deployed Rust prover is trusted for completeness, see `pi2Prover`): the setup's trees and π1's and π2's IVs recomputed
+  over `π`, the circuit's witness and public values for π1's stream (`pi2Choice`: a choice of one satisfying the
+  compiled circuit at the values' public limbs and holding π1's stream, `Pi2Good`), then
   `pi2ProveWith` (`prover.rs`'s `prove_with` and `open`, Keccak-256 the sponge over `π`, `π` for the proofs of work), its
   stream and three openings after π1's three.
-* **`Pi2WitnessComplete D C Fa`** (named: the circuit compiler's completeness, which the Rust's witness generation and
-  `Circuit::check` establish on the real vector, not proved): on a stream π1-rec3's graph accepts, such a witness exists.
+* **`Pi2WitnessComplete D C Fa`** (the circuit compiler's completeness; proved at the real deployment,
+  `Pi2W.pi2WitnessComplete`): on a stream whose π1-rec3 graph checks hold, such a witness exists.
 * **`pi2_accepts`** (proved): at a pure permutation, π2's honest prover's proof is accepted by the contract, off the bad
   challenges (π2's arithmetic passes and its claims hold, `contract_accepts`) and the proofs of work, π1's three
   openings accepted.
@@ -93,7 +94,13 @@ noncomputable def pi2ProverWith (D : RecDeployment) (C : Pi2Circuits D) (Fa : Pi
 end With
 
 /-- **π2's honest prover in the random-permutation model**: Keccak-256 the sponge over `π`, `π` itself for WHIR's
-proofs of work. -/
+proofs of work.
+
+The deployed Rust prover is trusted for completeness; this Lean prover is a transcription (`Pi2Prover.lean`, after
+`prover.rs`), compared with the Rust on the circuit compiler's example at `2^9`, `2^10` positions only (setup, `W`, `Q`
+roots and the stream; `RecComposeTest/Pi2Prover.lean`), not on π2's real circuit. Its witness is not the Rust's witness
+generation but `Classical.choose` among the `Pi2Good` witnesses (`pi2Choice`), which exist by
+`Pi2W.pi2WitnessComplete`. -/
 noncomputable def pi2Prover (D : RecDeployment) (C : Pi2Circuits D) (Fa : Pi2Facts D C) (fuel : ℕ) : Pi2Prover :=
   pi2ProverWith (keccak256With queryPermutation) queryPermutation D C Fa fuel
 
