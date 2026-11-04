@@ -283,11 +283,26 @@ python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|
 
 ## The recursive verifier: end theorems (`RecCompose/`)
 
-> **Status (2026-11-05): the review's findings are addressed.** An adversarial review of the statements
-> ([`RecCompose/Review/STATEMENT_REVIEW.md`](RecCompose/Review/STATEMENT_REVIEW.md)) found the end theorems vacuous or
-> without a bound as stated. Each finding is fixed there (its **Fixed** paragraph). For finding 1 (IVs of every
-> length), the per-IV premises are stated for every 32-byte IV, **evaluated at three** (`rec-real-check`) and assumed at
-> the others (IV uniformity is not proved). The hypotheses are inhabited given the evaluations
+> **Status (2026-11-04), after two adversarial reviews of the statements.**
+> The first ([`RecCompose/Review/STATEMENT_REVIEW.md`](RecCompose/Review/STATEMENT_REVIEW.md), at f7c640f) found the
+> end theorems vacuous or without a bound as stated: premises false at long IVs, a soundness bound of at least 1,
+> Fiat–Shamir premises false for unbounded adversaries, a completeness prover hashing its Fiat–Shamir over the wrong
+> function, `Real` unchecked. Each is fixed (its **Fixed** paragraph): per-IV premises at 32-byte IVs, a merge hazard
+> that asks the run to draw `t` on a stream whose graph checks hold, the reduction `recKnowledgeSoundness_reduction`
+> with explicit derived adversaries, the prover `Pi1KF.pi1Rec3ProverKF`, the evaluated `DigestChecked` and
+> `SetupRootChecked`.
+> The second ([`RecCompose/Review/STATEMENT_REVIEW_2.md`](RecCompose/Review/STATEMENT_REVIEW_2.md), at f774b11)
+> found no wrong statement: none vacuous, none with a bound that cannot apply. What it leaves open:
+> * **`IvChecked`**, a universal over every 32-byte π1 IV, is evaluated at sampled IVs, not proved. A single failing IV
+>   would make every end theorem at `realDeployment` vacuous (its finding 2, and `RealDeployment.lean`);
+> * **the completeness theorems' provers are Lean transcriptions**: the deployed Rust π1 and π2 provers are trusted for
+>   completeness (its finding 1; what each Lean prover is compared with the Rust on is under "The recursion's π1
+>   prover" and "π2's honest prover" below);
+> * **the honest hazard `δh`** (its finding 3; see the named inputs' table below).
+>
+> Its documentation fixes are made: `pi1KeccakVerifierWith` is π1-rec3's deployed verifier, not a superset of it
+> (`Pi1KF.verifierFs_eq`, `pi1KeccakVerifierWith_kf_eq`, finding 4); `contract_rejects_le` is unconditional (finding 5);
+> the stale docstrings of finding 6. The hypotheses are inhabited given the evaluations
 > (`RecCompose/Review/NonVacuity.lean`).
 
 The recursive EVM verifier (`crates/leanvm_rec`) runs π2's verifier, then six `PCS_OPEN` calls. Its statements are
@@ -404,7 +419,8 @@ Pr[contract accepts ∧ recExtractor fails] ≤ pi2Bound Q
 The derived adversaries are `def`s: `A`, its queries logged, then π2's explicit extractor `recExtractor2` (preimage
 replay, `W`'s inversion, the fast path, unique and Guruswami–Sudan decoding at `2^24`, π1's graph's checks), which makes
 no query. They run in `A`'s time plus the extractor's, a polynomial; Lean does not model time. The reader applies the
-Fiat–Shamir heuristic for Keccak-f[1600] to these two adversaries. The merge hazard (`RecGraph.MergeHazard`) asks that
+Fiat–Shamir heuristic for Keccak-f[1600] to these two adversaries, in the resource it bounds and `Q` does not: their
+Keccak-f[1600] work, `A`'s offline evaluations plus the extractor's graph checks at Keccak-f[1600] per candidate. The merge hazard (`RecGraph.MergeHazard`) asks that
 π1-rec3's run draw `t` (challenge 49), and `Pi1HazardAccepted` that π1-rec3's graph accept the stream, so the empty
 stream is off it (`RecCompose/Review/StatementReview.lean`: `not_mergeHazard_empty`, `emptyAdversary_hazard_zero`).
 
@@ -494,7 +510,9 @@ and `recCompleteness_pi2_closed_fs` (the same inputs, `Pi1CompletenessKeccak D P
   Keccak-256 and permutation; `pi2Prover`, `Pi2CompleteEnd.lean`: the setup, the IVs, a witness by `Classical.choose`,
   π1's three openings then π2's). **Differential test** (`RecComposeTest/Pi2Prover.lean`, vectors from
   `crates/leanvm_rec/tests/lean_pi2_prover.rs`, `spec::example()` padded to `2^9`, `2^10` positions): the setup's,
-  `W`'s and `Q`'s roots and the stream byte for byte, 2/2.
+  `W`'s and `Q`'s roots and the stream byte for byte, 2/2. **The deployed Rust prover is trusted for completeness**:
+  the Lean prover is a transcription, compared with the Rust on that example only (not on π2's real circuit), and its
+  witness is `Classical.choose` among the honest ones, not the Rust's witness generation.
 * **The algebra** (`Pi2Honest*.lean`, `pi2_honest`): a satisfying witness's honest stacks satisfy π2's four claims and
   `all ≠ 0` off `BadCopy` (a copy denominator zero: at most `2N·|E|²` triples, `card_badCopy_le`) and `BadT`
   (`t ∈ V_{m+2}` or `c_h + c_q = 0` at `t`: at most `8N` values, `card_badT_le`), from `Σ_V h = T` (`sum_hValues`)
@@ -596,9 +614,13 @@ theorem RecCompose.Pi2Alpha.recCompleteness_pi2_rec3_closed_fs {D : RecDeploymen
 `Pi2KFEnd.lean`). The theorems above are at `Pi2G.pi1Rec3Prover D`, whose Fiat–Shamir (IV, seed, stream) is Keccak-256
 over the random permutation `π`. π1-rec3's graph and `pi1KeccakVerifierWith` hash it over the real Keccak-f[1600], so
 there "the graph accepts" has probability about `2^-180` and `Pi1CompletenessKeccak D (pi1Rec3Prover D) δ1` holds only
-at `δ1 ≈ 1`. They are kept, **superseded** by the same theorems at the prover the recursion runs,
+at `δ1 ≈ 1`. They are kept, **superseded** by the same theorems at the Lean prover with the recursion's hashes,
 `Pi1KF.pi1Rec3ProverKF D`: its Fiat–Shamir the pure `keccak256` (Keccak-256 over Keccak-f[1600], the graph's), its
-Merkle trees and three WHIR openings over `π`:
+Merkle trees and three WHIR openings over `π`. As on the membership side, the deployed Rust prover is trusted for completeness; the Lean prover is a transcription of `prove.rs` and `batch.rs`
+at `FLOCK_REC3`, not differentially tested against the Rust π1-rec3 prover (UniComplete's runner compares the main
+line only, Flock omitted, at `2^4`/`2^5`; the Rust π1-rec3 prover is linked to Lean only by the Lean verifier accepting
+one real proof). So the completeness theorems are
+about this Lean prover (and π2's Lean prover, above), not the deployed Rust one:
 
 ```lean
 def RecCompose.Pi1KF.pi1Rec3ProverKF (D : RecDeployment) : Pi1Prover D := pi1ProverFs hKF D
@@ -641,7 +663,8 @@ theorem RecCompose.Pi1KF.pi1CompletenessFs_rpm (D : RecDeployment) (hsh : D.pi1.
   is `keccak256` by `rfl`; off π1-rec3's completeness bad events at its own challenges (`BadKF`), the Keccak-f[1600]
   verifier's run on its stream draws its challenges (`pi1KF_challenges`) and `pi1KeccakVerifierWith` accepts its
   honest proof at every permutation (`pi1KF_accepts`); the contract's rejection is at most π1's completeness at
-  Keccak-f[1600] plus the honest hazard plus `δ2`'s event (`contract_rejects_le`). See
+  Keccak-f[1600] plus the honest hazard plus `δ2`'s event (`contract_rejects_le`, unconditional: `¬ BadKF` enters only
+  the two non-vacuity witnesses, and no end theorem uses `BadKF`). See
   [`RecCompose/README.md`](RecCompose/README.md).
 
 ```sh

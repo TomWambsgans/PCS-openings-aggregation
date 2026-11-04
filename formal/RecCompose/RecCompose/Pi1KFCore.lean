@@ -239,7 +239,9 @@ def hOfF (F : KeccakState → KeccakState) (x : List UInt8) : Digest :=
   Id.run (keccak256With (m := Id) (fun s ↦ pure (F s)) x)
 
 /-- **`pi1KeccakVerifierWith` accepts** when its run over Keccak-f[1600] accepts with the three point claims on `C1`,
-`C2`, the setup and the three openings accept (it does not check a matrices' claim). -/
+`C2`, the setup and the three openings accept. It has no check of a matrices' claim to meet: π1-rec3's run returns
+none (`runWithFs_shape`), and `pi1KeccakVerifierWith` is π1-rec3's deployed verifier (`Pi1KF.verifierFs_eq`,
+`Pi1KF.pi1KeccakVerifierWith_kf_eq`). -/
 theorem pi1KeccakVerifier_of_calls (F : KeccakState → KeccakState) (D : Deployment) (roots : SetupRoots)
     (input : Vector UInt8 32) (π : UniProof) (o : UniStatement.Outcome) (r : Reduced) (p1 p2 p3 : List E) (v1 v2 v3 : E)
     (hrun : runFs D.shape (RecStatement.pi1Iv D.shape D.programIv roots) input.toList π.stream (.flock flockMain)

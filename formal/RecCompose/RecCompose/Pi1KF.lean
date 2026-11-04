@@ -14,14 +14,18 @@ The statement review (`Review/STATEMENT_REVIEW.md`, finding 4) found that the co
 (`Pi2G.pi1Rec3Prover D = uniProverRec3RP flockProve3H D.pi1`) hashes its Fiat–Shamir (IV, seed, stream) with
 Keccak-256 over the random permutation `π`, while π1-rec3's graph (`RecGraph.evalGraphDeployed`) and
 `RecStatement.pi1KeccakVerifierWith` hash it with Keccak-256 over the real Keccak-f[1600]. Its proofs then fail π1's
-checks but with probability about `2^-180`. This file defines the prover the recursion runs:
+checks but with probability about `2^-180`. This file defines the Lean prover for the recursion's π1 (UniComplete's
+π1-rec3 prover with the recursion's hashes). As on the membership side, the deployed Rust prover is trusted for
+completeness; the Lean prover is a transcription of `prove.rs` and `batch.rs` at `FLOCK_REC3`, not differentially tested
+against the Rust π1-rec3 prover (UniComplete's runner compares the main line only, Flock omitted, at `2^4`/`2^5`; the
+Rust π1-rec3 prover is linked to Lean only by the Lean verifier accepting one real proof):
 
 * **`proveRec3With2 Hfs Hm F`**: `UniComplete.Rec3.proveRec3With` with two hashes, `Hfs` for the Fiat–Shamir (π1-rec3's
   IV `contractIvRec3Of`, the seed `seedOf`, the stream's draws `proveStreamRec3With`, Flock's prover) and `Hm` for the
   Merkle trees (the setup's `setupTreesOf`, the commitments `commitReal`) and the WHIR openings (`proveOpeningWithH Hm
   F`). At one hash it is UniComplete's prover, by `rfl` (**`proveRec3With2_self`**).
-* **`pi1ProverFs Hfs D`**: the deployed π1 prover over the random permutation with its Fiat–Shamir hash `Hfs`: the
-  trees and openings over `π` (`keccak256With queryPermutation`, `queryPermutation`).
+* **`pi1ProverFs Hfs D`**: UniComplete's Lean π1-rec3 prover over the random permutation with its Fiat–Shamir hash
+  `Hfs`: the trees and openings over `π` (`keccak256With queryPermutation`, `queryPermutation`).
 * **`pi1Rec3ProverKF D = pi1ProverFs hKF D`**, `hKF x = pure (keccak256 x)`: **its Fiat–Shamir over Keccak-f[1600]**, a
   pure function, no query; its trees and openings over `π`. This is the `Pi1Prover` of `RecStatement`'s docstring
   ("its Fiat–Shamir over Keccak-f[1600], its openings over `π`").

@@ -14,7 +14,7 @@ Evidence (this directory):
   `sorry`, on `propext`, `Classical.choice`, `Quot.sound` (`#guard_msgs`):
   `cd formal/EndToEnd && systemd-run --scope -q -p MemoryMax=12G lake env lean ../RecCompose/Review/StatementReview2.lean`.
 - [`IvSample.lean`](IvSample.lean). It was run as the executable `rec-iv-sample` in an h1 copy. Its `lean_exe` stanza
-  (`name = "rec-iv-sample"`, `srcDir = "../RecCompose"`, `root = "Review.IvSample"`) is not committed.
+  is now committed (`formal/EndToEnd/lakefile.toml`).
 
 **Verdict.** No statement is wrong in the sense of the first review: none is vacuous or trivially satisfied, and none
 has a bound that cannot apply. The first review's fixes close their findings. What remains:
@@ -59,6 +59,21 @@ tested); the deployed Rust prover is trusted for completeness". Better, add a re
 `streamRunKF` against the Rust `prove` at a small shape, comparing stream bytes as UniComplete's runner does for the
 main line.
 
+**Caveat added, no test** (`fix-rec-docs2`). The rec3 differential test was started and then dropped for time; it is
+still to do. What the attempt found: the Rust π1-rec3 prover refuses every small Flock shape tried (memory/bytecode
+logs 5/7, 6/7, 7/7, 5/8, 6/8, with 77 to 205 BLAKE2S rows; Flock needs a BLAKE2S height of at least 7,
+`verifier.rs:65`). `prove_pairs` fails with "a stack shorter than the batch ends inside a pair"
+(`crates/leanvm_univariate/src/prover/batch.rs:295-296`): a stack with an odd number of variables is accepted only if it
+is the largest, and at these sizes the setup stack has 15 variables while `C1` has 16 or 17. By the attempt's
+reading (not checked further), the Lean `batchRounds3` zero-extends such a stack instead, so the two provers would
+differ there by construction; not at the reference shape, where the Rust prover runs. A test needs a shape whose odd stacks are the largest, or a Rust `prove_pairs` that zero-extends.
+A synthetic trace with real BLAKE2s compressions and Flock's own `q_flock` witness (`log_n = 21`, 128 instances)
+passed its checks up to that point. The docs now carry the membership side's caveat, "the deployed Rust prover is trusted for completeness;
+the Lean prover is a transcription", for π1 (`Pi1KF.lean`'s module docstring and `pi1ProverFs`, `Pi2KFEnd.lean`,
+`formal/README.md`'s "The recursion's π1 prover") and for π2 (`Pi2CompleteEnd.pi2Prover`, compared with the Rust on
+`spec::example()` at `2^9`, `2^10` only, its witness `Classical.choose`; `formal/README.md`'s "π2's honest prover").
+The status note of `formal/README.md` lists it as open.
+
 ### 2. `IvChecked` is a universal over `2^256` IVs. No counterexample exists by code reading or by 9 more evaluations, but it is unproved, and one bad IV would void every end theorem (open premise; docs honest, but the risk is understated)
 
 Every headline theorem takes `C : Pi2Circuits D` and `Pi2ViewChecked C`. At `realDeployment` these come from
@@ -101,6 +116,25 @@ size moving by the popcount difference). **Status at hand-off: the reference cir
 `rec-real-check`). The nine sampled IVs' lines were not yet printed** (about 13 minutes per IV, three runs in
 parallel). Their logs are `/root/pcs-quotient-fv/review2/sample-{0,3,1000}.log` on h1. Append them here, then delete
 `review2`.
+
+**Results** (appended by `fix-rec-docs2`; h1, `rec-iv-sample 3 0`, `3 3`, `3 1000`, about 30 minutes an IV per
+process). Each line: `ivCheck`; whether `logN`, `logWidth`, regions, blocks, `σ`, ports and calls equal the reference
+IV's; `κ`'s entries, the symmetric difference with the reference's (`+` only here, `-` only there), whether every entry
+of it is a `1`, and whether `κ`'s size moved by the popcount difference.
+
+| index | IV | popcount | `ivCheck` | structure equal | `κ` entries | difference | all ones | size check |
+|---|---|---|---|---|---|---|---|---|
+| 0 | `85d3ff47f89be87938bfb1cfc77ed52002e8d3c27f2c1e217ae436b0b31da1ff` | 141 | true | true | 19138 | +70 −75 | true | true |
+| 1 | `8eacfa3e0697039f56c5dc4afc77cefb555cc652192c7f423e5c992ad6726765` | 138 | true | true | 19135 | +63 −71 | true | true |
+| 3 | `55c2aed426cc58a15dee8a807ad51d242d491e7d944888853393aec21ecd7a76` | 122 | true | true | 19119 | +48 −72 | true | true |
+| 4 | `d67b198881fb44078601544d3440f6bc91488c6fd62992a34bfa5d30716fbed9` | 123 | true | true | 19120 | +51 −74 | true | true |
+| 1000 | `b74dacfd5e63bf47f8601ef74de51666fa02acbd959fcf6500192f96d4d7fef9` | 147 | true | true | 19144 | +1 −0 | true | true |
+| 1001 | `0100000000000000000000000000000000000000000000000000000000000000` | 1 | true | true | 18998 | +1 −146 | true | true |
+| 2 | not finished | | | | | | | |
+| 5 | not finished | | | | | | | |
+| 1002 | not finished | | | | | | | |
+
+**6 of 9 sampled IVs evaluated: all hold** (`ivCheck` true, the structure equal, the `κ` difference only `1`s of the expected size). The union of the differences' positions over these IVs: 252 positions, all in `92175..96255` and `≡ 92175 mod 16` (yes), a set of at most 256 slots: the seed's IV constants, one slot a bit. Not finished at hand-off: indices [2, 5, 1002] (the three runs still going; `review2` kept).
 
 **Fix.**
 
@@ -191,6 +225,16 @@ Fiat–Shamir at Keccak-f[1600], its openings over `π`.
 verifier accepts" remark in `STATEMENT_REVIEW.md` finding 4 and the `Pi1KFCore.lean:242` docstring. Optionally restore
 the check in `pi1KeccakVerifierWith` for transcription fidelity.
 
+**Fixed** (`fix-rec-docs2`). `Pi1KF.verifierFs_le` is replaced by the equality **`Pi1KF.verifierFs_eq`**
+(`Pi1KFRpm.lean`): at the reference shape, in every lawful monad and at every hash `F`,
+`pi1VerifierFsWith F F D roots input p = D.verifierRec3With F roots input p`, from `runWithFs_shape` through
+`bind_congr_of_holds` (the reviewer's `strict_eq`, generalised from `runFs` to `runWithFs F`). With
+`pi1VerifierFsWith_kf` it gives **`Pi1KF.pi1KeccakVerifierWith_kf_eq`**, the reviewer's `keccak_eq_verifierRec3` in
+every lawful monad. `pi1CompletenessFs_rpm` uses the equality. The remarks are corrected (`Pi1KFRpm.lean`'s module
+docstring, `Pi1KFCore.lean`'s `pi1KeccakVerifier_of_calls`, `STATEMENT_REVIEW.md` finding 4, `RecCompose/README.md`).
+The check is not restored in `pi1KeccakVerifierWith`: the equality makes it unnecessary, and the Statement is
+unchanged.
+
 ### 5. `keccak_accepts`'s `¬ BadKF` and `contract_rejects_le` (clarification; cosmetic)
 
 The question assumed `contract_rejects_le` was conditional on `¬ BadKF`. It is not: `contract_rejects_le`
@@ -206,6 +250,10 @@ heuristic premise `δ1`; at `π` it is inside `deltaRec3` (`BadFp`, `BadT`).
 `none` (grinding beyond `nonceFuel`) is likewise inside `δ1`. So "graph accepts" in `RecCompleteness2` is the likely
 event exactly when the heuristic `δ1` is small. That is consistent, and documented by `contract_rejects_le`.
 
+**Fixed** (`fix-rec-docs2`). `Review/Pi1ProverReview.lean` (its module docstring, `challenges_match`, `keccak_accepts`,
+`contract_rejects_le`), `formal/README.md` and `RecCompose/README.md` now say that `contract_rejects_le` is
+unconditional and that `¬ BadKF` enters only the two non-vacuity witnesses; `keccak_accepts`'s `hπ` is noted.
+
 ### 6. Stale or imprecise docs (cosmetic)
 
 - `Pi2CompleteEnd.lean:55`: `Pi2WitnessComplete` is still called a "Named input … (not transcribed; the Rust's witness
@@ -220,6 +268,13 @@ event exactly when the heuristic `δ1` is small. That is consistent, and documen
 - The derived adversaries' time is documented as "a polynomial". The Keccak-f[1600] work the heuristic counts is `A`'s
   offline work plus the extractor's graph checks per candidate. Say so, since that is the resource the heuristic bounds
   and the reduction's `Q` does not.
+
+**Fixed** (`fix-rec-docs2`), item by item: `Pi2WitnessComplete`'s docstring points to `Pi2W.pi2WitnessComplete`;
+`RecStatement/README.md`'s open point 1 points to `RecCompose`'s theorems and open point 2 says the Keccak readings are
+heuristic, `Pi1CompletenessKeccak`'s with a proved RPM reading; `formal/README.md`'s status note is rewritten as the
+current status after both reviews; `Pi1HazardAccepted`'s docstring says it asks only `pi1GraphChecks`, a larger event
+than needed; `Reduction.lean`'s docstrings, `RecStatement/README.md` and `formal/README.md` name the derived
+adversaries' Keccak-f[1600] work as the resource the heuristic bounds.
 
 ## Answers to the questions
 

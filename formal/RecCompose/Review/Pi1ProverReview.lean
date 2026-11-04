@@ -29,6 +29,10 @@ prover (`Pi1KF.pi1Rec3ProverKF`, `Pi2KF.recCompleteness2_pi2_rec3_kf`, `recCompl
    is at most π1's completeness experiment at Keccak-f[1600] plus the honest hazard
    (`completenessPi1Coupling`, `pi1FsCompletenessExperiment_kf`). The first is the Fiat–Shamir reading of a theorem
    proved in the random-permutation model (**`rpm_reading`**: `deltaRec3 < 2^-167`), not a probability-one event.
+   **It is unconditional**: no `¬ BadKF` hypothesis. `¬ BadKF` enters only items 2 and 3, the non-vacuity witnesses
+   that the Keccak-f[1600] verifier accepts the honest proof; no end theorem uses `BadKF`. Its probability at
+   Keccak-f[1600] is part of the heuristic premise `δ1`, and at `π` it is inside `deltaRec3` (`BadFp`, `BadT`)
+   (`STATEMENT_REVIEW_2.md`, finding 5).
 -/
 
 namespace RecCompose.Pi1ProverReview
@@ -43,7 +47,9 @@ theorem pi1Rec3ProverKF_fs_kf (D : RecDeployment) :
     pi1Rec3ProverKF D = uniProverRec3With2 (fun x ↦ pure (keccak256 x)) (keccak256With queryPermutation)
       queryPermutation (UniComplete.Rec3.flockProve3H fun x ↦ pure (keccak256 x)) D.pi1 := rfl
 
-/-- **2. The verifier's challenges on the honest stream are the prover's**, off π1's completeness bad events. -/
+/-- **2. The verifier's challenges on the honest stream are the prover's**, off π1's completeness bad events. A
+non-vacuity witness: `¬ BadKF` enters here and in `keccak_accepts` only, not in `contract_rejects_le` or an end
+theorem. -/
 theorem challenges_match (Hm : List UInt8 → Digest) (D : Deployment) (hD : D.shape = reference)
     (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) (hfit : D.shape.RowsFit rows)
     (hrel : D.HonestRelation rows input q) (hbad : ¬ BadKF Hm D input rows q) :
@@ -56,7 +62,9 @@ theorem challenges_match (Hm : List UInt8 → Digest) (D : Deployment) (hD : D.s
         (UniComplete.honestTrace D input rows q)).2.challenges :=
   (pi1KF_challenges Hm D hD input rows q hfit hrel hbad).1
 
-/-- **3. The Keccak-f[1600] verifier accepts the honest proof**, at every permutation, off π1's bad events. -/
+/-- **3. The Keccak-f[1600] verifier accepts the honest proof**, at every permutation, off π1's bad events. A
+non-vacuity witness, as `challenges_match`; `hπ` (the prover returns a proof, grinding within `nonceFuel`) is not shown
+satisfiable here, and the prover's `none` is inside `δ1`. -/
 theorem keccak_accepts (D : Deployment) (hD : D.shape = reference) (F : KeccakState → KeccakState)
     (input : Vector UInt8 32) (rows : List ℕ) (q : D.Stack rows) (hfit : D.shape.RowsFit rows)
     (hrel : D.HonestRelation rows input q) (π : UniProof)
@@ -67,7 +75,7 @@ theorem keccak_accepts (D : Deployment) (hD : D.shape = reference) (F : KeccakSt
   pi1KF_accepts D hD F input rows q hfit hrel π hπ hbad
 
 /-- **4. The bound's event is the contract's rejection of an honest proof**, up to π1's completeness at Keccak-f[1600]
-and the honest hazard. -/
+and the honest hazard. Unconditional: unlike `challenges_match` and `keccak_accepts`, it takes no `¬ BadKF`. -/
 theorem contract_rejects_le (D : RecDeployment) (hD : D.pi1.shape = reference) (P2 : Pi2Prover)
     (input : Vector UInt8 32) (rows : List ℕ) (q : D.pi1.Stack rows) :
     Pr{let v ← recCompletenessExperiment2 D (pi1Rec3ProverKF D) P2 input rows q}[v.2 = false] ≤

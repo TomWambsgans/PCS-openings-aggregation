@@ -633,9 +633,11 @@ noncomputable def pi1HazardExperiment (D : RecDeployment) (B : Pi1StreamAdversar
     let (z, _) ← (simulateQ loggedOracles (B trees.roots trees.evaluations)).run []
     return (D.pi1IvAt trees.roots.pi1, z)
 
-/-- **The merge hazard on a stream π1-rec3's graph accepts**, at Keccak-f[1600]: the graph's checks hold on the stream
-(`pi1GraphChecks`), and π1-rec3's run on it draws `t` (challenge 49), `t` a root of `Z_bad(p_0)` (`RecGraph.MergeHazard`).
-The empty stream, and every stream on which the run stops before `t`, is not on it (STATEMENT_REVIEW.md, finding 2). -/
+/-- **The merge hazard on a stream whose π1-rec3 graph checks hold**, at Keccak-f[1600]: the graph's checks hold on the
+stream (`pi1GraphChecks`), and π1-rec3's run on it draws `t` (challenge 49), `t` a root of `Z_bad(p_0)`
+(`RecGraph.MergeHazard`). It asks only `pi1GraphChecks`, not the full `Pi1GraphAccepts` on which `breaks_cases` splits:
+a larger event than needed, which is harmless, since the term is only larger (`STATEMENT_REVIEW_2.md`, finding 6). The
+empty stream, and every stream on which the run stops before `t`, is not on it (`STATEMENT_REVIEW.md`, finding 2). -/
 def Pi1HazardAccepted (iv1 : List UInt8) (input : Vector UInt8 32) (s : Array UInt8) : Prop :=
   pi1GraphChecks iv1 input s = true ∧ RecGraph.MergeHazard LeanVM.Semantics.keccakF1600 iv1 input.toList s
 

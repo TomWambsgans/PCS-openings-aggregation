@@ -208,8 +208,10 @@ Keccak-f[1600] plus the honest hazard plus the bounded event. `Pi1CompletenessKe
 `Pi1CompletenessFs D queryPermutation deltaRec3` is proved (`pi1CompletenessFs_rpm`, `deltaRec3 < 2^-167`,
 `Pi1KFRpm.lean`); the Keccak reading stays a heuristic premise. Not done: the graph form of `pi1KF_accepts` at a fixed
 permutation (it holds in probability through `completenessPi1Coupling`). Found: `pi1KeccakVerifierWith` does not check
-`r.matrices = none`, unlike `verifyWithFs` with the walk, so it accepts at least what π1-rec3's verifier accepts
-(harmless for completeness; `verifierFs_le`).
+`r.matrices = none`, unlike `verifyWithFs` with the walk. Corrected by the second review (its finding 4): the check
+never fires, since π1-rec3's run returns no matrices' claim over any permutation (`runWithFs_shape`), so
+`pi1KeccakVerifierWith` is π1-rec3's verifier, not a superset of it (`Pi1KF.verifierFs_eq`, an equality of programs at
+the reference shape, and `Pi1KF.pi1KeccakVerifierWith_kf_eq` at Keccak-f[1600], `Pi1KFRpm.lean`).
 
 ### 5. `RecDeployment.Real` pins the Rust's digest and setup root, but nothing checks them against the Lean compiler, and no proof uses them (misleading; vacuity risk)
 

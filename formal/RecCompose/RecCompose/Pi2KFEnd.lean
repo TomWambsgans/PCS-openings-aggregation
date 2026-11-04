@@ -13,9 +13,13 @@ import RecCompose.Pi1KFTransfer
 `Pi2Alpha.recCompleteness2_pi2_rec3_closed` is stated at `Pi2G.pi1Rec3Prover D`, whose Fiat–Shamir is over the random
 permutation; π1-rec3's graph hashes with the real Keccak-f[1600], so its event "the graph accepts" has probability
 about `2^-180` there (`Review/STATEMENT_REVIEW.md`, finding 4). Here the same theorems at `Pi1KF.pi1Rec3ProverKF D`, the
-prover the recursion runs: its Fiat–Shamir the pure `keccak256` (the graph's), its trees and WHIR openings over `π`. Its
-honest proofs are the ones the graph accepts (`Pi1KFCore`), so the event bounded is the contract's rejection of an honest
-proof.
+Lean prover with the recursion's hashes: its Fiat–Shamir the pure `keccak256` (the graph's), its trees and WHIR openings
+over `π`. Its honest proofs are the ones the graph accepts (`Pi1KFCore`), so the event bounded is the contract's
+rejection of an honest proof. These are completeness theorems for Lean provers: the deployed Rust prover is trusted for
+completeness; the Lean prover is a transcription of `prove.rs` and `batch.rs` at `FLOCK_REC3`, not differentially tested
+against the Rust π1-rec3 prover (UniComplete's runner compares the main line only, Flock omitted, at `2^4`/`2^5`; the
+Rust π1-rec3 prover is linked to Lean only by the Lean verifier accepting one real proof); π2's Lean prover likewise
+(`Pi2CompleteEnd.pi2Prover`, compared with the Rust on a toy circuit only, its witness `Classical.choose`).
 
 The staged argument is unchanged: every piece of `pi2Staged` is generic in π1's two-call program, which is now
 `Pi1KF.p1kKF D` (`Pi1KF.pi1Rec3ProverKF_eq`). Its facts:

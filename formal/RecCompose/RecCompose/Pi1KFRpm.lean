@@ -4,6 +4,7 @@
 -- eager form of the random-permutation model is `formal/EndToEnd/ZK/ProverBridgeEager.lean`'s; Keccak-256 through a
 -- monad morphism `ProverBridgeParam.lean`'s (`keccak256With_hom`).
 import RecCompose.Pi1KF
+import RecCompose.RunShape
 import RecCompose.RpmC
 import UniComplete.Rec3EndClosed
 import ZK.ProverBridgeParam
@@ -28,9 +29,12 @@ Fiat–Shamir with Keccak-f[1600]. This file makes the premise's content explici
   Pi1CompletenessFs D (pure ∘ keccakF1600) δ`.
 * **The random-permutation reading, proved** (**`pi1CompletenessFs_rpm`**): at `Φ = π` (Keccak-f[1600] read as the
   random permutation, one permutation for the Fiat–Shamir and the openings) the experiment is π1-rec3's own
-  (`uniCompletenessExperimentRec3` of `uniProverRec3RP`, `pi1ProverFs_rpm`), but for π2's setup tree, built and unused,
-  and the matrices' check, which `pi1KeccakVerifierWith` does not make; so `Pi1CompletenessFs D π deltaRec3`, from
-  `uniCompletenessRec3_end_closed`, `deltaRec3 < 2^-167`.
+  (`uniCompletenessExperimentRec3` of `uniProverRec3RP`, `pi1ProverFs_rpm`), but for π2's setup tree, built and unused;
+  so `Pi1CompletenessFs D π deltaRec3`, from `uniCompletenessRec3_end_closed`, `deltaRec3 < 2^-167`.
+* **No matrices gap** (**`verifierFs_eq`**, **`pi1KeccakVerifierWith_kf_eq`**): `pi1KeccakVerifierWith` omits
+  `verifyWithFs`'s check that the walk leaves no matrices' claim, but π1-rec3's run never returns one
+  (`runWithFs_shape`), so at the reference shape the verifier is π1-rec3's deployed `verifierRec3With`, equal as
+  programs, over every permutation and at Keccak-f[1600].
 
 **The gap, stated plainly.** Nothing here proves the Keccak reading. `Pi1CompletenessKeccak D (pi1Rec3ProverKF D) δ1`
 is the heuristic "Keccak-f[1600] behaves as the random permutation for this fixed honest prover": the experiment at
@@ -185,32 +189,48 @@ theorem eager_le {α β : Type} (X : OracleComp RandomPermutationOracles α) (Y 
   rw [prEvent_runWithRandomPermutation, prEvent_runWithRandomPermutation]
   exact mul_le_mul' le_rfl (Finset.sum_le_sum fun π _ ↦ h π)
 
-/-- **Without the matrices' check, π1-rec3's verifier rejects at most as often**, permutation by permutation. -/
-theorem verifierFs_le (π : Equiv.Perm St) (D : Deployment) (roots : SetupRoots) (input : Vector UInt8 32)
-    (p : UniProof) :
-    Pr{let a ← simulateQ (permImpl π) (pi1VerifierFsWith queryPermutation queryPermutation D roots input p)}[
-      a = false] ≤
-      Pr{let a ← simulateQ (permImpl π) (D.verifierRec3With queryPermutation roots input p)}[a = false] := by
+section Eq
+
+variable {m : Type → Type} [Monad m] [LawfulMonad m]
+
+/-- **π1-rec3's verifier without the matrices' check is π1-rec3's deployed verifier**, at the reference shape, every
+lawful monad and every hash `F` (its Fiat–Shamir and openings both over `F`): `verifyWithFs … .rec3 true`'s last check
+(`r.matrices = none` with the walk) never fires, since π1-rec3's run returns no matrices' claim over any permutation
+(`runWithFs_shape`). So `pi1KeccakVerifierWith` is no superset verifier (second statement review, finding 4). -/
+theorem verifierFs_eq (F : KeccakState → m KeccakState) (D : Deployment) (hD : D.shape = reference)
+    (roots : SetupRoots) (input : Vector UInt8 32) (p : UniProof) :
+    pi1VerifierFsWith F F D roots input p = D.verifierRec3With F roots input p := by
   unfold pi1VerifierFsWith Deployment.verifierRec3With verifyWithFs
-  simp only [RecStatement.pi1IvWith, Deployment.ivRec3With, simulateQ_bind]
-  refine prEvent_bind_mono_of_forall_le _ _ _ _ _ fun iv ↦ ?_
-  refine prEvent_bind_mono_of_forall_le _ _ _ _ _ fun o ↦ ?_
-  split_ifs
-  · exact le_rfl
-  · rcases hres : o.result with e | r
-    · exact le_rfl
-    · simp only [simulateQ_bind]
-      refine prEvent_bind_mono_of_forall_le _ _ _ _ _ fun ok ↦ ?_
-      cases hm : r.matrices
-      · simp
-      · simp only [simulateQ_pure, prEvent_pure]
-        split_ifs <;> simp
+  simp only [RecStatement.pi1IvWith, Deployment.ivRec3With]
+  rw [hD]
+  refine bind_congr fun iv ↦ ?_
+  refine bind_congr_of_holds (runWithFs_shape F iv input.toList p.stream) fun o ho ↦ ?_
+  by_cases hacc : o.accepts = true
+  · simp only [hacc, Bool.not_true, Bool.false_eq_true, ↓reduceIte]
+    rcases hres : o.result with e | r
+    · rfl
+    · simp only [(ho r hres).1, bind_pure]
+      rfl
+  · simp only [Bool.not_eq_true] at hacc
+    simp only [hacc, Bool.not_false, ↓reduceIte]
+
+/-- **At the real Keccak-f[1600], `pi1KeccakVerifierWith` is π1-rec3's deployed verifier** `verifierRec3With` (the
+verifier of `UniSound.Rec3Ref.uniKnowledgeSoundness_closed_rec3`), at the reference shape and in every lawful monad:
+the reduction's π1 term is about π1-rec3's own verifier. -/
+theorem pi1KeccakVerifierWith_kf_eq (D : Deployment) (hD : D.shape = reference) (roots : SetupRoots)
+    (input : Vector UInt8 32) (p : UniProof) :
+    RecStatement.pi1KeccakVerifierWith (m := m) (fun s ↦ pure (keccakF1600 s)) D roots input p =
+      D.verifierRec3With (fun s ↦ pure (keccakF1600 s)) roots input p := by
+  rw [← pi1VerifierFsWith_kf]
+  exact verifierFs_eq _ D hD roots input p
+
+end Eq
 
 /-- **The random-permutation reading of `Pi1CompletenessKeccak`, proved**: with Keccak-f[1600] read as the random
 permutation (one `π` for π1's Fiat–Shamir, its trees and its openings), the recursion's π1 prover is
 `uniProverRec3RP flockProve3H D.pi1` (`pi1ProverFs_rpm`) and π1-rec3's completeness holds with `deltaRec3 < 2^-167`
 (`uniCompletenessRec3_end_closed`): π2's setup tree, built and unused, drops out permutation by permutation, and the
-verifier without the matrices' check rejects at most when π1-rec3's deployed one does (`verifierFs_le`). The Keccak
+verifier without the matrices' check is π1-rec3's deployed one (`verifierFs_eq`). The Keccak
 reading (`pi1CompletenessKeccak_iff`) is not proved: it is the heuristic premise. -/
 theorem pi1CompletenessFs_rpm (D : RecDeployment) (hsh : D.pi1.shape = reference)
     (hiv : D.pi1.programIv.length ≤ 2 ^ 16) : Pi1CompletenessFs D queryPermutation deltaRec3 := by
@@ -226,7 +246,9 @@ theorem pi1CompletenessFs_rpm (D : RecDeployment) (hsh : D.pi1.shape = reference
   refine prEvent_bind_mono_of_forall_le _ _ _ _ _ fun o ↦ ?_
   cases o with
   | none => exact le_rfl
-  | some p1 => exact verifierFs_le π D.pi1 t1.roots input p1
+  | some p1 =>
+    exact le_of_eq (congrArg (fun X ↦ Pr{let v ← simulateQ (permImpl π) X}[v = false])
+      (verifierFs_eq queryPermutation D.pi1 hsh t1.roots input p1))
 
 end RecCompose.Pi1KF
 
@@ -237,6 +259,14 @@ end RecCompose.Pi1KF
 /-- info: 'RecCompose.Pi1KF.pi1CompletenessKeccak_iff' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCompose.Pi1KF.pi1CompletenessKeccak_iff
+
+/-- info: 'RecCompose.Pi1KF.verifierFs_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi1KF.verifierFs_eq
+
+/-- info: 'RecCompose.Pi1KF.pi1KeccakVerifierWith_kf_eq' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCompose.Pi1KF.pi1KeccakVerifierWith_kf_eq
 
 /-- info: 'RecCompose.Pi1KF.pi1CompletenessFs_rpm' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
