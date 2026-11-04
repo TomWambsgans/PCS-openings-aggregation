@@ -211,7 +211,7 @@ values are an honest witness (`Pi2Good`). -/
 theorem pi2WitnessComplete {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D) (hchk : Pi2ViewChecked C) :
     Pi2WitnessComplete D C (pi2Facts hD C hchk) := by
   intro roots input s hgc
-  have hc := C.compile_ok (D.pi1IvAt roots.pi1)
+  have hc := C.compile_okAt roots.pi1
   have hck := RecCircuit.Compiled.checked_of_compile hc
   obtain ⟨hview, -, -⟩ := viewChecked_at C hchk roots
   set c := C.compiled (D.pi1IvAt roots.pi1) with hcdef
@@ -309,7 +309,7 @@ theorem pi2WitnessComplete {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
       rfl
   · -- the stream
     show D.pi1Stream w = s
-    rw [C.stream_eq, hstr, Array.toArray_toList]
+    rw [C.stream_eqAt roots.pi1, hstr, Array.toArray_toList]
 
 end RecCompose.Pi2W
 

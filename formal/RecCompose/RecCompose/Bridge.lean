@@ -379,7 +379,7 @@ theorem circuitBridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa 
   unfold GraphsAgree at hg
   have hc : RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt
       (D.pi1IvAt roots.pi1)) = .ok (C.compiled (D.pi1IvAt roots.pi1)) := by
-    have h := C.compile_ok (D.pi1IvAt roots.pi1)
+    have h := C.compile_okAt roots.pi1
     rw [hroots, hg] at h
     exact h
   generalize hcd : C.compiled (D.pi1IvAt roots.pi1) = c at hc hw hE
@@ -403,7 +403,7 @@ theorem circuitBridge (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D) (Fa 
     simpa [List.getD_eq_getElem?_getD, hk] using this
   -- The stream.
   have hs : D.pi1Stream w = (c.streamW (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) w).toArray := by
-    rw [C.stream_eq (D.pi1IvAt roots.pi1) w, hroots, hg, hiv, hcd]
+    rw [C.stream_eqAt roots.pi1 w, hroots, hg, hiv, hcd]
   have hsize : (c.streamW (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) w).toArray.size =
       RecGraph.Emitted.graph.streamLen := by
     rw [List.size_toArray, RecCircuit.Compiled.streamW_length, ofRG_streamLen]

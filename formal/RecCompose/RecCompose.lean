@@ -38,6 +38,8 @@ import RecCompose.FactsSpecOf
 import RecCompose.Facts
 import RecCompose.Meanings
 import RecCompose.Layouts
+import RecCompose.IvLength
+import RecCompose.RealDeployment
 
 /-!
 # RecCompose: the recursive verifier's end theorems

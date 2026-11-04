@@ -6,7 +6,7 @@ import RecCompose.Valid
 # `Pi2Facts`, from the compiled circuit and one evaluated check
 
 **`pi2Facts hD C hchk : Pi2Facts D C`** at the real deployment, for the compiled circuits `C` (the run-checked
-`Pi2Circuits`) and **`Pi2ViewChecked C`**: at every π1 IV the compiled circuit passes `viewCheck` (its view `viewOf`, the
+`Pi2Circuits`) and **`Pi2ViewChecked C`**: at every 32-byte π1 IV the compiled circuit passes `viewCheck` (its view `viewOf`, the
 Rust's `adapt` transcribed, is `Data.circuit`; its calls are `Data.pi1Calls`; `validB` accepts it). That check is a
 `Bool` of the compiled circuit, **checked by evaluation** (`rec-view-check`, `RecComposeTest/ViewCheck.lean`, at π1's
 reference IV and at the zero IV), as `Pi2Circuits` itself is; no kernel evaluation of the circuit.
@@ -22,9 +22,12 @@ namespace RecCompose
 
 open RecStatement LeanVM.Parameters Primitives Finset
 
-/-- **The compiled circuits pass the view check** at every π1 IV (`viewCheck`: the view is `Data.circuit`, the calls
-`Data.pi1Calls`, the circuit valid). A `Bool` of the compiled circuit: **checked by evaluation** (`rec-view-check`). -/
-def Pi2ViewChecked {D : RecDeployment} (C : Pi2Circuits D) : Prop := ∀ iv, viewCheck (C.compiled iv) = true
+/-- **The compiled circuits pass the view check** at every 32-byte π1 IV (`viewCheck`: the view is `Data.circuit`, the
+calls `Data.pi1Calls`, the circuit valid). A `Bool` of the compiled circuit at each IV: **checked by evaluation at
+three IVs** (`rec-view-check`: π1's reference IV and the zero IV; `rec-real-check`: those and the all-ones IV), assumed
+at the others. At the real deployment it follows from `RecCompose.IvChecked` (`pi2ViewChecked_real`). -/
+def Pi2ViewChecked {D : RecDeployment} (C : Pi2Circuits D) : Prop :=
+  ∀ iv, iv.length = 32 → viewCheck (C.compiled iv) = true
 
 theorem viewCheck_parts {c : RecCircuit.Compiled} (h : viewCheck c = true) :
     viewOf c.circuit = Data.circuit ∧ callsOf c.circuit = Data.pi1Calls ∧ validB c.circuit = true := by
@@ -167,7 +170,7 @@ theorem viewChecked_at (roots : RecSetupRoots) :
     viewOf (C.compiled (D.pi1IvAt roots.pi1)).circuit = Data.circuit ∧
       callsOf (C.compiled (D.pi1IvAt roots.pi1)).circuit = Data.pi1Calls ∧
       validB (C.compiled (D.pi1IvAt roots.pi1)).circuit = true :=
-  viewCheck_parts (hchk _)
+  viewCheck_parts (hchk _ (D.pi1IvAt_length roots.pi1))
 
 include hchk in
 /-- Four limbs at port `j` exactly when `Data`'s term `j` has two or four terms. -/
@@ -201,15 +204,15 @@ def pi2Facts : Pi2Facts D C where
   spec roots := by
     obtain ⟨hview, -, hval⟩ := viewChecked_at C hchk roots
     rw [show (D.circuitAt roots.pi1).circuit = Data.circuit from hD.1 _]
-    exact specOf_data (C.compile_ok _) hview (validB_sound hval)
+    exact specOf_data (C.compile_okAt roots.pi1) hview (validB_sound hval)
   valid roots := validB_sound (viewChecked_at C hchk roots).2.2
   logN roots := viewOf_logN (viewChecked_at C hchk roots).1
   logW roots := viewOf_logW (viewChecked_at C hchk roots).1
   four roots := four_sum C hchk roots
   pub_len roots scalars j hj := by
     unfold pubOfC
-    rw [limbs_toPiop (C.compile_ok _) hj, pubOfSource_length, portWeights_length (source_limbs _)]
-  pub_canon roots scalars j hj u hul huK hfp := pubOfC_canon (C.compile_ok _) hj scalars u hul huK hfp
+    rw [limbs_toPiop (C.compile_okAt roots.pi1) hj, pubOfSource_length, portWeights_length (source_limbs _)]
+  pub_canon roots scalars j hj u hul huK hfp := pubOfC_canon (C.compile_okAt roots.pi1) hj scalars u hul huK hfp
 
 /-- **`pi2Facts`' public limbs**: `pubOfC` of the compiled circuit (by port source: the statement's words and a root's
 halves as `canon2` pairs, an element's three limbs, zeros). -/

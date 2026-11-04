@@ -1,5 +1,6 @@
 -- Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
 import RecCompose.Basic
+import RecCompose.IvLength
 import RecCircuit
 
 /-!
@@ -53,15 +54,16 @@ def Pi2Extraction (D : RecDeployment) (Rel : RecSetupRoots → Vector UInt8 32 �
     Pr{let z ← recSoundnessExperiment2 D A}[(acc z) = true ∧
       ¬ ∃ w ∈ outcomeCandidates D z, Rel (rts z) (inp z) (prf z).stream (witnessOf D (rts z) w)] ≤ ε2 Q
 
-/-- **π2's layers**: π2's circuit as the Lean compiler builds it from π1-rec3's recorded graph at every π1 IV, the
-public limbs of its ports for a statement, π2's extraction for that circuit's relation, and the circuit's corollary.
+/-- **π2's layers**: π2's circuit as the Lean compiler builds it from π1-rec3's recorded graph at every 32-byte π1 IV
+(π1's contract IV is a Keccak-256 digest, `RecDeployment.pi1IvAt_length`), the public limbs of its ports for a
+statement, π2's extraction for that circuit's relation, and the circuit's corollary.
 
-* `rootsAt`, `compiled`, `compile_ok`: the compiler's input (π1's roots' stream offsets, the IV) and output;
-  `compile_ok` is established by `RecCircuitTest/Main.lean` (the Lean compiler on π1-rec3's graph, compiled
-  evaluation, against the Rust's circuit), not in the kernel (no kernel evaluation of the `2^24`-position circuit);
+* `rootsAt`, `compiled`, `compile_ok`: the compiler's input (π1's roots' stream offsets, the IV) and output, at every
+  32-byte IV; checked by evaluation at three IVs (`rec-real-check`, `RecComposeTest/RealCheck.lean`), not in the
+  kernel (no kernel evaluation of the `2^24`-position circuit), and assumed at the others;
 * `stream_eq`: the deployment's π1 stream is the compiler's decoding of the witness's free bits, `streamW`
   (`decodeStream` of the witness's values `ctx.val w`; `RecDeployment`'s docstring: `pi1Stream` is meant to be
-  RecCircuit's `decodeStream`);
+  RecCircuit's `decodeStream`), at every 32-byte IV;
 * `pub`: port `J`'s public limbs, for the setup's roots, the public input and π2's stream (the statement's four
   words, π1's roots' limbs, π1's claims' elements, zeros);
 * `extraction` (**open, `lean-rec-compose`**): π2's Fiat–Shamir layer, openings, PIOP and tables' layer;
@@ -70,8 +72,9 @@ public limbs of its ports for a statement, π2's extraction for that circuit's r
 structure Pi2Layers (D : RecDeployment) (ε2 : ℕ → ℝ≥0∞) where
   rootsAt : List ℕ
   compiled : List UInt8 → RecCircuit.Compiled
-  compile_ok : ∀ iv, RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) = .ok (compiled iv)
-  stream_eq : ∀ iv (w : ℕ → K),
+  compile_ok : ∀ iv, iv.length = 32 →
+    RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) = .ok (compiled iv)
+  stream_eq : ∀ iv, iv.length = 32 → ∀ (w : ℕ → K),
     D.pi1Stream w = ((compiled iv).streamW (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) w).toArray
   pub : RecSetupRoots → Vector UInt8 32 → Array UInt8 → ℕ → List Primitives.F192
   extraction : Pi2Extraction D (fun roots input stream w ↦

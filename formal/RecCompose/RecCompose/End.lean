@@ -40,10 +40,10 @@ theorem pi2CircuitAccepts_of_bridge (C : Pi2Circuits D) (Fa : Pi2Facts D C)
     (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
     (hb : CircuitBridge D C.compiled fun roots input stream ↦ Fa.pubOf roots (pi2Scalars D roots input stream)) :
     Pi2CircuitAccepts C Fa := by
-  have hc : ∀ iv, RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) =
-      .ok (C.compiled iv) := by
-    intro iv
-    have h := C.compile_ok iv
+  have hc : ∀ iv, iv.length = 32 →
+      RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) = .ok (C.compiled iv) := by
+    intro iv hiv
+    have h := C.compile_ok iv hiv
     unfold GraphsAgree at hg
     rw [hroots, hg] at h
     exact h

@@ -38,8 +38,8 @@ random-permutation model and do not formally compose with the EVM one, which hol
    * `Pi1HazardKeccak εh`: π1-rec3's run at Keccak-f[1600] avoids the merge hazard (`RecGraph.MergeHazard`, where the
      recorded graph merges by symbol what the verifier merges by value), but with probability `εh Q`; justified by
      `RecGraph.hazard_prob` (`2^19/|E|` a challenge) for random challenges, the same heuristic.
-   * `RecGraph.Pi1.Pi1GraphIsVerifier`: off the hazard, the recorded graph is π1-rec3's verifier (RecGraph's target,
-     provable, not yet proved).
+   * `RecGraph.Pi1.Pi1GraphIsVerifier`: off the hazard, the recorded graph is π1-rec3's verifier (RecGraph's target;
+     **proved**, `RecGraph.Pi1.pi1GraphIsVerifier`, for every permutation function, Keccak-f[1600] included).
 
    The conclusion's error is `ε2 + ε1 + εh`. Completeness likewise: π2's completeness is over its own coins and `π`
    (`RecCompleteness2`); π1-rec3's completeness at Keccak-f[1600] is the named hypothesis `Pi1CompletenessKeccak δ1`,
@@ -54,6 +54,11 @@ opened by the Statement's WHIR opening: **π1's three** (`C1`, `C2`, π1's setup
 contract derives from π1-rec3's 14 pair challenges) on the plain layout of π1's stacks (`UniStatement.pcsOpenWith`, as
 `UniStatement.verifyWithFs`), and **π2's three** (`W`, the setup, `Q` with its two claims in one call) on π2's layouts
 (`PcsQuotient.openingWith`, `quotient::opening`). π1's verifier itself never runs: π2 proves its graph accepted.
+The deployed EVM bytecode is linked to this model **by transcription and test**, not by a Lean proof (unlike the
+membership verifier's `Evm.evm_accepts_iff_verifyWith`): `contract.rs`'s parity tests (`parity`, `parity_deployable`)
+and `RecStatement`'s differential runner (64 streams). The deployed contract hard-codes π2's IV (`inst.iv`, the Rust's
+from its digest and setup root); `RecDeployment.Real` pins those (`Data.digest`, `Data.setupRoot`) to the Lean
+compiler's `σ`, `κ` at π1's reference IV, checked by evaluation (`RecCompose.DigestChecked`, `rec-real-check`).
 
 **The deployment** (`RecDeployment`): π1's (`UniStatement.Deployment`: the program, the shape, leanVM's program IV),
 **π2's circuit for π1's contract IV** (`Pi2Circuit`: the verifier's view, `Circuit`, and the setup columns `σ`, `κ`;
@@ -172,17 +177,26 @@ def RecDeployment.circuitAt (D : RecDeployment) (roots : UniStatement.SetupRoots
   D.pi2 (D.pi1IvAt roots)
 
 /-- **The real deployment's setup columns are the circuit compiler's** (how the deployment builds them: `Setup::new`
-of `adapt` of `compile`, at π1's contract IV): at every π1 IV at which the Lean compiler (`RecCircuit.compile`, the
-Rust's by `RecCircuitTest`) accepts π1-rec3's recorded graph at the emitted graph's roots, π2's `σ` and `κ` are the
-compiled circuit's (`sigmaAt`, `kappaAt`). (Composition, `lean-pi2-complete`: `RecCompose.Pi2SetupColumns` follows.) -/
+of `adapt` of `compile`, at π1's contract IV): at every 32-byte π1 IV (π1's contract IV is a Keccak-256 digest) at
+which the Lean compiler (`RecCircuit.compile`, the Rust's by `RecCircuitTest`) accepts π1-rec3's recorded graph at the
+emitted graph's roots, π2's `σ` and `κ` are the compiled circuit's (`sigmaAt`, `kappaAt`). (Composition,
+`lean-pi2-complete`: `RecCompose.Pi2SetupColumns` follows. `RecCompose.realDeployment` has it by construction.) -/
 def RecDeployment.SetupFromCompiler (D : RecDeployment) : Prop :=
-  ∀ (iv : List UInt8) (c : RecCircuit.Compiled),
+  ∀ (iv : List UInt8), iv.length = 32 → ∀ (c : RecCircuit.Compiled),
     RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph RecGraph.Emitted.rootsAt iv) = .ok c →
       (D.pi2 iv).sigma = c.circuit.sigmaAt ∧ (D.pi2 iv).kappa = c.circuit.kappaAt
 
 /-- **The real deployment's data**: π2's circuit for π1-rec3's real proof (the emitted tables at every IV, and at π1's
 reference IV the `σ`, `κ` whose digest and setup root the Rust computed), π1's calls, the reference shape and leanVM's
-program IV, and the setup columns the compiler's at every IV (`SetupFromCompiler`). -/
+program IV, and the setup columns the compiler's at every 32-byte IV (`SetupFromCompiler`).
+
+**Inhabited**: `RecCompose.realDeployment prog` (σ, κ the Lean compiler's at every IV, π1's stream its `streamW`) has
+it, `RecCompose.realDeployment_real`, given the two evaluated checks of the digest and the setup root
+(`RecCompose.DigestChecked`, `RecCompose.SetupRootChecked`, `rec-real-check`) and `GraphsAgree`. The digest and setup
+root clauses are used by no proof: they pin the model's σ, κ (from which the model's contract computes π2's IV over `π`)
+to the deployed contract's constant IV, which the Rust computed from them. **The program is not pinned**
+(`D.pi1.prog`): the end theorems hold for every program of the reference shape, the deployment's program; leanVM
+42422001's program is not transcribed in Lean. -/
 def RecDeployment.Real (D : RecDeployment) : Prop :=
   (∀ iv, (D.pi2 iv).circuit = Data.circuit) ∧ D.pi1Calls = Data.pi1Calls ∧ D.pi1.shape = UniStatement.reference ∧
     D.pi1.programIv = UniStatement.programIv ∧
@@ -635,7 +649,7 @@ def RecKnowledgeSoundnessWith (D : RecDeployment) (ext : RecExtractor D) (ε : �
 /-- **Knowledge soundness of the recursive verifier against leanVM 42422001's relation, end to end** (π2's verifier
 and the six openings; the explicit extractor `recExtractor`: π2's, then π1-rec3's), error `ε2 + ε1 + εh`, under the
 named hypotheses: the recorded graph is π1-rec3's verifier off the merge hazard (`RecGraph.Pi1.Pi1GraphIsVerifier`,
-provable), π1-rec3 is knowledge sound with its Fiat–Shamir over Keccak-f[1600] (`Pi1FsKeccak ε1`, justified by
+proved: `RecGraph.Pi1.pi1GraphIsVerifier`), π1-rec3 is knowledge sound with its Fiat–Shamir over Keccak-f[1600] (`Pi1FsKeccak ε1`, justified by
 `uniKnowledgeSoundness_closed_rec3`: the Fiat–Shamir heuristic), and its run at Keccak-f[1600] avoids the merge
 hazard (`Pi1HazardKeccak εh`, justified by `RecGraph.hazard_prob`). `ε2` is π2's part's (`RecKnowledgeSoundness2`). The
 random-permutation theorems do not formally compose with the circuit's Keccak-f[1600]: these hypotheses are where they

@@ -66,26 +66,26 @@ def CircuitBridge (D : RecDeployment) (compiled : List UInt8 → RecCircuit.Comp
 π1's roots' offsets `RecGraph.Emitted.rootsAt`), the bridge gives the field's statement. -/
 theorem circuit_of_bridge {D : RecDeployment} {compiled : List UInt8 → RecCircuit.Compiled}
     {pub : RecSetupRoots → Vector UInt8 32 → Array UInt8 → ℕ → List Primitives.F192}
-    (hc : ∀ iv, RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) =
-      .ok (compiled iv))
+    (hc : ∀ iv, iv.length = 32 →
+      RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) = .ok (compiled iv))
     (hb : CircuitBridge D compiled pub) :
     ∀ (roots : RecSetupRoots) (input : Vector UInt8 32) (stream : Array UInt8) (w : ℕ → K) (ops : List Pi1Opening),
       ((compiled (D.pi1IvAt roots.pi1)).circuit.toPiop).Satisfies (pub roots input stream) (RecCircuit.emb w) →
         pi1OpsOf D roots input stream = some ops →
           Pi1GraphAccepts (D.pi1IvAt roots.pi1) input (D.pi1Stream w) ops :=
   fun roots input stream w ops hw hops ↦
-    hb roots input stream w ops hw (RecCircuit.pi1rec3_end (hc _) hw) hops
+    hb roots input stream w ops hw (RecCircuit.pi1rec3_end (hc _ (D.pi1IvAt_length _)) hw) hops
 
 /-- **`Pi2Layers.compile_ok` from the compiler's run on the emitted graph**, the graphs agreeing. -/
 theorem compile_ok_of_emitted {compiled : List UInt8 → RecCircuit.Compiled} (hg : GraphsAgree)
-    (hc : ∀ iv, RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) =
-      .ok (compiled iv)) :
-    ∀ iv, RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph RecGraph.Emitted.rootsAt iv) =
-      .ok (compiled iv) := by
-  intro iv
+    (hc : ∀ iv, iv.length = 32 →
+      RecCircuit.compile (RecCircuit.ofRG RecGraph.Emitted.graph RecGraph.Emitted.rootsAt iv) = .ok (compiled iv)) :
+    ∀ iv, iv.length = 32 →
+      RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph RecGraph.Emitted.rootsAt iv) = .ok (compiled iv) := by
+  intro iv hiv
   unfold GraphsAgree at hg
   rw [hg]
-  exact hc iv
+  exact hc iv hiv
 
 end RecCompose
 

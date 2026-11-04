@@ -19,9 +19,9 @@ open RecStatement LeanVM.Parameters
 theorem pi2SetupColumns_of_real {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
     (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) : Pi2SetupColumns D C := by
   intro roots i _
-  have hc := C.compile_ok (D.pi1IvAt roots.pi1)
+  have hc := C.compile_okAt roots.pi1
   rw [hroots] at hc
-  obtain ⟨hs, hk⟩ := hD.2.2.2.2.2.2 (D.pi1IvAt roots.pi1) _ hc
+  obtain ⟨hs, hk⟩ := hD.2.2.2.2.2.2 (D.pi1IvAt roots.pi1) (D.pi1IvAt_length roots.pi1) _ hc
   have hs' : (D.circuitAt roots.pi1).sigma = (C.compiled (D.pi1IvAt roots.pi1)).circuit.sigmaAt := hs
   have hk' : (D.circuitAt roots.pi1).kappa = (C.compiled (D.pi1IvAt roots.pi1)).circuit.kappaAt := hk
   refine ⟨?_, ?_⟩

@@ -202,7 +202,7 @@ include hD in
 theorem callWordsAgree : CallWordsAgree D C (pi2Facts hD C hchk) := by
   intro roots input stream w r hw hr
   obtain ⟨hview, hcallsv, -⟩ := viewChecked_at C hchk roots
-  have hc := C.compile_ok (D.pi1IvAt roots.pi1)
+  have hc := C.compile_okAt roots.pi1
   have hck := RecCircuit.Compiled.checked_of_compile hc
   have hcallsD : D.pi1Calls = callsOf (C.compiled (D.pi1IvAt roots.pi1)).circuit := hD.2.1.trans hcallsv.symm
   obtain ⟨hsize, hsc, hpp⟩ := run_data hD hr

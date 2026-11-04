@@ -247,3 +247,10 @@ root = "RecCircuitTest.Emitted"
 name = "rec-view-check"
 srcDir = "../RecCompose"
 root = "RecComposeTest.ViewCheck"
+
+# The real deployment's run-checked inputs (`RecCompose/RealDeployment.lean`: `DigestChecked`, `IvChecked` at three
+# IVs, with `--setup` `SetupRootChecked`), evaluated (`RecComposeTest/RealCheck.lean`).
+[[lean_exe]]
+name = "rec-real-check"
+srcDir = "../RecCompose"
+root = "RecComposeTest.RealCheck"

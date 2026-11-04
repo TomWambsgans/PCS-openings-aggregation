@@ -178,16 +178,32 @@ def Pi2FsLayer (D : RecDeployment) : Prop :=
 
 /-! ## The compiled circuit and its facts -/
 
-/-- **π2's circuit, as the Lean compiler builds it** from π1-rec3's recorded graph at every π1 IV (`Pi2Layers`'
-`rootsAt`, `compiled`, `compile_ok`, `stream_eq`). -/
+/-- **π2's circuit, as the Lean compiler builds it** from π1-rec3's recorded graph at every 32-byte π1 IV
+(`Pi2Layers`' `rootsAt`, `compiled`, `compile_ok`, `stream_eq`). Only 32-byte IVs occur: π1's contract IV is a
+Keccak-256 digest (`RecDeployment.pi1IvAt_length`), and the checker rejects every other length (`graphOk`). The real
+deployment's is `RecCompose.pi2Circuits_real` (`RealDeployment.lean`), from one named Bool per IV
+(`RecCompose.IvChecked`). -/
 structure Pi2Circuits (D : RecDeployment) where
   rootsAt : List ℕ
   compiled : List UInt8 → RecCircuit.Compiled
-  compile_ok : ∀ iv, RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) = .ok (compiled iv)
-  stream_eq : ∀ iv (w : ℕ → K),
+  compile_ok : ∀ iv, iv.length = 32 →
+    RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) = .ok (compiled iv)
+  stream_eq : ∀ iv, iv.length = 32 → ∀ (w : ℕ → K),
     D.pi1Stream w = ((compiled iv).streamW (RecCircuit.ofRG RecGraph.Pi1.pi1Graph rootsAt iv) w).toArray
 
 variable {D : RecDeployment}
+
+/-- `compile_ok` at π1's contract IV of the setup's roots (32 bytes, `pi1IvAt_length`). -/
+theorem Pi2Circuits.compile_okAt (C : Pi2Circuits D) (roots : UniStatement.SetupRoots) :
+    RecCircuit.compile (RecCircuit.ofRG RecGraph.Pi1.pi1Graph C.rootsAt (D.pi1IvAt roots)) =
+      .ok (C.compiled (D.pi1IvAt roots)) :=
+  C.compile_ok _ (D.pi1IvAt_length roots)
+
+/-- `stream_eq` at π1's contract IV of the setup's roots. -/
+theorem Pi2Circuits.stream_eqAt (C : Pi2Circuits D) (roots : UniStatement.SetupRoots) (w : ℕ → K) :
+    D.pi1Stream w = ((C.compiled (D.pi1IvAt roots)).streamW
+      (RecCircuit.ofRG RecGraph.Pi1.pi1Graph C.rootsAt (D.pi1IvAt roots)) w).toArray :=
+  C.stream_eq _ (D.pi1IvAt_length roots) w
 
 /-- The compiled circuit at the setup's roots, as `RecPiop`'s (`RecCircuit.Circuit.toPiop`). -/
 abbrev Pi2Circuits.G (C : Pi2Circuits D) (roots : RecSetupRoots) : RecPiop.Circuit E :=
@@ -329,7 +345,7 @@ theorem hbind_of (C : Pi2Circuits D) (Fa : Pi2Facts D C) (T : Pi2Tables D C) (ro
         ((C.G roots).port j) = (C.G roots).pubFp γ (Fa.pubOf roots s.2) j).card ≤ C.d roots j := by
   intro j hj hne
   have hV := Fa.valid roots
-  have hl := limbs_toPiop (C.compile_ok (D.pi1IvAt roots.pi1)) hj
+  have hl := limbs_toPiop (C.compile_okAt roots.pi1) hj
   have hwK : ∀ x ∈ (C.G roots).limbVals (fun i ↦ ((T.model roots).wP c).eval (pi2Omega i)) j, x ∈ subK := by
     intro x hx
     unfold RecPiop.Circuit.limbVals at hx
