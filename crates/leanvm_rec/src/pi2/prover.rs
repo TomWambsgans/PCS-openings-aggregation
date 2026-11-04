@@ -614,39 +614,70 @@ pub fn prove_with(
     let [alpha, beta_, gamma] = [(); 3].map(|_| to_f192(writer.sample()));
     lap("W: transform, commit", &mut timings);
 
-    // h on V_m.
-    let pushes = circuit.pushes(w, gamma);
-    let pulls = circuit.pulls();
-    let mut h = vec![F192::ZERO; n];
-    parallel::chunks_mut(&mut h, 1 << 12, |chunk, out| {
-        let start = chunk << 12;
-        let mut d: Vec<F192> = (0..out.len())
-            .flat_map(|j| {
+    // h on V_m, limb by limb. Each position's pull and push are `Circuit::pulls`'s and `Circuit::pushes`'s, found
+    // without their tables: a position's pair by a search in its role's pairs (sorted row intervals), every
+    // formula's kind once.
+    let gammas = super::circuit::gamma_powers(gamma, circuit.max_gamma());
+    let base_formula: Vec<bool> = circuit.formulas.iter().map(|f| f.is_base()).collect();
+    let width = circuit.width();
+    let mut by_role: Vec<Vec<(usize, usize, usize)>> = vec![vec![]; width];
+    for (p, pair) in circuit.pairs.iter().enumerate() {
+        by_role[pair.role].push((pair.first_row, pair.first_row + (1 << pair.log_rows), p));
+    }
+    by_role.iter_mut().for_each(|l| l.sort_unstable());
+    let pair_at = |i: usize| -> Option<usize> {
+        let (row, list) = (i >> r, &by_role[i & (width - 1)]);
+        let k = list.partition_point(|e| e.0 <= row);
+        (k > 0 && row < list[k - 1].1).then(|| list[k - 1].2)
+    };
+    let run = n.min(1 << 12);
+    let mut h_novel: [Vec<F64>; 3] = std::array::from_fn(|_| parallel::map_collect(n, |_| F64::ZERO));
+    {
+        let [h0, h1, h2] = &mut h_novel;
+        parallel::chunks_mut3(h0, h1, h2, run, |chunk, o0, o1, o2| {
+            let start = chunk * run;
+            let mut pulls = vec![false; o0.len()];
+            let mut d: Vec<F192> = Vec::with_capacity(2 * o0.len());
+            for (j, pulls_j) in pulls.iter_mut().enumerate() {
                 let i = start + j;
-                let pull = if pulls[i] {
+                let base = i & !(width - 1);
+                let (pull, own) = match pair_at(i) {
+                    None => (true, F192::from(w[i])),
+                    Some(p) => {
+                        let pair = &circuit.pairs[p];
+                        let formula = &circuit.formulas[pair.formula];
+                        let own = if base_formula[pair.formula] {
+                            F192::from(formula.eval_k(&|c| w[base + c]))
+                        } else {
+                            formula.eval(&|c| F192::from(w[base + c]), &gammas)
+                        };
+                        (pair.pulls, own)
+                    }
+                };
+                *pulls_j = pull;
+                d.push(if pull {
                     alpha + F192::from(w[i]) + beta_.mul_base(point(i))
                 } else {
                     F192::ONE
-                };
-                [
-                    pull,
-                    alpha + pushes[i] + beta_.mul_base(point(circuit.sigma[i] as usize)),
-                ]
-            })
-            .collect();
-        batch_inverse_e(&mut d);
-        for (j, o) in out.iter_mut().enumerate() {
-            *o = if pulls[start + j] { d[2 * j] } else { F192::ZERO } + d[2 * j + 1];
-        }
-    });
-    drop(pushes);
-    let run = n.min(1 << 12);
-    let sum = parallel::map_reduce(
-        n / run,
-        || F192::ZERO,
-        |c| h[c * run..(c + 1) * run].iter().fold(F192::ZERO, |a, &x| a + x),
-        |a, b| a + b,
-    );
+                });
+                d.push(alpha + own + F192::from(circuit.kappa[i]) + beta_.mul_base(point(circuit.sigma[i] as usize)));
+            }
+            batch_inverse_e(&mut d);
+            for (j, &pull) in pulls.iter().enumerate() {
+                let x = if pull { d[2 * j] } else { F192::ZERO } + d[2 * j + 1];
+                (o0[j], o1[j], o2[j]) = (F64(x.c0), F64(x.c1), F64(x.c2));
+            }
+        });
+    }
+    let limb_sum = |l: &[F64]| {
+        parallel::map_reduce(
+            n / run,
+            || F64::ZERO,
+            |c| l[c * run..(c + 1) * run].iter().fold(F64::ZERO, |a, &x| a + x),
+            |a, b| a + b,
+        )
+    };
+    let sum = F192::new(limb_sum(&h_novel[0]).0, limb_sum(&h_novel[1]).0, limb_sum(&h_novel[2]).0);
     let mut target_dens: Vec<F192> = circuit
         .public_values(&public, gamma)
         .iter()
@@ -659,12 +690,9 @@ pub fn prove_with(
         !check || sum == target,
         "the copy argument's sum is not the public target: the witness does not satisfy the circuit"
     );
-    let h_novel: [Vec<F64>; 3] = std::array::from_fn(|limb| {
-        let mut out: Vec<F64> = parallel::map_collect(n, |i| F64([h[i].c0, h[i].c1, h[i].c2][limb]));
-        ntt::coefficients(&mut out, F64::ZERO);
-        out
-    });
-    drop(h);
+    for limb in &mut h_novel {
+        ntt::coefficients(limb, F64::ZERO);
+    }
     lap("h on V_m, its coefficients", &mut timings);
 
     let q_novel = quotient_on_extension(circuit, spec, setup, &w_novel, &h_novel, [alpha, beta_, gamma]);
