@@ -635,7 +635,8 @@ theorem RecCompose.Pi1KF.pi1CompletenessFs_rpm (D : RecDeployment) (hsh : D.pi1.
   is `keccak256` by `rfl`; off π1-rec3's completeness bad events at its own challenges (`BadKF`), the Keccak-f[1600]
   verifier's run on its stream draws its challenges (`pi1KF_challenges`) and `pi1KeccakVerifierWith` accepts its
   honest proof at every permutation (`pi1KF_accepts`); the contract's rejection is at most π1's completeness at
-  Keccak-f[1600] plus the honest hazard plus `δ2`'s event (`contract_rejects_le`). See
+  Keccak-f[1600] plus the honest hazard plus `δ2`'s event (`contract_rejects_le`, unconditional: `¬ BadKF` enters only
+  the two non-vacuity witnesses, and no end theorem uses `BadKF`). See
   [`RecCompose/README.md`](RecCompose/README.md).
 
 ```sh
