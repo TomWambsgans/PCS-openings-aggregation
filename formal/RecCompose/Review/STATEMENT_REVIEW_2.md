@@ -60,7 +60,15 @@ tested); the deployed Rust prover is trusted for completeness". Better, add a re
 main line.
 
 **Caveat added, no test** (`fix-rec-docs2`). The rec3 differential test was started and then dropped for time; it is
-still to do. The docs now carry the membership side's caveat, "the deployed Rust prover is trusted for completeness;
+still to do. What the attempt found: the Rust π1-rec3 prover refuses every small Flock shape tried (memory/bytecode
+logs 5/7, 6/7, 7/7, 5/8, 6/8, with 77 to 205 BLAKE2S rows; Flock needs a BLAKE2S height of at least 7,
+`verifier.rs:65`). `prove_pairs` fails with "a stack shorter than the batch ends inside a pair"
+(`crates/leanvm_univariate/src/prover/batch.rs:295-296`): a stack with an odd number of variables is accepted only if it
+is the largest, and at these sizes the setup stack has 15 variables while `C1` has 16 or 17. The Lean `batchRounds3`
+zero-extends such a stack instead, so the two provers differ there by construction (not at the reference shape, where
+the Rust prover runs). A test needs a shape whose odd stacks are the largest, or a Rust `prove_pairs` that zero-extends.
+A synthetic trace with real BLAKE2s compressions and Flock's own `q_flock` witness (`log_n = 21`, 128 instances)
+passed its checks up to that point. The docs now carry the membership side's caveat, "the deployed Rust prover is trusted for completeness;
 the Lean prover is a transcription", for π1 (`Pi1KF.lean`'s module docstring and `pi1ProverFs`, `Pi2KFEnd.lean`,
 `formal/README.md`'s "The recursion's π1 prover") and for π2 (`Pi2CompleteEnd.pi2Prover`, compared with the Rust on
 `spec::example()` at `2^9`, `2^10` only, its witness `Classical.choose`; `formal/README.md`'s "π2's honest prover").
