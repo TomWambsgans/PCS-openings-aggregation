@@ -545,7 +545,7 @@ and `recCompleteness_pi2_rec3_final_fs` (with `Pi1CompletenessKeccak D (pi1Rec3P
 | `D.Real`, `Pi2Circuits D`, `hroots`, `GraphsAgree` | at `realDeployment`: the Lean compiler (with its completeness checks) accepts π1-rec3's graph at every 32-byte π1 IV and decodes π1's stream alike (`IvChecked`); the digest and setup root at the reference IV are the Rust's (`DigestChecked`, `SetupRootChecked`); `recordedGraph pi1Rec3 = Emitted.graph` | **checked by evaluation**, not by the kernel: `IvChecked` at three IVs and assumed at the others (`rec-real-check`), `GraphsAgree` (`RecGraphTest/Pi1Check.lean`) |
 | `Pi2ViewChecked C` | at every 32-byte π1 IV the compiled circuit passes `viewCheck` | from `IvChecked` (`pi2ViewChecked_real`) |
 | `Pi2AlphaFresh D C Fa (p1k D) εα` | `α`'s 536-byte input is not hashed before its query but with probability `εα` (`εα ≤ 2^-201` for `2^-164`) | **proved where the graph accepts** (`lean-pi2-alpha`, below); not needed |
-| `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest` (end to end only) | π1-rec3 at Keccak-f[1600] | the Fiat–Shamir heuristic (π1-rec3's random-permutation theorems) |
+| `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest` (end to end only) | π1-rec3 at Keccak-f[1600] | the Fiat–Shamir heuristic. `Pi1CompletenessKeccak`: its random-permutation reading is proved (`Pi1KF.pi1CompletenessFs_rpm`, `2^-167`). `Pi1HazardKeccakHonest`: its Φ-reading is stated (`Pi1Hazard.pi1HazardKeccakHonest_iff`), its random-permutation reading **is not proved**; it is motivated only by `RecGraph.hazard_prob` (`≤ 2^19` hazardous `t` per `p_0`: `2^-173` for a uniform `t`) |
 
 The earlier form (`recCompleteness2_pi2_closed`, any `P1`, `P1k`, the named staged facts) is kept.
 

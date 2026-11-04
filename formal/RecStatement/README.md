@@ -329,10 +329,16 @@ setup's commitment (`setupTreeWith`) and the circuit's digest over Keccak-f[1600
    meeting point is the reduction `RecKnowledgeSoundnessReduction`: the reader applies the Fiat–Shamir heuristic to
    its two explicit derived adversaries (motivated by `uniKnowledgeSoundness_closed_rec3` and `hazard_prob`). The Props
    `Pi1FsKeccak`, `Pi1HazardKeccak` are false as stated for unbounded adversaries (they grind Keccak-f[1600] offline for
-   free); `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest` (about the honest prover, justified by
-   `uniCompletenessRec3_end_closed` and `hazard_prob`) are not provable. A random-permutation proof of the hazard bound
-   for the derived adversary (as `hazard_prob` per uniform `t`) is not done: it would need the sponge-freshness
-   argument of π1-rec3's game for challenge 49.
+   free); `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest` (about the honest prover) are not provable.
+   `Pi1CompletenessKeccak`'s random-permutation reading is proved (`RecCompose.Pi1KF.pi1CompletenessFs_rpm`, from
+   `uniCompletenessRec3_end_closed`). **`Pi1HazardKeccakHonest`'s is not**: it is motivated only by `hazard_prob`, a
+   count (at most `2^19` hazardous `t` per `p_0`, so `2^-173` for a uniform `t` with `p_0` fixed), not a game;
+   `deltaRec3`'s `BadT` is a different event. Its Φ-reading is stated (`RecCompose.Pi1Hazard.Pi1HazardFsHonest`,
+   `pi1HazardKeccakHonest_iff`), as is the soundness one's (`Pi1HazardFs`, `pi1HazardKeccak_of_fs`). A
+   random-permutation proof of either hazard bound is not done: for the honest prover it needs π1-rec3's staging at
+   `t` (`Rec3ProbTFresh`) plus the facts that the verifier's challenges on the honest stream are the prover's writer's
+   (`runWithFsH_syncs3` with `flockSyncs3`, `batchSyncs3`) and that the writer holds exactly 49 challenges before
+   `t`; for the derived adversary, the sponge-freshness argument of π1-rec3's game for challenge 49.
 3. **`pi1Stream`** is a field of the deployment: where π2's witness holds π1's stream is the circuit compiler's (the
    stream's hashed bytes are free bits of π2's witness, `RecCircuit.Compiled.decodeStream`); the composition instantiates
    it. **`pi2`** is π2's circuit for π1's contract IV (the seed's constants): at the real deployment, the emitted tables
