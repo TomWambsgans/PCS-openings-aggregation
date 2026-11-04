@@ -117,7 +117,7 @@ size moving by the popcount difference). **Status at hand-off: the reference cir
 parallel). Their logs are `/root/pcs-quotient-fv/review2/sample-{0,3,1000}.log` on h1. Append them here, then delete
 `review2`.
 
-**Results** (appended by `fix-rec-docs2`; h1, `rec-iv-sample 3 0`, `3 3`, `3 1000`, about 25 minutes an IV per
+**Results** (appended by `fix-rec-docs2`; h1, `rec-iv-sample 3 0`, `3 3`, `3 1000`, about 30 minutes an IV per
 process). Each line: `ivCheck`; whether `logN`, `logWidth`, regions, blocks, `σ`, ports and calls equal the reference
 IV's; `κ`'s entries, the symmetric difference with the reference's (`+` only here, `-` only there), whether every entry
 of it is a `1`, and whether `κ`'s size moved by the popcount difference.
@@ -125,16 +125,16 @@ of it is a `1`, and whether `κ`'s size moved by the popcount difference.
 | index | IV | popcount | `ivCheck` | structure equal | `κ` entries | difference | all ones | size check |
 |---|---|---|---|---|---|---|---|---|
 | 0 | `85d3ff47f89be87938bfb1cfc77ed52002e8d3c27f2c1e217ae436b0b31da1ff` | 141 | true | true | 19138 | +70 −75 | true | true |
+| 1 | `8eacfa3e0697039f56c5dc4afc77cefb555cc652192c7f423e5c992ad6726765` | 138 | true | true | 19135 | +63 −71 | true | true |
 | 3 | `55c2aed426cc58a15dee8a807ad51d242d491e7d944888853393aec21ecd7a76` | 122 | true | true | 19119 | +48 −72 | true | true |
+| 4 | `d67b198881fb44078601544d3440f6bc91488c6fd62992a34bfa5d30716fbed9` | 123 | true | true | 19120 | +51 −74 | true | true |
 | 1000 | `b74dacfd5e63bf47f8601ef74de51666fa02acbd959fcf6500192f96d4d7fef9` | 147 | true | true | 19144 | +1 −0 | true | true |
-| 1 | not finished | | | | | | | |
+| 1001 | `0100000000000000000000000000000000000000000000000000000000000000` | 1 | true | true | 18998 | +1 −146 | true | true |
 | 2 | not finished | | | | | | | |
-| 4 | not finished | | | | | | | |
 | 5 | not finished | | | | | | | |
-| 1001 | not finished | | | | | | | |
 | 1002 | not finished | | | | | | | |
 
-**3 of 9 sampled IVs evaluated: all hold** (`ivCheck` true, the structure equal, the `κ` difference only `1`s of the expected size). The union of the differences' positions over these IVs: 198 positions, all in `92175..96255` and `≡ 92175 mod 16` (yes), a set of at most 256 slots: the seed's IV constants, one slot a bit. Not finished at hand-off: indices [1, 2, 4, 5, 1001, 1002] (the three runs still going; `review2` kept).
+**6 of 9 sampled IVs evaluated: all hold** (`ivCheck` true, the structure equal, the `κ` difference only `1`s of the expected size). The union of the differences' positions over these IVs: 252 positions, all in `92175..96255` and `≡ 92175 mod 16` (yes), a set of at most 256 slots: the seed's IV constants, one slot a bit. Not finished at hand-off: indices [2, 5, 1002] (the three runs still going; `review2` kept).
 
 **Fix.**
 
