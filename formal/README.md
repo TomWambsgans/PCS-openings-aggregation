@@ -288,7 +288,6 @@ python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|
 > theorems are vacuous or carry no bound, though their proofs are valid:
 > - `Pi2Circuits` asks the compiler to accept π1-rec3's graph at IVs of every length, and it rejects long ones, so no
 >   `Pi2Circuits` exists;
-> - completeness uses a π1 prover whose Fiat–Shamir is over the random permutation rather than Keccak-f[1600].
 >
 > The fixes are in progress. Until they land, read the theorems below as proved implications, not as end results.
 
@@ -514,6 +513,58 @@ theorem RecCompose.Pi2Alpha.recCompleteness_pi2_rec3_closed_fs {D : RecDeploymen
   it is fresh but with probability `(K + 4) / 2^256`, `K ≤ 2^47.01` the inputs hashed before `σ` (`Pi2AlphaChain`).
 * `Pi2WitnessComplete` is no more an argument (proved, `Pi2W.pi2WitnessComplete`); the `Pi2Sim` forms with `hal` are
   kept.
+
+**The recursion's π1 prover** (`fix-rec-pi1prover`; statement review finding 4; `RecCompose/Pi1KF*.lean`,
+`Pi2KFEnd.lean`). The theorems above are at `Pi2G.pi1Rec3Prover D`, whose Fiat–Shamir (IV, seed, stream) is Keccak-256
+over the random permutation `π`. π1-rec3's graph and `pi1KeccakVerifierWith` hash it over the real Keccak-f[1600], so
+there "the graph accepts" has probability about `2^-180` and `Pi1CompletenessKeccak D (pi1Rec3Prover D) δ1` holds only
+at `δ1 ≈ 1`. They are kept, **superseded** by the same theorems at the prover the recursion runs,
+`Pi1KF.pi1Rec3ProverKF D`: its Fiat–Shamir the pure `keccak256` (Keccak-256 over Keccak-f[1600], the graph's), its
+Merkle trees and three WHIR openings over `π`:
+
+```lean
+def RecCompose.Pi1KF.pi1Rec3ProverKF (D : RecDeployment) : Pi1Prover D := pi1ProverFs hKF D
+-- pi1ProverFs Hfs D = uniProverRec3With2 Hfs (keccak256With queryPermutation) queryPermutation (flockProve3H Hfs) D.pi1
+-- hKF x = pure (keccak256 x);  proveRec3With2 H H F = proveRec3With H F  (rfl)
+theorem RecCompose.Pi2KF.recCompleteness2_pi2_rec3_kf {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
+    (hchk : Pi2ViewChecked C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) :
+    RecCompleteness2 D (pi1Rec3ProverKF D) (pi2Prover D C (pi2Facts hD C hchk) PcsQuotient.nonceFuel)
+      (delta2' Cost2.pi2RunN alphaBound (tFreshBound2 Cost2.pi2RunN alphaBound)
+        ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel))
+theorem RecCompose.Pi2KF.recCompleteness_pi2_rec3_kf_fs {D : RecDeployment} (hD : D.Real) (C : Pi2Circuits D)
+    (hchk : Pi2ViewChecked C) (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree)
+    (δ1 δh : ℝ≥0∞) (h1 : Pi1CompletenessKeccak D (pi1Rec3ProverKF D) δ1)
+    (hh : Pi1HazardKeccakHonest D (pi1Rec3ProverKF D) δh) :
+    RecCompletenessWith D (composeProver D (pi1Rec3ProverKF D) (pi2Prover D C (pi2Facts hD C hchk) PcsQuotient.nonceFuel))
+      (δ1 + δh + delta2' Cost2.pi2RunN alphaBound (tFreshBound2 Cost2.pi2RunN alphaBound)
+        ((Cost2.pi2RunN : ℝ≥0∞) * missProb Whir.queryGrindingBits ^ PcsQuotient.nonceFuel))
+theorem RecCompose.Pi1KF.pi1CompletenessKeccak_iff (D : RecDeployment) (δ : ℝ≥0∞) :
+    RecStatement.Pi1CompletenessKeccak D (pi1Rec3ProverKF D) δ ↔ Pi1CompletenessFs D (fun s ↦ pure (keccakF1600 s)) δ
+theorem RecCompose.Pi1KF.pi1CompletenessFs_rpm (D : RecDeployment) (hsh : D.pi1.shape = reference)
+    (hiv : D.pi1.programIv.length ≤ 2 ^ 16) : Pi1CompletenessFs D queryPermutation deltaRec3
+```
+
+* **The numbers are unchanged**: `εα = alphaBound ≈ 2^-207.0`, `εt = tFreshBound2 pi2RunN alphaBound ≤ 2^-200`,
+  `δ2 ≤ 2^-164` (about `2^-164.7`; `delta2_kf_le`). Every count they use bounds the new prover's: its block count is
+  UniComplete's prover's `2^47` (`qc_p1kKF`), nearly all its three WHIR provers' (`2^46.70`); its Fiat–Shamir, about
+  `150` blocks, is no oracle call now. The census before `σ` is simpler (π1's IV, seed and stream challenges are not
+  random-oracle queries), and the bound `K ≤ 2 · setupR + 2^47 + 3 · gOpen + 4` is kept.
+* **How**: the old and the new prover are two simulations of one program over three calls (the Fiat–Shamir hash, the
+  trees' hash, the permutation; `Pi1KFTransfer.uprover`), so the duplex discipline, the block count and the hash
+  census transfer from UniComplete's prover (`disc_p1kKF`, `qc_p1kKF`, `hashOK_p1kKF_of`); the experiment's
+  commutation is `app_proveRec3With2`. The staged argument is generic in π1's program and runs unchanged.
+* **`Pi1CompletenessKeccak D (pi1Rec3ProverKF D) δ1`** is now the honest-prover Fiat–Shamir heuristic, prover and
+  verifier at the same Keccak-f[1600]: the generic experiment `pi1FsCompletenessExperiment D Φ` (π1's Fiat–Shamir over
+  `Φ`, trees and openings over `π`) at `Φ = Keccak-f[1600]` is its experiment (`pi1CompletenessKeccak_iff`), and at
+  `Φ = π` (Keccak-f[1600] read as the random permutation) it is π1-rec3's random-permutation completeness, proved with
+  `deltaRec3 < 2^-167` (`pi1CompletenessFs_rpm`, from `uniCompletenessRec3_end_closed`). The gap is the heuristic
+  "Keccak-f[1600] behaves as the random permutation for this fixed honest prover"; nothing proves the Keccak reading.
+* **Non-vacuity** (`RecCompose/Pi1KFCore.lean`, `RecCompose/Review/Pi1ProverReview.lean`): the prover's Fiat–Shamir
+  is `keccak256` by `rfl`; off π1-rec3's completeness bad events at its own challenges (`BadKF`), the Keccak-f[1600]
+  verifier's run on its stream draws its challenges (`pi1KF_challenges`) and `pi1KeccakVerifierWith` accepts its
+  honest proof at every permutation (`pi1KF_accepts`); the contract's rejection is at most π1's completeness at
+  Keccak-f[1600] plus the honest hazard plus `δ2`'s event (`contract_rejects_le`). See
+  [`RecCompose/README.md`](RecCompose/README.md).
 
 ```sh
 cd formal/EndToEnd   # on h1

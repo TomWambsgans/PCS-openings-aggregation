@@ -26,7 +26,9 @@ def p1k (D : RecDeployment) (input : Vector UInt8 32) (rows : List ℕ) (q : D.p
   UniComplete.Rec3.uniProverRec3With callKeccak256 callKeccakF1600
     (UniComplete.Rec3.flockProve3H callKeccak256) D.pi1 input rows q
 
-/-- **π1-rec3's honest prover over the random permutation.** -/
+/-- **π1-rec3's honest prover over the random permutation**, its Fiat–Shamir included. **Superseded** as the recursion's
+π1 prover by `Pi1KF.pi1Rec3ProverKF` (its Fiat–Shamir over Keccak-f[1600], as π1-rec3's graph hashes;
+`Review/STATEMENT_REVIEW.md`, finding 4); kept for the theorems stated at it. -/
 abbrev pi1Rec3Prover (D : RecDeployment) : Pi1Prover D :=
   UniComplete.Rec3.uniProverRec3RP UniComplete.Rec3.flockProve3H D.pi1
 

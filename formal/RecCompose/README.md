@@ -130,3 +130,22 @@ the seed (the IV at `16` of `80`), `α`'s input (the seed at `0` of `536`), each
 | `Pi2AlphaFresh.lean` | **`alphaFresh_p1k`**: `α`'s input cached while the graph accepted, at most **`alphaBound = 4 · (2 · setupR + 2^47 + 3 · gOpen + 4) / 2^256`**, **`alphaBound_le`** (`≤ 2^-204`); `prA_le`. |
 | `Pi2AlphaG.lean` | `Holds2` conditioned on `G`: **`Pi2Staged.Holds3`** (`alphaFresh`, `tFresh` with `G`; `accA`, `accB`), `prEvent_staged3_triple_leG`, `prEvent_tquery_leG`, `prEvent_staged_bad_le3`, **`recCompleteness2_of_staged3`**, `tFresh_ofG`, **`pi2TFresh_ofG`**. |
 | `Pi2AlphaEnd.lean` | **`holds3_pi2_p1k`**; **`Pi2Alpha.recCompleteness2_pi2_rec3_closed`**, **`Pi2Alpha.recCompleteness_pi2_rec3_closed_fs`** (the run-checked inputs only, and for the end-to-end form the Fiat–Shamir premises), **`delta2_alpha_le`** (`δ2 ≤ 2^-164`). |
+
+## The recursion's π1 prover (`fix-rec-pi1prover`, statement review finding 4)
+
+The completeness theorems above are stated at `Pi2G.pi1Rec3Prover D = uniProverRec3RP flockProve3H D.pi1`, whose
+Fiat–Shamir is Keccak-256 over the random permutation, while π1-rec3's graph and `pi1KeccakVerifierWith` hash with the
+real Keccak-f[1600]. They are kept, superseded by the same theorems at **`Pi1KF.pi1Rec3ProverKF D`**: Fiat–Shamir the
+pure `keccak256`, trees and WHIR openings over `π`. `εα`, `εt`, `δ2` are unchanged (`δ2 ≤ 2^-164`, `delta2_kf_le`).
+
+| File | What |
+|---|---|
+| `Pi1KF.lean` | **`proveRec3With2 Hfs Hm F`** (UniComplete's prover with its Fiat–Shamir hash `Hfs` and its trees' hash `Hm` split; `proveRec3With2_self`, by `rfl`), `uniProverRec3With2`, `hKF = pure ∘ keccak256`, `pi1ProverFs Hfs D`, **`pi1Rec3ProverKF D = pi1ProverFs hKF D`**, `pi1ProverFs_rpm` (at `keccak256With π` UniComplete's `uniProverRec3RP`, by `rfl`), `p1kKF` (over the two calls), `app_proveRec3With2`, `simulateQ_p1kKF`, `pi1Rec3ProverKF_eq`. |
+| `Pi1KFTransfer.lean` | the old and new two-call provers as simulations of one three-call program `uprover` (`sim_uprover_old`, `sim_uprover_new`); the transfers `duplexP_new`, `qc_new`, `hashOK_new`; **`disc_p1kKF`**, **`qc_p1kKF`** (`2^47`), **`hashOK_p1kKF_of`**. |
+| `Pi1KFCore.lean` | at a pure trees' hash: `proveRec3With2_eq(_some)`, `pi1Iv_eq`, `runFs_eq`, **`pi1KF_challenges`** (off π1's bad events `BadKF` at the prover's own challenges, the Keccak-f[1600] verifier's run on its stream draws its challenges and accepts), **`pi1KF_accepts`** (`pi1KeccakVerifierWith` accepts its honest proof at every permutation, off `BadKF`). |
+| `Pi1KFRpm.lean` | `pi1VerifierFsWith Φ F`, `pi1FsCompletenessExperiment D Φ`, `Pi1CompletenessFs D Φ δ`; **`pi1CompletenessKeccak_iff`** (`Pi1CompletenessKeccak D (pi1Rec3ProverKF D) δ ↔ Pi1CompletenessFs D (pure ∘ keccakF1600) δ`), **`pi1CompletenessFs_rpm`** (at `Φ = π`, `deltaRec3 < 2^-167`, from `uniCompletenessRec3_end_closed`), `verifierFs_le`. |
+| `Pi2KFEnd.lean` | `experiment_eq_kf`, `pi2ExperimentLe_kf`, `pi2RunDuplex_kf`, `pi2RunCost_kf`, `alphaFresh_kf`, `holds3_pi2_kf`; **`recCompleteness2_pi2_rec3_kf`**, **`recCompleteness_pi2_rec3_kf_fs`**, `delta2_kf_le`. |
+| `Review/Pi1ProverReview.lean` | non-vacuity (`lake env lean`): `pi1Rec3ProverKF_fs_kf`, `challenges_match`, `keccak_accepts`, `contract_rejects_le`, `rpm_reading`. |
+
+`Pi1CompletenessKeccak D (pi1Rec3ProverKF D) δ1` is a heuristic premise, "Keccak-f[1600] behaves as the random
+permutation for this fixed honest prover": its random-permutation reading is proved, its Keccak reading is not.
