@@ -67,6 +67,7 @@ named inputs; the files:
 | `Facts.lean` | `Pi2ViewChecked`; **`pi2Facts`** (`Pi2Facts D C`), `pubOfC_canon`, `pi2Facts_pubOf`. |
 | `IvLength.lean` | **`RecDeployment.pi1IvAt_length`**: π1's contract IV has 32 bytes (a Keccak-256 digest); the per-IV premises are stated at 32-byte IVs and reach `pi1IvAt` through it (`Pi2Circuits.compile_okAt`, `stream_eqAt`). |
 | `RealDeployment.lean` | **`realDeployment prog hprog`** (σ, κ the Lean compiler's at every IV, π1's stream its `streamW`), **`realDeployment_real`** (`Real`, from `GraphsAgree`, `DigestChecked`, `SetupRootChecked`), **`pi2Circuits_real`**, **`pi2ViewChecked_real`** (from `GraphsAgree`, `IvChecked`); `ivCheck` (compile, `viewCheck`, `streamAgree`), `streamW_eq_of_streamAgree`. Why IV uniformity is not proved: the module docstring. |
+| `IvUniform.lean` | **`ivChecked_of_patchChecked`**: `IvChecked` from `PatchChecked` (the compiler's IV factorization: at every 32-byte IV, the all-ones IV's circuit with `κ` removed at the zero bits' seed positions, same view, free bits, free reads; **not proved**) and `ivCheck` at the all-ones and zero IVs (evaluated). `viewCheck_patch`, `streamAgree_patch`. |
 | `Meanings.lean` | **`statementPortMeaning`**, **`zeroPortsMeaning`**, **`callWordsAgree`** for `pi2Facts`. |
 | `Layouts.lean` | **`pi1CallsLayouts_of_real`** (`stackLayout_words`). |
 | `Final.lean` | **`recKnowledgeSoundness2_final`**, **`recKnowledgeSoundnessReduction_final`**, **`recKnowledgeSoundness_final`**, **`recKnowledgeSoundness_final_fs`**: the end theorems from the named inputs left. |

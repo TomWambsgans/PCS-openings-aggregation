@@ -359,12 +359,19 @@ def RecCompose.IvChecked : Prop := ∀ iv : List UInt8, iv.length = 32 → ivChe
   (`streamW_eq_of_streamAgree`); it was a functional equation that no evaluation checked. **`IvChecked` is stated for
   every 32-byte IV, evaluated at three** (π1's reference IV, the zero IV, the all-ones IV; together they set each of
   the 256 IV constants both ways) and assumed at the others.
-* **IV uniformity is not proved.** The IV enters the compiler only through the seed's message: 256 constants
-  `fresh 0`/`fresh 1` in the seed's Keccak-f input, plus the seed sponge's traces. A `0` is not stored in the sparse
-  `κ`, so `κ` has one entry per IV one-bit more: 19,143 entries at the reference IV (146 one-bits) against 18,997 at the
-  zero IV. Proving that nothing else in the run depends on those constants is a relational simulation of the builder
-  (about 1,200 lines of monadic code) and of the checker (680 lines). That is not done
-  (`RealDeployment.lean`'s docstring).
+* **IV uniformity is reduced, not proved** (`RecCompose/IvUniform.lean`). The IV enters the compiler only through the
+  seed's message: 256 constants `fresh 0`/`fresh 1` in the seed's Keccak-f input, plus the seed sponge's traces. A `0`
+  is not stored in the sparse `κ`, so `κ` has one entry per IV one-bit more: 19,143 entries at the reference IV (146
+  one-bits) against 18,997 at the zero IV. **Proved**: `ivChecked_of_patchChecked : PatchChecked → ivCheck onesIv =
+  true → ivCheck zeroIv = true → IvChecked`. `PatchChecked` is the compiler's IV factorization alone: at every 32-byte
+  IV the compile succeeds and its circuit is the all-ones IV's with the `κ` entries removed at the seed positions of
+  the IV's zero bits (`patchCircuit`, `seedPositions`, `zeroPos`), with the same view, free bits and free reads. The
+  view check and `streamAgree` transfer across that patch (`viewCheck_patch`, `streamAgree_patch`: `κ` is at every
+  position the all-ones IV's or the zero IV's, and `valAgree` reads it at one position). **Not proved**: `PatchChecked`
+  itself, a simulation of `compileM` (about 1,200 lines of monadic code) in which only the seed's constants differ. It
+  is universal over the IVs like `IvChecked`, but it is about the compiler alone; the checker and the view check no
+  longer enter the premise. It is not yet evaluated in this exact form (`patchCheck iv`); `Review/IvSample.lean`
+  compares the same structure field by field. `NonVacuity.inhabited_of_patch` restates the non-vacuity from it.
 * The recursive contract's EVM bytecode is linked to the model **by transcription and test** (`contract.rs`'s parity
   tests and `RecStatement`'s differential runner), not by Lean. The membership verifier, by contrast, has
   `Evm.evm_accepts_iff_verifyWith`.

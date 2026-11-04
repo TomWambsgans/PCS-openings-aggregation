@@ -116,6 +116,19 @@ parallel). Their logs are `/root/pcs-quotient-fv/review2/sample-{0,3,1000}.log` 
      `κ` constants. One compile then serves every IV, and `IvChecked` collapses to the one evaluated check.
 4. Until then, say in the end-theorem docstrings that a single failing IV would make them vacuous.
 
+**Status (`fix-rec-iv-uniform`): reduced, not fixed.** `RecCompose/IvUniform.lean` proves route (a)'s second half and
+the conclusion: `ivChecked_of_patchChecked : PatchChecked → ivCheck onesIv = true → ivCheck zeroIv = true →
+IvChecked`, on the three standard axioms. `PatchChecked` is the factorization alone, restricted to what `ivCheck`
+reads. At every 32-byte IV the compile succeeds, its circuit is `patchCircuit onesCompiled.circuit (zeroPos
+(seedPositions onesCompiled) iv)` (the all-ones IV's `κ` with the entries at the zero bits' seed positions removed), and
+its view, free bits and free reads are the all-ones IV's. The transfer needs no data about the circuit. `viewOf`,
+`callsOf` and `validB` but `kappaExprB` do not read `κ`, and `kappaExprB` holds of a sublist. A patched `κ` is, at
+every position, the all-ones IV's or the zero IV's, and `valAgree` reads `κ` at one position. The two evaluated IVs set
+every seed constant both ways. `NonVacuity.inhabited_of_patch` restates the non-vacuity from `PatchChecked` and the two
+evaluated `ivCheck`s. Still open: the simulation of `compileM` that proves `PatchChecked` (route (a)'s first half). It
+was not attempted for lack of time. `PatchChecked` is not yet evaluated in this exact form (`patchCheck iv`; no new
+compile was started). The compile's own checker no longer needs to transfer: `PatchChecked` includes its success.
+
 ### 3. The honest-hazard premise `δh` has no random-permutation reading, unlike `δ1`, but the docs pair them as both backed by RPM theorems (misleading doc)
 
 `recCompleteness_pi2_rec3_kf_fs` bounds the contract's rejection of an honest proof by `δ1 + δh + δ2`. For

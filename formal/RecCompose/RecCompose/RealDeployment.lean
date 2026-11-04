@@ -36,6 +36,9 @@ check). A proof that the rest of the run (regions, rows, placements, values, σ,
 checker's verdict, `streamW`) does not depend on those 256 constants is a relational simulation of the whole builder
 (`compileM`, the templates and `finish`, about 1,200 lines of monadic code) and of the checker (680 lines); it is not
 done. The three evaluated IVs set every IV constant both ways (the zero IV all `0`, the all-ones IV all `1`).
+`IvUniform.lean` proves `IvChecked` from the builder's half alone (`PatchChecked`: the compile at every IV is the
+all-ones IV's with `κ` removed at its zero bits' seed positions) and `ivCheck` at the all-ones and zero IVs: the
+checker's half (`viewCheck`, `streamAgree`) is done.
 -/
 
 namespace RecCompose
@@ -143,7 +146,7 @@ def ivCheck (iv : List UInt8) : Bool :=
 
 /-- **The per-IV check holds at every 32-byte IV.** Stated for every 32-byte IV, **checked by evaluation at three**
 (π1's reference IV, the zero IV, the all-ones IV: `rec-real-check`), assumed at the others (IV uniformity is not
-proved; see the module docstring). -/
+proved; see the module docstring; `ivChecked_of_patchChecked` derives it from `PatchChecked`). -/
 def IvChecked : Prop := ∀ iv : List UInt8, iv.length = 32 → ivCheck iv = true
 
 /-! ## From the checks -/
