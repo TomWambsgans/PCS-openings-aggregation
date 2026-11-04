@@ -41,10 +41,12 @@ closed forms, the siblings' fold, and `checks_claims_iff`: the checks pass and t
 `c_h + c_q ≠ 0` and `RecPiop.Post2`); and the recursive verifier's end statements, stated, not proved, in two parts,
 since π2's circuit computes π1's Fiat–Shamir with the real Keccak-f[1600] while π1-rec3's soundness is proved in the
 random-permutation model: π2's part in that model (`RecKnowledgeSoundness2`, `RecCompleteness2`: the contract accepts
-only if π1-rec3's recorded graph, at Keccak-f[1600], accepts the stream π2's extractor outputs), and the end-to-end
-corollaries `RecKnowledgeSoundness`, `RecCompleteness` against `Lv42`'s `M3Holds` under named hypotheses about π1-rec3 at
-Keccak-f[1600] (`Pi1FsKeccak` and its kin: the Fiat–Shamir heuristic, justified by π1-rec3's random-permutation
-theorems).
+only if π1-rec3's recorded graph, at Keccak-f[1600], accepts the stream π2's extractor outputs); end-to-end knowledge
+soundness against `Lv42`'s `M3Holds` as an explicit reduction (`RecKnowledgeSoundnessReduction`: π2's error plus
+π1-rec3's and the merge hazard's experiments at Keccak-f[1600] for two explicit adversaries derived from the attacker);
+and the corollaries `RecKnowledgeSoundness`, `RecCompleteness` under named hypotheses about π1-rec3 at Keccak-f[1600]
+(`Pi1FsKeccak` and its kin; the soundness ones false as stated for unbounded adversaries, the Fiat–Shamir heuristic
+for bounded ones).
 
 ## End-to-end theorems
 
@@ -286,8 +288,6 @@ python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|
 > theorems are vacuous or carry no bound, though their proofs are valid:
 > - `Pi2Circuits` asks the compiler to accept π1-rec3's graph at IVs of every length, and it rejects long ones, so no
 >   `Pi2Circuits` exists;
-> - the merge hazard holds trivially on the empty stream, so `εh ≥ 1`;
-> - the Fiat–Shamir premises quantify over adversaries that grind Keccak-f[1600] offline for free;
 > - completeness uses a π1 prover whose Fiat–Shamir is over the random permutation rather than Keccak-f[1600].
 >
 > The fixes are in progress. Until they land, read the theorems below as proved implications, not as end results.
@@ -299,6 +299,9 @@ with the real Keccak-f[1600] while π1-rec3's soundness is proved in the random-
 The end theorems are in `RecCompose/FsClosed.lean` (π2's Fiat–Shamir layer proved), `Final.lean` and `End.lean`:
 
 ```lean
+theorem RecCompose.recKnowledgeSoundness_reduction (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
+    (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hchk : Pi2ViewChecked C) :
+    RecKnowledgeSoundnessReduction D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64
 theorem RecCompose.recKnowledgeSoundness2_closed (D : RecDeployment) (hD : D.Real) (C : Pi2Circuits D)
     (hroots : C.rootsAt = RecGraph.Emitted.rootsAt) (hg : GraphsAgree) (hchk : Pi2ViewChecked C) :
     RecKnowledgeSoundness2 D pi2Bound ∧ ∀ Q ≤ 2 ^ 64, pi2Bound Q ≤ (2 : ℝ≥0∞)⁻¹ ^ 64
@@ -311,14 +314,36 @@ theorem RecCompose.recCompleteness_end_fs (D : RecDeployment) (hD : D.Real) (P1 
     (hh : Pi1HazardKeccakHonest D P1 δh) : RecCompletenessWith D (composeProver D P1 P2) (δ1 + δh + δ2)
 ```
 
+**The headline is `recKnowledgeSoundness_reduction`**, with no Fiat–Shamir premise. `RecKnowledgeSoundnessReduction D
+pi2Bound` (`RecStatement/Reduction.lean`) says: for every adversary `A` of `Q` calls of `π`, `π⁻¹` against the recursive
+verifier, the derived adversaries `pi1Adversary D A` and `hazardAdversary D A` make at most `Q` calls, and
+
+```
+Pr[contract accepts ∧ recExtractor fails] ≤ pi2Bound Q
+    + Pr[pi1Adversary D A breaks π1-rec3, Fiat–Shamir over Keccak-f[1600]]   (pi1KeccakSoundnessExperiment)
+    + Pr[hazardAdversary D A hits the merge hazard on an accepted stream]     (pi1HazardExperiment, Pi1HazardAccepted)
+```
+
+The derived adversaries are `def`s: `A`, its queries logged, then π2's explicit extractor `recExtractor2` (preimage
+replay, `W`'s inversion, the fast path, unique and Guruswami–Sudan decoding at `2^24`, π1's graph's checks), which makes
+no query. They run in `A`'s time plus the extractor's, a polynomial; Lean does not model time. The reader applies the
+Fiat–Shamir heuristic for Keccak-f[1600] to these two adversaries. The merge hazard (`RecGraph.MergeHazard`) asks that
+π1-rec3's run draw `t` (challenge 49), and `Pi1HazardAccepted` that π1-rec3's graph accept the stream, so the empty
+stream is off it (`RecCompose/Review/StatementReview.lean`: `not_mergeHazard_empty`, `emptyAdversary_hazard_zero`).
+
+The `_fs` forms are its corollaries under `Pi1FsKeccak ε1`, `Pi1HazardKeccak εh`. **These two Props are false as stated**:
+they quantify over every `OracleComp` adversary and count only its calls of `π`, so an adversary grinds π1's
+Keccak-f[1600] challenges offline for free. They are kept as the Fiat–Shamir heuristic for adversaries of bounded
+Keccak-f[1600] work, which Lean does not model.
+
 They are `Final.lean`'s `recKnowledgeSoundness2_final`, `recKnowledgeSoundness_final_fs` (kept) with their hypothesis
 `hfs : Pi2FsLayer D` discharged by `pi2FsLayer_real`, the circuit's facts `Fa` by `pi2Facts hD C hchk` and the ports' and
 calls' meaning by `statementPortMeaning`, `zeroPortsMeaning`, `callWordsAgree`, `pi1CallsLayouts_of_real`. `recKnowledgeSoundness_closed` and `recCompleteness_end` state the `RecStatement` Props `RecKnowledgeSoundness D
 pi2Bound ε1 εh` and `RecCompleteness D P1 P2 δ1 δh δ2` themselves. Their own premise `Pi1GraphIsVerifier` is proved
-(`RecGraph.Pi1.pi1GraphIsVerifier`), so the `_fs` forms keep only the Fiat–Shamir heuristic for Keccak-f[1600]:
-`Pi1FsKeccak ε1` and `Pi1HazardKeccak εh`, or `Pi1CompletenessKeccak δ1` and `Pi1HazardKeccakHonest δh`. These are
-justified by `uniKnowledgeSoundness_closed_rec3`, `uniCompletenessRec3_end_closed` and `RecGraph.hazard_prob`. The end
-bound is `pi2Bound Q + ε1 Q + εh Q`.
+(`RecGraph.Pi1.pi1GraphIsVerifier`), so the `_fs` forms keep only `Pi1FsKeccak ε1` and `Pi1HazardKeccak εh` (false as
+stated, above), or `Pi1CompletenessKeccak δ1` and `Pi1HazardKeccakHonest δh` (about the fixed honest prover, the
+statement chosen before `π`: no grinding; motivated by `uniCompletenessRec3_end_closed` and `RecGraph.hazard_prob`). The
+`_fs` soundness bound is `pi2Bound Q + ε1 Q + εh Q`.
 
 **ε2 = `pi2Bound`** is `2^-64.93` at `Q = 2^64`, i.e. 128.93 bits as `Q / ε2` (`pi2Bound_le_bits`;
 `EndToEnd/Review/RecSoundnessNumbers.py`, exact rationals). Its terms:

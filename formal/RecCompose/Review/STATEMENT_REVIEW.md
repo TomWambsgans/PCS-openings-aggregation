@@ -85,6 +85,15 @@ The documentation says the opposite: `Security.lean` ("justified by `RecGraph.ha
 `breaks_cases` only needs the hazard on streams with `Pi1GraphAccepts`, so the coupling survives. Finding 3 still
 applies after this fix.
 
+**Fixed** (`fix-rec-hazard-fs`). `RecGraph.MergeHazard` asks `50 ≤ ch.size` (the run draws `t`), `NoHazardAt` likewise,
+and `RecGraph.Pi1.pi1GraphIsVerifier` is re-proved on the larger domain (`not_noHazard_of_mono` keeps the drawn count).
+The soundness hazard is `RecStatement.Pi1HazardAccepted` (`pi1GraphChecks` and `MergeHazard`) in `Pi1HazardKeccak`,
+`HazardEvent`, `HazardCoupling`; `Pi1HazardKeccakHonest` reads the restated `MergeHazard`. `StatementReview.lean` now
+proves `not_mergeHazard_empty`, `not_pi1HazardAccepted_empty`, `hazardAdversary_default` and
+`emptyAdversary_hazard_zero` (the zero-query adversary hits the hazard with probability `0`). Not done: a
+random-permutation proof of the hazard bound for the derived adversary (it needs the sponge-freshness argument of
+π1-rec3's game at challenge 49); `hazard_prob` remains the per-uniform-`t` motivation.
+
 ### 3. The Fiat–Shamir premises are false as stated, for computationally unbounded adversaries (statement wrong)
 
 `Pi1FsKeccak` and `Pi1HazardKeccak` quantify over every `OracleComp RandomPermutationOracles` adversary and count only
@@ -124,6 +133,15 @@ theorem recKnowledgeSoundness_reduction … (A : RecAdversary) (Q : ℕ) (hQ : �
 Say in the documentation that the derived adversaries run in `A`'s time plus π2's extractor's (Guruswami–Sudan at
 `2^24`, polynomial), and that the heuristic is applied by the reader to them. Keep `Pi1FsKeccak` and the others as
 named Props, but document them as false for unbounded adversaries, or drop them.
+
+**Fixed** (`fix-rec-hazard-fs`). `RecStatement.RecKnowledgeSoundnessReduction` (`RecStatement/Reduction.lean`) is the
+reduction above, with the resource statements as conjuncts (each derived adversary makes at most `Q` calls of `π`,
+`π⁻¹`); `pi1Adversary`, `hazardAdversary` moved there. `RecCompose.recKnowledgeSoundness_reduction` (`FsClosed.lean`)
+proves it at `pi2Bound` from the same inputs as `recKnowledgeSoundness2_closed`, through
+`recKnowledgeSoundnessReduction_of_part1`, `_end`, `_final`. The Prop-premise forms are its corollaries
+(`recKnowledgeSoundness_of_reduction`), `Pi1FsKeccak` and `Pi1HazardKeccak` documented as false as stated for
+unbounded adversaries. Completeness's `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest` quantify over one fixed honest
+prover, the statement chosen before `π`, so no grinding applies there (given finding 4's fix).
 
 ### 4. The completeness theorems' π1 prover hashes its Fiat–Shamir over `π`, but the graph and verifier hash it over Keccak-f[1600] (statement wrong)
 
