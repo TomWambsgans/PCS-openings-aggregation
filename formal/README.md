@@ -281,6 +281,17 @@ python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|
 
 ## The recursive verifier: end theorems (`RecCompose/`)
 
+> **Status (2026-11-05): the statements below are under repair.** An adversarial review of the statements
+> ([`RecCompose/Review/STATEMENT_REVIEW.md`](RecCompose/Review/STATEMENT_REVIEW.md)) found that, as stated, the end
+> theorems are vacuous or carry no bound, though their proofs are valid:
+> - `Pi2Circuits` asks the compiler to accept π1-rec3's graph at IVs of every length, and it rejects long ones, so no
+>   `Pi2Circuits` exists;
+> - the merge hazard holds trivially on the empty stream, so `εh ≥ 1`;
+> - the Fiat–Shamir premises quantify over adversaries that grind Keccak-f[1600] offline for free;
+> - completeness uses a π1 prover whose Fiat–Shamir is over the random permutation rather than Keccak-f[1600].
+>
+> The fixes are in progress. Until they land, read the theorems below as proved implications, not as end results.
+
 The recursive EVM verifier (`crates/leanvm_rec`) runs π2's verifier, then six `PCS_OPEN` calls. Its statements are
 [`RecStatement`](RecStatement/README.md)'s. They come in two parts, because π2's circuit computes π1-rec3's Fiat–Shamir
 with the real Keccak-f[1600] while π1-rec3's soundness is proved in the random-permutation model. The library
