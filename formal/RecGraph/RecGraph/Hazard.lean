@@ -16,8 +16,11 @@ the BLAKE2S table's `q_flock` slot point (its terms read as many coordinates as 
 `y(t)`'s first coordinate is one of these: `Z_bad(t) = 0`, `Z_bad = (y_0 + X)(y_0 + p_0)`, the main line's
 (`UniSound.Ids.zBad`, `NoMerge`). Off it, no `C1` point extends `y(t)` (`UniSound.Ids.Eval.y_self`).
 
-* `MergeHazard`: the hazard at a run of π1-rec3's verifier (`t` its challenge 49, `p_0` its challenge 42, the
-  lincheck's last round: the first coordinate of Flock's point, the lincheck's rounds reversed).
+* `MergeHazard`: the hazard at a run of π1-rec3's verifier that draws `t` (its challenge 49; `p_0` its challenge 42,
+  the lincheck's last round: the first coordinate of Flock's point, the lincheck's rounds reversed). A run that stops
+  before drawing `t` (a short stream, a malformed one) is not on the hazard: `Hazard p_0 0` holds for every `p_0`
+  (`y_0` is linearised, so `Z_bad(0) = 0`), and reading an undrawn challenge as `0` would put every such run on it
+  (`formal/RecCompose/Review/STATEMENT_REVIEW.md`, finding 2).
 * `hazard_card`: **for every `p_0`, at most `2^19` values of `t` are hazardous** (`Z_bad` is a nonzero polynomial of
   degree at most `2^19`: Schwartz–Zippel in `t`).
 * `hazard_prob`: so, `t` uniform and `p_0` fixed (Flock's point is drawn before `C2`'s root, `t` after it): the hazard
@@ -39,12 +42,18 @@ def Hazard (p0 t : E) : Prop := (hazardPoly p0).eval t = 0
 
 noncomputable instance (p0 : E) : DecidablePred (Hazard p0) := fun t ↦ inferInstanceAs (Decidable ((hazardPoly p0).eval t = 0))
 
-/-- **The hazard at a run of π1-rec3's verifier** over `π`: at its `t` (challenge 49) and Flock's point's first
-coordinate (challenge 42). -/
+/-- **The hazard at a run of π1-rec3's verifier** over `π`: the run draws `t` (challenge 49: at least 50 challenges),
+and `t` is hazardous for Flock's point's first coordinate (challenge 42). -/
 def MergeHazard (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8) : Prop :=
   let ch := (Id.run (runWithFs (m := Id) (fun s ↦ pure (π s)) reference iv publicInput stream (.flock flockMain) .point
     .rec3 true)).chan.challenges
-  Hazard (ch.getD 42 0) (ch.getD 49 0)
+  50 ≤ ch.size ∧ Hazard (ch.getD 42 0) (ch.getD 49 0)
+
+/-- **The hazard needs `t` drawn**: a run on the hazard has drawn at least 50 challenges. -/
+theorem MergeHazard.drawn {π : KeccakState → KeccakState} {iv publicInput : List UInt8} {stream : Array UInt8}
+    (h : MergeHazard π iv publicInput stream) :
+    50 ≤ (Id.run (runWithFs (m := Id) (fun s ↦ pure (π s)) reference iv publicInput stream (.flock flockMain) .point
+      .rec3 true)).chan.challenges.size := h.1
 
 theorem reference_blake2s_height : reference.heights.getD opBlake2s 0 = 18 := by
   rw [UniSound.Ids.reference_eq]; decide

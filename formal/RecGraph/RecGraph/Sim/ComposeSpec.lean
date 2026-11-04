@@ -173,8 +173,9 @@ def ShapeSpec (TS : Table → List E → TablePart × List Relation → Prop) (C
     OK (relsUni outs (digits tE wLen) alphasE betaE mfc addr mpl bfc bpl constraint heapOut.1 flockPt target)
       (c2Uni heapOut.2)
 
-/-- No hazard at a channel's challenges `42` (`p_0`) and `49` (`t`): `MergeHazard`'s condition. -/
-def NoHazardAt (c : Chan) : Prop := ¬ Hazard (c.challenges.getD 42 0) (c.challenges.getD 49 0)
+/-- No hazard at a channel's challenges `42` (`p_0`) and `49` (`t`), `t` drawn: `MergeHazard`'s condition. -/
+def NoHazardAt (c : Chan) : Prop :=
+  ¬ (50 ≤ c.challenges.size ∧ Hazard (c.challenges.getD 42 0) (c.challenges.getD 49 0))
 
 /-- A root's halves, represented, at their stream offsets. -/
 def RootR (π : KeccakState → KeccakState) (iv publicInput : List UInt8) (stream : Array UInt8) (st : RecState)
