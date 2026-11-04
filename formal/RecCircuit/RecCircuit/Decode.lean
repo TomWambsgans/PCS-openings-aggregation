@@ -35,6 +35,11 @@ structure Checked (c : Compiled) (r : Recorded) : Prop where
   zeroConst : c.zeroConstOk r = true
   sizes : c.live.size = c.nodes.size ∧ c.limbs.size = c.nodes.size ∧ c.digests.size = c.nodes.size ∧
     c.bitSelf.size = 8 * r.graph.streamLen ∧ c.circuit.logWidth = 4 ∧ c.circuit.logWidth ≤ c.circuit.logN
+  /-- The completeness checks (`Complete.lean`). -/
+  cSlots : c.completeSlots = true
+  cValues : c.completeValues = true
+  cGiven : c.completeGiven = true
+  cCover : c.completeCover r.graph.streamLen = true
 
 theorem checked_of_compile {r : Recorded} {c : Compiled} (h : compile r = .ok c) : c.Checked r := by
   unfold compile at h
@@ -55,9 +60,9 @@ theorem checked_of_compile {r : Recorded} {c : Compiled} (h : compile r = .ok c)
         rw [hfind] at this; simp at this
       have g := fun (name : String) (b : Bool) (hm : (name, b) ∈ c.checks r) => hall _ hm
       simp only [checks, List.mem_cons, List.mem_nil_iff, or_false, forall_eq_or_imp, forall_eq] at hall
-      obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h11', h11'', h13, h12⟩ := hall
+      obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h11', h11'', h13, hc1, hc2, hc3, hc4, h12⟩ := hall
       simp only [Array.all_eq_true, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at h2 h3 h4 h12
-      refine ⟨h1, ?_, ?_, ?_, h5, h6, h7, h8, h9, ?_, h11, h11', h11'', h13, ?_⟩
+      refine ⟨h1, ?_, ?_, ?_, h5, h6, h7, h8, h9, ?_, h11, h11', h11'', h13, ?_, hc1, hc2, hc3, hc4⟩
       · intro t ht; obtain ⟨i, hi, rfl⟩ := Array.mem_iff_getElem.mp ht; exact h2 i hi
       · intro t ht; obtain ⟨i, hi, rfl⟩ := Array.mem_iff_getElem.mp ht; exact h3 i hi
       · intro t ht; obtain ⟨i, hi, rfl⟩ := Array.mem_iff_getElem.mp ht; exact h4 i hi

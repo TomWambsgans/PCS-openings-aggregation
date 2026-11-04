@@ -25,6 +25,7 @@ import RecCircuit.ExpandProof
 import RecCircuit.Calls
 import RecCircuit.End
 import RecCircuit.Pi1Rec3
+import RecCircuit.Complete
 
 /-!
 # π2's circuit, formally (`crates/leanvm_rec/src/circuit`)
@@ -36,6 +37,18 @@ ones.
 /-- info: 'RecCircuit.compile_sound' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in
 #print axioms RecCircuit.compile_sound
+
+/-- info: 'RecCircuit.Compiled.witness_copy' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.witness_copy
+
+/-- info: 'RecCircuit.Compiled.streamW_witness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.streamW_witness
+
+/-- info: 'RecCircuit.Compiled.pubW_witness' depends on axioms: [propext, Classical.choice, Quot.sound] -/
+#guard_msgs in
+#print axioms RecCircuit.Compiled.pubW_witness
 
 /-- info: 'RecCircuit.compile_sound_flow' depends on axioms: [propext, Classical.choice, Quot.sound] -/
 #guard_msgs in

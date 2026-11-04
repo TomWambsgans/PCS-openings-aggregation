@@ -500,6 +500,119 @@ def callsOk (r : Recorded) : Bool :=
     allBelow (r.graph.calls.getD ci []).length fun k =>
       c.wordOk r k ((c.circuit.calls.getD ci []).getD k default) ((r.graph.calls.getD ci []).getD k default)
 
+/-! ## The completeness checks (`Complete.lean`: the honest witness)
+
+The witness the honest prover takes (`layout.rs`'s `finish`, its words in value order) needs more of the layout than
+soundness does: every position pulls the value of the chain it is on (`pullArr`, none for a free end's pull or a dead
+slot's), every forward passes its pull on, every slot's push reaches a position pulling its value, a dead slot (no
+value) is a self-loop reading nothing pulled, every gate reads values computed before its own or given (a free value,
+a free bit: `givenArr`), a free bit's slot is its self-loop `b = b²`, and every byte of the stream is hashed or in a
+never-hashed read. -/
+
+/-- Where a given value's word comes from: a public-input bit, a stream bit, a never-hashed read's limb. -/
+inductive Given where
+  | pub (k : ℕ)
+  | stream (i : ℕ)
+  | free (e l : ℕ)
+  deriving DecidableEq, Inhabited
+
+/-- Each position's pulled value: its chain's placements (a produced value's past its producer). -/
+def pullArr : Array ℕ := Id.run do
+  let mut a : Array ℕ := Array.replicate c.circuit.n NONE
+  for v in [0:c.view.chains.size] do
+    let ch := c.view.chains.getD v #[]
+    let first := if c.view.producerF.getD v NONE == NONE then 0 else 1
+    for k in [first:ch.size] do
+      a := a.set! (ch.getD k 0) v
+  return a
+
+/-- Each position's produced value. -/
+def prodArr : Array ℕ := Id.run do
+  let mut a : Array ℕ := Array.replicate c.circuit.n NONE
+  for v in [0:c.view.producerF.size] do
+    let p := c.view.producerF.getD v NONE
+    if p != NONE then a := a.set! p v
+  return a
+
+/-- The given values' sources. -/
+def givenArr : Array (Option Given) := Id.run do
+  let mut a : Array (Option Given) := Array.replicate c.view.producerF.size none
+  for k in [0:c.publicSelf.size] do
+    a := a.set! (c.publicSelf.getD k NONE) (some (.pub k))
+  for i in [0:c.bitSelf.size] do
+    match c.bitSelf.getD i none with
+    | some v => a := a.set! v (some (.stream i))
+    | none => pure ()
+  for e in [0:c.freeReads.size] do
+    for l in [0:3] do
+      a := a.set! ((c.freeReads.getD e default).2.getD l NONE) (some (.free e l))
+  return a
+
+end Compiled
+
+namespace Ctx
+
+variable (X : Ctx)
+
+/-- **A position's push reaches its value's pull** (`P` the pulls, `Q` the produced values, `G` the given ones). -/
+def slotOk (P Q : Array ℕ) (G : Array (Option Compiled.Given)) (i : ℕ) : Bool :=
+  let pl := fun q => P.getD q NONE
+  match X.C.formulaAt i with
+  | .port _ => true
+  | .forward => X.kap i == 0 && X.C.sigmaAt i < X.n && pl (X.C.sigmaAt i) == pl i
+  | .expr p =>
+    let v := Q.getD i NONE
+    p.reads.all (· < X.W) &&
+    if v == NONE then
+      X.C.sigmaAt i == i && pl i == NONE && X.kap i == 0 && p.reads.all (fun c => pl (X.rowStart i + c) == NONE)
+    else
+      X.prod v == i && X.C.sigmaAt i < X.n && pl (X.C.sigmaAt i) == v &&
+      match G.getD v none with
+      | some (.free _ _) => false
+      | some _ => p == sqPoly (i % X.W) && X.kap i == 0 && pl i == v
+      | none => p.reads.all (fun c => let u := pl (X.rowStart i + c); u != NONE && (u < v || (G.getD u none).isSome))
+
+/-- **A value's word is its producer's push or its first placement's pull.** -/
+def valueOk (P Q : Array ℕ) (G : Array (Option Compiled.Given)) (v : ℕ) : Bool :=
+  if X.prod v == NONE then
+    (match G.getD v none with
+     | some (.free _ _) => true
+     | _ => false) && 1 ≤ (X.chain v).size && P.getD ((X.chain v).getD 0 0) NONE == v
+  else
+    X.prod v < X.n && Q.getD (X.prod v) NONE == v &&
+      match X.C.formulaAt (X.prod v) with
+      | .expr _ => true
+      | _ => false
+
+end Ctx
+
+namespace Compiled
+
+variable (c : Compiled)
+
+/-- **Completeness: every position's push reaches its value's pull.** -/
+def completeSlots : Bool := allBelow c.ctx.n (c.ctx.slotOk c.pullArr c.prodArr c.givenArr)
+
+/-- **Completeness: every value's word is its producer's push or its first placement's pull.** -/
+def completeValues : Bool :=
+  c.givenArr.size == c.view.producerF.size && decide (c.view.producerF.size < NONE) &&
+    allBelow c.view.producerF.size (c.ctx.valueOk c.pullArr c.prodArr c.givenArr)
+
+/-- **Completeness: the free bits and free limbs are given.** -/
+def completeGiven : Bool :=
+  allBelow c.publicSelf.size (fun k => c.givenArr.getD (c.publicSelf.getD k NONE) none == some (.pub k)) &&
+  allBelow c.bitSelf.size (fun i => match c.bitSelf.getD i none with
+    | some v => c.givenArr.getD v none == some (.stream i)
+    | none => true) &&
+  allBelow c.freeReads.size (fun e => allBelow 3 fun l =>
+    c.givenArr.getD ((c.freeReads.getD e default).2.getD l NONE) none == some (.free e l))
+
+/-- **Completeness: every byte of the stream is hashed or in a never-hashed read.** -/
+def completeCover (streamLen : ℕ) : Bool :=
+  allBelow streamLen (fun i =>
+    allBelow 8 (fun j => (c.bitSelf.getD (8 * i + j) none).isSome) ||
+      c.freeReads.any (fun e => e.1 ≤ i && i < e.1 + 24))
+
 /-- **Everything the theorems need**, checked. -/
 def checks (r : Recorded) : List (String × Bool) :=
   let X := c.ctx
@@ -518,6 +631,10 @@ def checks (r : Recorded) : List (String × Bool) :=
    ("sources", c.sourcesOk),
    ("calls", c.callsOk r),
    ("zero constants", c.zeroConstOk r),
+   ("complete slots", c.completeSlots),
+   ("complete values", c.completeValues),
+   ("complete given", c.completeGiven),
+   ("complete cover", c.completeCover r.graph.streamLen),
    ("sizes", c.live.size == c.nodes.size && c.limbs.size == c.nodes.size && c.digests.size == c.nodes.size &&
       c.bitSelf.size == 8 * r.graph.streamLen && c.circuit.logWidth == 4 && c.circuit.logWidth ≤ c.circuit.logN)]
 

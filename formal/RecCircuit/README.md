@@ -114,6 +114,22 @@ The Rust compiler asserts the same typing (`assert_typed` in `compile.rs`, with 
 | `ExpandProof` | `expandSound`: the expansion keeps RecGraph's elements, on every accepted graph |
 | `Calls` | `Circuit.callInputs` (π2's rebuild of π1's `PCS_OPEN` inputs), `pair_val`, `compile_sound_calls`, `compile_sound_callInputs` |
 | `End` | `EndStatement`, `compile_sound_end`; `Pi1Rec3`: `pi1rec3_end` |
+| `Complete` | **completeness**: the honest witness (`word`: the words in value order, `layout.rs`'s; `witness`: each position's pulled value's word) satisfies the circuit (`witness_satisfied`) and RecPiop's copy constraints (`witness_copy`) and encodes the public input and the stream (`pubW_witness`, `streamW_witness`), for every public input and stream of the graph's length; `zero_port_sat` (a zero port's limbs on any satisfying witness) |
+
+### The completeness checks (`Check.lean`: `completeSlots`, `completeValues`, `completeGiven`, `completeCover`)
+
+Soundness reads the layout one way (a placed position is on its value's chain); the honest witness needs the other:
+
+- every non-port position pulls the value of the chain it is on (`pullArr`) or none; a forward (`κ = 0`) passes its
+  pull on; a slot that produces a value pushes to a position pulling it, and reads only values produced before its own
+  or given (a free value, a free bit); a free bit's slot is `b = b²` reading itself; a dead slot (no value) is a
+  self-loop with `κ = 0` reading nothing pulled (`layout.rs`'s "dead slot … does not push 0", here for every witness);
+- a free value's word is its first placement's; every free bit (stream, public input) and every never-hashed read's
+  limb is given (`givenArr`);
+- every byte of the stream is hashed (its eight free bits) or in a never-hashed 24-byte read.
+
+The real run accepts them at both IVs `rec-view-check` uses (the compiler with the checker now about 10 minutes and
+3.2 GB per IV, from about 2).
 
 ### What is generic and what is instantiated
 
