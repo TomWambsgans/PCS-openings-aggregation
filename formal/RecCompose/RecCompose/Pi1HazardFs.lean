@@ -26,7 +26,9 @@ is a root of `Z_bad(p_0)`, `p_0` challenge 42). This file states them with Kecca
   `Pi1HazardFs D (pure ∘ keccakF1600) εh → Pi1HazardKeccak D εh` (the premise asks the hazard on accepted streams
   only, so this direction).
 
-The random-permutation reading of the completeness side is `Pi1HazardRpm.lean`'s `pi1HazardFsHonest_rpm`.
+**Not proved here**: the random-permutation readings (`Pi1HazardFsHonest D queryPermutation δh`,
+`Pi1HazardFs D queryPermutation εh`). `RecGraph.hazard_prob` is a count for a uniform `t`, not a game; the completeness
+route left is in `Review/STATEMENT_REVIEW_2.md`, finding 3.
 -/
 
 set_option autoImplicit false
