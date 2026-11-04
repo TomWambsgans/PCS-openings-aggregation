@@ -10,13 +10,26 @@ Keccak-f[1600] while π1-rec3's soundness is proved in the random-permutation mo
 1. **π2's part, in the random-permutation model**: `RecKnowledgeSoundness2 D ε2` (if the contract accepts, π2's
    extractor outputs π1's stream on which π1-rec3's recorded graph over Keccak-f[1600] accepts, its three calls the
    contract's), `RecCompleteness2 D P1 P2 δ2`;
-2. **end to end, against Lv42's `M3Holds`**: `RecKnowledgeSoundness D ε2 ε1 εh`, `RecCompleteness D P1 P2 δ1 δh δ2`,
-   Props whose own hypotheses are `RecGraph.Pi1.Pi1GraphIsVerifier`, `Pi1FsKeccak ε1`, `Pi1HazardKeccak εh` (and the
-   completeness analogues): the Fiat–Shamir heuristic for Keccak-f[1600], justified by π1-rec3's random-permutation
-   theorems (`UniSound.Rec3Ref.uniKnowledgeSoundness_closed_rec3`, `UniComplete.Rec3.uniCompletenessRec3_end_closed`)
-   and `RecGraph.hazard_prob`.
+2. **end to end, against Lv42's `M3Holds`, knowledge soundness as an explicit reduction**:
+   `RecKnowledgeSoundnessReduction D ε2` (`RecStatement/Reduction.lean`). For every adversary `A` of `Q` queries, the
+   break is at most `ε2 Q` plus the probability that `pi1Adversary D A` breaks π1-rec3 at Keccak-f[1600] plus the
+   probability that `hazardAdversary D A` hits the merge hazard on a stream π1-rec3's graph accepts; the two derived
+   adversaries are `A` then π2's explicit extractor, of `A`'s queries. No Fiat–Shamir hypothesis: the headline theorem
+   is **`recKnowledgeSoundness_reduction`** (`FsClosed.lean`);
+3. **the Prop-premise corollaries**: `RecKnowledgeSoundness D ε2 ε1 εh`, `RecCompleteness D P1 P2 δ1 δh δ2`, whose own
+   hypotheses are `RecGraph.Pi1.Pi1GraphIsVerifier` (proved), `Pi1FsKeccak ε1`, `Pi1HazardKeccak εh` (and the
+   completeness analogues `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest`, about the honest prover). `Pi1FsKeccak` and
+   `Pi1HazardKeccak` are **false as stated** for unbounded adversaries, which grind Keccak-f[1600] offline for free
+   (`Review/STATEMENT_REVIEW.md`, finding 3): read them as the Fiat–Shamir heuristic for adversaries of bounded
+   Keccak-f[1600] work, motivated by π1-rec3's random-permutation theorem
+   (`UniSound.Rec3Ref.uniKnowledgeSoundness_closed_rec3`) and `RecGraph.hazard_prob`.
 
-This library proves part 1 from π2's layers, its bound in bits, and part 1 ⇒ part 2.
+The merge hazard (`RecGraph.MergeHazard`) asks that π1-rec3's run draw `t` (challenge 49), so the empty stream and
+every run that stops early are off it (finding 2: they were on it, `Z_bad(0) = 0`, and `εh ≥ 1` was forced;
+`Review/StatementReview.lean`, `not_mergeHazard_empty`, `emptyAdversary_hazard_zero`). The soundness hazard
+(`Pi1HazardAccepted`) also asks that π1-rec3's graph accept the stream.
+
+This library proves part 1 from π2's layers, its bound in bits, and part 1 ⇒ parts 2 and 3.
 
 ```sh
 cd formal/EndToEnd   # on h1, under /root/pcs-quotient-fv/ only
@@ -36,7 +49,7 @@ named inputs; the files:
 | `Part1.lean` | `CallsPure`, `Pi2Extraction`, `Pi2Layers`; **`recKnowledgeSoundness2_of_layers`**. |
 | `Circuit.lean` | `Pi2Layers.circuit` from RecCircuit's `pi1rec3_end` and `CircuitBridge`; `compile_ok` from the compiler's run on the emitted graph and `GraphsAgree`; `Pi1RootWordOk` (the root-word fix's named dependence). |
 | `Numbers.lean` | **`pi2Bound`** (`ε2`), `pi2_rounds_le` (RecPiop's three rounds times their lists, at most `2^-140.60`), **`pi2Bound_le_bits`** (`≤ 2^-64` for `Q ≤ 2^64`). |
-| `Part2.lean` | the derived adversaries (`hazardAdversary`, `pi1Adversary`), the three events, `ExperimentsAgree`, `HazardCoupling`, `Pi1Coupling`; **`recKnowledgeSoundness_of_part1`**. |
+| `Part2.lean` | the three events (`HazardEvent` on `Pi1HazardAccepted`), `ExperimentsAgree`, `HazardCoupling`, `Pi1Coupling`, `breaks_cases`; **`recKnowledgeSoundnessReduction_of_part1`** (the reduction), `recKnowledgeSoundness_of_reduction`, **`recKnowledgeSoundness_of_part1`**. The derived adversaries (`hazardAdversary`, `pi1Adversary`) are `RecStatement/Reduction.lean`'s. |
 | `Complete.lean` | `CompletenessAgree`, `CompletenessPi1Coupling`; **`recCompleteness_of_part1`**. |
 | `Layers.lean` | `Pi2FsLayer` (π2's Fiat–Shamir layer, proved in `FsClosed.lean`), `Pi2Tables` (the tables' layer, open), `Pi2Circuits`, `Pi2Facts`; `pi2Piop` (`RecPiop.piop` per setup), `hbind_of`, `indep_K`, `satisfies_congr`; **`pi2Extraction_of_layers`**, `pi2Layers_of`. |
 | `Holds.lean`, `Chan.lean`, `Pi2Run.lean`, `CallsPure.lean` | postconditions in any lawful monad (`Holds`), the channel's reads (`Reads`), π2's run's public data independent of the permutation (`runWith_post`); **`callsPure`**. |
@@ -45,20 +58,20 @@ named inputs; the files:
 | `RpmC.lean`, `Pi1Decode.lean`, `CompleteCouplings.lean`, `RunShape.lean` | eager comparisons, π1's call bytes decoded back; **`completenessAgree`**, **`completenessPi1Coupling`**, **`pi1RunShape`**. |
 | `Tables.lean` | **`pi2Tables`** (the tables' layer, from `Pi2SetupColumns`), `cells_wFold`, `claim_wFold`, `claim_quotient`, `claim_sum`, `claim_setup`, `sum_novP_omega`. |
 | `Bridge.lean` | **`circuitBridge`** (from `StatementPortMeaning`, `ZeroPortsMeaning`, `CallWordsAgree`, `Pi1CallsLayouts`). |
-| `End.lean` | `recKnowledgeSoundness2_real`, **`recKnowledgeSoundness_end`**, `recKnowledgeSoundness_end_real`, **`recCompleteness_end`**, **`recKnowledgeSoundness_end_fs`**, **`recCompleteness_end_fs`**. |
+| `End.lean` | `recKnowledgeSoundness2_real`, **`recKnowledgeSoundnessReduction_end`**, **`recKnowledgeSoundness_end`**, `recKnowledgeSoundness_end_real`, **`recCompleteness_end`**, **`recKnowledgeSoundness_end_fs`**, **`recCompleteness_end_fs`**. |
 | `ViewDefs.lean`, `View.lean` | **`viewOf`** (`pi2::adapt` transcribed), `callsOf`, `validB`, **`viewCheck`** (evaluated by `rec-view-check`, `RecComposeTest/ViewCheck.lean`); the slots, `groupsOf_perm`, `groupsOf_mem`. |
 | `Valid.lean` | **`validB_sound`**: `validB` gives `RecPiop.Circuit.Valid` of `toPiop`. |
 | `FactsAlg.lean`, `FactsSpec.lean`, `FactsSpecOf.lean` | the formulas' and terms' values, `pubOfC`; `Data`'s facts by kernel decision; **`specOf_data`**. |
 | `Facts.lean` | `Pi2ViewChecked`; **`pi2Facts`** (`Pi2Facts D C`), `pubOfC_canon`, `pi2Facts_pubOf`. |
 | `Meanings.lean` | **`statementPortMeaning`**, **`zeroPortsMeaning`**, **`callWordsAgree`** for `pi2Facts`. |
 | `Layouts.lean` | **`pi1CallsLayouts_of_real`** (`stackLayout_words`). |
-| `Final.lean` | **`recKnowledgeSoundness2_final`**, **`recKnowledgeSoundness_final`**, **`recKnowledgeSoundness_final_fs`**: the end theorems from the named inputs left. |
+| `Final.lean` | **`recKnowledgeSoundness2_final`**, **`recKnowledgeSoundnessReduction_final`**, **`recKnowledgeSoundness_final`**, **`recKnowledgeSoundness_final_fs`**: the end theorems from the named inputs left. |
 | `FsDefs.lean` | π2's Fiat–Shamir layer's objects: the chain `pi2Spec` (`ChainSpecU` over π2's transcript: the label `name ‖ iv ‖ input`, the public data's 472 bytes before `W`'s root), the proof `P2Pf` and its view, the six openings `p2Ops` (π1's `C1`, `C2`, `F`, π2's `W`, the setup, `Q`), the setup's stacks `p2Stk`, the composed setup `p2Setup`, the IV `p2IvKC4`, the composed verifier `p2Ver`, the bridge facts' Props. |
 | `FsOps.lean` | the openings' `OKP`, coverage, `hS_p2` (the setup's claim), `ClaimOn` as F2's `tableEval` on public layouts (`claimOn_iff`, `readEntry_public`), the shapes at once (`p2Shapes`), `maxErrK_p2`. |
 | `FsSetup.lean`, `FsExtract.lean`, `FsWalk.lean` | **`pi2SetupBridge`**, the setup's facts and `okp_setupOp`; **`pi2ExtractBridge`**; **`pi2Walk`** (π2's run is the chain), **`pi2WalkReject`**, `pi2Scalars_real`. |
 | `FsVerifier.lean`, `FsCouple.lean`, `FsCost.lean` | **`pi2VerifierBridge`** (the contract's six calls below the composed openings), **`pi2GameLeV`** (the coupling), the composed verifier's cost, the IV moved into the adversary (`expU_p2IvAdv`), `hlab_p2`. |
 | `Pi2Witness.lean` | **`pi2WitnessComplete hD C hchk : Pi2WitnessComplete D C (pi2Facts hD C hchk)`** (π2's completeness input 1): on a stream π1-rec3's graph accepts, RecCircuit's honest witness (`RecCircuit/Complete.lean`) and the public values `valuesOf` (the roots' 32 bytes of the stream, the element ports' values) are an honest witness; the ports: the statement's the input's words, the roots' the stream's, the zero ports `0` (the graph's checks, `zero_port_sat`). |
-| `FsGame.lean`, `FsClosed.lean` | **`pi2FsLayer_of`** (through `Compose.knowledgeSoundness_listChainU_closed128S`, `prEvent_doomF_le`, `prEvent_pairTr_expL_le`, `le_pi2BoundE`); **`pi2FsLayer_real`** (`Pi2FsLayer D` proved at the real deployment); **`recKnowledgeSoundness2_closed`**, **`recKnowledgeSoundness_closed`**, **`recKnowledgeSoundness_closed_fs`**: `Final.lean`'s end theorems without `hfs`, `Fa`, `hstmt`, `hzero`, `hcalls`, `hlay` (their inputs `C`, `hroots`, `GraphsAgree`, `Pi2ViewChecked C`). |
+| `FsGame.lean`, `FsClosed.lean` | **`pi2FsLayer_of`** (through `Compose.knowledgeSoundness_listChainU_closed128S`, `prEvent_doomF_le`, `prEvent_pairTr_expL_le`, `le_pi2BoundE`); **`pi2FsLayer_real`** (`Pi2FsLayer D` proved at the real deployment); **`recKnowledgeSoundness_reduction`** (the headline), **`recKnowledgeSoundness2_closed`**, **`recKnowledgeSoundness_closed`**, **`recKnowledgeSoundness_closed_fs`**: `Final.lean`'s end theorems without `hfs`, `Fa`, `hstmt`, `hzero`, `hcalls`, `hlay` (their inputs `C`, `hroots`, `GraphsAgree`, `Pi2ViewChecked C`). |
 
 ## The statements' fixes (in `RecStatement/Security.lean`, found by this composition)
 

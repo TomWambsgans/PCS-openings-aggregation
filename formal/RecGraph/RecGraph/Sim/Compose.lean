@@ -225,8 +225,11 @@ theorem not_noHazard_of_mono {β : Type} {u : ChanM Id β} (hm : Mono u) {c : Ch
     (hz : Hazard (c.challenges.getD 42 0) (c.challenges.getD 49 0)) : ¬ NoHazardAt ((u.run).run c).2 := by
   obtain ⟨l, hl⟩ := hm c
   unfold NoHazardAt
-  rw [getD_of_prefix hl (by omega), getD_of_prefix hl (by omega)]
-  exact not_not.mpr hz
+  rw [getD_of_prefix hl (by omega), getD_of_prefix hl (by omega), not_not]
+  refine ⟨?_, hz⟩
+  have e := congrArg List.length hl
+  simp only [Array.length_toList, List.length_append] at e
+  omega
 
 /-- The challenges' values a coupled channel holds. -/
 theorem couple_getD {st : RecState} {c : Chan} (hc : Couple π iv publicInput stream st c) {k : Nat}

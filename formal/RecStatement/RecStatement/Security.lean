@@ -29,17 +29,29 @@ random-permutation model and do not formally compose with the EVM one, which hol
    commitments and the six openings. If the contract accepts, π2's explicit extractor (`recExtractor2`) outputs
    π1's stream `s` on which **π1-rec3's recorded graph, run with Keccak-f[1600]**, accepts, its three `PCS_OPEN` calls
    being the contract's (which `PCS_OPEN` attested) (`Pi1GraphAccepts`); but with probability `ε2 Q`.
-2. **The end-to-end corollaries, against Lv42's `M3Holds`** (`RecKnowledgeSoundness`, `RecCompleteness`), under named
+2. **End to end, against Lv42's `M3Holds`, as an explicit reduction** (`RecKnowledgeSoundnessReduction`,
+   `Reduction.lean`): for every adversary `A` of `Q` queries against the recursive verifier, the end-to-end
+   extractor fails while the contract accepts with probability at most `ε2 Q` plus the probabilities that two
+   **explicit derived adversaries** (`pi1Adversary A`, `hazardAdversary A`: they run `A`, then π2's extractor, and make
+   `A`'s `Q` queries) break π1-rec3 at Keccak-f[1600] (`pi1KeccakSoundnessExperiment`) and hit the merge hazard on a
+   stream π1-rec3's graph accepts (`pi1HazardExperiment`, `Pi1HazardAccepted`). No Fiat–Shamir hypothesis: the reader
+   applies the Fiat–Shamir heuristic for Keccak-f[1600] to these two adversaries, which run in `A`'s time plus π2's
+   extractor's.
+3. **The end-to-end corollaries, against Lv42's `M3Holds`** (`RecKnowledgeSoundness`, `RecCompleteness`), under named
    hypotheses about π1-rec3 **at Keccak-f[1600]**:
    * `Pi1FsKeccak ε1`: π1-rec3 is knowledge sound with its Fiat–Shamir instantiated by Keccak-f[1600] (its openings
-     and commitments over `π`), error `ε1 Q`, for the adversaries of the recursive setup. **Its justification is
-     π1-rec3's random-permutation theorem** (`uniKnowledgeSoundness_closed_rec3`): the Fiat–Shamir heuristic for
-     Keccak-f[1600]. It is not provable.
-   * `Pi1HazardKeccak εh`: π1-rec3's run at Keccak-f[1600] avoids the merge hazard (`RecGraph.MergeHazard`, where the
-     recorded graph merges by symbol what the verifier merges by value), but with probability `εh Q`; justified by
-     `RecGraph.hazard_prob` (`2^19/|E|` a challenge) for random challenges, the same heuristic.
-   * `RecGraph.Pi1.Pi1GraphIsVerifier`: off the hazard, the recorded graph is π1-rec3's verifier (RecGraph's target;
-     **proved**, `RecGraph.Pi1.pi1GraphIsVerifier`, for every permutation function, Keccak-f[1600] included).
+     and commitments over `π`), error `ε1 Q`. Its motivation is π1-rec3's random-permutation theorem
+     (`uniKnowledgeSoundness_closed_rec3`). **As stated it is false**: it quantifies over every adversary, and charges
+     only calls of `π`, so an adversary grinds π1's Keccak-f[1600] challenges offline for free (STATEMENT_REVIEW.md,
+     finding 3). It is the Fiat–Shamir heuristic **for adversaries of bounded Keccak-f[1600] work**, which Lean does not
+     model; the reduction form (2) does not need it.
+   * `Pi1HazardKeccak εh`: π1-rec3's run at Keccak-f[1600] avoids the merge hazard on the streams its graph accepts
+     (`Pi1HazardAccepted`: `RecGraph.MergeHazard`, the run drawing `t` and `t` a root of `Z_bad`, where the recorded
+     graph merges by symbol what the verifier merges by value), but with probability `εh Q`; motivated by
+     `RecGraph.hazard_prob` (`2^19/|E|` a challenge) for random challenges. False as stated for the same reason (an
+     unbounded adversary grinds `t`); the same heuristic for bounded adversaries.
+   * `RecGraph.Pi1.Pi1GraphIsVerifier`: off the hazard, the recorded graph is π1-rec3's verifier (RecGraph's target,
+     proved: `RecGraph.Pi1.pi1GraphIsVerifier`).
 
    The conclusion's error is `ε2 + ε1 + εh`. Completeness likewise: π2's completeness is over its own coins and `π`
    (`RecCompleteness2`); π1-rec3's completeness at Keccak-f[1600] is the named hypothesis `Pi1CompletenessKeccak δ1`,
@@ -590,10 +602,16 @@ noncomputable def pi1KeccakSoundnessExperiment (D : RecDeployment) (A : Pi1Adver
     return ((z, accepted), trees.evaluations, transcript)
 
 /-- **Hypothesis: π1-rec3 is knowledge sound with its Fiat–Shamir instantiated by Keccak-f[1600]**, error `ε1 Q`, for
-its own extractor `UniStatement.uniExtractor`, against the adversaries of the recursive setup (those built from π2's:
-they run π2's adversary and π2's extractor). Its justification is π1-rec3's random-permutation theorem
-(`UniSound.Rec3Ref.uniKnowledgeSoundness_closed_rec3`, 128.49 bits): **the Fiat–Shamir heuristic for Keccak-f[1600]**;
-it is not provable, as the earlier proofs' caveat says (AGENTS.md). -/
+its own extractor `UniStatement.uniExtractor`, against every π1 adversary of the recursive setup, `Q` counting its
+calls of `π` and `π⁻¹` only.
+
+**As stated it is false.** Keccak-f[1600] is a fixed public function, which an `OracleComp` adversary computes for free:
+it commits a non-satisfying table, grinds each round's prover message offline until the Keccak-derived challenge
+escapes the round's doom, and opens honestly (STATEMENT_REVIEW.md, finding 3). It is the Fiat–Shamir heuristic **for
+adversaries of bounded Keccak-f[1600] work**, which Lean does not model, motivated by π1-rec3's random-permutation
+theorem (`UniSound.Rec3Ref.uniKnowledgeSoundness_closed_rec3`, 128.49 bits), where each grinding step costs a query.
+The end-to-end theorem does not take it: `RecKnowledgeSoundnessReduction` (`Reduction.lean`) bounds the break by this
+experiment's probability for one explicit adversary, `pi1Adversary A`. -/
 def Pi1FsKeccak (D : RecDeployment) (ε1 : ℕ → ℝ≥0∞) : Prop :=
   ∀ (A : Pi1Adversary) (Q : ℕ), (∀ roots evals, QueryCostAtMost (A roots evals) permutationCallCost Q) →
     Pr{let z ← pi1KeccakSoundnessExperiment D A}[
@@ -613,13 +631,25 @@ noncomputable def pi1HazardExperiment (D : RecDeployment) (B : Pi1StreamAdversar
     let (z, _) ← (simulateQ loggedOracles (B trees.roots trees.evaluations)).run []
     return (D.pi1IvAt trees.roots.pi1, z)
 
-/-- **Hypothesis: π1-rec3's run at Keccak-f[1600] avoids the merge hazard** (`RecGraph.MergeHazard`: the challenges at
-which the recorded graph, merging by symbol, and the verifier, merging by value, may differ), but with probability
-`εh Q`. Justified by `RecGraph.hazard_prob` (`2^19/|E|` a challenge) for random challenges: the same heuristic. -/
+/-- **The merge hazard on a stream π1-rec3's graph accepts**, at Keccak-f[1600]: the graph's checks hold on the stream
+(`pi1GraphChecks`), and π1-rec3's run on it draws `t` (challenge 49), `t` a root of `Z_bad(p_0)` (`RecGraph.MergeHazard`).
+The empty stream, and every stream on which the run stops before `t`, is not on it (STATEMENT_REVIEW.md, finding 2). -/
+def Pi1HazardAccepted (iv1 : List UInt8) (input : Vector UInt8 32) (s : Array UInt8) : Prop :=
+  pi1GraphChecks iv1 input s = true ∧ RecGraph.MergeHazard LeanVM.Semantics.keccakF1600 iv1 input.toList s
+
+/-- **Hypothesis: π1-rec3's run at Keccak-f[1600] avoids the merge hazard** on the streams its graph accepts
+(`Pi1HazardAccepted`; `RecGraph.MergeHazard`: the run draws `t` and `t` is where the recorded graph, merging by symbol,
+and the verifier, merging by value, may differ), but with probability `εh Q`, `Q` counting calls of `π` and `π⁻¹`
+only. Motivated by `RecGraph.hazard_prob` (`2^19/|E|` a uniform `t`).
+
+**As stated it is false** for the same reason as `Pi1FsKeccak`: an adversary writes an accepted-looking stream and
+grinds its free bytes offline until Keccak-f[1600]'s `t` lands on one of the `≤ 2^19` hazardous values, about `2^173`
+evaluations and no query. It is the Fiat–Shamir heuristic **for adversaries of bounded Keccak-f[1600] work**, which
+Lean does not model. The end-to-end theorem does not take it: `RecKnowledgeSoundnessReduction` bounds the hazard by
+this experiment's probability for one explicit adversary, `hazardAdversary A`. -/
 def Pi1HazardKeccak (D : RecDeployment) (εh : ℕ → ℝ≥0∞) : Prop :=
   ∀ (B : Pi1StreamAdversary) (Q : ℕ), (∀ roots evals, QueryCostAtMost (B roots evals) permutationCallCost Q) →
-    Pr{let z ← pi1HazardExperiment D B}[
-      RecGraph.MergeHazard LeanVM.Semantics.keccakF1600 z.1 z.2.1.toList z.2.2] ≤ εh Q
+    Pr{let z ← pi1HazardExperiment D B}[Pi1HazardAccepted z.1 z.2.1 z.2.2] ≤ εh Q
 
 /-! ## Knowledge soundness, part 2: end to end, against Lv42's `M3Holds` -/
 
@@ -646,14 +676,16 @@ def RecKnowledgeSoundnessWith (D : RecDeployment) (ext : RecExtractor D) (ε : �
   ∀ (A : RecAdversary) (Q : ℕ), (∀ roots, QueryCostAtMost (A roots) permutationCallCost Q) →
     Pr{let z ← recSoundnessExperiment D A}[RecBreaksKnowledgeSoundness D ext z] ≤ ε Q
 
-/-- **Knowledge soundness of the recursive verifier against leanVM 42422001's relation, end to end** (π2's verifier
-and the six openings; the explicit extractor `recExtractor`: π2's, then π1-rec3's), error `ε2 + ε1 + εh`, under the
-named hypotheses: the recorded graph is π1-rec3's verifier off the merge hazard (`RecGraph.Pi1.Pi1GraphIsVerifier`,
-proved: `RecGraph.Pi1.pi1GraphIsVerifier`), π1-rec3 is knowledge sound with its Fiat–Shamir over Keccak-f[1600] (`Pi1FsKeccak ε1`, justified by
-`uniKnowledgeSoundness_closed_rec3`: the Fiat–Shamir heuristic), and its run at Keccak-f[1600] avoids the merge
-hazard (`Pi1HazardKeccak εh`, justified by `RecGraph.hazard_prob`). `ε2` is π2's part's (`RecKnowledgeSoundness2`). The
-random-permutation theorems do not formally compose with the circuit's Keccak-f[1600]: these hypotheses are where they
-meet. -/
+/-- **Knowledge soundness of the recursive verifier against leanVM 42422001's relation, end to end, the Prop-premise
+corollary** (π2's verifier and the six openings; the explicit extractor `recExtractor`: π2's, then π1-rec3's), error
+`ε2 + ε1 + εh`, under the named hypotheses: the recorded graph is π1-rec3's verifier off the merge hazard
+(`RecGraph.Pi1.Pi1GraphIsVerifier`, proved), π1-rec3 is knowledge sound with its Fiat–Shamir over Keccak-f[1600]
+(`Pi1FsKeccak ε1`), and its run at Keccak-f[1600] avoids the merge hazard on accepted streams (`Pi1HazardKeccak εh`).
+`ε2` is π2's part's (`RecKnowledgeSoundness2`). The random-permutation theorems do not formally compose with the
+circuit's Keccak-f[1600]: these hypotheses are where they meet. **`Pi1FsKeccak` and `Pi1HazardKeccak` are false as
+stated** (they quantify over adversaries that grind Keccak-f[1600] offline for free): read them as the Fiat–Shamir
+heuristic for adversaries of bounded Keccak-f[1600] work. The end-to-end statement without them is the explicit
+reduction `RecKnowledgeSoundnessReduction` (`Reduction.lean`). -/
 def RecKnowledgeSoundness (D : RecDeployment) (ε2 ε1 εh : ℕ → ℝ≥0∞) : Prop :=
   RecGraph.Pi1.Pi1GraphIsVerifier → Pi1FsKeccak D ε1 → Pi1HazardKeccak D εh →
     RecKnowledgeSoundnessWith D (recExtractor D) fun Q ↦ ε2 Q + ε1 Q + εh Q
@@ -733,7 +765,8 @@ noncomputable def pi1HonestHazardExperiment (D : RecDeployment) (P1 : Pi1Prover 
     | some p1 => return some (D.pi1IvAt trees.roots.pi1, p1.stream)
 
 /-- **Hypothesis: π1-rec3's honest proofs avoid the merge hazard at Keccak-f[1600]**, but with probability `δh`
-(`RecGraph.hazard_prob` for random challenges). -/
+(`RecGraph.hazard_prob` for random challenges). `RecGraph.MergeHazard` asks that the run draw `t` (challenge 49), so a
+proof whose run stops before `t` is not on it (STATEMENT_REVIEW.md, finding 2). -/
 def Pi1HazardKeccakHonest (D : RecDeployment) (P1 : Pi1Prover D) (δh : ℝ≥0∞) : Prop :=
   ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.pi1.Stack rows), D.pi1.shape.RowsFit rows →
     D.pi1.HonestRelation rows input q →
