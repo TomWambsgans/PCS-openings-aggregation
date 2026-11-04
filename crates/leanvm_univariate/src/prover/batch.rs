@@ -71,6 +71,39 @@ impl Folded {
         }
     }
 
+    /// The sums [`Folded::fold`] at `r` would leave, without writing the folded tables (nor cloning these).
+    fn sums_at(&self, r: F192) -> (F192, F192) {
+        if self.len == 1 {
+            let x = (self.w[0] * (F192::ONE + r)) * (self.c[0] * (F192::ONE + r));
+            return (x, x);
+        }
+        let half = self.len / 2;
+        let (w, c) = (&self.w[..self.len], &self.c[..self.len]);
+        let at = |g: usize| (w[g] + r * (w[g] + w[g + 1]), c[g] + r * (c[g] + c[g + 1]));
+        if half == 1 {
+            let (wo, co) = at(0);
+            let x = wo * co;
+            return (x, x);
+        }
+        let (a, b) = parallel::map_reduce(
+            half.div_ceil(FOLD_CHUNK),
+            || (F192Unreduced::ZERO, F192Unreduced::ZERO),
+            |k| {
+                let (first, end) = (k * FOLD_CHUNK, ((k + 1) * FOLD_CHUNK).min(half));
+                let (mut a, mut b) = (F192Unreduced::ZERO, F192Unreduced::ZERO);
+                // The folded tables' pairs `(i, i + 1)` of this chunk, as `pair_sums` takes them.
+                for i in (first..end).step_by(2).take((end - first) / 2) {
+                    let ((w0, c0), (w1, c1)) = (at(2 * i), at(2 * i + 2));
+                    a ^= w0.mul_unreduced(c0);
+                    b ^= (w0 + w1).mul_unreduced(c0 + c1);
+                }
+                (a, b)
+            },
+            |x, y| (x.0 ^ y.0, x.1 ^ y.1),
+        );
+        (a.reduce(), b.reduce())
+    }
+
     /// Bind the low variable to `r` (one word is folded with its zero partner), and take the next round's sums in
     /// the same pass.
     fn fold(&mut self, r: F192) {
@@ -315,11 +348,7 @@ pub fn prove_pairs(
                     w.round(stacks[k].0, &extend(e, x))
                 }
                 (false, None) => folded[k].sums,
-                (false, Some(x)) => {
-                    let mut f = folded[k].clone();
-                    f.fold(x);
-                    f.sums
-                }
+                (false, Some(x)) => folded[k].sums_at(x),
             };
             q0 += scales[k] * a;
             q2 += scales[k] * b;
@@ -327,6 +356,17 @@ pub fn prove_pairs(
         (q0, q2)
     };
     let mut round = 0;
+    let prof = std::env::var("PI1_PROFILE").is_ok();
+    if prof {
+        eprintln!("    batch: stacks {:?}, base rounds {base_rounds}", stacks.iter().map(|s| (s.0.len(), s.1)).collect::<Vec<_>>());
+    }
+    let mut clock = std::time::Instant::now();
+    let mut lap = |what: &str, round: usize| {
+        if prof {
+            eprintln!("    batch r{round}: {what} {:.4} s", clock.elapsed().as_secs_f64());
+        }
+        clock = std::time::Instant::now();
+    };
     while round + 2 <= vars {
         if round == base_rounds {
             folded = stacks
@@ -338,9 +378,11 @@ pub fn prove_pairs(
                 })
                 .collect();
             weights = Vec::new();
+            lap("written out", round);
         }
         // h(u_0) = Σ G̃(u_0, ·): c_0 and c_2 from the round, c_1 from the claim (h(0) + h(1) = claim).
         let (a0, a2) = sums(&weights, &folded, &e, None);
+        lap("sums", round);
         let a1 = claim + a2;
         let h = |x: F192| a0 + a1 * x + a2 * x * x;
         // G̃(a, u_1) for a = 0, 1, β_1: (c_0, c_1, c_2) in u_1.
@@ -352,6 +394,7 @@ pub fn prove_pairs(
                 [b0, h(a) + b2, b2]
             })
             .collect();
+        lap("three clones' sums", round);
         // G̃'s coefficient of u_1^j as a polynomial in u_0 of degree 2 through (0, v_0), (1, v_1), (β_1, v_b):
         // g_0 = v_0, g_2 = (v_0 + v_b) + β_1 (v_0 + v_1) (as β_1² + β_1 = 1), g_1 = v_0 + v_1 + g_2.
         let mut g = [[F192::ZERO; 3]; 3]; // g[i][j]: u_0^i u_1^j
@@ -403,6 +446,7 @@ pub fn prove_pairs(
                 }
             }
         }
+        lap("fold", round);
         round += 2;
     }
     if round < vars {
