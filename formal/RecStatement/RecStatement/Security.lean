@@ -54,9 +54,11 @@ random-permutation model and do not formally compose with the EVM one, which hol
      proved: `RecGraph.Pi1.pi1GraphIsVerifier`).
 
    The conclusion's error is `ε2 + ε1 + εh`. Completeness likewise: π2's completeness is over its own coins and `π`
-   (`RecCompleteness2`); π1-rec3's completeness at Keccak-f[1600] is the named hypothesis `Pi1CompletenessKeccak δ1`,
-   justified by `UniComplete.Rec3.uniCompletenessRec3_end_closed` (`δ < 2^-167`), its honest proofs off the hazard
-   `Pi1HazardKeccakHonest δh`.
+   (`RecCompleteness2`); π1-rec3's completeness at Keccak-f[1600] is the named hypothesis `Pi1CompletenessKeccak δ1`
+   (its random-permutation reading proved, `RecCompose.Pi1KF.pi1CompletenessFs_rpm` from
+   `UniComplete.Rec3.uniCompletenessRec3_end_closed`, `δ < 2^-167`), its honest proofs off the hazard
+   `Pi1HazardKeccakHonest δh` (motivated only by `RecGraph.hazard_prob`, a count for a uniform `t`; its
+   random-permutation reading is not proved).
 
 **The recursive verifier** (`RecDeployment.contractWith`) is the contract (`pi2::contract`): π2's verifier on the
 calldata (`runWith`: the public input, then the stream with π1's roots and claims' elements, `W`'s and `Q`'s roots and
@@ -747,8 +749,9 @@ noncomputable def pi1KeccakCompletenessExperiment (D : RecDeployment) (P1 : Pi1P
     | none => return false
     | some p1 => pi1KeccakVerifierWith queryPermutation D.pi1 trees.roots.pi1 input p1
 
-/-- **Hypothesis: π1-rec3 is complete with its Fiat–Shamir instantiated by Keccak-f[1600]**, error `δ1`. Justified by
-`UniComplete.Rec3.uniCompletenessRec3_end_closed` (`δ < 2^-167` in the random-permutation model). -/
+/-- **Hypothesis: π1-rec3 is complete with its Fiat–Shamir instantiated by Keccak-f[1600]**, error `δ1`. Its
+random-permutation reading is proved (`RecCompose.Pi1KF.pi1CompletenessFs_rpm`, from
+`UniComplete.Rec3.uniCompletenessRec3_end_closed`, `δ < 2^-167`). -/
 def Pi1CompletenessKeccak (D : RecDeployment) (P1 : Pi1Prover D) (δ1 : ℝ≥0∞) : Prop :=
   ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.pi1.Stack rows), D.pi1.shape.RowsFit rows →
     D.pi1.HonestRelation rows input q →
@@ -764,8 +767,9 @@ noncomputable def pi1HonestHazardExperiment (D : RecDeployment) (P1 : Pi1Prover 
     | none => return none
     | some p1 => return some (D.pi1IvAt trees.roots.pi1, p1.stream)
 
-/-- **Hypothesis: π1-rec3's honest proofs avoid the merge hazard at Keccak-f[1600]**, but with probability `δh`
-(`RecGraph.hazard_prob` for random challenges). `RecGraph.MergeHazard` asks that the run draw `t` (challenge 49), so a
+/-- **Hypothesis: π1-rec3's honest proofs avoid the merge hazard at Keccak-f[1600]**, but with probability `δh`.
+Motivated only by `RecGraph.hazard_prob` (at most `2^19` hazardous `t` per `p_0`, `2^-173` for a uniform `t`), a count,
+not a game: its random-permutation reading (`RecCompose.Pi1Hazard.Pi1HazardFsHonest` at `π`) is not proved. `RecGraph.MergeHazard` asks that the run draw `t` (challenge 49), so a
 proof whose run stops before `t` is not on it (STATEMENT_REVIEW.md, finding 2). -/
 def Pi1HazardKeccakHonest (D : RecDeployment) (P1 : Pi1Prover D) (δh : ℝ≥0∞) : Prop :=
   ∀ (input : Vector UInt8 32) (rows : List ℕ) (q : D.pi1.Stack rows), D.pi1.shape.RowsFit rows →
@@ -792,8 +796,8 @@ def RecCompletenessWith (D : RecDeployment) (P : RecProver D) (δ : ℝ≥0∞) 
 /-- **Completeness of the recursive verifier, end to end**: π1-rec3's prover then π2's (`composeProver`), error
 `δ1 + δh + δ2`, under the named hypotheses: the recorded graph is π1-rec3's verifier off the merge hazard
 (`RecGraph.Pi1.Pi1GraphIsVerifier`), π1-rec3 is complete with its Fiat–Shamir over Keccak-f[1600]
-(`Pi1CompletenessKeccak δ1`, justified by `uniCompletenessRec3_end_closed`) and its honest proofs avoid the merge hazard
-(`Pi1HazardKeccakHonest δh`). `δ2` is π2's part's (`RecCompleteness2`). -/
+(`Pi1CompletenessKeccak δ1`, its random-permutation reading proved from `uniCompletenessRec3_end_closed`) and its honest
+proofs avoid the merge hazard (`Pi1HazardKeccakHonest δh`, motivated by `hazard_prob` only). `δ2` is π2's part's (`RecCompleteness2`). -/
 def RecCompleteness (D : RecDeployment) (P1 : Pi1Prover D) (P2 : Pi2Prover) (δ1 δh δ2 : ℝ≥0∞) : Prop :=
   RecGraph.Pi1.Pi1GraphIsVerifier → Pi1CompletenessKeccak D P1 δ1 → Pi1HazardKeccakHonest D P1 δh →
     RecCompletenessWith D (composeProver D P1 P2) (δ1 + δh + δ2)

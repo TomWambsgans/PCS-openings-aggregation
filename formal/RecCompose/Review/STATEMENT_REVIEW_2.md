@@ -151,6 +151,21 @@ The soundness hazard `εh` is in the same position, but its docs are honest ("No
 before it. `hazard_card` then gives `2^19/|E|` plus the freshness term, about `2^-173`. Until then, say
 "`δh`: motivated by `hazard_prob` only; no game bounds it".
 
+**Status (`fix-rec-hazard-rpm`).** The docs are fixed: `formal/README.md` (named inputs), `RecStatement/README.md`
+(open point 2) and `Security.lean` (part 3, `Pi1CompletenessKeccak`, `Pi1HazardKeccakHonest`, `RecCompleteness`) now
+say that `δ1`'s random-permutation reading is proved and `δh`'s is not, `δh` being motivated by `hazard_prob`'s count
+only. The Φ-readings are stated and their Keccak readings proved (`RecCompose/Pi1HazardFs.lean`, sorry-free, three
+axioms): `Pi1HazardFsHonest D Φ δ` with `pi1HazardKeccakHonest_iff : Pi1HazardKeccakHonest D (pi1Rec3ProverKF D) δ ↔
+Pi1HazardFsHonest D (pure ∘ keccakF1600) δ`, and `Pi1HazardFs D Φ εh` with `pi1HazardKeccak_of_fs :
+Pi1HazardFs D (pure ∘ keccakF1600) εh → Pi1HazardKeccak D εh`. **The random-permutation readings (`Φ = π`) are still
+not proved**, on either side. The completeness route is mapped: π1-rec3's staged run with the prior
+`w.challenges` (the writer before `t`) and the bad set `Hazard (prior.getD 42 0)` (at most `2^19` values,
+`hazard_card`), `prEvent_tquery_le` with `tQueryFresh3_reference` (`2^-200`), the transfer `rpm_le_rom`
+(`2^48` blocks), and, at a pure hash, the verifier's final challenges on the honest stream being the prover's writer's
+(`runWithFsH_syncs3` with `flockSyncs3_zero`, `batchSyncs3`). The missing pieces are prover-side counts: the writer
+holds exactly 49 challenges before `t` (Flock's prover 46) and only appends after it. That would give
+`δh = 2^19/2^192 + 2^-200 + rpmError(2^48)`, about `2^-172.99`.
+
 ### 4. The "known gap" of `pi1KeccakVerifierWith` is empty: at Keccak-f[1600] it is π1-rec3's deployed verifier (misleading doc, in the conservative direction)
 
 `pi1KeccakVerifierWith` (`Security.lean:405-425`) omits `verifyWithFs`'s final check that `r.matrices = none` at the
