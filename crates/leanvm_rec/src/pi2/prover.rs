@@ -24,7 +24,7 @@ use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::transcript::{KeccakWriter, keccak_seed};
 use primitives::field::{F64, F192};
 use quotient::domain::{beta, chain, point};
-use quotient::ntt::{self, ESplat, Ex8, Kx8, MixedSum};
+use quotient::ntt::{self, ESplat, Ex8, Kx8, Kx8U, MixedSum};
 use quotient::opening::{self, Committed, Layout, Table};
 use quotient::transcript::root_scalars;
 
@@ -91,11 +91,11 @@ fn b_coefficients(novel: &[F64]) -> Vec<F64> {
     b
 }
 
-/// The setup: `σ` and `κ`, their novel coefficients (kept for the prover's extension coset) and the committed
-/// table of their `B` coefficients.
+/// The setup: `σ` and `κ` on the prover's extension coset `D = β_{m+2} + V_{m+2}` (fixed by the circuit, so computed
+/// once here, not per proof), and the committed table of their `B` coefficients.
 pub struct Setup {
-    pub sigma: Vec<F64>,
-    pub kappa: Vec<F64>,
+    pub sigma_on_d: Vec<F64>,
+    pub kappa_on_d: Vec<F64>,
     pub table: Table,
     pub committed: Committed,
 }
@@ -122,9 +122,11 @@ impl Setup {
             out.copy_from_slice(&src[start & (n - 1)..(start & (n - 1)) + lane]);
         });
         let committed = opening::commit(&table);
+        drop((kb, skb));
+        let offset = beta()[m + 2];
         Self {
-            sigma,
-            kappa,
+            sigma_on_d: on_extension(&sigma, m, offset),
+            kappa_on_d: on_extension(&kappa, m, offset),
             table,
             committed,
         }
@@ -240,31 +242,34 @@ fn batch_inverse_e(values: &mut [F192]) {
 
 /// A linear form in `K` on eight points, its cells' indices permuted by a role.
 struct KLin {
-    terms: Vec<(F64, usize)>,
+    /// The cells of coefficient 1, and the others with theirs (summed unreduced, one reduction).
+    ones: Vec<usize>,
+    scaled: Vec<(Kx8, usize)>,
     constant: F64,
 }
 
 impl KLin {
     fn new(l: &Lin, role: usize) -> Self {
+        let terms = l.terms.iter().map(|&(c, cell)| (F64(c.value[0]), cell as usize ^ role));
         Self {
-            terms: l
-                .terms
-                .iter()
-                .map(|&(c, cell)| (F64(c.value[0]), cell as usize ^ role))
-                .collect(),
+            ones: terms.clone().filter(|&(c, _)| c == F64::ONE).map(|(_, i)| i).collect(),
+            scaled: terms.filter(|&(c, _)| c != F64::ONE).map(|(c, i)| (Kx8::splat(c), i)).collect(),
             constant: l.constant.map_or(F64::ZERO, |c| F64(c.value[0])),
         }
     }
 
     #[inline(always)]
     fn eval(&self, cells: &[Kx8]) -> Kx8 {
-        self.terms.iter().fold(Kx8::splat(self.constant), |acc, &(c, i)| {
-            acc + if c == F64::ONE {
-                cells[i]
-            } else {
-                Kx8::splat(c) * cells[i]
-            }
-        })
+        let sum = self.ones.iter().fold(Kx8::splat(self.constant), |acc, &i| acc + cells[i]);
+        if self.scaled.is_empty() {
+            sum
+        } else {
+            sum + self
+                .scaled
+                .iter()
+                .fold(Kx8U::zero(), |acc, &(c, i)| acc + Kx8U::product(c, cells[i]))
+                .reduce()
+        }
     }
 }
 
@@ -330,19 +335,41 @@ fn quotient_on_extension(
     w_novel: &[F64],
     h_novel: &[Vec<F64>; 3],
     [alpha, beta_, gamma]: [F192; 3],
-) -> [Vec<F64>; 3] {
+    [l0, l1, l2]: [&mut [F64]; 3],
+) {
     let (m, r, n) = (circuit.log_n, circuit.log_row, circuit.n());
     let big = 4 * n;
     let offset = beta()[m + 2];
-    let on_d = |novel: &[F64]| {
-        let mut out = vec![F64::ZERO; big];
-        out[..novel.len()].copy_from_slice(novel);
-        ntt::values(&mut out, offset);
-        out
+    let profile = std::env::var_os("PI2_PROFILE").is_some();
+    let mut clock = Instant::now();
+    let mut lap = |name: &str| {
+        if profile {
+            eprintln!("    q: {:7.3} s  {name}", clock.elapsed().as_secs_f64());
+        }
+        clock = Instant::now();
     };
-    let (wd, sd, kd) = (on_d(w_novel), on_d(&setup.sigma), on_d(&setup.kappa));
+    if profile {
+        let mut hist = std::collections::BTreeMap::new();
+        spec.pairs.iter().for_each(|p| *hist.entry(p.log_rows).or_insert(0usize) += 1);
+        let kinds = spec.groups.iter().fold([0usize; 3], |mut k, g| {
+            k[if g.formula.is_base() { 0 } else if g.formula.products.is_empty() { 1 } else { 2 }] += 1;
+            k
+        });
+        let terms: usize = spec.groups.iter().map(|g| g.formula.lin.terms.len()).sum();
+        let products: usize = spec.groups.iter().map(|g| g.formula.products.len()).sum();
+        eprintln!(
+            "    q: m {m} r {r}; {} pairs by log_rows {hist:?}; {} pull-less; {} groups (K, E-linear, E: {kinds:?}), {terms} terms, {products} products",
+            spec.pairs.len(),
+            spec.pull_less.len(),
+            spec.groups.len()
+        );
+    }
+    let on_d = |novel: &[F64]| on_extension(novel, m, offset);
+    let wd = on_d(w_novel);
+    let (sd, kd) = (&setup.sigma_on_d, &setup.kappa_on_d);
     let hd = [on_d(&h_novel[0]), on_d(&h_novel[1]), on_d(&h_novel[2])];
     let gammas = primitives::field::powers(gamma, spec.max_gamma + 1);
+    lap("w, σ, κ, h on D");
 
     // `Z_V` on `D`: `w_m(β_{m+2}) + ω_{i >> m}`, one value per coset of `V_m`, and its inverses.
     let zv_off = chain(offset, m + 1)[m];
@@ -361,64 +388,114 @@ fn quotient_on_extension(
         .map(|s| (0..(big >> LOW).max(1)).map(|j| zhat(point(j << LOW), s)).collect())
         .collect();
 
-    let pairs: Vec<(usize, Kx8)> = spec.pairs.iter().map(|p| (p.log_rows, Kx8::splat(p.z))).collect();
-    let groups: Vec<(Compiled, &[usize])> = spec
+    // The indicators, a chunk of `run` points at a time: a chunk lies in one coset of `V_m` (one `Z_V` value) and
+    // fixes the index's bits from `log run` up. `Ẑ_s` vanishes on `U_s = ⟨β_r, …, β_{r+s-1}⟩`, so pair `p`'s indicator
+    // reads the bits below `r` and from `r + s_p` up only: if `r + s_p ≥ log run` it is periodic in the chunk, of
+    // period `2^r` (a *wide* pair: `period` points of it per chunk); otherwise it is computed at every point of the
+    // chunk. Every chunk's indicators are one batched inversion.
+    let width = 1usize << r;
+    let run = n.min(1 << LOW);
+    assert!(run % 8 == 0 && run.is_power_of_two());
+    let log_run = run.trailing_zeros() as usize;
+    let period = width.max(8);
+    let pv = period / 8;
+    let wide: Vec<bool> = spec
+        .pairs
+        .iter()
+        .map(|p| period <= run && r + p.log_rows >= log_run)
+        .collect();
+    // Pair `p`'s vectors in a chunk's table: from `at[p]`, `pv` of them if wide, else `run / 8`.
+    let mut at = Vec::with_capacity(spec.pairs.len());
+    let mut vectors = 0;
+    for &w in &wide {
+        at.push(vectors);
+        vectors += if w { pv } else { run / 8 };
+    }
+    let narrow = |members: &[usize]| -> Vec<usize> { members.iter().copied().filter(|&p| !wide[p]).collect() };
+
+    let pairs: Vec<(usize, F64)> = spec.pairs.iter().map(|p| (p.log_rows, p.z)).collect();
+    let groups: Vec<(Compiled, &[usize], Vec<usize>)> = spec
         .groups
         .iter()
-        .map(|g| (Compiled::new(&g.formula, g.role, &gammas), &g.pairs[..]))
+        .map(|g| (Compiled::new(&g.formula, g.role, &gammas), &g.pairs[..], narrow(&g.pairs)))
         .collect();
     let pull_less = &spec.pull_less;
-    let width = 1usize << r;
+    let pull_less_narrow = narrow(pull_less);
     let points8 = Kx8::new(std::array::from_fn(point));
     let (alpha8, beta8) = (Ex8::splat(alpha), Ex8::splat(beta_));
     let one8 = Kx8::splat(F64::ONE);
+    let zero8 = Kx8::splat(F64::ZERO);
 
-    let mut q = vec![F192::ZERO; big];
-    let run = big.min(1 << LOW);
-    parallel::chunks_mut(&mut q, run, |chunk, out| {
+    assert!(l0.len() == big && l1.len() == big && l2.len() == big);
+    parallel::chunks_mut3(&mut *l0, &mut *l1, &mut *l2, run, |chunk, o0, o1, o2| {
         let start = chunk * run;
-        let mut dens = vec![one8; pairs.len()];
-        let mut prefix = vec![one8; pairs.len()];
-        let mut ind = vec![one8; pairs.len()];
-        let mut zs = vec![one8; s_max + 1];
+        let coset = start >> m;
+        // The chunk's indicators: denominators, then one batched inversion, times `Z_V`.
+        let mut table = vec![one8; vectors];
+        for (p, &(s, z)) in pairs.iter().enumerate() {
+            let len = if wide[p] { pv } else { run / 8 };
+            for v in 0..len {
+                let i = start + 8 * v;
+                table[at[p] + v] =
+                    Kx8::load(&low[s][i & ((1 << LOW) - 1)..]) + Kx8::splat(at_offset[s] + high[s][i >> LOW] + z);
+            }
+        }
+        let mut prefix = vec![one8; vectors];
+        let mut acc = one8;
+        for (pre, &d) in prefix.iter_mut().zip(&table) {
+            *pre = acc;
+            acc = acc * d;
+        }
+        let mut inv = Kx8::new(lanes(acc).map(|x| x.inv())) * Kx8::splat(zv[coset]);
+        for (d, &pre) in table.iter_mut().zip(&prefix).rev() {
+            let next = inv * *d;
+            *d = inv * pre;
+            inv = next;
+        }
+        drop(prefix);
+        // The wide pairs' sums by group (and the pull-less pairs'), `pv` vectors each.
+        let wide_sum = |members: &[usize], k: usize| {
+            members
+                .iter()
+                .filter(|&&p| wide[p])
+                .fold(zero8, |acc, &p| acc + table[at[p] + k])
+        };
+        let group_wide: Vec<Kx8> = groups
+            .iter()
+            .flat_map(|(_, members, _)| (0..pv).map(|k| wide_sum(members, k)).collect::<Vec<_>>())
+            .collect();
+        let pull_less_wide: Vec<Kx8> = (0..pv).map(|k| wide_sum(pull_less, k)).collect();
+
         let mut cells = vec![one8; width];
-        for block in (0..out.len()).step_by(8) {
-            let i = start + block;
-            let coset = i >> m;
-            for s in 0..=s_max {
-                zs[s] = Kx8::load(&low[s][i & ((1 << LOW) - 1)..]) + Kx8::splat(at_offset[s] + high[s][i >> LOW]);
-            }
-            // The indicators: one batched inversion over the pairs, lane by lane.
-            let mut acc = one8;
-            for (p, &(s, z)) in pairs.iter().enumerate() {
-                dens[p] = zs[s] + z;
-                prefix[p] = acc;
-                acc = acc * dens[p];
-            }
-            let mut inv = Kx8::new(lanes(acc).map(|x| x.inv())) * Kx8::splat(zv[coset]);
-            for p in (0..pairs.len()).rev() {
-                ind[p] = inv * prefix[p];
-                inv = inv * dens[p];
-            }
+        for j in 0..run / 8 {
+            let i = start + 8 * j;
+            let jw = j % pv;
             // Lane `l` is the point `i + l`, its row's cell `c` the point `(i + l) ^ c`.
             for (c, cell) in cells.iter_mut().enumerate() {
-                let (b, x) = ((i ^ c) & !7, c & 7);
-                *cell = Kx8::new(std::array::from_fn(|l| wd[b + (l ^ x)]));
+                *cell = Kx8::load(&wd[i ^ (c & !7)..]).xor_lanes(c & 7);
             }
             let w = cells[0];
-            let mut selected = Kx8::splat(F64::ZERO);
-            let mut pushed_k = Kx8::splat(F64::ZERO);
+            let mut selected = zero8;
+            // `Σ_g sum_g v_g` (and `w · selected`), unreduced until the row's end.
+            let mut pushed_k = Kx8U::zero();
             let mut pushed_e = Ex8::splat(F192::ZERO);
-            for (compiled, members) in &groups {
-                let sum = members.iter().fold(Kx8::splat(F64::ZERO), |acc, &p| acc + ind[p]);
+            for (g, (compiled, _, narrow)) in groups.iter().enumerate() {
+                let sum = narrow
+                    .iter()
+                    .fold(group_wide[g * pv + jw], |acc, &p| acc + table[at[p] + j]);
                 selected = selected + sum;
                 match compiled {
                     Compiled::K { lin, products } => {
-                        let v = products.iter().fold(lin.eval(&cells), |acc, (c, a, b)| {
-                            let p = a.eval(&cells) * b.eval(&cells);
-                            acc + if *c == F64::ONE { p } else { Kx8::splat(*c) * p }
-                        });
-                        pushed_k = pushed_k + sum * v;
+                        let v = if products.is_empty() {
+                            lin.eval(&cells)
+                        } else {
+                            let p = products.iter().fold(Kx8U::zero(), |acc, (c, a, b)| {
+                                let (x, y) = (a.eval(&cells), b.eval(&cells));
+                                acc + Kx8U::product(if *c == F64::ONE { x } else { Kx8::splat(*c) * x }, y)
+                            });
+                            lin.eval(&cells) + p.reduce()
+                        };
+                        pushed_k = pushed_k + Kx8U::product(sum, v);
                     }
                     Compiled::ELinear { terms, constant } => {
                         let mut v = MixedSum::default();
@@ -438,23 +515,41 @@ fn quotient_on_extension(
                     }
                 }
             }
-            let one_s = pull_less.iter().fold(Kx8::splat(F64::ZERO), |acc, &p| acc + ind[p]);
-            let p_t = Ex8::from_k(w + w * selected + pushed_k + Kx8::load(&kd[i..])) + pushed_e;
+            let one_s = pull_less_narrow
+                .iter()
+                .fold(pull_less_wide[jw], |acc, &p| acc + table[at[p] + j]);
+            let pushed_k = (pushed_k + Kx8U::product(w, selected)).reduce();
+            let p_t = Ex8::from_k(w + pushed_k + Kx8::load(&kd[i..])) + pushed_e;
             let x = Kx8::splat(offset + point(i)) + points8;
             let d_pull = alpha8 + Ex8::from_k(w) + beta8.mul_k(x);
             let d_push = alpha8 + p_t + beta8.mul_k(Kx8::load(&sd[i..]));
             let h = Ex8::from_limbs([Kx8::load(&hd[0][i..]), Kx8::load(&hd[1][i..]), Kx8::load(&hd[2][i..])]);
             let num = h * d_pull * d_push + d_push.mul_k(one8 + one_s) + d_pull;
-            out[block..block + 8].copy_from_slice(&num.mul_k(Kx8::splat(zv_inv[coset])).to_array());
+            let [q0, q1, q2] = num.mul_k(Kx8::splat(zv_inv[coset])).limbs();
+            o0[8 * j..8 * j + 8].copy_from_slice(&q0.to_row().0);
+            o1[8 * j..8 * j + 8].copy_from_slice(&q1.to_row().0);
+            o2[8 * j..8 * j + 8].copy_from_slice(&q2.to_row().0);
         }
     });
-    drop((wd, sd, kd, hd));
-    let limbs: [Vec<F64>; 3] = std::array::from_fn(|l| {
-        let mut limb: Vec<F64> = parallel::map_collect(big, |i| F64([q[i].c0, q[i].c1, q[i].c2][l]));
-        ntt::coefficients(&mut limb, offset);
-        limb
-    });
-    limbs
+    lap("the numerator over Z_V");
+    drop((wd, hd));
+    for limb in [l0, l1, l2] {
+        ntt::coefficients(limb, offset);
+    }
+    lap("q's coefficients");
+}
+
+/// `f`'s values on `offset + V_{m+2}` from its novel coefficients (`2^m` of them: degree below `2^m`): one transform
+/// of `2^m` points on each coset `offset + ω_{c 2^m} + V_m`, `c < 4`; the values of the transform of the coefficients
+/// zero-padded to `2^(m+2)`, whose top two layers copy them to the four quarters.
+fn on_extension(novel: &[F64], m: usize, offset: F64) -> Vec<F64> {
+    let n = novel.len();
+    assert_eq!(n, 1 << m);
+    let mut out: Vec<F64> = parallel::map_collect(4 * n, |i| novel[i & (n - 1)]);
+    for (c, quarter) in out.chunks_mut(n).enumerate() {
+        ntt::values(quarter, offset + point(c << m));
+    }
+    out
 }
 
 /// Prove that `w` satisfies `circuit` with the public data `values` (the public input's words in the seed): the
@@ -518,39 +613,70 @@ pub fn prove_with(
     let [alpha, beta_, gamma] = [(); 3].map(|_| to_f192(writer.sample()));
     lap("W: transform, commit", &mut timings);
 
-    // h on V_m.
-    let pushes = circuit.pushes(w, gamma);
-    let pulls = circuit.pulls();
-    let mut h = vec![F192::ZERO; n];
-    parallel::chunks_mut(&mut h, 1 << 12, |chunk, out| {
-        let start = chunk << 12;
-        let mut d: Vec<F192> = (0..out.len())
-            .flat_map(|j| {
+    // h on V_m, limb by limb. Each position's pull and push are `Circuit::pulls`'s and `Circuit::pushes`'s, found
+    // without their tables: a position's pair by a search in its role's pairs (sorted row intervals), every
+    // formula's kind once.
+    let gammas = super::circuit::gamma_powers(gamma, circuit.max_gamma());
+    let base_formula: Vec<bool> = circuit.formulas.iter().map(|f| f.is_base()).collect();
+    let width = circuit.width();
+    let mut by_role: Vec<Vec<(usize, usize, usize)>> = vec![vec![]; width];
+    for (p, pair) in circuit.pairs.iter().enumerate() {
+        by_role[pair.role].push((pair.first_row, pair.first_row + (1 << pair.log_rows), p));
+    }
+    by_role.iter_mut().for_each(|l| l.sort_unstable());
+    let pair_at = |i: usize| -> Option<usize> {
+        let (row, list) = (i >> r, &by_role[i & (width - 1)]);
+        let k = list.partition_point(|e| e.0 <= row);
+        (k > 0 && row < list[k - 1].1).then(|| list[k - 1].2)
+    };
+    let run = n.min(1 << 12);
+    let mut h_novel: [Vec<F64>; 3] = std::array::from_fn(|_| parallel::map_collect(n, |_| F64::ZERO));
+    {
+        let [h0, h1, h2] = &mut h_novel;
+        parallel::chunks_mut3(h0, h1, h2, run, |chunk, o0, o1, o2| {
+            let start = chunk * run;
+            let mut pulls = vec![false; o0.len()];
+            let mut d: Vec<F192> = Vec::with_capacity(2 * o0.len());
+            for (j, pulls_j) in pulls.iter_mut().enumerate() {
                 let i = start + j;
-                let pull = if pulls[i] {
+                let base = i & !(width - 1);
+                let (pull, own) = match pair_at(i) {
+                    None => (true, F192::from(w[i])),
+                    Some(p) => {
+                        let pair = &circuit.pairs[p];
+                        let formula = &circuit.formulas[pair.formula];
+                        let own = if base_formula[pair.formula] {
+                            F192::from(formula.eval_k(&|c| w[base + c]))
+                        } else {
+                            formula.eval(&|c| F192::from(w[base + c]), &gammas)
+                        };
+                        (pair.pulls, own)
+                    }
+                };
+                *pulls_j = pull;
+                d.push(if pull {
                     alpha + F192::from(w[i]) + beta_.mul_base(point(i))
                 } else {
                     F192::ONE
-                };
-                [
-                    pull,
-                    alpha + pushes[i] + beta_.mul_base(point(circuit.sigma[i] as usize)),
-                ]
-            })
-            .collect();
-        batch_inverse_e(&mut d);
-        for (j, o) in out.iter_mut().enumerate() {
-            *o = if pulls[start + j] { d[2 * j] } else { F192::ZERO } + d[2 * j + 1];
-        }
-    });
-    drop(pushes);
-    let run = n.min(1 << 12);
-    let sum = parallel::map_reduce(
-        n / run,
-        || F192::ZERO,
-        |c| h[c * run..(c + 1) * run].iter().fold(F192::ZERO, |a, &x| a + x),
-        |a, b| a + b,
-    );
+                });
+                d.push(alpha + own + F192::from(circuit.kappa[i]) + beta_.mul_base(point(circuit.sigma[i] as usize)));
+            }
+            batch_inverse_e(&mut d);
+            for (j, &pull) in pulls.iter().enumerate() {
+                let x = if pull { d[2 * j] } else { F192::ZERO } + d[2 * j + 1];
+                (o0[j], o1[j], o2[j]) = (F64(x.c0), F64(x.c1), F64(x.c2));
+            }
+        });
+    }
+    let limb_sum = |l: &[F64]| {
+        parallel::map_reduce(
+            n / run,
+            || F64::ZERO,
+            |c| l[c * run..(c + 1) * run].iter().fold(F64::ZERO, |a, &x| a + x),
+            |a, b| a + b,
+        )
+    };
+    let sum = F192::new(limb_sum(&h_novel[0]).0, limb_sum(&h_novel[1]).0, limb_sum(&h_novel[2]).0);
     let mut target_dens: Vec<F192> = circuit
         .public_values(&public, gamma)
         .iter()
@@ -563,31 +689,39 @@ pub fn prove_with(
         !check || sum == target,
         "the copy argument's sum is not the public target: the witness does not satisfy the circuit"
     );
-    let h_novel: [Vec<F64>; 3] = std::array::from_fn(|limb| {
-        let mut out: Vec<F64> = parallel::map_collect(n, |i| F64([h[i].c0, h[i].c1, h[i].c2][limb]));
-        ntt::coefficients(&mut out, F64::ZERO);
-        out
-    });
-    drop(h);
+    for limb in &mut h_novel {
+        ntt::coefficients(limb, F64::ZERO);
+    }
     lap("h on V_m, its coefficients", &mut timings);
 
-    let q_novel = quotient_on_extension(circuit, spec, setup, &w_novel, &h_novel, [alpha, beta_, gamma]);
-    lap("q on the extension coset, its coefficients", &mut timings);
-
+    // Q's stack, built in place: its lanes are the chunks in `quotient_chunks`'s order, so the stack is, limb by
+    // limb, `h`'s coefficients (`N` words) then `q`'s (`4N`, its four chunks in order). Checked lane by lane
+    // against the table's layout (lane `L` holds block `b`: chunk `c = b·lane >> m`, `8 limb + 4 kind + digit`).
     let qlane = 1usize << l.quotient.log_lane();
-    let quotient = Table::new(l.quotient, |_, block, out| {
-        let start = block * qlane;
+    assert_eq!(l.quotient.placed(), 15 * n);
+    for lane in 0..15 * n / qlane {
+        let start = l.quotient.block(lane) * qlane;
         let (c, within) = (start >> m, start & (n - 1));
         let (limb, kind, digit) = (c >> 3, (c >> 2) & 1, c & 3);
-        let src = if kind == 0 {
-            assert_eq!(digit, 0);
-            &h_novel[limb][within..within + qlane]
-        } else {
-            &q_novel[limb][digit * n + within..digit * n + within + qlane]
-        };
-        out.copy_from_slice(src);
-    });
-    drop(q_novel);
+        assert!(kind == 1 || digit == 0);
+        assert_eq!(5 * n * limb + kind * n + digit * n + within, lane * qlane, "Q's lane {lane}");
+    }
+    let mut stack: Vec<F64> = parallel::map_collect(15 * n, |_| F64::ZERO);
+    {
+        let mut parts = stack.chunks_exact_mut(5 * n).map(|limb| limb.split_at_mut(n));
+        let [(h0, q0), (h1, q1), (h2, q2)] = [(); 3].map(|_| parts.next().expect("three limbs"));
+        for (dst, src) in [h0, h1, h2].into_iter().zip(&h_novel) {
+            parallel::chunks_mut(dst, 1 << 16, |k, out| out.copy_from_slice(&src[k << 16..(k << 16) + out.len()]));
+        }
+        quotient_on_extension(circuit, spec, setup, &w_novel, &h_novel, [alpha, beta_, gamma], [q0, q1, q2]);
+    }
+    drop(h_novel);
+    lap("q on the extension coset, its coefficients", &mut timings);
+
+    let quotient = Table {
+        layout: l.quotient.clone(),
+        stack,
+    };
     let quotient_committed = opening::commit(&quotient);
     writer.send_root(root_scalars(&quotient_committed.root).map(to_e));
     let t = to_f192(writer.sample());
@@ -652,10 +786,28 @@ pub fn open(proved: Proved, setup: &Setup) -> (Reduced<E>, [Hash; 2], Openings) 
         reduced,
         ..
     } = proved;
+    let profile = std::env::var_os("PI2_PROFILE").is_some();
+    let timed = |name: &str, f: &mut dyn FnMut() -> fiat_shamir::transcript::Proof| {
+        let clock = Instant::now();
+        let proof = f();
+        if profile {
+            eprintln!("    open: {:7.3} s  {name}", clock.elapsed().as_secs_f64());
+        }
+        proof
+    };
+    let (mut w, mut q) = (Some(witness), Some(quotient));
     let openings = Openings {
-        witness: opening::open_owned(witness.0, witness.1, &[claim(&reduced.witness)]),
-        quotient: opening::open_owned(quotient.0, quotient.1, &[claim(&reduced.quotient), claim(&reduced.sum)]),
-        setup: opening::open(&setup.table, &setup.committed, &[claim(&reduced.setup)]),
+        witness: timed("W", &mut || {
+            let (table, committed) = w.take().expect("once");
+            opening::open_owned(table, committed, &[claim(&reduced.witness)])
+        }),
+        quotient: timed("Q", &mut || {
+            let (table, committed) = q.take().expect("once");
+            opening::open_owned(table, committed, &[claim(&reduced.quotient), claim(&reduced.sum)])
+        }),
+        setup: timed("setup", &mut || {
+            opening::open(&setup.table, &setup.committed, &[claim(&reduced.setup)])
+        }),
     };
     (reduced, roots, openings)
 }

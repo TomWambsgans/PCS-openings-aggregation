@@ -687,6 +687,22 @@ impl Kx8 {
         Self(splat(x.0))
     }
 
+    /// Lane `l` is lane `l ^ x`'s (`x < 8`).
+    #[inline(always)]
+    pub fn xor_lanes(self, x: usize) -> Self {
+        let mut v = self.0;
+        if x & 1 != 0 {
+            v = swap::<1>(v);
+        }
+        if x & 2 != 0 {
+            v = swap::<2>(v);
+        }
+        if x & 4 != 0 {
+            v = swap::<4>(v);
+        }
+        Self(v)
+    }
+
     #[inline(always)]
     pub fn to_row(self) -> K8 {
         let mut out = K8::ZERO;
@@ -709,6 +725,36 @@ impl Mul for Kx8 {
     #[inline(always)]
     fn mul(self, rhs: Self) -> Self {
         Self(mul(self.0, rhs.0))
+    }
+}
+
+/// Eight K products, unreduced: a sum of them is reduced once ([`Kx8U::reduce`]).
+#[derive(Clone, Copy)]
+pub struct Kx8U(U);
+
+impl Kx8U {
+    #[inline(always)]
+    pub fn zero() -> Self {
+        Self(zero_u())
+    }
+
+    /// `a b`, unreduced.
+    #[inline(always)]
+    pub fn product(a: Kx8, b: Kx8) -> Self {
+        Self(clmul_u(a.0, b.0))
+    }
+
+    #[inline(always)]
+    pub fn reduce(self) -> Kx8 {
+        Kx8(reduce_u(self.0))
+    }
+}
+
+impl Add for Kx8U {
+    type Output = Self;
+    #[inline(always)]
+    fn add(self, rhs: Self) -> Self {
+        Self(xor_u(self.0, rhs.0))
     }
 }
 
