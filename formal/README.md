@@ -293,8 +293,12 @@ python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|
 > `SetupRootChecked`.
 > The second ([`RecCompose/Review/STATEMENT_REVIEW_2.md`](RecCompose/Review/STATEMENT_REVIEW_2.md), at f774b11)
 > found no wrong statement: none vacuous, none with a bound that cannot apply. What it leaves open:
-> * **`IvChecked`**, a universal over every 32-byte π1 IV, is evaluated at sampled IVs, not proved. A single failing IV
->   would make every end theorem at `realDeployment` vacuous (its finding 2, and `RealDeployment.lean`);
+> * **`IvChecked`**, a universal over every 32-byte π1 IV, is not proved. It is reduced (`IvUniform.lean`,
+>   `ivChecked_of_patchChecked`) to `PatchChecked`: every IV's compiled circuit is the all-ones IV's with κ cleared at
+>   the IV's zero bits, plus `ivCheck` at the all-ones and zero IVs. `PatchChecked` is unproved. Evaluated: `ivCheck` at
+>   the reference, zero and all-ones IVs, and at six sampled IVs with the structure compared field by field (all hold;
+>   `STATEMENT_REVIEW_2.md` finding 2). A single failing IV would make every end theorem at `realDeployment` vacuous
+>   (its finding 2, and `RealDeployment.lean`);
 > * **the completeness theorems' provers are Lean transcriptions**: the deployed Rust π1 and π2 provers are trusted for
 >   completeness (its finding 1; what each Lean prover is compared with the Rust on is under "The recursion's π1
 >   prover" and "π2's honest prover" below);
