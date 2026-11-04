@@ -283,11 +283,26 @@ python3 -I Review/UniRec3Numbers.py           # uniBound3, uniBound128 at 2^35/|
 
 ## The recursive verifier: end theorems (`RecCompose/`)
 
-> **Status (2026-11-05): the review's findings are addressed.** An adversarial review of the statements
-> ([`RecCompose/Review/STATEMENT_REVIEW.md`](RecCompose/Review/STATEMENT_REVIEW.md)) found the end theorems vacuous or
-> without a bound as stated. Each finding is fixed there (its **Fixed** paragraph). For finding 1 (IVs of every
-> length), the per-IV premises are stated for every 32-byte IV, **evaluated at three** (`rec-real-check`) and assumed at
-> the others (IV uniformity is not proved). The hypotheses are inhabited given the evaluations
+> **Status (2026-11-04), after two adversarial reviews of the statements.**
+> The first ([`RecCompose/Review/STATEMENT_REVIEW.md`](RecCompose/Review/STATEMENT_REVIEW.md), at f7c640f) found the
+> end theorems vacuous or without a bound as stated: premises false at long IVs, a soundness bound of at least 1,
+> Fiat–Shamir premises false for unbounded adversaries, a completeness prover hashing its Fiat–Shamir over the wrong
+> function, `Real` unchecked. Each is fixed (its **Fixed** paragraph): per-IV premises at 32-byte IVs, a merge hazard
+> that asks the run to draw `t` on a stream whose graph checks hold, the reduction `recKnowledgeSoundness_reduction`
+> with explicit derived adversaries, the prover `Pi1KF.pi1Rec3ProverKF`, the evaluated `DigestChecked` and
+> `SetupRootChecked`.
+> The second ([`RecCompose/Review/STATEMENT_REVIEW_2.md`](RecCompose/Review/STATEMENT_REVIEW_2.md), at f774b11)
+> found no wrong statement: none vacuous, none with a bound that cannot apply. What it leaves open:
+> * **`IvChecked`**, a universal over every 32-byte π1 IV, is evaluated at sampled IVs, not proved. A single failing IV
+>   would make every end theorem at `realDeployment` vacuous (its finding 2, and `RealDeployment.lean`);
+> * **the completeness theorems' provers are Lean transcriptions**: the deployed Rust π1 and π2 provers are trusted for
+>   completeness (its finding 1; what each Lean prover is compared with the Rust on is under "The recursion's π1
+>   prover" and "π2's honest prover" below);
+> * **the honest hazard `δh`** (its finding 3; see the named inputs' table below).
+>
+> Its documentation fixes are made: `pi1KeccakVerifierWith` is π1-rec3's deployed verifier, not a superset of it
+> (`Pi1KF.verifierFs_eq`, `pi1KeccakVerifierWith_kf_eq`, finding 4); `contract_rejects_le` is unconditional (finding 5);
+> the stale docstrings of finding 6. The hypotheses are inhabited given the evaluations
 > (`RecCompose/Review/NonVacuity.lean`).
 
 The recursive EVM verifier (`crates/leanvm_rec`) runs π2's verifier, then six `PCS_OPEN` calls. Its statements are

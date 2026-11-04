@@ -163,6 +163,16 @@ Fiat–Shamir at Keccak-f[1600], its openings over `π`.
 verifier accepts" remark in `STATEMENT_REVIEW.md` finding 4 and the `Pi1KFCore.lean:242` docstring. Optionally restore
 the check in `pi1KeccakVerifierWith` for transcription fidelity.
 
+**Fixed** (`fix-rec-docs2`). `Pi1KF.verifierFs_le` is replaced by the equality **`Pi1KF.verifierFs_eq`**
+(`Pi1KFRpm.lean`): at the reference shape, in every lawful monad and at every hash `F`,
+`pi1VerifierFsWith F F D roots input p = D.verifierRec3With F roots input p`, from `runWithFs_shape` through
+`bind_congr_of_holds` (the reviewer's `strict_eq`, generalised from `runFs` to `runWithFs F`). With
+`pi1VerifierFsWith_kf` it gives **`Pi1KF.pi1KeccakVerifierWith_kf_eq`**, the reviewer's `keccak_eq_verifierRec3` in
+every lawful monad. `pi1CompletenessFs_rpm` uses the equality. The remarks are corrected (`Pi1KFRpm.lean`'s module
+docstring, `Pi1KFCore.lean`'s `pi1KeccakVerifier_of_calls`, `STATEMENT_REVIEW.md` finding 4, `RecCompose/README.md`).
+The check is not restored in `pi1KeccakVerifierWith`: the equality makes it unnecessary, and the Statement is
+unchanged.
+
 ### 5. `keccak_accepts`'s `¬ BadKF` and `contract_rejects_le` (clarification; cosmetic)
 
 The question assumed `contract_rejects_le` was conditional on `¬ BadKF`. It is not: `contract_rejects_le`
@@ -178,6 +188,10 @@ heuristic premise `δ1`; at `π` it is inside `deltaRec3` (`BadFp`, `BadT`).
 `none` (grinding beyond `nonceFuel`) is likewise inside `δ1`. So "graph accepts" in `RecCompleteness2` is the likely
 event exactly when the heuristic `δ1` is small. That is consistent, and documented by `contract_rejects_le`.
 
+**Fixed** (`fix-rec-docs2`). `Review/Pi1ProverReview.lean` (its module docstring, `challenges_match`, `keccak_accepts`,
+`contract_rejects_le`), `formal/README.md` and `RecCompose/README.md` now say that `contract_rejects_le` is
+unconditional and that `¬ BadKF` enters only the two non-vacuity witnesses; `keccak_accepts`'s `hπ` is noted.
+
 ### 6. Stale or imprecise docs (cosmetic)
 
 - `Pi2CompleteEnd.lean:55`: `Pi2WitnessComplete` is still called a "Named input … (not transcribed; the Rust's witness
@@ -192,6 +206,13 @@ event exactly when the heuristic `δ1` is small. That is consistent, and documen
 - The derived adversaries' time is documented as "a polynomial". The Keccak-f[1600] work the heuristic counts is `A`'s
   offline work plus the extractor's graph checks per candidate. Say so, since that is the resource the heuristic bounds
   and the reduction's `Q` does not.
+
+**Fixed** (`fix-rec-docs2`), item by item: `Pi2WitnessComplete`'s docstring points to `Pi2W.pi2WitnessComplete`;
+`RecStatement/README.md`'s open point 1 points to `RecCompose`'s theorems and open point 2 says the Keccak readings are
+heuristic, `Pi1CompletenessKeccak`'s with a proved RPM reading; `formal/README.md`'s status note is rewritten as the
+current status after both reviews; `Pi1HazardAccepted`'s docstring says it asks only `pi1GraphChecks`, a larger event
+than needed; `Reduction.lean`'s docstrings, `RecStatement/README.md` and `formal/README.md` name the derived
+adversaries' Keccak-f[1600] work as the resource the heuristic bounds.
 
 ## Answers to the questions
 
