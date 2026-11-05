@@ -22,6 +22,7 @@ pub mod field;
 pub mod flock;
 pub mod flock_min;
 mod hash;
+pub mod keccak_flock;
 pub mod keccak_gkr;
 pub mod layout;
 pub mod matrices;

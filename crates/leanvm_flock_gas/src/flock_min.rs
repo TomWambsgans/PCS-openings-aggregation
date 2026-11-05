@@ -3,7 +3,8 @@
 // lincheck and ring switch this module re-states with the univariate skip's size and the slices' fate as
 // parameters. New here: the skip of any size `k ≤ 6`, the matrices' reduction over the skip's `k` row bits, and the
 // lincheck's slices left to one claim of their combination, and π1-rec's zerocheck point (`FsShape::Rec`: its
-// sampled coordinates successive squares of one). MIT OR Apache-2.0; see NOTICE.md.
+// sampled coordinates successive squares of one); the walked variant on any block circuit ([`WalkedCircuit`]: BLAKE2s's,
+// or `crate::keccak_flock`'s Keccak-f block, for crates/slh_dsa/SPEC-FAST.md). MIT OR Apache-2.0; see NOTICE.md.
 //! Flock's verifier, lever by lever (`crates/leanvm_univariate/SPEC.md`, the Flock section).
 //!
 //! **What the verifier needs of the 64 slices.** The lincheck ends on `s_i = ẑ(i, p)`, `i < 64` the packing bits
@@ -66,6 +67,33 @@ pub struct Variant {
     pub fs: FsShape,
 }
 
+/// A Flock block circuit as the walked terminal reads it: a block's slots, its constant wire, and its rows' values
+/// `(A0 w, B0 w)` at column weights `w` (one forward walk). The lincheck runs `LOG_SIZE - 6` rounds.
+pub trait WalkedCircuit {
+    /// `log2` of a block's slots.
+    const LOG_SIZE: usize;
+    /// The constant wire's slot (lincheck's pin).
+    const CONSTANT_COLUMN: usize;
+    /// `(A0 w, B0 w)`, `w` of `2^LOG_SIZE` weights.
+    fn row_values<S: Scalar>(w: &[S]) -> (Vec<S>, Vec<S>);
+    /// The lincheck's rounds: the block's slot bits after the 6 packing bits.
+    fn lincheck_rounds() -> usize {
+        Self::LOG_SIZE - PACKING
+    }
+}
+
+/// leanVM 42422001's BLAKE2s compression block (`crate::flock::blake2s_row_values`).
+#[derive(Clone, Copy, Debug)]
+pub struct Blake2s;
+
+impl WalkedCircuit for Blake2s {
+    const LOG_SIZE: usize = BLAKE2S_R1CS_LOG_SIZE;
+    const CONSTANT_COLUMN: usize = BLAKE2S_CONSTANT_COLUMN;
+    fn row_values<S: Scalar>(w: &[S]) -> (Vec<S>, Vec<S>) {
+        crate::flock::blake2s_row_values(w)
+    }
+}
+
 impl Variant {
     pub const LEANVM: Self = Self {
         skip: PACKING,
@@ -76,6 +104,11 @@ impl Variant {
     /// The scalars Flock reads at `log_n` variables: the skip's `2^k` values, the zerocheck's rounds and its two
     /// values, the lincheck's rounds, the slices if sent, the matrices' rounds and their two values.
     pub fn scalars(&self, log_n: usize) -> usize {
+        self.scalars_with(log_n, FLOCK_NUM_LINCHECK_ROUNDS)
+    }
+
+    /// [`Self::scalars`] for a block whose lincheck runs `lincheck_rounds` rounds ([`WalkedCircuit::lincheck_rounds`]).
+    pub fn scalars_with(&self, log_n: usize, lincheck_rounds: usize) -> usize {
         let skip = if self.skip > 0 { 1 << self.skip } else { 0 };
         let slices = if self.slices == Slices::Claim { 0 } else { K_BITS };
         let matrices = if self.slices == Slices::TowerWalk {
@@ -83,7 +116,7 @@ impl Variant {
         } else {
             2 * (self.skip + PACKING) + 2
         };
-        skip + 2 * (log_n - self.skip) + 2 + 2 * FLOCK_NUM_LINCHECK_ROUNDS + slices + matrices
+        skip + 2 * (log_n - self.skip) + 2 + 2 * lincheck_rounds + slices + matrices
     }
 }
 
@@ -159,12 +192,21 @@ pub fn verify_walked<S: Scalar>(
     variant: Variant,
     transcript: &mut impl Channel<S>,
 ) -> Result<(Vec<S>, End<S>), VerifierError> {
+    verify_walked_with::<S, Blake2s>(log_n, variant, transcript)
+}
+
+/// [`verify_walked`] on the block circuit `C`: its lincheck's rounds, its walk and its constant wire.
+pub fn verify_walked_with<S: Scalar, C: WalkedCircuit>(
+    log_n: usize,
+    variant: Variant,
+    transcript: &mut impl Channel<S>,
+) -> Result<(Vec<S>, End<S>), VerifierError> {
     assert_eq!(variant.slices, Slices::TowerWalk, "the walked variant");
-    let front = front(log_n, variant, transcript)?;
+    let front = front_with(log_n, variant, C::LOG_SIZE, transcript)?;
     let slices = front.slices.as_ref().expect("the walked variant sends the slices");
     let terminal = {
         let _phase = enter("flock lincheck: the terminal by the circuit's walk");
-        walked_terminal(
+        walked_terminal_with::<S, C>(
             front.z_skip,
             &front.row_low,
             &front.chi_in,
@@ -190,15 +232,27 @@ pub fn walked_terminal<S: Scalar>(
     s: &[S],
     alpha: S,
 ) -> S {
+    walked_terminal_with::<S, Blake2s>(z_skip, row_low, chi_in, chi_in_prime, s, alpha)
+}
+
+/// [`walked_terminal`] on the block circuit `C` (`chi_in`, `chi_in'` of `C::lincheck_rounds()` coordinates).
+pub fn walked_terminal_with<S: Scalar, C: WalkedCircuit>(
+    z_skip: Option<S>,
+    row_low: &[S],
+    chi_in: &[S],
+    chi_in_prime: &[S],
+    s: &[S],
+    alpha: S,
+) -> S {
     let (_, low_weights) = row_low_weights(z_skip, row_low);
     let high = eq_kernel(chi_in_prime);
-    let mut w = vec![S::zero(); 1 << BLAKE2S_R1CS_LOG_SIZE];
+    let mut w = vec![S::zero(); 1 << C::LOG_SIZE];
     for (h, &weight) in high.iter().enumerate() {
         for (l, &slice) in s.iter().enumerate() {
             w[h * K_BITS + l] = slice * weight;
         }
     }
-    let (left, right) = crate::flock::blake2s_row_values(&w);
+    let (left, right) = C::row_values(&w);
     let rows = eq_kernel(chi_in);
     let mut matrix = S::zero();
     for (h, &row_weight) in rows.iter().enumerate() {
@@ -209,8 +263,8 @@ pub fn walked_terminal<S: Scalar>(
         }
         matrix += row_weight * (l_sum + alpha * r_sum);
     }
-    let (c_weight, pin_weight) = known_weights(alpha, chi_in, chi_in_prime);
-    matrix + c_weight * dot(&low_weights, s) + pin_weight * s[BLAKE2S_CONSTANT_COLUMN % K_BITS]
+    let (c_weight, pin_weight) = known_weights_with(alpha, chi_in, chi_in_prime, C::CONSTANT_COLUMN);
+    matrix + c_weight * dot(&low_weights, s) + pin_weight * s[C::CONSTANT_COLUMN % K_BITS]
 }
 
 /// Flock at `log_n = 14 + log(instances)` variables, as `variant` has it.
@@ -397,17 +451,28 @@ struct Front<S> {
 }
 
 fn front<S: Scalar>(log_n: usize, variant: Variant, transcript: &mut impl Channel<S>) -> Result<Front<S>, VerifierError> {
+    front_with(log_n, variant, BLAKE2S_R1CS_LOG_SIZE, transcript)
+}
+
+/// [`front`] for a block of `2^log_size` slots: the lincheck's `log_size - 6` rounds.
+fn front_with<S: Scalar>(
+    log_n: usize,
+    variant: Variant,
+    log_size: usize,
+    transcript: &mut impl Channel<S>,
+) -> Result<Front<S>, VerifierError> {
     let k = variant.skip;
-    assert!(k <= PACKING && log_n >= BLAKE2S_R1CS_LOG_SIZE + N_FIXED_CHALLENGES);
+    let lincheck_rounds = log_size - PACKING;
+    assert!(k <= PACKING && log_n >= log_size + N_FIXED_CHALLENGES);
     let (z_skip, chi, [v_a, v_b, v_c]) = zerocheck(log_n, k, variant.fs, transcript)?;
     // The row point: the skip, the packing bits left to rounds, the 8 slot bits, the instance bits.
     let (row_low, rest) = chi.split_at(PACKING - k);
-    let (chi_in, chi_rest) = rest.split_at(FLOCK_NUM_LINCHECK_ROUNDS);
+    let (chi_in, chi_rest) = rest.split_at(lincheck_rounds);
 
     let _phase = enter("flock lincheck: rounds");
     let alpha = transcript.sample();
     let claim = v_a + alpha * v_b + alpha.pow(2) * v_c + alpha.pow(3);
-    let (round_challenges, r_lc) = sumcheck(transcript, claim, 3, &[None; FLOCK_NUM_LINCHECK_ROUNDS])?;
+    let (round_challenges, r_lc) = sumcheck(transcript, claim, 3, &vec![None; lincheck_rounds])?;
     let chi_in_prime: Vec<S> = round_challenges.iter().rev().copied().collect();
     let slices = match variant.slices {
         Slices::Claim => None,
@@ -447,8 +512,13 @@ fn ring_end<S: Scalar>(variant: Variant, front: &Front<S>, s: &[S], transcript: 
 
 /// The weights of the terminal's two known terms: the `C = I` claim's and the constant position's pin.
 fn known_weights<S: Scalar>(alpha: S, chi_in: &[S], chi_in_prime: &[S]) -> (S, S) {
-    let constant_bits: Vec<S> = (0..FLOCK_NUM_LINCHECK_ROUNDS)
-        .map(|bit| S::constant(E::new((BLAKE2S_CONSTANT_COLUMN / K_BITS) as u64 >> bit & 1, 0, 0)))
+    known_weights_with(alpha, chi_in, chi_in_prime, BLAKE2S_CONSTANT_COLUMN)
+}
+
+/// [`known_weights`] with the constant wire at `constant_column` (its word's bits, `chi_in'.len()` of them).
+fn known_weights_with<S: Scalar>(alpha: S, chi_in: &[S], chi_in_prime: &[S], constant_column: usize) -> (S, S) {
+    let constant_bits: Vec<S> = (0..chi_in_prime.len())
+        .map(|bit| S::constant(E::new((constant_column / K_BITS) as u64 >> bit & 1, 0, 0)))
         .collect();
     let pin_weight = alpha.pow(3) * eq_eval(&constant_bits, chi_in_prime);
     let c_weight = alpha.pow(2) * eq_eval(chi_in, chi_in_prime);

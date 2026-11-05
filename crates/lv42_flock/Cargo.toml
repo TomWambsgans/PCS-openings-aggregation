@@ -1,6 +1,6 @@
 # Vendored from leanVM (https://github.com/leanEthereum/leanVM), commit 42422001, crates/flock (CREDIT:
 # https://github.com/succinctlabs/flock), MIT OR Apache-2.0, renamed; its prover writes to lv42_fiat_shamir's
-# transcript trait. See NOTICE.md.
+# transcript trait; its `keccak` module (and its test, tests/keccak.rs) is new here. See NOTICE.md.
 [package]
 name = "lv42_flock"
 version.workspace = true
@@ -17,6 +17,10 @@ primitives = { package = "lv42_primitives", path = "../lv42_primitives" }
 fiat_shamir = { package = "lv42_fiat_shamir", path = "../lv42_fiat_shamir" }
 pcs = { package = "lv42_pcs", path = "../lv42_pcs" }
 tracing.workspace = true
+
+[dev-dependencies]
+# The reference Keccak-f[1600] the block is tested against (RustCrypto's, sha3's permutation).
+keccak = "0.2"
 
 [lints]
 workspace = true

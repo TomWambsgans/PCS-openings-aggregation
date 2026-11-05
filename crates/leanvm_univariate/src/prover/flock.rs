@@ -2,7 +2,8 @@
 // its `Blake2sSetup::prove_reduction_precomputed`, unchanged, at leanVM's skip of 6; `prove_reduction_skip`, this
 // repository's, below), on its own witness buffers (dumped by `dump/trace_dump.rs`); the matrices' reduction follows
 // `leanvm_flock_gas::flock_min`'s verifier (its `sliced` is that module's test's). With π1-rec (`FsShape::Rec`) the
-// zerocheck's eq point is the skip module's, as squares. MIT OR Apache-2.0; see NOTICE.md.
+// zerocheck's eq point is the skip module's, as squares. [`prove_keccak`] runs the same reduction on the Keccak-f block
+// (`lv42_flock::keccak`, crates/slh_dsa/SPEC-FAST.md), for the walked terminal. MIT OR Apache-2.0; see NOTICE.md.
 //! Flock's prover (SPEC.md §7), behind one call ([`prove`]): the zerocheck (a skip of 3 to 6), lincheck and 64
 //! slices, written to the contract's Keccak-256 chain through [`Chain`]; then the matrices' reduction to `A0`, `B0`
 //! claims (`k + 6` rounds and `a`, `b`) and the ring map's challenges, as `flock_min::verify` reads them; or, on the
@@ -271,6 +272,133 @@ fn product_rounds(mut tables: Vec<Vec<E>>, rounds: usize, mut round: impl FnMut(
 
 /// Flock at `log_n = 14 + log(instances)` variables, written to `writer` as `flock_min::verify(log_n, variant)` reads
 /// it, or as `flock_min::verify_deferred` does when `deferred` (the matrices' reduction left to the batching sumcheck).
+/// The zerocheck's eq point for the variant's Fiat–Shamir shape.
+fn eq_point(variant: Variant) -> EqPoint {
+    // leanVM's own prover at a skip of 6 (with leanVM's eq point); the skip module's zerocheck and the lincheck at its
+    // row weights otherwise.
+    match variant.fs {
+        FsShape::Main => EqPoint::Sampled,
+        FsShape::Rec | FsShape::Rec2 | FsShape::Rec3 => EqPoint::Squares,
+    }
+}
+
+/// What the zerocheck and the lincheck leave, as the verifier reads them.
+struct Reduction<'a> {
+    point: Vec<E>,
+    slices: Vec<E>,
+    slices_end: usize,
+    reduction_secs: f64,
+    z_skip: E,
+    row_low: &'a [E],
+    chi_in: &'a [E],
+    chi_in_prime: Vec<E>,
+    alpha: E,
+}
+
+/// The reduction `reduce` runs (the zerocheck and the lincheck of a block with `lincheck_rounds` rounds, on the chain),
+/// checked against the challenges the verifier draws, with the slices sent or not as `variant` has it.
+fn reduction<'a>(
+    writer: &mut KeccakWriter,
+    variant: Variant,
+    log_n: usize,
+    lincheck_rounds: usize,
+    samples: &'a mut Vec<E>,
+    reduce: impl FnOnce(&mut Chain) -> lv42_flock::hash::SliceClaim,
+) -> Result<Reduction<'a>, String> {
+    let k = variant.skip;
+    let sent = variant.slices != Slices::Claim;
+    let eq = eq_point(variant);
+    let mut chain = Chain {
+        writer: &mut *writer,
+        samples: Vec::new(),
+    };
+    let started = std::time::Instant::now();
+    let claim = reduce(&mut chain);
+    *samples = chain.samples;
+    let samples: &'a Vec<E> = samples;
+    // The challenges, as the verifier draws them: the zerocheck's sampled eq coordinates (with π1-rec only the first,
+    // the others its squares), the skip's point, its rounds', the lincheck's batching and rounds'.
+    let n_r = match eq {
+        EqPoint::Sampled => log_n - k - FIXED,
+        EqPoint::Squares => usize::from(log_n > k + FIXED),
+    };
+    let rounds = log_n - k;
+    if samples.len() != n_r + 1 + rounds + 1 + lincheck_rounds {
+        return Err(format!("Flock's prover drew {} challenges", samples.len()));
+    }
+    let z_skip = samples[n_r];
+    let chi = &samples[n_r + 1..n_r + 1 + rounds];
+    let alpha = samples[n_r + 1 + rounds];
+    let lincheck = &samples[n_r + 2 + rounds..];
+    let (row_low, rest) = chi.split_at(PACKING - k);
+    let (chi_in, chi_rest) = rest.split_at(lincheck_rounds);
+    let chi_in_prime: Vec<E> = lincheck.iter().rev().copied().collect();
+    let point: Vec<E> = [&chi_in_prime[..], chi_rest].concat();
+    let theirs: Vec<E> = claim.suffix_point.iter().map(|x| E::new(x.c0, x.c1, x.c2)).collect();
+    if theirs != point {
+        return Err("Flock's slices are not at the point the verifier derives".into());
+    }
+    let slices: Vec<E> = claim.s_hat_v.iter().map(|x| E::new(x.c0, x.c1, x.c2)).collect();
+    if !sent {
+        // Extension B (`Slices::Claim`): the lincheck's slices, its last 64 scalars, are not sent; nothing was drawn
+        // since, so the chain has not absorbed them.
+        let len = writer.stream.len() - 24 * K_BITS;
+        writer.stream.truncate(len);
+    }
+    let slices_end = writer.stream.len();
+    Ok(Reduction {
+        point,
+        slices,
+        slices_end,
+        reduction_secs: started.elapsed().as_secs_f64(),
+        z_skip,
+        row_low,
+        chi_in,
+        chi_in_prime,
+        alpha,
+    })
+}
+
+/// Flock on the Keccak-f block (`lv42_flock::keccak`, `k_log = 17`: 11 lincheck rounds) at `log_n = 17 +
+/// log(blocks)` variables, written to `writer` as `flock_min::verify_walked_with::<_, keccak_flock::Keccak>` reads it:
+/// the walked terminal only (`Slices::TowerWalk`), so after the slices only the ring map's challenges. `witness` is
+/// `lv42_flock::keccak::generate_witness_with_ab_packed_and_lincheck`'s.
+pub fn prove_keccak(
+    writer: &mut KeccakWriter,
+    witness: &FlockWitness,
+    variant: Variant,
+    log_n: usize,
+) -> Result<FlockOut, String> {
+    use lv42_flock::keccak::{K_LOG, KeccakSetup};
+    let k = variant.skip;
+    if !(lv42_flock::zerocheck::skip::MIN_SKIP..=PACKING).contains(&k) {
+        return Err(format!("Flock {variant:?}: a prover for a skip of 3 to 6"));
+    }
+    if variant.slices != Slices::TowerWalk {
+        return Err(format!("Flock on Keccak-f {variant:?}: the walked terminal only"));
+    }
+    lv42_parallel::init();
+    let setup = KeccakSetup::new(witness.n_blocks);
+    if setup.m() != log_n {
+        return Err(format!("Flock's witness has {} variables, the verifier's shape {log_n}", setup.m()));
+    }
+    let eq = eq_point(variant);
+    let mut samples = Vec::new();
+    let out = reduction(writer, variant, log_n, K_LOG - PACKING, &mut samples, |chain| {
+        setup.prove_reduction_skip(k, eq, &witness.z, &witness.a, &witness.b, &witness.z_lincheck, chain)
+    })?;
+    for _ in 0..RING_MAP_CHALLENGES {
+        writer.sample();
+    }
+    Ok(FlockOut {
+        point: out.point,
+        slices: out.slices,
+        slices_end: out.slices_end,
+        matrices: Matrices::Walked,
+        reduction_secs: out.reduction_secs,
+    })
+}
+
 pub fn prove(
     writer: &mut KeccakWriter,
     witness: &FlockWitness,
@@ -288,51 +416,21 @@ pub fn prove(
     if setup.m() != log_n {
         return Err(format!("Flock's witness has {} variables, the verifier's shape {log_n}", setup.m()));
     }
-    let mut chain = Chain {
-        writer: &mut *writer,
-        samples: Vec::new(),
-    };
-    // leanVM's own prover at a skip of 6 (with leanVM's eq point); the skip module's zerocheck and the lincheck at its
-    // row weights otherwise.
-    let eq = match variant.fs {
-        FsShape::Main => EqPoint::Sampled,
-        FsShape::Rec | FsShape::Rec2 | FsShape::Rec3 => EqPoint::Squares,
-    };
-    let started = std::time::Instant::now();
-    let claim = setup.prove_reduction_skip(k, eq, &witness.z, &witness.a, &witness.b, &witness.z_lincheck, &mut chain);
-    let samples = chain.samples;
-    // The challenges, as the verifier draws them: the zerocheck's sampled eq coordinates (with π1-rec only the first,
-    // the others its squares), the skip's point, its rounds', the lincheck's batching and rounds'.
-    let n_r = match eq {
-        EqPoint::Sampled => log_n - k - FIXED,
-        EqPoint::Squares => usize::from(log_n > k + FIXED),
-    };
-    let rounds = log_n - k;
-    if samples.len() != n_r + 1 + rounds + 1 + FLOCK_NUM_LINCHECK_ROUNDS {
-        return Err(format!("Flock's prover drew {} challenges", samples.len()));
-    }
-    let z_skip = samples[n_r];
-    let chi = &samples[n_r + 1..n_r + 1 + rounds];
-    let alpha = samples[n_r + 1 + rounds];
-    let lincheck = &samples[n_r + 2 + rounds..];
-    let (row_low, rest) = chi.split_at(PACKING - k);
-    let (chi_in, chi_rest) = rest.split_at(FLOCK_NUM_LINCHECK_ROUNDS);
-    let chi_in_prime: Vec<E> = lincheck.iter().rev().copied().collect();
-    let point: Vec<E> = [&chi_in_prime[..], chi_rest].concat();
-    let theirs: Vec<E> = claim.suffix_point.iter().map(|x| E::new(x.c0, x.c1, x.c2)).collect();
-    if theirs != point {
-        return Err("Flock's slices are not at the point the verifier derives".into());
-    }
-    let slices: Vec<E> = claim.s_hat_v.iter().map(|x| E::new(x.c0, x.c1, x.c2)).collect();
-    if !sent {
-        // Extension B (`Slices::Claim`): the lincheck's slices, its last 64 scalars, are not sent; nothing was drawn
-        // since, so the chain has not absorbed them.
-        let len = writer.stream.len() - 24 * K_BITS;
-        writer.stream.truncate(len);
-    }
-    let slices_end = writer.stream.len();
-
-    let reduction_secs = started.elapsed().as_secs_f64();
+    let eq = eq_point(variant);
+    let mut samples = Vec::new();
+    let Reduction {
+        point,
+        slices,
+        slices_end,
+        reduction_secs,
+        z_skip,
+        row_low,
+        chi_in,
+        chi_in_prime,
+        alpha,
+    } = reduction(writer, variant, log_n, FLOCK_NUM_LINCHECK_ROUNDS, &mut samples, |chain| {
+        setup.prove_reduction_skip(k, eq, &witness.z, &witness.a, &witness.b, &witness.z_lincheck, chain)
+    })?;
     // π1-rec2: the verifier checks the lincheck's terminal by walking the circuit; nothing more is sent before the
     // ring map's challenges.
     if variant.slices == Slices::TowerWalk {
