@@ -349,6 +349,104 @@ The relations batched: quotient (W at its digits, Q at two novel-basis points, �
 (`ring_tower::weight_at`), the link (three claims), `ρ`-combined; then one point `r` (24 coordinates from 12 narrow
 challenges).
 
+### M4 status (stopped): π1 as built (`crates/slh_fast`)
+
+**Done** [M] (Mac, Apple M4 Max, 16 cores; h1 not used):
+- New crate `crates/slh_fast`. It is a crate of its own, not part of `slh_dsa`, because it pulls in the whole prover
+  stack (leanvm_univariate, WHIR, Flock); M5 will add leanvm_rec on top.
+  - `verifier::{front, reduce}` is generic over `leanvm_flock_gas::Scalar` and a `Channel`, and records.
+  - The Keccak terminal is a type parameter `T: WalkedCircuit`: `keccak_flock::Keccak` (M3's structured terminal,
+    the default) or `KeccakWalked` (M1's reference).
+  - `prover::{Setup, prove, verify}`; `quotients::{copy_and_gate, link_quotient}`.
+- The transcript follows §4.1 (KeccakChannel):
+  - the seed is `keccak(NAME ‖ IV ‖ PK ‖ M)`, and the IV binds σ's root, the parameters and the three layout words;
+  - C1's root, then `α, β, γ`;
+  - Flock (skip 3, `TowerWalk`, `FsShape::Rec3`);
+  - C2's root, then `t`;
+  - 5 values;
+  - `ρ`;
+  - `λ` and 12 narrow pairs;
+  - 3 values (`C1`, `C2`, setup), all at one point.
+- Stacks (§4.6): `C1 = q_flock ‖ W ‖ Q_link` (13.89M words of 2^24, 82.8%); `C2 = h ‖ q ‖ q_gate`, non-hiding
+  (14.47M of 2^24, 86.2%); setup `σ` (2^20).
+- Tests (`cargo test --release -p slh_fast`):
+  - `toy`: 2^13 rows, 128 blocks. Every combined claim is checked on the stacks, and both terminals accept. 48 stream
+    bytes, the 3 roots, the 3 values, M, PK, the setup root and a wrong port (glue ≠ Flock) are each rejected.
+  - `real`: 3 RustCrypto 128s signatures, with full WHIR openings in Rust. The first proof is also checked with the
+    walked terminal. Rejected: 24 stream bytes, the roots, the values, M, PK, and a wrong port. With a tampered
+    signature the prover refuses, and a forced proof of it is rejected. Takes about 5 s.
+  - `ops`: the counts below.
+  - `bench` (ignored): the prover's time and memory.
+- **Prover, Mac (M-series), median of 3**: **0.39 s** in all, peak RSS **1.27 GB**. Phases:
+  - glue witness 0.006 s, Flock blocks 0.003 s;
+  - W 0.001 s, Q_link 0.019 s;
+  - C1 0.030 s;
+  - Flock 0.177 s;
+  - h, q, q_gate 0.029 s;
+  - C2 0.036 s;
+  - values 0.002 s;
+  - batch 0.027 s;
+  - openings 0.058 s.
+
+  The target was ≈ 1.4 s and ≤ 4 GB on h1. These are Mac numbers; Flock's 0.177 s is close to M1's 0.189 s on h1.
+- **The verifier, recorded** (structured terminal):
+  - **254 scalars (6,112 B), 65 Keccak-256 calls, 90 Keccak-f** (the spec estimated ≈ 91);
+  - 2,806 products (369 by a constant) and 3,197 sums, live;
+  - compiled: 2,806 `FIELD_MUL`, 159,609 gas of execution as a measured fragment;
+  - without the terminal: 1,306 products and 1,695 sums;
+  - the ring kernel is one node; expanded it is 3,178 products and 1,535 sums;
+  - with the walked terminal: 203,604 products and 308,650 sums, the same 90 Keccak-f.
+
+**Deviations from §4.1 and §4.5, and fixes** (the "M4 notes"):
+1. *The quotient argument is linear relations, not `reduce_in`'s normalised claims.* The identities at `t` become
+   relations on the columns:
+   - copy: `h·dd' + q·w_m = d + d' + P·W·dd'`;
+   - gate: `q_gate·R = gate(row)`;
+   - sum: `Σ_(V_m) h = target`, the sum of `h`'s B coefficients;
+   - `σ(t)`;
+   - `W` at `(ρ, ρ², w_2..)` against the four sent `A_j`.
+
+   Nothing is inverted, so **no `Inverse::Hint`** is needed. Five values are sent: the four `A_j` and `σ(t)`.
+2. *The link sends no values.* `W(t)` is the row's X cell, from the `A_j`. `ℓ_q(t)` and `Q_link(t)` are terms of one
+   C1 relation: `ℓ_q + Q_link·Z = W(t)`. `W` itself is used, not a restriction `W_R`; `Q_link` absorbs it.
+   `Q_link` has `(m−3)·2^(m−2) + 1` coefficients (chunks 2^22 + 2^18 + 2^0).
+3. *Coset alignment (a fix).* The port cells are the coset `β_(m−1) + V_(m−1)`, not `V_19`:
+   - its vanishing polynomial is `Z = w_(m−1) + 1`;
+   - the coordinates are `y'_l = y_l + y_l(β_(m−1))`, from the digits (`y_l = Σ_i b_(i−l) w_i`);
+   - `q_flock`'s point is `(y'_0..6, 0⁴, y'_7..18)`: the port word's 7 bits, then the block's.
+
+   The cell order `4r + role` and `q_flock`'s word order `2^11·b + 4q + role` agree as in §4.5.
+4. *Changes in shared code* (minimal; existing behaviour unchanged):
+   - `leanvm_univariate::claims::Column::Extra {commitment, id}`;
+   - `verifier::SUM_TWIST`, a term whose weight is 1 on its block: its row is 1 in `weight_at`, and a factored shape
+     of ones in the prover's `Weight`;
+   - `verifier::batch` made `pub`.
+
+   No edits to `flock_min.rs` or `keccak_flock.rs`.
+5. The stacks' variable counts are rounded up to even, for the pairs.
+6. The public input is read as 8 words of 64 bits (`Node::Statement(0..8)`).
+
+**Not done**:
+- No run of the brief's full regression list. Run so far: slh_fast's tests, and leanvm_univariate's unit tests
+  (pass). leanvm_univariate's real-trace tests need h1.
+- No h1 benchmark.
+- No soundness re-derivation (§4.8 still applies). The narrow batch challenges are 160 bits (126.9 bits); §4.8
+  recommends 168.
+- No review.
+
+**Next steps**:
+1. Run `cargo test --release -p quotient -p evm -p slh_dsa -p lv42_flock -p leanvm_univariate -p leanvm_flock_gas
+   -p leanvm_rec`.
+2. Benchmark on h1.
+3. Decide on 168-bit pair challenges, and possibly `γ = β²` (−1 Keccak-f).
+4. M5. π2 needs:
+   - a 64-byte public input: the seed hashes `NAME ‖ IV ‖ PK ‖ M`, and the compiler's `Node::Statement` reads 8
+     words;
+   - the IV;
+   - the three point claims: C1 and C2 at `r[..24]`, the setup at `r[..20]`.
+
+   It compiles `slh_fast::verifier::reduce::<Sym, _, Keccak>` as it compiles π1-rec3.
+
 ### 4.7 π2 and the gas
 
 π1's verifier, recorded generically (`leanvm_flock_gas::evm::record`), is compiled by leanvm_rec's circuit
