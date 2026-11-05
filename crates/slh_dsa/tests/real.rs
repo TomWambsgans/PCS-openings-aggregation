@@ -46,6 +46,7 @@ fn verifies_real_signatures() {
         start.elapsed().as_secs_f64()
     );
     assert_eq!(keccak_f, p.keccak_f());
+    assert_eq!(circuit.log_rows, slh_dsa::SHAKE_128S_LOG_ROWS);
     assert_eq!(circuit.n_inputs(), 8 * (32 + MSG_BYTES + p.sig_bytes()));
     assert!(PUBLIC_ROWS == 8 * WORD_BITS / 2);
 

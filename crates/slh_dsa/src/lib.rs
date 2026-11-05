@@ -47,6 +47,9 @@ pub const SHAKE_256S: Params = Params { name: "SLH-DSA-SHAKE-256s", n: 32, h: 64
 pub const SHAKE_256F: Params = Params { name: "SLH-DSA-SHAKE-256f", n: 32, h: 68, d: 17, hp: 4, a: 9, k: 35, m: 49 };
 pub const ALL: [Params; 6] = [SHAKE_128S, SHAKE_128F, SHAKE_192S, SHAKE_192F, SHAKE_256S, SHAKE_256F];
 
+/// The rows of the SLH-DSA-SHAKE-128s circuit, `2^29` (447,137,304 used; `tests/real.rs` builds it).
+pub const SHAKE_128S_LOG_ROWS: usize = 29;
+
 /// The message's bytes: a digest of what is signed.
 pub const MSG_BYTES: usize = 32;
 

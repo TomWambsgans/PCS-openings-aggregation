@@ -110,9 +110,14 @@ pub enum TableId {
 /// hidden layouts (`quotient::protocol::MIN_LOG_ROWS`, `crates/quotient/HIDING.md`).
 pub const LOG_ROWS: std::ops::RangeInclusive<usize> = quotient::protocol::MIN_LOG_ROWS..=22;
 
+/// The rows of the layouts a `PCS_OPEN` taking tables past WHIR's `2^28` words would know
+/// ([`PcsOpen::large_tables`]): every size the reduction takes (`quotient::protocol::reduction_supported`).
+pub const LARGE_LOG_ROWS: std::ops::RangeInclusive<usize> =
+    quotient::protocol::MIN_LOG_ROWS..=quotient::protocol::MAX_REDUCTION_LOG_ROWS;
+
 /// The id of the layout of `table` for a circuit of `2^log_rows` rows: `256 · table + log_rows`.
 pub fn layout_id(table: TableId, log_rows: usize) -> u64 {
-    assert!(LOG_ROWS.contains(&log_rows), "no layout for 2^{log_rows} rows");
+    assert!(LARGE_LOG_ROWS.contains(&log_rows), "no layout for 2^{log_rows} rows");
     256 * table as u64 + log_rows as u64
 }
 
@@ -129,9 +134,22 @@ pub fn layout(id: U256) -> Option<Layout> {
     LOG_ROWS.contains(&log_rows).then(|| table(log_rows))
 }
 
+/// [`layout`] for a `PCS_OPEN` that also takes the larger tables, to [`LARGE_LOG_ROWS`].
+pub fn layout_large(id: U256) -> Option<Layout> {
+    let id = u64::try_from(id).ok()?;
+    let log_rows = (id % 256) as usize;
+    let table = match id / 256 {
+        1 => witness_layout,
+        2 => wiring_layout,
+        3 => quotient_layout,
+        _ => return None,
+    };
+    LARGE_LOG_ROWS.contains(&log_rows).then(|| table(log_rows))
+}
+
 /// The input of `PCS_OPEN` for `claims` on the table committed as `root`, under layout `id`.
 pub fn pcs_open_input(root: &Hash, id: u64, claims: &[Claim]) -> Vec<u8> {
-    let vars = layout(U256::from(id)).expect("a layout PCS_OPEN knows").vars;
+    let vars = layout_large(U256::from(id)).expect("a layout PCS_OPEN knows").vars;
     assert!(!claims.is_empty() && claims.iter().all(|claim| claim.point.len() == vars));
     let mut input = root_word(root).to_vec();
     input.extend(U256::from(id).to_be_bytes::<32>());
@@ -154,9 +172,20 @@ pub struct PcsOpen {
     pub call_gas: u64,
     /// Gas a claim costs.
     pub claim_gas: u64,
+    /// Whether it also takes the layouts past WHIR's `2^28` words ([`layout_large`]): the assumption a circuit
+    /// above `2^22` rows, such as SLH-DSA's (`crates/slh_dsa`), needs. Off, it knows [`layout`]'s only.
+    pub large_tables: bool,
 }
 
 impl PcsOpen {
+    /// A `PCS_OPEN` that also takes the tables past WHIR's `2^28` words ([`PcsOpen::large_tables`]).
+    pub fn large() -> Self {
+        Self {
+            large_tables: true,
+            ..Self::default()
+        }
+    }
+
     /// Take an opening of `claims`, all together, on the table committed as `root`, under layout `id`, to be in
     /// the block.
     pub fn register(&mut self, root: &Hash, id: u64, claims: &[Claim]) {
@@ -169,17 +198,18 @@ impl PcsOpen {
             .get(64..96)
             .map_or(0, |k| U256::from_be_slice(k).saturating_to::<u64>());
         let gas = self.claim_gas.saturating_mul(claims).saturating_add(self.call_gas);
-        (gas, Self::well_sized(input) && self.attested.contains(input))
+        (gas, Self::well_sized(input, self.large_tables) && self.attested.contains(input))
     }
 
     /// Whether `input` is `3 + k (v + 1)` words, `k ≥ 1` its third word and `v` the variables of the layout its
     /// second names.
-    fn well_sized(input: &[u8]) -> bool {
+    fn well_sized(input: &[u8], large_tables: bool) -> bool {
         let word = |i: usize| input.get(32 * i..32 * i + 32).map(U256::from_be_slice);
         let (Some(id), Some(k)) = (word(1), word(2)) else {
             return false;
         };
-        let (Some(layout), Ok(k)) = (layout(id), u64::try_from(k)) else {
+        let known = if large_tables { layout_large(id) } else { layout(id) };
+        let (Some(layout), Ok(k)) = (known, u64::try_from(k)) else {
             return false;
         };
         let words = (layout.vars as u64 + 1)
@@ -433,13 +463,13 @@ mod tests {
         ] {
             let mut other = input.clone();
             other.resize(len, 0);
-            assert!(!PcsOpen::well_sized(&other), "{len}");
+            assert!(!PcsOpen::well_sized(&other, false), "{len}");
             assert!(!block.run(&other).1, "{len}");
         }
         for (at, byte) in [(95, 0), (95, 2), (62, 9), (40, 1)] {
             let mut other = input.clone();
             other[at] = byte;
-            assert!(!PcsOpen::well_sized(&other), "{at} {byte}");
+            assert!(!PcsOpen::well_sized(&other, false), "{at} {byte}");
         }
     }
 

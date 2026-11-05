@@ -16,5 +16,7 @@ primitives.workspace = true
 [dev-dependencies]
 primitives = { workspace = true, features = ["test-util"] }
 sha3.workspace = true
+evm = { path = "../evm" }
+revm.workspace = true
 # The reference: RustCrypto's FIPS 205 implementation signs, and verifies, the signatures the circuit checks.
 fips205 = { package = "slh-dsa", version = "=0.2.0-rc.5" }

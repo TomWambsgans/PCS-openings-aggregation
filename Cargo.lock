@@ -3087,8 +3087,10 @@ dependencies = [
 name = "slh_dsa"
 version = "0.1.0"
 dependencies = [
+ "evm",
  "primitives",
  "quotient",
+ "revm",
  "sha3",
  "slh-dsa",
 ]

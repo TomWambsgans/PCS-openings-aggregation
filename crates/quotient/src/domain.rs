@@ -1,5 +1,5 @@
 // Adapted from leanVM (https://github.com/leanEthereum/leanVM), branch PCS-openings-aggregation, commit 651453c6,
-// file crates/flock/src/quotient/domain.rs: copied unchanged but for this header. MIT OR Apache-2.0; see NOTICE.md.
+// file crates/flock/src/quotient/domain.rs: copied unchanged but for this header and the basis continued to `EXT_BASIS` vectors (`beta_ext`). MIT OR Apache-2.0; see NOTICE.md.
 //! The Cantor basis of `GF(2^64)`, its subspaces, and the additive transform between a polynomial's novel-basis
 //! coefficients and its values on a coset.
 
@@ -8,8 +8,12 @@ use std::sync::OnceLock;
 
 use primitives::field::{F64, F192};
 
-/// Basis vectors computed: enough for a quotient domain of `2^26` points.
+/// Basis vectors of [`beta`]: enough for a quotient domain of `2^26` points.
 pub const BASIS: usize = 28;
+
+/// Basis vectors of [`beta_ext`], the same basis continued: enough for the reduction at `2^31` rows
+/// (`quotient::protocol::MAX_REDUCTION_LOG_ROWS`). [`beta`] is its first [`BASIS`].
+pub const EXT_BASIS: usize = 36;
 
 /// `S(x) = x^2 + x`.
 pub fn s(x: F64) -> F64 {
@@ -18,7 +22,12 @@ pub fn s(x: F64) -> F64 {
 
 /// `beta[0] = 1` and `S(beta[k + 1]) = beta[k]`, each the solution with its low bit clear.
 pub fn beta() -> &'static [F64; BASIS] {
-    static BETA: OnceLock<[F64; BASIS]> = OnceLock::new();
+    <&[F64; BASIS]>::try_from(&beta_ext()[..BASIS]).expect("a prefix")
+}
+
+/// [`beta`] continued to [`EXT_BASIS`] vectors.
+pub fn beta_ext() -> &'static [F64; EXT_BASIS] {
+    static BETA: OnceLock<[F64; EXT_BASIS]> = OnceLock::new();
     BETA.get_or_init(|| {
         // `S` is linear over GF(2): reduce its matrix once, keeping what each pivot was made of.
         let mut pivots = [(0u64, 0u64); 64];
@@ -44,8 +53,8 @@ pub fn beta() -> &'static [F64; BASIS] {
             }
             F64(source & !1)
         };
-        let mut beta = [F64::ONE; BASIS];
-        for k in 1..BASIS {
+        let mut beta = [F64::ONE; EXT_BASIS];
+        for k in 1..EXT_BASIS {
             beta[k] = solve(beta[k - 1]);
         }
         beta
@@ -56,17 +65,17 @@ pub fn beta() -> &'static [F64; BASIS] {
 pub fn point(index: usize) -> F64 {
     static TABLES: OnceLock<Vec<[F64; 256]>> = OnceLock::new();
     let tables = TABLES.get_or_init(|| {
-        (0..BASIS.div_ceil(8))
+        (0..EXT_BASIS.div_ceil(8))
             .map(|byte| {
                 std::array::from_fn(|low| {
                     (0..8)
-                        .filter(|bit| (low >> bit) & 1 == 1 && 8 * byte + bit < BASIS)
-                        .fold(F64::ZERO, |acc, bit| acc + beta()[8 * byte + bit])
+                        .filter(|bit| (low >> bit) & 1 == 1 && 8 * byte + bit < EXT_BASIS)
+                        .fold(F64::ZERO, |acc, bit| acc + beta_ext()[8 * byte + bit])
                 })
             })
             .collect()
     });
-    debug_assert!(index >> BASIS == 0);
+    debug_assert!(index >> EXT_BASIS == 0);
     tables.iter().enumerate().fold(F64::ZERO, |acc, (byte, table)| {
         acc + table[(index >> (8 * byte)) & 0xff]
     })
@@ -82,7 +91,7 @@ pub fn chain(x: F64, count: usize) -> Vec<F64> {
 pub fn coordinates(count: usize) -> Vec<F64> {
     let mut b = vec![F64::ONE; count];
     for d in 1..count {
-        b[d] = (1..=d).fold(F64::ZERO, |acc, e| acc + beta()[e] * b[d - e]);
+        b[d] = (1..=d).fold(F64::ZERO, |acc, e| acc + beta_ext()[e] * b[d - e]);
     }
     b
 }
@@ -95,7 +104,7 @@ pub fn row_vanishing(m: usize) -> Vec<F64> {
     let mut rows: Vec<Vec<F64>> = (2..m)
         .map(|j| {
             (0..=n)
-                .map(|k| if k <= j { beta()[j - k] } else { F64::ZERO })
+                .map(|k| if k <= j { beta_ext()[j - k] } else { F64::ZERO })
                 .collect()
         })
         .collect();
@@ -326,6 +335,8 @@ mod tests {
         // The basis is a Cantor basis, as `formal/quotient`'s `CantorBasis` asks.
         assert_eq!(beta()[0], F64::ONE);
         assert!((0..BASIS - 1).all(|k| s(beta()[k + 1]) == beta()[k]));
+        assert!((0..EXT_BASIS - 1).all(|k| s(beta_ext()[k + 1]) == beta_ext()[k]));
+        assert_eq!(&beta_ext()[..BASIS], beta());
     }
 
     /// Above one worker's block the layers are fused in pairs: the transform still matches the basis there.

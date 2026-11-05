@@ -149,6 +149,16 @@ pub const MIN_LOG_ROWS: usize = 17;
 /// The most rows: above `2^22` rows the quotient table's stack is more than the `2^28` words leanVM's WHIR takes.
 pub const MAX_LOG_ROWS: usize = 22;
 
+/// The most rows the reduction alone takes (its domain's basis, `m + 3 <= EXT_BASIS`): circuits past
+/// [`MAX_LOG_ROWS`] reduce to claims on tables leanVM's WHIR cannot commit, for a `PCS_OPEN` that takes larger
+/// tables ([`verify_reduction_in`]).
+pub const MAX_REDUCTION_LOG_ROWS: usize = domain::EXT_BASIS - 5;
+
+/// Whether the reduction alone takes a circuit of `2^log_rows` rows.
+pub fn reduction_supported(log_rows: usize) -> bool {
+    (MIN_LOG_ROWS..=MAX_REDUCTION_LOG_ROWS).contains(&log_rows)
+}
+
 /// Whether the layouts support a circuit of `2^log_rows` rows.
 pub fn supported(log_rows: usize) -> bool {
     (MIN_LOG_ROWS..=MAX_LOG_ROWS).contains(&log_rows)
@@ -319,7 +329,7 @@ fn into_words(values: Vec<F192>) -> Vec<F64> {
 
 /// The offset of the quotients' coset, for `2^m` cells.
 fn coset(m: usize) -> F64 {
-    beta()[m + 2]
+    domain::beta_ext()[m + 2]
 }
 
 /// What a proof leaves: one claim on the witness table, one on the circuit's, two on the quotient table.
@@ -450,7 +460,7 @@ fn denominators_product(log_rows: usize, [alpha, beta_]: [F192; 2], t: F192, a: 
 /// commitments and the five values; any after them are not read): the inverse of the product of the denominators
 /// at the challenges they lead to, or `Degenerate` where that product is zero, which no hint passes.
 pub fn hint(index_root: &Hash, statement: &Statement, proof: &Proof, log_rows: usize) -> Result<F192, VerifyError> {
-    if !supported(log_rows) {
+    if !reduction_supported(log_rows) {
         return Err(VerifyError::Shape);
     }
     let transcript = VerifyError::Transcript;
@@ -574,7 +584,7 @@ pub(crate) fn prove_with_randomness_in(
     let m = cell_vars(circuit.log_rows);
     let n = 1usize << m;
     assert_eq!(cells.len(), n);
-    assert!(m > REGION + 2 && m + 3 <= domain::BASIS);
+    assert!(m > REGION + 2 && m + 3 <= domain::EXT_BASIS);
     let mut ps = ProverChain::new(&label_in(index_root, statement, inverse));
 
     // The witness: four polynomials in the row, each with a multiple of the rows' vanishing polynomial.
@@ -955,6 +965,21 @@ pub fn verify_in(
     inverse: Inverse,
 ) -> Result<([Hash; 2], Claims), VerifyError> {
     if !supported(log_rows) {
+        return Err(VerifyError::Shape);
+    }
+    verify_reduction_in(index_root, statement, proof, log_rows, inverse)
+}
+
+/// [`verify_in`] at any size the reduction takes ([`reduction_supported`]), past the sizes whose claims leanVM's
+/// WHIR opens: the commitments and the claims, for a `PCS_OPEN` that takes the tables.
+pub fn verify_reduction_in(
+    index_root: &Hash,
+    statement: &Statement,
+    proof: &Proof,
+    log_rows: usize,
+    inverse: Inverse,
+) -> Result<([Hash; 2], Claims), VerifyError> {
+    if !reduction_supported(log_rows) {
         return Err(VerifyError::Shape);
     }
     let mut stream = Stream {
