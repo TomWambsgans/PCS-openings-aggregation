@@ -74,8 +74,18 @@ pub trait WalkedCircuit {
     const LOG_SIZE: usize;
     /// The constant wire's slot (lincheck's pin).
     const CONSTANT_COLUMN: usize;
+    /// The phase the terminal is recorded under.
+    const TERMINAL_PHASE: &'static str = "flock lincheck: the terminal by the circuit's walk";
     /// `(A0 w, B0 w)`, `w` of `2^LOG_SIZE` weights.
     fn row_values<S: Scalar>(w: &[S]) -> (Vec<S>, Vec<S>);
+    /// The lincheck's terminal [`verify_walked_with`] checks: by default [`walked_terminal_with`] (the walk of
+    /// [`Self::row_values`]); a block may compute the same value from its structure (`crate::keccak_flock::Keccak`).
+    fn terminal<S: Scalar>(z_skip: Option<S>, row_low: &[S], chi_in: &[S], chi_in_prime: &[S], s: &[S], alpha: S) -> S
+    where
+        Self: Sized,
+    {
+        walked_terminal_with::<S, Self>(z_skip, row_low, chi_in, chi_in_prime, s, alpha)
+    }
     /// The lincheck's rounds: the block's slot bits after the 6 packing bits.
     fn lincheck_rounds() -> usize {
         Self::LOG_SIZE - PACKING
@@ -195,7 +205,8 @@ pub fn verify_walked<S: Scalar>(
     verify_walked_with::<S, Blake2s>(log_n, variant, transcript)
 }
 
-/// [`verify_walked`] on the block circuit `C`: its lincheck's rounds, its walk and its constant wire.
+/// [`verify_walked`] on the block circuit `C`: its lincheck's rounds, its terminal ([`WalkedCircuit::terminal`]) and its
+/// constant wire.
 pub fn verify_walked_with<S: Scalar, C: WalkedCircuit>(
     log_n: usize,
     variant: Variant,
@@ -205,8 +216,8 @@ pub fn verify_walked_with<S: Scalar, C: WalkedCircuit>(
     let front = front_with(log_n, variant, C::LOG_SIZE, transcript)?;
     let slices = front.slices.as_ref().expect("the walked variant sends the slices");
     let terminal = {
-        let _phase = enter("flock lincheck: the terminal by the circuit's walk");
-        walked_terminal_with::<S, C>(
+        let _phase = enter(C::TERMINAL_PHASE);
+        C::terminal(
             front.z_skip,
             &front.row_low,
             &front.chi_in,

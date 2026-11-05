@@ -2,10 +2,11 @@
 //! Flock on the Keccak-f\[1600\] block (`lv42_flock::keccak`, crates/slh_dsa/SPEC-FAST.md §4.2, M1), end to end:
 //!
 //! - the verifier's walk (`leanvm_flock_gas::keccak_flock`, on `E`) is the prover's (`lv42_flock::keccak`, on `F192`);
-//! - `prove_keccak`'s stream is accepted by `flock_min::verify_walked_with::<_, Keccak>` (the walked terminal) at
-//!   skips of 3 and 6, both eq points; the slices are the witness's at the verifier's point;
+//! - `prove_keccak`'s stream is accepted by `flock_min::verify_walked_with::<_, Keccak>` (the structured terminal,
+//!   SPEC-FAST §4.2, M3) and by `verify_walked_with::<_, KeccakWalked>` (M1's walked terminal) at skips of 3 and 6,
+//!   both eq points; the slices are the witness's at the verifier's point;
 //! - a witness with one state bit flipped (its rows' own values kept, so the zerocheck still holds) and a stream with
-//!   one slice changed are rejected;
+//!   one slice changed are rejected, by both terminals;
 //! - at 4,096 blocks (3,959 random permutations and Keccak-f(0) padding, `log_n = 29`, ignored): the same, and the
 //!   benchmark (witness and proof, median of 3, skips 3 and 6).
 //!
@@ -15,7 +16,8 @@
 use leanvm_flock_gas::VerifierError;
 use leanvm_flock_gas::field::E;
 use leanvm_flock_gas::flock_min::{self, Slices, Variant};
-use leanvm_flock_gas::keccak_flock::Keccak;
+use leanvm_flock_gas::flock_min::WalkedCircuit;
+use leanvm_flock_gas::keccak_flock::{Keccak, KeccakWalked};
 use leanvm_flock_gas::transcript::{Checks, FsShape, KeccakChannel, KeccakWriter, keccak_seed};
 use leanvm_univariate::prover::flock::{FlockWitness, prove_keccak};
 use lv42_flock::keccak::{self as block, K, K_LOG, LANES, WORDS};
@@ -100,9 +102,23 @@ fn run(witness: &FlockWitness, variant: Variant, log_n: usize, seed: [u8; 32]) -
     (verdict, out.point, out.slices, writer.stream, secs)
 }
 
+/// The verdict of the structured terminal ([`Keccak`]), checked to be the walked one's ([`KeccakWalked`]).
 fn verify(stream: &[u8], variant: Variant, log_n: usize, seed: [u8; 32], point: &[E]) -> Result<(), VerifierError> {
+    let structured = verify_with::<Keccak>(stream, variant, log_n, seed, point);
+    let walked = verify_with::<KeccakWalked>(stream, variant, log_n, seed, point);
+    assert_eq!(structured, walked, "the structured terminal's verdict is the walk's");
+    structured
+}
+
+fn verify_with<C: WalkedCircuit>(
+    stream: &[u8],
+    variant: Variant,
+    log_n: usize,
+    seed: [u8; 32],
+    point: &[E],
+) -> Result<(), VerifierError> {
     let mut channel = KeccakChannel::new(seed, stream, Checks::Enforce);
-    let (theirs, _end) = flock_min::verify_walked_with::<E, Keccak>(log_n, variant, &mut channel)?;
+    let (theirs, _end) = flock_min::verify_walked_with::<E, C>(log_n, variant, &mut channel)?;
     channel.finish()?;
     assert_eq!(theirs, point, "the slices' point");
     Ok(())
