@@ -4,6 +4,66 @@ Part of this repository. This crate proves "a valid SLH-DSA signature on `M` und
 argument of `crates/quotient`, verified on the EVM with the `PCS_OPEN` claims priced at 0. The gas convention is
 `STATUS.md`'s: transaction gas without the 21,000 base, under EIP-7623.
 
+## Status (2026-11-05): two designs, work stopped mid-way
+
+There are two designs. The plan, measurements and per-milestone notes are in [`SPEC-FAST.md`](SPEC-FAST.md).
+- **Direct** (this crate's bit circuit and its contract): the gas is measured at **≈ 17.2K**, but there is no
+  feasible prover.
+- **Fast, "C\*"** (`SPEC-FAST.md`): Flock proves the Keccak-f table, the quotient argument proves the lane-level
+  glue, and π2 (`crates/leanvm_rec`'s wrap) verifies π1. One signature per transaction; the user accepted
+  ≈ 40K gas.
+
+| milestone (`SPEC-FAST.md` §6) | state | result |
+|---|---|---|
+| M1: the Keccak-f Flock block (`lv42_flock::keccak`) | **done**, on main | 4,096 Keccak-f (2^29 bits) proved in 0.13–0.19 s on h1, 0.18 s on the Mac; checked against RustCrypto's `keccak` |
+| M2: the lane-level glue (`src/glue.rs`) | **done**, on main | 182,099 rows (2^18, against 2^29 for the bit circuit); 3 real signatures accepted, 21 tamperings rejected, and the same values as the bit circuit |
+| M3: the structured Keccak terminal (`leanvm_flock_gas::keccak_flock`) | **done**, on main | 3,019 `E` ops (the walk: 563K), equal to the walk at every skip; whole Flock-for-Keccak verifier: 148 scalars, 47 Keccak-256 calls |
+| M4: π1 (`crates/slh_fast`) | **works, stopped before its checks** | 3 real signatures prove and verify, WHIR openings included; mutations rejected; **prover 0.39 s, 1.27 GB on the Mac**; verifier 90 Keccak-f, 254 scalars, 2,806 products |
+| M5: the π2 wrap and the contract | not started | gas modelled ≈ 44.6K (42–48K) |
+| M6: review and tuning toward 40K | not started | |
+
+Whole prover, modelled: π1 0.39 s (measured, Mac) plus π2 ≈ 4.5 s (measured for leanVM's π1 on h1), so
+**≈ 5 s**.
+
+### What remains to be done
+
+1. **Close M4** (details in `SPEC-FAST.md`, "M4 status (stopped)"):
+   - Run the regression list:
+     `cargo test --release -p quotient -p evm -p slh_dsa -p slh_fast -p lv42_flock -p leanvm_univariate -p leanvm_flock_gas -p leanvm_rec`.
+     M4 changed `leanvm_univariate`: `Column::Extra`, a `SUM_TWIST` term, and `verifier::batch` made public.
+     leanVM's π1 must stay byte-identical, so also run `leanvm_univariate`'s pinned vectors and `leanvm_rec`'s
+     `pi2_real` (this needs `LEANVM_TRACE`).
+   - Re-check soundness. The paired batch uses 160-bit narrow challenges, which give 126.9 bits after the lists,
+     below the 128 target. Take 168-bit challenges (§4.8, about +144 gas). Decide on `γ = β²` (one Keccak-f less).
+   - Benchmark π1 on one machine with the π2 numbers it is compared to (h1 or the Mac), median of 3.
+   - Record the three deviations from the spec in the design section. They are working code now:
+     - no inverse hint: the identities at `t` are linear relations, 5 values;
+     - the link sends no values;
+     - the port coset is `β_19 + V_19`.
+2. **M5: the π2 wrap and real gas.**
+   - Compile `slh_fast::verifier::reduce::<Sym, _, Keccak>` with `leanvm_rec`'s circuit compiler, as it compiles
+     π1-rec3 (`SPEC-REC.md` §1).
+   - The new inputs:
+     - a 64-byte public input (`PK ‖ M`) in the seed and in the compiler's statement reads;
+     - the IV, binding σ's root, the parameters and the three layout words;
+     - π1's 3 point claims: C1 and C2 at `r[..24]`, the setup at `r[..20]`.
+   - Prove π2 on real π1 proofs, then run the contract on revm with `PCS_OPEN` attesting all 7 claims, and
+     reject calldata mutations.
+   - Measure the gas (target ≤ 46K) and the total prover time.
+   - Expected size: π2 ≈ 13.1M of 2^24 positions (78%).
+3. **M6: review and tuning.**
+   - An adversarial review of π1 (the link, the K-valued glue's semantics, Flock's Keccak block) and of the wrap.
+   - `review/slh_fast_params.py` for sizes, soundness and gas.
+   - π2's push side toward 40–42K, using the 22% of π2 that π1 leaves free.
+4. **Not planned:**
+   - formal (Lean) proofs of the fast design;
+   - parameter sets other than `n = 16` (wiring only);
+   - several signatures per proof (π2 stays fixed, so the gas per signature falls as 1/k).
+5. **Housekeeping on h1:**
+   - `/root/pcs-quotient-fv/` holds `m1-keccak`, `m2-glue` and `m3-terminal` (≈ 3 GB); the work in them is
+     merged, so they can be deleted.
+   - Since 2026-11-05 the work runs on the Mac, at the user's request.
+
 ## What is built and tested
 
 | piece | where | tested |
