@@ -675,6 +675,31 @@ mod tests {
         assert!(contract.code.len() <= 24_576, "EIP-170");
     }
 
+    /// The membership contracts' bytecode, pinned: the code of the deployed contract, of the claims contract, of
+    /// the contract with the root in its code, and of the deployed contract linked into parts of 2,048 bytes (the
+    /// driver's then the parts', back to back), each its Keccak-256, as at 2607d40 (before the inverse hint mode).
+    #[test]
+    fn membership_bytecode_is_pinned() {
+        let hex = |code: &[u8]| -> String { primitives::hash::hash(code).iter().map(|b| format!("{b:02x}")).collect() };
+        let linked = contract_linked(LOG_ROWS, 2_048);
+        let linked_code = [&linked.code[..], &linked.parts.concat()].concat();
+        let codes = [
+            hex(&contract(LOG_ROWS).code),
+            hex(&claims_contract(LOG_ROWS).code),
+            hex(&build(LOG_ROWS, &entry(true, Some(&[0xa5; 32])), true).code),
+            hex(&linked_code),
+        ];
+        assert_eq!(
+            codes,
+            [
+                "090dbf41625e9c66df8a6359d00b6cd060f5f39a66139b59d975992ff0e6e32b",
+                "b1630107e2502d02cb458cc5752f300e3fcf2ee4e6772d6e5a88804ed0b8c5c7",
+                "62ba3abb9e3ab9e9f4a1fe23ad2cf30fce62cbc742596188de8f891f855e1db0",
+                "47d5a8e6135abfd897cc68224821b8fe0801149565e8c5806a03c158be15489f",
+            ]
+        );
+    }
+
     /// `n` with a comma every three digits.
     fn grouped(n: u64) -> String {
         let digits = n.to_string();
