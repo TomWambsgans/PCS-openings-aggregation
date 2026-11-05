@@ -9,6 +9,18 @@
 //! `X = 1, Y = 0`. A free input bit is a row whose three inputs are wired to its own output, so the gate reads
 //! `v = v + v + v^2`, that is `v^2 = v`. Every other row reads constants or rows before it, and the gate sends
 //! bits to bits: by induction every cell is a bit, and the one the circuit computes.
+//!
+//! **Lane circuits** (`crates/slh_dsa/SPEC-FAST.md`, §4.3). The gate is an identity of `K = GF(2^64)`, and the
+//! argument does not need the cells to be bits. A lane circuit has `K`-valued cells besides its bits:
+//! - a **free-`K` row** ([`Builder::free_k`]) reads its own output as `X` and `1` as `Y`, so the gate reads
+//!   `v = v + C + C`: any value;
+//! - a product is one row ([`Builder::mul`]: `(X, Y, C) = (b, a, b)`, `V = a·b`), and with `Y` a bit `s`, `χ` is a
+//!   lane mux: `X + C·(1 + s)`;
+//! - a **port** ([`Builder::port`]) is a row at a reserved index of the port region, `(X, Y, C, V) = (O, 1, I, O)`:
+//!   `O` free (or read from a row), `I` read from its source. Another argument (Flock, for Keccak-f) is to prove
+//!   the region's cells; here they are only rows.
+//! Bits stay Boolean by the free-bit row's `v = v^2`, whose roots in `K` are `0` and `1`. The rows are evaluated
+//! over `K` by [`Circuit::outputs_k`], in the order they were built.
 
 use primitives::field::F64;
 use primitives::hash::{PI, RC, RHO, ROUNDS, STATE_LANES};
@@ -22,7 +34,7 @@ pub const WORD_BITS: usize = 128;
 pub const LOG_ROWS: usize = 22;
 
 /// What a cell reads: a constant, or row `r`'s `V` cell.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Src {
     Zero,
     One,
@@ -61,11 +73,20 @@ pub struct Circuit {
     pub inputs: Vec<u32>,
     /// Each cell's successor on its cycle. Cell `4 r + role`, the roles `X, Y, C, V`.
     pub sigma: Vec<u32>,
+    /// The port region's rows `[start, start + len)` ([`Builder::with_ports`]); `(0, 0)` without one.
+    pub port_region: (usize, usize),
+    /// The placed ports in the order they were placed: `(row, rows built before it)`, which is where
+    /// [`Circuit::outputs_k`] evaluates them. Empty without a port region.
+    pub ports: Vec<(u32, u32)>,
 }
 
 pub struct Builder {
     rows: Vec<Row>,
     inputs: Vec<u32>,
+    /// The port region's first row, its rows, and when each placed one was placed.
+    port_start: usize,
+    port_rows: Vec<Option<Row>>,
+    placed: Vec<(u32, u32)>,
 }
 
 impl Default for Builder {
@@ -86,7 +107,56 @@ impl Builder {
         Self {
             rows: all,
             inputs: Vec::new(),
+            port_start: usize::MAX,
+            port_rows: Vec::new(),
+            placed: Vec::new(),
         }
+    }
+
+    /// A builder whose rows `[start, start + len)` are a port region: the built rows must stay below `start`,
+    /// and [`Builder::port`] places the region's rows by index.
+    pub fn with_ports(rows: usize, start: usize, len: usize) -> Self {
+        assert!(start >= PUBLIC_ROWS);
+        let mut b = Self::with_capacity(rows.min(start));
+        b.port_start = start;
+        b.port_rows = vec![None; len];
+        b
+    }
+
+    /// A free `K` value: a row reading its own output as `X`, `1` as `Y` and `0` as `C`, so `V = V + 0 + 0`.
+    pub fn free_k(&mut self) -> Src {
+        let at = Src::Row(self.rows.len() as u32);
+        self.row(at, Src::One, Src::Zero)
+    }
+
+    /// `a · b` in `K`, one row `(X, Y, C) = (b, a, b)`: `V = b + b + a·b`.
+    pub fn mul(&mut self, a: Src, b: Src) -> Src {
+        match (a, b) {
+            (Src::Zero, _) | (_, Src::Zero) => Src::Zero,
+            (Src::One, v) | (v, Src::One) => v,
+            _ => self.row(b, a, b),
+        }
+    }
+
+    /// Port `index` of the region: the row `(X, Y, C) = (out, 1, input)`, `out` its own output where `None` (a
+    /// free value). The gate reads `V = X + C + C = X`, so the four cells are `(O, 1, I, O)`. Returns `V`.
+    pub fn port(&mut self, index: usize, out: Option<Src>, input: Src) -> Src {
+        let row = self.port_start + index;
+        assert!(self.port_rows[index].is_none(), "port {index} placed twice");
+        let at = Src::Row(row as u32);
+        self.port_rows[index] = Some(Row {
+            x: out.unwrap_or(at),
+            y: Src::One,
+            c: input,
+        });
+        self.placed.push((row as u32, self.rows.len() as u32));
+        at
+    }
+
+    /// The row a port index is at.
+    pub fn port_row(&self, index: usize) -> u32 {
+        assert!(index < self.port_rows.len());
+        (self.port_start + index) as u32
     }
 
     /// Rows used so far, the public ones included.
@@ -99,6 +169,7 @@ impl Builder {
     }
 
     pub fn row(&mut self, x: Src, y: Src, c: Src) -> Src {
+        debug_assert!(self.rows.len() < self.port_start, "the rows reach the port region");
         self.rows.push(Row { x, y, c });
         Src::Row(self.rows.len() as u32 - 1)
     }
@@ -218,6 +289,13 @@ impl Builder {
         let n = 1 << log_rows;
         let used_rows = self.rows.len();
         assert!(used_rows <= n, "{used_rows} rows");
+        let port_region = if self.port_rows.is_empty() {
+            (0, 0)
+        } else {
+            assert!(used_rows <= self.port_start, "{used_rows} rows reach the port region");
+            assert!(self.port_start + self.port_rows.len() <= n, "the port region past the rows");
+            (self.port_start, self.port_rows.len())
+        };
         let bit = |word: usize, j: usize| match word {
             0..4 => public[word][j],
             4 if j == 0 => Src::One,
@@ -233,6 +311,11 @@ impl Builder {
             };
         }
         self.rows.resize(n, IDLE);
+        for (i, row) in self.port_rows.iter().enumerate() {
+            if let Some(row) = row {
+                self.rows[port_region.0 + i] = *row;
+            }
+        }
 
         // A cycle is a source and the cells reading it, in cell order.
         const NONE: u32 = u32::MAX;
@@ -267,6 +350,8 @@ impl Builder {
             rows: self.rows,
             inputs: self.inputs,
             sigma,
+            port_region,
+            ports: self.placed,
         }
     }
 }
@@ -288,6 +373,7 @@ impl Circuit {
     /// Every row's output bit, from the free inputs.
     pub fn outputs(&self, inputs: &[bool]) -> Vec<u8> {
         assert_eq!(inputs.len(), self.inputs.len());
+        assert!(self.ports.is_empty(), "a lane circuit: use outputs_k");
         let mut v = vec![0u8; self.rows.len()];
         for (&row, &input) in self.inputs.iter().zip(inputs) {
             v[row as usize] = input as u8;
@@ -314,6 +400,97 @@ impl Circuit {
             F64(bit as u64)
         })
     }
+}
+
+/// The `K` value a source holds, given every row's output.
+pub fn read_k(v: &[F64], src: Src) -> F64 {
+    match src {
+        Src::Zero => F64::ZERO,
+        Src::One => F64::ONE,
+        Src::Row(r) => v[r as usize],
+    }
+}
+
+/// The gate over `K`: `x + c + y·c`.
+pub fn gate_k(x: F64, y: F64, c: F64) -> F64 {
+    x + c + y * c
+}
+
+impl Circuit {
+    /// Every row's output over `K`. The rows are evaluated in the order they were built (the ports where they
+    /// were placed, the public rows last); a free row (one whose `X` reads itself: a free bit or a free `K`
+    /// value) takes `free(row, outputs so far)`, and every other row its gate.
+    pub fn outputs_k(&self, mut free: impl FnMut(u32, &[F64]) -> F64) -> Vec<F64> {
+        let mut v = vec![F64::ZERO; self.rows.len()];
+        let mut eval = |r: usize, v: &mut Vec<F64>| {
+            let row = self.rows[r];
+            v[r] = if row.x == Src::Row(r as u32) {
+                free(r as u32, v)
+            } else {
+                gate_k(read_k(v, row.x), read_k(v, row.y), read_k(v, row.c))
+            };
+        };
+        let mut ports = self.ports.iter().peekable();
+        for r in PUBLIC_ROWS..self.used_rows {
+            while let Some(&(port, _)) = ports.next_if(|&&(_, before)| before as usize <= r) {
+                eval(port as usize, &mut v);
+            }
+            eval(r, &mut v);
+        }
+        for &(port, _) in ports {
+            eval(port as usize, &mut v);
+        }
+        let (start, len) = self.port_region;
+        for r in self.used_rows..self.rows.len() {
+            let placed = (start..start + len).contains(&r) && self.rows[r] != IDLE;
+            if !placed {
+                eval(r, &mut v);
+            }
+        }
+        for r in 0..PUBLIC_ROWS {
+            eval(r, &mut v);
+        }
+        v
+    }
+
+    /// Every cell's value over `K`, from every row's output.
+    pub fn cells_k(&self, v: &[F64]) -> Vec<F64> {
+        assert_eq!(v.len(), self.rows.len());
+        parallel::map_collect(4 * self.rows.len(), |cell| {
+            let row = self.rows[cell / 4];
+            match cell % 4 {
+                0 => read_k(v, row.x),
+                1 => read_k(v, row.y),
+                2 => read_k(v, row.c),
+                _ => v[cell / 4],
+            }
+        })
+    }
+
+    /// Whether `cells` satisfy every row's gate and are constant on every cycle of the wiring; else the first
+    /// row whose gate fails, or the first cell that differs from its successor.
+    pub fn check_k(&self, cells: &[F64]) -> Result<(), CheckError> {
+        assert_eq!(cells.len(), 4 * self.rows.len());
+        if let Some(r) = (0..self.rows.len()).find(|&r| {
+            let [x, y, c, v] = std::array::from_fn(|role| cells[4 * r + role]);
+            gate_k(x, y, c) != v
+        }) {
+            return Err(CheckError::Gate(r));
+        }
+        if let Some(cell) = (0..cells.len()).find(|&i| cells[self.sigma[i] as usize] != cells[i]) {
+            return Err(CheckError::Wiring(cell));
+        }
+        Ok(())
+    }
+}
+
+/// Why cells are not a witness of a circuit ([`Circuit::check_k`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheckError {
+    /// The row's gate fails.
+    Gate(usize),
+    /// The cell differs from its successor on its cycle.
+    Wiring(usize),
 }
 
 /// The 256 wires of 32 bytes to the four public words they are read as: a word is sixteen bytes, big-endian.

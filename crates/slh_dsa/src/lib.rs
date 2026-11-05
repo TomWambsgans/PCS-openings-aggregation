@@ -19,6 +19,8 @@
 use quotient::circuit::{Builder, Circuit, Src, WORD_BITS, public_words};
 use quotient::statement::Statement;
 
+pub mod glue;
+
 /// `lg_w`: every SLH-DSA parameter set has `w = 16`.
 pub const LG_W: usize = 4;
 /// `len2` at `w = 16`, for every `n` of FIPS 205.
@@ -354,6 +356,10 @@ pub struct Built {
     /// `computed root ⊕ PK.root`: public word 6, zero exactly when the signature verifies.
     pub zero: Vec<Src>,
     pub keccak_f: usize,
+    /// Taps for comparisons: `H_msg`'s digest (`8 m` bits), and the message each layer signs (the FORS public
+    /// key, then each layer's root but the last) followed by the last root: `d + 1` values of `8 n` bits.
+    pub digest: Vec<Src>,
+    pub roots: Vec<Vec<Src>>,
 }
 
 /// The verification of `p` (`n = 16`: the public key is 32 bytes, two public words), its rows unclosed.
@@ -380,6 +386,7 @@ pub fn build(p: &Params) -> Built {
 
     let fors_len = bits * p.k * (1 + p.a);
     let mut node = hashes.fors_pk(p, &sig[bits..bits + fors_len], md, &idx_tree, &idx_leaf);
+    let mut roots = vec![node.clone()];
     let xmss_len = bits * (p.len() + p.hp);
     let (mut tree, mut leaf) = (idx_tree, idx_leaf);
     for layer in 0..p.d {
@@ -389,6 +396,7 @@ pub fn build(p: &Params) -> Built {
         }
         let at = bits + fors_len + xmss_len * layer;
         node = hashes.xmss_root(p, layer, &tree, &leaf, &sig[at..at + xmss_len], &node);
+        roots.push(node.clone());
     }
     let keccak_f = hashes.calls;
     assert_eq!(bits + fors_len + xmss_len * p.d, sig.len());
@@ -396,12 +404,12 @@ pub fn build(p: &Params) -> Built {
     let zero: Bits = (0..bits).map(|i| b.xor(node[i], root[i])).collect();
     assert_eq!(zero.len(), WORD_BITS);
     let public = public_words(&[&seed[..], &root[..]].concat(), &msg);
-    Built { builder: b, public, zero, keccak_f }
+    Built { builder: b, public, zero, keccak_f, digest, roots }
 }
 
 /// The circuit on the fewest rows that hold it, and its Keccak-f calls.
 pub fn circuit(p: &Params) -> (Circuit, usize) {
-    let Built { builder, public, zero, keccak_f } = build(p);
+    let Built { builder, public, zero, keccak_f, .. } = build(p);
     let log_rows = builder.len().next_power_of_two().trailing_zeros() as usize;
     (builder.finish_with_zeros(log_rows, &public, &[zero]), keccak_f)
 }
