@@ -76,8 +76,15 @@ impl Default for Builder {
 
 impl Builder {
     pub fn new() -> Self {
+        Self::with_capacity(PUBLIC_ROWS)
+    }
+
+    /// A builder with room for `rows` rows, so that a large circuit's rows are not copied as they grow.
+    pub fn with_capacity(rows: usize) -> Self {
+        let mut all = Vec::with_capacity(rows.max(PUBLIC_ROWS));
+        all.resize(PUBLIC_ROWS, IDLE);
         Self {
-            rows: vec![IDLE; PUBLIC_ROWS],
+            rows: all,
             inputs: Vec::new(),
         }
     }
@@ -199,13 +206,22 @@ impl Builder {
     }
 
     /// Close the circuit on `2^log_rows` rows, `public[J][j]` being bit `j` of public word `J`.
-    pub fn finish(mut self, log_rows: usize, public: &[Vec<Src>; 4]) -> Circuit {
+    pub fn finish(self, log_rows: usize, public: &[Vec<Src>; 4]) -> Circuit {
+        self.finish_with_zeros(log_rows, public, &[])
+    }
+
+    /// As [`Builder::finish`], with public words `6` and `7` reading `zeros[0]` and `zeros[1]` (128 wires each)
+    /// instead of constant zeros. The verifier takes every word past `4` to be zero, so an accepted proof has
+    /// these wires at `0`: an equality `a = b` of computed bits is `a ⊕ b` here. Word `5` stays the zero anchor.
+    pub fn finish_with_zeros(mut self, log_rows: usize, public: &[Vec<Src>; 4], zeros: &[Vec<Src>]) -> Circuit {
+        assert!(zeros.len() <= 2 && zeros.iter().all(|word| word.len() == WORD_BITS));
         let n = 1 << log_rows;
         let used_rows = self.rows.len();
         assert!(used_rows <= n, "{used_rows} rows");
         let bit = |word: usize, j: usize| match word {
             0..4 => public[word][j],
             4 if j == 0 => Src::One,
+            6 | 7 if word - 6 < zeros.len() => zeros[word - 6][j],
             _ => Src::Zero,
         };
         for (r, row) in self.rows[..PUBLIC_ROWS].iter_mut().enumerate() {

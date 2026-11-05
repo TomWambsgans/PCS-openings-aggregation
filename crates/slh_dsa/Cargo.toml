@@ -1,0 +1,20 @@
+# Part of this repository. MIT OR Apache-2.0; see NOTICE.md.
+[package]
+name = "slh_dsa"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "SLH-DSA-SHAKE (FIPS 205) signature verification as a circuit of the quotient argument's χ gate"
+
+[lints]
+workspace = true
+
+[dependencies]
+quotient.workspace = true
+primitives.workspace = true
+
+[dev-dependencies]
+primitives = { workspace = true, features = ["test-util"] }
+sha3.workspace = true
+# The reference: RustCrypto's FIPS 205 implementation signs, and verifies, the signatures the circuit checks.
+fips205 = { package = "slh-dsa", version = "=0.2.0-rc.5" }
