@@ -358,6 +358,11 @@ pub const FLOCK_REC3: Variant = Variant {
 /// batch's weight evaluates it at its point by [`ring_tower::weight_at`] (64 twisted eq products and the map's stages)
 /// rather than as 64 terms with explicit coefficients (SPEC.md §13).
 pub const RING_TWIST: u8 = u8::MAX;
+
+/// The twist field of a term that sums its column's words: the weight `1` on every word of its block, whatever its
+/// point (`crates/slh_fast`: the quotient argument's `Σ_(V_m) h`, the top novel coefficient of `h`, is the sum of its
+/// `B` coefficients). At the batch's point its row is `1`.
+pub const SUM_TWIST: u8 = u8::MAX - 1;
 pub const FLOCK_BIT_SLICE: Variant = Variant {
     skip: 4,
     slices: Slices::Claim,
@@ -938,6 +943,8 @@ fn weight_at<S: Scalar>(
             let map = ring_map.expect("the ring map of a ring-switch term");
             let _phase = enter("claims: the ring switch's weight at the batch's point");
             S::ring_weight(&point[..len], &cache.one_plus_r()[..len], map)
+        } else if twist == SUM_TWIST {
+            S::one()
         } else {
             cache.row(base_id + p, point, len, twist)
         };
@@ -958,7 +965,7 @@ fn weight_at<S: Scalar>(
 /// With Flock's matrices' reduction `pending` (SPEC.md §13), its sum `Σ_(x, y) G(x, y) L̂(x) ŝ(y)` over `k + 6`
 /// variables joins as the next power of `λ`, zero-extended by `eq(·, 0)` on the rest, so its rounds are the batch's
 /// first ones: after the stacks' values the prover sends `a = Â0`, `b = B̂0` at the point, and the terminal checks both.
-fn batch<S: Scalar + PartialEq, C: Channel<S>>(
+pub fn batch<S: Scalar + PartialEq, C: Channel<S>>(
     channel: &mut C,
     fs: FsShape,
     combined: &[(Commitment, Combined<S>)],

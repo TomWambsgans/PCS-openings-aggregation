@@ -264,6 +264,8 @@ impl Weight {
             plain: Vec<(usize, F192)>,
             twisted: Vec<(usize, Vec<(u8, F192)>)>,
             slots: Vec<(usize, Vec<F192>)>,
+            /// The coefficient of the column's sum (`verifier::SUM_TWIST`: the weight 1 on every word).
+            sum: Option<F192>,
         }
         let mut columns: Vec<(Column, Terms)> = Vec::new();
         for &(column, p, twist, coefficient) in &claim.terms {
@@ -280,6 +282,11 @@ impl Weight {
                 }
             };
             let terms = &mut columns[at].1;
+            if twist == crate::verifier::SUM_TWIST {
+                assert!(slot.is_none(), "no slot sums");
+                *terms.sum.get_or_insert(F192::ZERO) += coefficient;
+                continue;
+            }
             match slot {
                 Some(j) => {
                     assert_eq!(twist, 0, "no twisted slot terms");
@@ -373,6 +380,16 @@ impl Weight {
                 });
                 let shape = weight.shapes.len() - 1;
                 add(&mut weight, shape, F192::ONE);
+            }
+            if let Some(coefficient) = terms.sum {
+                // The weight 1 on every word: a factored shape of ones.
+                let a = vars.min(LOW_VARS);
+                weight.shapes.push(Shape::Factored {
+                    low: vec![F192::ONE; 1 << a],
+                    h: vec![F192::ONE; 1 << (vars - a)],
+                });
+                let shape = weight.shapes.len() - 1;
+                add(&mut weight, shape, coefficient);
             }
             for (p, slots) in &terms.slots {
                 weight.shapes.push(Shape::Factored {

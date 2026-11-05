@@ -52,6 +52,9 @@ pub enum Column {
     BytecodeTuple,
     /// Setup: the memory's addresses `g^i`.
     Address,
+    /// A column of another protocol's layout on the same stacks (`crates/slh_fast`, SLH-DSA's π1): its commitment
+    /// and its number there.
+    Extra { commitment: Commitment, id: u16 },
 }
 
 impl Column {
@@ -68,6 +71,7 @@ impl Column {
                 Commitment::C2
             }
             Column::BytecodeTuple | Column::Address => Commitment::Setup,
+            Column::Extra { commitment, .. } => commitment,
         }
     }
 
@@ -87,6 +91,14 @@ impl Column {
             Column::ConstraintQuotient(c) => 0x2300 | c as u64,
             Column::BytecodeTuple => 0x3000,
             Column::Address => 0x3100,
+            Column::Extra { commitment, id } => {
+                let c = match commitment {
+                    Commitment::C1 => 1,
+                    Commitment::C2 => 2,
+                    Commitment::Setup => 3,
+                };
+                0x0080_0000 | c << 16 | id as u64
+            }
         }
     }
 }

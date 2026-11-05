@@ -1,0 +1,30 @@
+# Part of this repository. Builds on crates/leanvm_univariate (its stacks, claims, batching sumcheck and openings),
+# crates/leanvm_flock_gas and crates/lv42_flock (Flock, which vendor and adapt leanVM
+# (https://github.com/leanEthereum/leanVM), commit 42422001), crates/quotient (its gate-and-copy argument, Cantor
+# basis and transforms) and crates/slh_dsa (the glue). MIT OR Apache-2.0; see NOTICE.md.
+[package]
+name = "slh_fast"
+version.workspace = true
+edition.workspace = true
+publish = false
+description = "pi1 of SLH-DSA-SHAKE-128s with a fast prover (crates/slh_dsa/SPEC-FAST.md, design C*): Flock for Keccak-f, the lane glue's quotient argument, the link, one batching sumcheck, three WHIR openings"
+
+[lints]
+workspace = true
+
+[dependencies]
+leanvm_flock_gas = { path = "../leanvm_flock_gas" }
+leanvm_univariate = { path = "../leanvm_univariate" }
+lv42_flock = { path = "../lv42_flock" }
+slh_dsa = { path = "../slh_dsa" }
+quotient.workspace = true
+primitives.workspace = true
+fiat_shamir.workspace = true
+verifier.workspace = true
+parallel.workspace = true
+
+[dev-dependencies]
+bench.workspace = true
+primitives = { workspace = true, features = ["test-util"] }
+# The reference: RustCrypto's FIPS 205 implementation signs the signatures pi1 proves.
+fips205 = { package = "slh-dsa", version = "=0.2.0-rc.5" }
