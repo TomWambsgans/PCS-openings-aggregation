@@ -318,7 +318,7 @@ fn program(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, inpu
             _ => None,
         })
     };
-    for root in graph.nonzero.iter().copied().chain(output_nodes()) {
+    for root in graph.nonzero.iter().chain(&graph.zero).copied().chain(output_nodes()) {
         uses[root as usize] += 1;
     }
     for at in (0..n).rev() {
@@ -390,6 +390,10 @@ fn program(graph: &Graph, outputs: &[Word], ending: &Ending, entry: &Entry, inpu
     for &id in &graph.nonzero {
         compiler.eval(id);
         compiler.code(&[ISZERO]);
+        compiler.item(Item::FailIf);
+    }
+    for &id in &graph.zero {
+        compiler.eval(id);
         compiler.item(Item::FailIf);
     }
     if linkable {
@@ -523,7 +527,8 @@ fn options(entry: &Entry) -> Options<'static> {
 
 /// The contract. A call of the verifier is calldata of the selector ([`VERIFY`], if `entry` has one) and the
 /// arguments: the statement, the commitments and `inputs` scalars of the proof, of `SCALAR_BYTES` each. On
-/// such a call, with no value, it reverts unless every node of `graph.nonzero` is nonzero, else writes `outputs`
+/// such a call, with no value, it reverts unless every node of `graph.nonzero` is nonzero and every node of
+/// `graph.zero` zero (checked in that order, after the entry's checks), else writes `outputs`
 /// to a region of fresh memory, one word each, and ends as `ending` says. Any other call is one of
 /// `setIndexRoot(bytes32 root)`, if the circuit's commitment is in storage, or reverts: from the owner, with no
 /// value, it stores `root` in slot [`INDEX_ROOT_SLOT`] and returns nothing.

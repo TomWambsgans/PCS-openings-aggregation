@@ -38,7 +38,7 @@ Each SHAKE256 call of SLH-DSA is one Keccak-f for `F`, `H` and `H_msg`, at every
 
 | `log_rows` | as deployed (root in storage) | root in code | root in code + inverse hint |
 |---|---:|---:|---:|
-| 22 (membership, check) | 18,309 (exec 14,289) | 16,071 (12,051) | 15,280 |
+| 22 (membership, check) | 18,309 (exec 14,289) | 16,071 (12,051) | 15,271 (10,879) |
 | 26 | 19,393 | 17,155 | ≈ 16,360 |
 | 28 | 19,936 | 17,698 | ≈ 16,910 |
 | **29 (SLH-DSA-SHAKE-128s)** | 20,208 (16,188) | **17,970 (13,950)** | **≈ 17,180 (12,775)** |
@@ -54,6 +54,18 @@ Each SHAKE256 call of SLH-DSA is one Keccak-f for `F`, `H` and `H_msg`, at every
   - The measurement used a stand-in hint with 21 zero bytes. A real inverse has about none, so the table adds
     21 × 12 = 252.
   - It changes the proof format; the check is deterministic, so soundness is unchanged.
+  - **Now implemented** as an opt-in mode, `quotient::protocol::Inverse::Hint` (transcript named
+    `pcs-quotient-kh1`; `prove_in`, `verify_in`, `evm::quotient::contract_in`), the membership protocol unchanged.
+    At 2^22, on honest proofs of each mode (`cargo test --release -p evm -- --ignored --nocapture
+    gas_report_hint`), transaction gas without the base under EIP-7623, and execution:
+
+    | 2^22 | root in storage | root in code |
+    |---|---:|---:|
+    | compute (membership), 252 bytes, 384 `FIELD_MUL`s | 18,309 (14,289) | 16,071 (12,051) |
+    | hint, 276 bytes, 309 `FIELD_MUL`s | 17,509 (13,117) | 15,271 (10,879) |
+
+    −1,172 execution, −800 transaction. The 2^22 row of the table above is this measurement; the others are
+    still the stand-in's estimate.
 - **Where the gas goes** (2^29, with the hint): 365 `FIELD_MUL`s (3,650), the transcript's Keccak, calldata
   loads, and the three calls' claim points written to memory. Calldata is 276 bytes:
   - selector 4;
