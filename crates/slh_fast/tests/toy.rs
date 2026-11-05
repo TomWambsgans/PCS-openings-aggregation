@@ -106,7 +106,7 @@ fn toy_pi1_end_to_end() {
     let mut bad = cells.clone();
     let row = P.port_start() + slh_dsa::glue::port_index(100, 7);
     for role in [0, 3] {
-        bad[4 * row + role] = bad[4 * row + role] + F64(1 << 33);
+        bad[4 * row + role] += F64(1 << 33);
     }
     glue.circuit.check_k(&bad).expect("the glue's gates and wires hold");
     assert!(prove(&setup, &pk, &msg, &bad, Config::default()).is_err(), "the prover refuses a wrong port");

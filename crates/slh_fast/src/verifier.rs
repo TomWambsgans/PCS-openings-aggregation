@@ -110,7 +110,7 @@ pub fn port_coordinates<S: Scalar>(w: &[S], port_vars: usize) -> Vec<S> {
 /// block's bits.
 pub fn port_point<S: Scalar>(y: &[S]) -> Vec<S> {
     let (word, block) = y.split_at(crate::PORT_WORD_BITS);
-    let zeros = vec![S::zero(); crate::BLOCK_WORD_BITS - crate::PORT_WORD_BITS];
+    let zeros = [S::zero(); crate::BLOCK_WORD_BITS - crate::PORT_WORD_BITS];
     [word, &zeros[..], block].concat()
 }
 

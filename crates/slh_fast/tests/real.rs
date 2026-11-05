@@ -107,7 +107,7 @@ fn real_signatures() {
             let mut bad = cells.clone();
             let row = P.port_start() + glue::port_index(4000, 7);
             for role in [0, 3] {
-                bad[4 * row + role] = bad[4 * row + role] + F64(1 << 40);
+                bad[4 * row + role] += F64(1 << 40);
             }
             glue.circuit.check_k(&bad).expect("the glue's gates and wires hold");
             let (forced, _) = prove(&setup, &pk, &msg, &bad, Config { check: false, force: true }).expect("forced");
