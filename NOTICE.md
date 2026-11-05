@@ -38,7 +38,7 @@ option. Every file says where it comes from in its first lines.
   but for a header and the small changes each header lists; `src/lib.rs`, `src/bus.rs`, `src/layout.rs`,
   `src/flock.rs`, `src/multilinear.rs` and `src/transcript.rs` adapt the files of the same names (the same protocol,
   generic over the scalar it computes on); `src/matrices.rs` takes `matrix_values` from `deferred.rs`.
-  `src/keccak_gkr.rs` adapts `crates/verifier/src/keccak.rs` of leanVM commit `4af2cddd`, for an estimate. New there:
+  `src/keccak_gkr.rs` adapts `crates/verifier/src/keccak.rs` of leanVM commit `4af2cddd`, for an estimate. New there: `src/keccak_flock.rs` (the verifier's walk of `crates/lv42_flock`'s Keccak-f block),
   the Keccak-256 chain (after `crates/quotient/src/transcript.rs`), the stack's batching sumcheck, the matrices'
   reduction, the EVM recorder, code generator and machine (after `crates/evm`), and the `gas-dump` command it adds to
   a leanVM checkout (`dump/`). Each file says where it comes from in its first lines.
@@ -62,7 +62,7 @@ option. Every file says where it comes from in its first lines.
       `c445e3d5`'s, and copied unchanged but for a header line. The exceptions say so in their headers:
       `flock/src/hash.rs` leaves out the PCS packaging of the slices and adds `prove_reduction_skip`;
       `zerocheck/bit_fold.rs` and `zerocheck/multilinear.rs` take rows of 1, 2 and 4 bytes (and the latter a
-      byte-row pass with a product table); `lincheck.rs` takes its row weights given.
+      byte-row pass with a product table); `lincheck.rs` takes its row weights given. `flock/src/keccak.rs` (and its test) is new here: the Keccak-f[1600] block of `crates/slh_dsa/SPEC-FAST.md`, after `hash.rs`'s BLAKE2s block.
     - `crates/lv42_flock/src/zerocheck/skip.rs` (new here, built on leanVM `42422001`'s zerocheck prover and its
       round-1 kernel, CREDIT flock-core): the zerocheck with a univariate skip of 3 to 6.
     - `crates/lv42_pcs` is the part of `42422001`'s `pcs` that `flock` uses: the GF(2^8) additive NTT, its inverse
