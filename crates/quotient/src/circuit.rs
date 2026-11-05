@@ -19,6 +19,7 @@
 //! - a **port** ([`Builder::port`]) is a row at a reserved index of the port region, `(X, Y, C, V) = (O, 1, I, O)`:
 //!   `O` free (or read from a row), `I` read from its source. Another argument (Flock, for Keccak-f) is to prove
 //!   the region's cells; here they are only rows.
+//!
 //! Bits stay Boolean by the free-bit row's `v = v^2`, whose roots in `K` are `0` and `1`. The rows are evaluated
 //! over `K` by [`Circuit::outputs_k`], in the order they were built.
 
@@ -553,6 +554,68 @@ pub fn membership_inputs(secret: &Secret) -> Vec<bool> {
 mod tests {
     use super::*;
     use primitives::test_rng::Rng;
+
+    /// A lane circuit: free `K` values, a product, a lane mux, ports placed out of row order (one free, one read
+    /// from a row) and read back; its `K` evaluation follows the build order, its cells hold every gate and wire,
+    /// and a changed cell does not. On a bit circuit the `K` evaluation is the bit one.
+    #[test]
+    fn lane_cells_and_ports() {
+        let mut b = Builder::with_ports(2048, 1024, 8);
+        let (a, c) = (b.free_k(), b.free_k());
+        let s = b.input();
+        let product = b.mul(a, c);
+        let not_s = b.not(s);
+        let differ = b.xor(a, c);
+        let muxed = b.chi(a, not_s, differ);
+        let free_port = b.port(3, None, product);
+        let read_port = b.port(5, Some(muxed), a);
+        let after = b.xor(free_port, a);
+        assert_eq!(b.port_row(3), 1027);
+        let circuit = b.finish(11, &std::array::from_fn(|_| vec![Src::Zero; WORD_BITS]));
+        assert_eq!(circuit.port_region, (1024, 8));
+        assert_eq!(circuit.ports, vec![(1027, 519), (1029, 519)]);
+        assert_eq!(circuit.rows[1026], IDLE);
+        let mut rng = Rng::new(0x4C);
+        for bit in [0, 1, 0, 1] {
+            let (va, vc, vo) = (F64(rng.next_u64()), F64(rng.next_u64()), F64(rng.next_u64()));
+            let v = circuit.outputs_k(|r, _| match Src::Row(r) {
+                x if x == a => va,
+                x if x == c => vc,
+                x if x == s => F64(bit),
+                x if x == free_port => vo,
+                _ => panic!("row {r} is not free"),
+            });
+            assert_eq!(read_k(&v, product), va * vc);
+            assert_eq!(read_k(&v, muxed), if bit == 1 { vc } else { va });
+            assert_eq!(read_k(&v, read_port), read_k(&v, muxed));
+            assert_eq!(read_k(&v, after), vo + va);
+            let cells = circuit.cells_k(&v);
+            assert_eq!(circuit.check_k(&cells), Ok(()));
+            let Src::Row(port) = free_port else { unreachable!() };
+            assert_eq!(&cells[4 * port as usize..4 * port as usize + 4], [vo, F64::ONE, va * vc, vo]);
+            let mut bad = cells.clone();
+            bad[4 * port as usize + 2] += F64::ONE;
+            assert!(circuit.check_k(&bad).is_err());
+        }
+        // A bit circuit evaluates over `K` as over bits.
+        let mut b = Builder::new();
+        let ins: Vec<Src> = (0..8).map(|_| b.input()).collect();
+        let mut out = ins[0];
+        for w in ins.windows(3) {
+            let t = b.chi(w[0], w[1], w[2]);
+            out = b.xor(out, t);
+        }
+        let circuit = b.finish(10, &std::array::from_fn(|j| vec![if j == 0 { out } else { Src::Zero }; WORD_BITS]));
+        assert!(circuit.ports.is_empty() && circuit.port_region == (0, 0));
+        for _ in 0..8 {
+            let inputs: Vec<bool> = (0..8).map(|_| rng.next_u64() & 1 == 1).collect();
+            let bits = circuit.outputs(&inputs);
+            let v = circuit.outputs_k(|r, _| F64(inputs[circuit.inputs.iter().position(|&i| i == r).unwrap()] as u64));
+            assert_eq!(v, bits.iter().map(|&x| F64(x as u64)).collect::<Vec<_>>());
+            assert_eq!(circuit.cells_k(&v), circuit.cells(&inputs));
+            assert_eq!(circuit.check_k(&circuit.cells_k(&v)), Ok(()));
+        }
+    }
 
     /// The circuit's Keccak-256 is Ethereum's, on random blocks.
     #[test]

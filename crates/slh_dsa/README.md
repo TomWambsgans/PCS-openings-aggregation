@@ -9,6 +9,7 @@ argument of `crates/quotient`, verified on the EVM with the `PCS_OPEN` claims pr
 | piece | where | tested |
 |---|---|---|
 | The SLH-DSA-SHAKE verification circuit (FIPS 205, pure, empty context) | `src/lib.rs` | `tests/real.rs`: see below |
+| The same verification on `GF(2^64)` lanes, with Keccak-f in a port region of 4,096 blocks (`SPEC-FAST.md`'s glue, M2): 51,027 rows plus 2^17 port rows, 2^18 in all | `src/glue.rs`, on `quotient::circuit`'s lane cells and ports | `tests/glue.rs`, `SPEC-FAST.md` appendix B |
 | The inverse-hint mode of the reduction, prover, verifier and contract | `quotient::protocol::Inverse`, `evm::quotient::contract_in` | the `quotient` and `evm` suites; membership proofs and bytecode pinned unchanged |
 | The reduction past 2^22 rows (domain basis of 36, so up to 2^31) | `quotient::protocol::verify_reduction_in` | `tests/contract.rs` |
 | The SLH-DSA-SHAKE-128s verifier contract (2^29 rows, hint, commitment in code) | `evm::quotient::contract_in(29, Inverse::Hint, Some(root))` | `tests/contract.rs`: see below |

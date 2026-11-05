@@ -8,7 +8,7 @@
 use fips205::{Shake128s, SigningKey, VerifyingKey};
 use primitives::field::F64;
 use primitives::test_rng::Rng;
-use quotient::circuit::{WORD_BITS, read};
+use quotient::circuit::{Src, WORD_BITS, read};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use slh_dsa::glue::{self, Glue};
 use slh_dsa::{MSG_BYTES, Params, SHAKE_128S, statement};
@@ -146,8 +146,9 @@ fn glue_agrees_with_the_bit_circuit() {
         glue.witness(&public_bits, &lanes).expect("the honest witness holds");
         let v = glue.outputs(&public_bits, &lanes);
         let w = bits.outputs(&slh_dsa::inputs(&p, &pk, &msg, &sig));
-        let bit_bytes = |wires: &[quotient::circuit::Src]| -> Vec<u8> {
-            wires.chunks(8).map(|byte| byte.iter().enumerate().fold(0u8, |acc, (i, &s)| acc | read(&w, s) << i)).collect()
+        let bit_bytes = |wires: &[Src]| -> Vec<u8> {
+            let byte = |bits: &[Src]| bits.iter().enumerate().fold(0u8, |acc, (i, &s)| acc | read(&w, s) << i);
+            wires.chunks(8).map(byte).collect()
         };
         assert_eq!(glue::read_bytes(&v, &glue.digest), bit_bytes(&digest), "round {round}: the digest");
         let h_msg = [&sig[..16], &pk[..], &[0, 0], &msg[..]].concat();

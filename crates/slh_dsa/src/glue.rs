@@ -332,7 +332,8 @@ impl G {
     }
 
     /// An XMSS root from a signature of `msg` at leaf `leaf` (FIPS 205, Algorithm 11), and its bits.
-    fn xmss_root(&mut self, p: &Params, layer: usize, tree: &[Src], leaf: &[Src], sig: &[Node], msg: &[Src]) -> (Node, Bits) {
+    fn xmss_root(&mut self, p: &Params, layer: usize, tree: &[Src], leaf: &[Src], sig: &[Node], msg: &[Src])
+    -> (Node, Bits) {
         let (wots_sig, auth) = sig.split_at(p.len());
         let mut adrs = Adrs::new(layer, tree, WOTS_HASH);
         adrs.key_pair = leaf.to_vec();
@@ -434,7 +435,9 @@ impl Glue {
             Hint::Lane(k) => F64(lanes[k as usize]),
             Hint::X => F64::G,
             Hint::Out { call, lane } => F64(self.state(&mut states, call as usize, v)[lane as usize]),
-            Hint::OutBit { call, lane, bit } => F64(self.state(&mut states, call as usize, v)[lane as usize] >> bit & 1),
+            Hint::OutBit { call, lane, bit } => {
+                F64(self.state(&mut states, call as usize, v)[lane as usize] >> bit & 1)
+            }
         })
     }
 
@@ -507,7 +510,7 @@ pub fn build(p: &Params) -> Glue {
     // `H_msg(R, PK.seed, PK.root, M')`: lanes 0–1 `R`, 2–3 the seed, 4–5 `PK.root`, then the bytes 48..88 of
     // `0x0000 ‖ M ‖ 0x1F ‖ 0…`, the last rate lane `0x80 << 56`; one block.
     g.at(3);
-    let packed: Vec<Src> = [&seed, &root].iter().flat_map(|v| v.chunks(64).collect::<Vec<_>>()).map(|lane| g.pack(lane)).collect();
+    let packed: Vec<Src> = [&seed, &root].iter().flat_map(|v| v.chunks(64)).map(|lane| g.pack(lane)).collect();
     g.seed = [packed[0], packed[1]];
     let tail = [const_bytes(&[0, 0]), msg.clone(), const_bytes(&[0x1F]), const_bytes(&[0; 5])].concat();
     assert!(3 * p.n + 2 + MSG_BYTES < RATE && tail.len() == 5 * 64);
@@ -526,7 +529,8 @@ pub fn build(p: &Params) -> Glue {
     let leaf_bytes = p.hp.div_ceil(8);
     let md = &digest[..8 * md_bytes];
     let idx_tree = to_int(&digest[8 * md_bytes..8 * (md_bytes + tree_bytes)])[..p.h - p.hp].to_vec();
-    let idx_leaf = to_int(&digest[8 * (md_bytes + tree_bytes)..8 * (md_bytes + tree_bytes + leaf_bytes)])[..p.hp].to_vec();
+    let leaf_at = 8 * (md_bytes + tree_bytes);
+    let idx_leaf = to_int(&digest[leaf_at..leaf_at + 8 * leaf_bytes])[..p.hp].to_vec();
 
     let fors_len = p.k * (1 + p.a);
     let (_, mut node) = g.fors_pk(p, &sig[1..1 + fors_len], md, &idx_tree, &idx_leaf);
@@ -560,14 +564,16 @@ pub fn build(p: &Params) -> Glue {
 /// The public bits `PK.seed ‖ PK.root ‖ M`, each byte low bit first, and the signature's lanes.
 pub fn inputs(p: &Params, pk: &[u8; 32], msg: &[u8; MSG_BYTES], sig: &[u8]) -> (Vec<bool>, Vec<u64>) {
     assert_eq!(sig.len(), p.sig_bytes());
-    let public = [&pk[..], &msg[..]].concat().iter().flat_map(|&byte| (0..8).map(move |i| (byte >> i) & 1 == 1)).collect();
+    let bytes = [&pk[..], &msg[..]].concat();
+    let public = bytes.iter().flat_map(|&byte| (0..8).map(move |i| (byte >> i) & 1 == 1)).collect();
     let lanes = sig.chunks(8).map(|lane| u64::from_le_bytes(lane.try_into().unwrap())).collect();
     (public, lanes)
 }
 
 /// The value of 128 bit cells (low bit first) as 16 bytes, from the row outputs.
 pub fn read_bytes(v: &[F64], bits: &[Src]) -> Vec<u8> {
-    bits.chunks(8).map(|byte| byte.iter().enumerate().fold(0u8, |acc, (i, &s)| acc | (read_k(v, s).0 as u8) << i)).collect()
+    let byte = |bits: &[Src]| bits.iter().enumerate().fold(0u8, |acc, (i, &s)| acc | (read_k(v, s).0 as u8) << i);
+    bits.chunks(8).map(byte).collect()
 }
 
 #[cfg(test)]
