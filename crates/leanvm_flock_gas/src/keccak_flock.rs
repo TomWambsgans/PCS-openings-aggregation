@@ -173,7 +173,7 @@ fn grouped<S: Scalar>(n: usize, weights: &[S; 4], x: impl Fn(usize) -> S) -> S {
 ///   s_z`, which is also the `C = I` claim's sum). Lanes 25..31 of every run and the suffix are empty rows and unread
 ///   columns: no term.
 ///
-/// About 2,600 `E` operations at a skip of 3 (the recorder's count is in SPEC-FAST's M3 notes). `Σ_z E_z = 1`
+/// 3,019 `E` operations at a skip of 3, 6,799 at 6 (recorded: SPEC-FAST's M3 notes). `Σ_z E_z = 1`
 /// (Lagrange weights and an eq table each sum to 1) is used for the rows whose 64 positions all carry the same form.
 pub fn structured_terminal<S: Scalar>(
     z_skip: Option<S>,

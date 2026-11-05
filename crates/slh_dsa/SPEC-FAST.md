@@ -141,7 +141,7 @@ batched; every z slot is the output of one row (constant wire, free input, lin-i
     per offset;
   - rounds 0 and 23 (the port quads) and the ι constants are corrections.
   
-  Estimate: ≈ 10K `E` ops [E], to be checked against the prover's walk (M3).
+  Estimate: ≈ 10K `E` ops [E]; built (M3): 3,019 [M], equal to the walk (M3 notes, after §4.5).
 
 ### 4.3 The glue circuit (quotient Builder over K)
 
@@ -271,6 +271,71 @@ Corrections beyond the shifted rounds: round 0's reads (port C words), round 23'
 (`A = [word 4q, same z]`), the constant rows (34 slots: Y bits, quad 25's two `x` bits), the free inputs
 (`A = [slot]`), the constant's column (every lin-id and free row's `B`, every product row's `A` has it, ι's bits),
 and the empty lanes 25..31 of each run. The forward walk to check against is `keccak_flock::row_values`.
+
+### M3 notes (as built: `leanvm_flock_gas::keccak_flock::structured_terminal`)
+
+`Keccak`'s `WalkedCircuit::terminal` is now the structured one (`verify_walked_with::<_, Keccak>`); `KeccakWalked` keeps
+M1's walk as the reference (the trait's default terminal, `walked_terminal_with`). The algorithm:
+
+1. **Packing weights.** `E = L(z_skip) ⊗ eq(row_low)` is split at bit `p = max(k, 3)` into `E_low ⊗ E_high`
+   (`8 + 8` entries at skip 3).
+2. **The 40 correlations** `Corr[off] = Σ_z E_z s_(z − off)`, `off` ∈ ρ's rotations ∪ (rotations + 1), the offsets
+   θ's `z − 1` adds. They go through 8 partial correlations of length 8, `Q[ol][m] = Σ_zl E_low[zl] s_(8m + zl − ol)`
+   (512 products), then `Corr[off] = Σ_zh E_high[zh] Q[off mod 8][zh − off/8]` (320). `Corr[0]` is also the
+   `C = I` claim's `Σ e_i s_i`.
+3. **Eq factors.** `eq(chi, word) = Lr[lane] · Kd[kind] · Rd[round + 2]`, on both sides (four 5-variable tables).
+   A port word `4q + r` is lane field `4(q & 7) + r` in group `q >> 3`.
+4. **b's terms.** For each of the 25 lanes `i` of `b`, a row weight `U_i = Kd0 (Lr[x−1] + α Lr[x−2]) + Kd1 Lr[i]`
+   covers the t rows' left and right and the A row. It is scaled by the round factor
+   `Σ_(j=1..22) Rd[j+2] Rh[j+1]` (rounds 1..22), plus round 23's (its A row is a port X word) and round 0's (its
+   columns are the port C words). It is spread over `b[i]`'s two offsets by θ's column sums of `Lh` (or of the C
+   words' column weights): 50 coefficients `G[off]`, then `Σ G[off] Corr[off]`.
+5. **Corrections**:
+   - the constant column, `s_0 eq(word 1, chi')`, times the t rows' `1`, ι's bits (`E` at `z = 2^m − 1`), the 34
+     constant rows and every `B = [1]` (using `Σ_z E_z = 1`), plus the pin's `α³`;
+   - the free inputs, the V copies and the A rows' `t` term, times `Corr[0]`.
+
+   Lanes 25..31 and the suffix have no term.
+
+**Tests** [M]: `crates/leanvm_flock_gas/tests/keccak_terminal.rs` (run on h1 and on a Mac).
+- It is equal to `walked_terminal_with::<_, KeccakWalked>` at random points, challenges and slices at every skip
+  0..6, with 24 trials at skips 3 and 6.
+- It is equal for each of the 64 packing positions alone (`s = e_i`, unit and random weight) at skips 3 and 6.
+- The eq points of `FsShape::Rec`/`Rec3` do not enter the terminal's inputs, which are the zerocheck's and lincheck's
+  round challenges.
+- The end-to-end test (`leanvm_univariate/tests/flock_keccak.rs`) now checks every verdict with both terminals and
+  asserts they agree. On a Mac (M-series):
+  - at 128 blocks, skips 3 and 6, `Rec` and `Main`, the proofs are accepted and a changed slice and a flipped state
+    bit are rejected;
+  - at 4,096 blocks (ignored test), the proofs at skips 3 and 6 are accepted and a flipped output bit is rejected;
+    prove 0.181 s at skip 3 and 0.125 s at skip 6 (not comparable to h1's).
+
+**Op count** [M] (the recorder's `Mul` and `Add` nodes, `structured_terminal_ops`):
+
+| skip | products (by a constant) | sums | **`E` ops** | where they go |
+|---|---:|---:|---:|---|
+| 3 | 1,510 (8) | 1,509 | **3,019** | partial correlations ≈ 960, correlations 600, eq tables ≈ 250, lane loop ≈ 575 |
+| 6 | 3,449 (64) | 3,350 | 6,799 | correlations `40 · 64` ≈ 5.1K, 64 Lagrange weights |
+
+Target ≤ 15K. The walk it replaces records 563,462 ops at skip 3 (255,704 products, 307,758 sums; the recorder
+shares common subterms).
+
+**Flock for 4,096 Keccak-f, structured terminal** [M] (`flock_keccak_verifier_fragment`: recorded, compiled, run on
+revm; log_n 29):
+
+| shape | scalars (B) | Keccak-256 | Keccak-f | `FIELD_MUL` (live) | recorded products / sums | execution (of it the terminal) |
+|---|---:|---:|---:|---:|---:|---:|
+| **skip 3, `Rec3`** (= `Rec` for Flock) | **148 (3,552)** | **47** | **59** | **2,239** | 2,266 / 2,622 | 74,374 (42,145) |
+| skip 6, `Rec3` | 198 (4,752) | 44 | 66 | 4,446 | 4,641 / 4,563 | 129,704 (87,926) |
+
+Keccak-f counts each hash's `⌈(32 + absorbed bytes + 1) / 136⌉` blocks.
+
+**π2 positions** (§4.7's accounting):
+- Flock: 59 Keccak-f × 130,736 = 7.71M, plus ≈ 4.9K `E` ops at ≈ 10 positions an op (SPEC-REC §10.4 measured
+  114,704 positions for 11.7K ops) ≈ 0.05M: **≈ 7.76M**.
+- The whole π1 of §4.7: 91 Keccak-f = 11.9M. Its `E` ops are ≈ 10.7K (this terminal 3.0K instead of the modelled
+  10K, plus the ring kernel 5.3K, the quotient 0.4K and the batch weights 2K), and with the stream bits that part is
+  ≈ 1.23M. Total **≈ 13.1M of 2^24 (78%)**, against the modelled 13.2M.
 
 ### 4.6 Claims and sizes
 
@@ -417,8 +482,8 @@ other large term is π2, which is already measured.
    - `W`'s committed basis (novel) and the restriction formula for its cell order (`4r + role`);
    - `Q_link`'s degree (2^22.3), which puts C1 at 90% of 2^24 (fallback: a 2^25 C1, +0.1 s, better lists).
    - The port quads force an output lane into `X`/`V` and an input lane into `C`, which σ must respect.
-3. **Keccak terminal cost**: a naive walk would overflow π2 (≈ 10M positions). The structured form (≈ 10K ops) is
-   modelled, not built (M3).
+3. **Keccak terminal cost**: a naive walk would overflow π2 (≈ 10M positions). The structured form is built (M3):
+   3,019 ops at skip 3, equal to the walk [M].
 4. **C2 near capacity** if the quotient keeps its hiding layout (63 words a row = 98% of 2^24). Use the non-hiding
    layout (86%) or a 2^25 C2.
 5. **π1 transcript count** (≈ 91 Keccak-f [E]): the batch pairs' message size sets ≈ 12–25 of it. Up to ≈ 110 still
