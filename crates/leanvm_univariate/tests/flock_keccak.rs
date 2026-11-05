@@ -87,8 +87,11 @@ fn variant(skip: usize, fs: FsShape) -> Variant {
     }
 }
 
-/// Prove, then verify: the verdict, and the proof's slices' point and slices and stream.
-fn run(witness: &FlockWitness, variant: Variant, log_n: usize, seed: [u8; 32]) -> (Result<(), VerifierError>, Vec<E>, Vec<E>, Vec<u8>, f64) {
+/// What [`run`] returns: the verdict, the proof's slices' point, its slices, its stream and its seconds.
+type Run = (Result<(), VerifierError>, Vec<E>, Vec<E>, Vec<u8>, f64);
+
+/// Prove, then verify.
+fn run(witness: &FlockWitness, variant: Variant, log_n: usize, seed: [u8; 32]) -> Run {
     let mut writer = KeccakWriter::new(seed);
     let started = std::time::Instant::now();
     let out = prove_keccak(&mut writer, witness, variant, log_n).expect("a proof");

@@ -217,6 +217,61 @@ So W's cells on the aligned coset `o + V_19` (2^17 rows × 4) equal `q_flock`'s 
 Prover: `ℓ_q` on 10 cosets of 2^19 by shifted-cube folds (`O(19 · 2^19)` each, leanvm_univariate's `copy_j`
 code) and one inverse NTT, ≈ 0.1 s [E].
 
+### M1 notes (as built: `lv42_flock::keccak`)
+
+The port quads are as above; two things inside the block differ from §4.2, neither visible to the glue.
+
+**Block layout** (64-bit words `w < 2048`; bit `z` of a lane is bit `z` of its word, the packing position; lanes
+`x + 5y`):
+
+| words | content | rows |
+|---|---|---|
+| `4q + 0`, `q < 25` | `A_23[q]` (X = output lane `q`) | lin-id: round 23's form `b[X] + t_23 + RC_23` |
+| `4q + 1`, all `q < 32` | the K-word `1` (Y): bit 0 = 1, bits 1..63 = 0 | bit 0 constant (`A = B = [1]`); others empty |
+| `4q + 2`, `q < 25` | `A_{-1}[q]` (C = input lane `q`) | free input |
+| `4q + 3`, `q < 25` | `A_23[q]` (V) | lin-id copy of word `4q` |
+| `100, 101, 102, 103` (quad 25) | `(x, 1, 0, x)`, `x` = bit 1 | bit 1 of 100 and 103 constant rows |
+| `4q..4q+3`, `26 ≤ q < 32` | `(0, 1, 0, 0)` | |
+| `64(j + 2) + l`, `j < 24`, `l < 25` | `t_j[l]` | product `(1 + b[x+1]) · b[x+2]` |
+| `64(j + 2) + 32 + l`, `j < 23` | `A_j[l]` | lin-id `b[x] + t_j + RC_j` (`RC` on lane 0 only) |
+| words 25..31 of each 32-word run; bits `[104,000, 131,072)` | 0 | empty (the suffix is Flock's `PaddingSpec`, 104,000 useful bits) |
+
+**Changes from §4.2, and why**:
+1. *The rounds' runs are aligned* (`t_j` at `64(j+2) + l`, `A_j` at `64(j+2) + 32 + l`) instead of packed
+   (`t_0..t_23, A_0..A_22` contiguous, 83,393 bits). §4.2's structured terminal needs the slot index to factor as
+   `(z: 6, lane: 5, kind: 1, round + 2: 5)` bit fields, so that the round factor is a shift between consecutive
+   values of a 5-bit field; a packed layout (`128 + 25(2j + kind) + l`) does not factor and would cost the terminal
+   a sum per round (≈ 20K more `E` products). Cost: the useful prefix is 104,000 bits (79%) instead of 83,393
+   (64%), which the zerocheck's bit passes and the lincheck's fold pay (measured below).
+2. *The constant wire is quad 0's Y bit* (slot 64) instead of a slot after `A_22`: every Y word needs its bit 0
+   pinned to 1 anyway; quad 0's is the wire (lincheck's `const_pin_col`), the others are constant rows from it.
+3. Quad 25's `x` words are both constant rows (not a copy of each other); empty bits are empty rows.
+
+80,034 slots are constrained; ≈ 1.39M nonzeros a block.
+
+**Measured** [M] (h1, `RUSTFLAGS="-C target-cpu=native"`, `FsShape::Rec`, walked terminal; `cargo test --release -p
+leanvm_univariate --test flock_keccak -- --ignored --nocapture`): 4,096 blocks (3,959 random states, Keccak-f(0)
+padding), `log_n = 29`, median of 3:
+
+| skip | witness | prove | runs | stream |
+|---|---:|---:|---|---:|
+| 3 | 0.023 s | **0.189 s** | 0.181 / 0.189 / 0.192 | 3,552 B |
+| 6 | 0.023 s | **0.132 s** | 0.132 / 0.120 / 0.148 | 4,752 B |
+
+At skip 3 the zerocheck is ≈ 0.17 s of it (round 1 0.021, bit passes 0.073 / 0.039 / 0.016, storing 0.013, table
+rounds 0.012), the lincheck (walk, fold, 11 rounds) ≈ 0.015 s. Within §4.9's 0.18 s and M1's 0.3 s target. The verifier's reference walk (generic `Scalar`) is
+`leanvm_flock_gas::keccak_flock` (`flock_min::verify_walked_with::<_, Keccak>`); the prover's entry is
+`leanvm_univariate::prover::flock::prove_keccak` (walked terminal only).
+
+**For M3 (the structured terminal)**: the terminal is `Σ_rows e(row) (Â0 + α B̂0)(row, col) w(col)` with
+`e = L(z_skip) ⊗ eq(row_low) ⊗ eq(chi_in)` (6 + 11 bits) and `w = s ⊗ eq(chi_in')`, plus `α² eq(chi_in, chi_in')
+Σ e_i s_i` and the pin `α³ eq(word(64) = 1, chi_in') s_0`. Every round `j` reads only `A_{j-1}` (round 0 the C
+words `4q + 2`) and writes `t_j` and `A_j` (round 23 the X words `4q`); rounds 1..22 are identical but for `RC_j`.
+Corrections beyond the shifted rounds: round 0's reads (port C words), round 23's writes (X words) and the V copies
+(`A = [word 4q, same z]`), the constant rows (34 slots: Y bits, quad 25's two `x` bits), the free inputs
+(`A = [slot]`), the constant's column (every lin-id and free row's `B`, every product row's `A` has it, ι's bits),
+and the empty lanes 25..31 of each run. The forward walk to check against is `keccak_flock::row_values`.
+
 ### 4.6 Claims and sizes
 
 | commitment | content | words [E] | stack | claim |

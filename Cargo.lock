@@ -1888,6 +1888,7 @@ dependencies = [
 name = "lv42_flock"
 version = "0.1.0"
 dependencies = [
+ "keccak",
  "lv42_fiat_shamir",
  "lv42_parallel",
  "lv42_pcs",
