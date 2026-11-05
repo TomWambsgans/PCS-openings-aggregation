@@ -53,7 +53,7 @@ pub enum VerifyError {
 /// - [`Inverse::Hint`]: the prover sends it, as a sixth scalar after the five, absorbed with them before the last
 ///   challenge, and the verifier requires `product · hint = 1`. The check is deterministic, and the hint a function
 ///   of the transcript before it, so soundness and zero knowledge are those of [`Inverse::Compute`]. The proof is
-///   one scalar longer (24 bytes of calldata), and the contract some 1,175 gas of execution cheaper.
+///   one scalar longer (24 bytes of calldata), and the contract 1,172 gas of execution cheaper at 2^22 rows.
 ///
 /// The two are different protocols: the transcript's label names the mode ([`Inverse::name`]), so a proof of one
 /// is not a proof of the other.
