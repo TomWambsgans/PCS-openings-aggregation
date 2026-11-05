@@ -48,17 +48,26 @@
 //! code, then the two arguments ABI-encoded (64 bytes); it stores `indexRoot`, the Merkle root of the circuit's
 //! index table as its 32 bytes, in slot 0, writes `owner` into the code, and reverts on value or on arguments of
 //! another length.
+//!
+//! # Hint mode
+//!
+//! [`contract_in`] and [`claims_contract_in`] build the same verifier for proofs of another protocol,
+//! `quotient::protocol::Inverse::Hint`, its transcript named `pcs-quotient-kh1`: the proof carries a sixth scalar,
+//! the inverse the verifier would otherwise compute, which it checks (`product · hint + 1` must be zero, else it
+//! reverts). Calldata is 276 bytes, the hint at `252..276`, 24 bytes big-endian. Either verifier may hold the
+//! circuit's commitment in storage, as above, or in its code (no constructor arguments, no `setIndexRoot`,
+//! deployed by [`creation_code`]). The deployed contract, and `formal/`, are of the compute mode.
 
 use fiat_shamir::merkle::Hash;
 use primitives::field::F192;
 use quotient::opening::Claim;
-use quotient::protocol::{Claims, Reduced, label, reduce, sum_point};
+use quotient::protocol::{Claims, Inverse, Reduced, label_in, reduce_in, sum_point};
 use quotient::statement::Statement;
 use quotient::transcript::{Proof, TranscriptError, scalars_root};
 use revm::primitives::{Address, U256};
 
-use crate::codegen::{COMMITMENT, Ending, Entry, Word, compile, compile_linked, creation_code};
-pub use crate::codegen::{Contract, SET_INDEX_ROOT, VERIFY};
+use crate::codegen::{COMMITMENT, Ending, Entry, Word, compile, compile_linked};
+pub use crate::codegen::{Contract, SET_INDEX_ROOT, VERIFY, creation_code};
 use crate::contract::Recorder;
 use crate::machine::{TableId, element_word, layout_id, root_word};
 use crate::record::{Graph, Sym, record};
@@ -92,6 +101,21 @@ pub fn contract_linked(log_rows: usize, limit: usize) -> Contract {
 /// [`claims_contract`] as contracts of at most `limit` bytes of code each.
 pub fn claims_contract_linked(log_rows: usize, limit: usize) -> Contract {
     build_linked(log_rows, &entry(true, None), false, limit)
+}
+
+/// [`contract`] for proofs in mode `inverse` (`quotient::protocol::Inverse`), with the circuit's commitment in
+/// storage (`None`, deployed by [`init_code`] or [`deploy`]) or in the code (deployed by [`creation_code`] alone,
+/// with no constructor arguments and no `setIndexRoot`). With [`Inverse::Hint`] calldata is 276 bytes: the proof
+/// is 208, the hint the sixth scalar, bytes `252..276`. `contract_in(log_rows, Inverse::Compute, None)` is
+/// [`contract`].
+pub fn contract_in(log_rows: usize, inverse: Inverse, index_root: Option<&Hash>) -> Contract {
+    build_in(log_rows, &entry_in(true, index_root, inverse), true, inverse)
+}
+
+/// [`claims_contract`] for proofs in mode `inverse`, the circuit's commitment in storage or in the code, as
+/// [`contract_in`].
+pub fn claims_contract_in(log_rows: usize, inverse: Inverse, index_root: Option<&Hash>) -> Contract {
+    build_in(log_rows, &entry_in(true, index_root, inverse), false, inverse)
 }
 
 /// The init code deploying `contract` (either of the two above) for the circuit committed as `index_root`, owned
@@ -131,12 +155,17 @@ pub fn deploy(
 /// How the contract is entered: with the selector or not, and with the circuit's commitment in storage or else
 /// in the code (`index_root`).
 fn entry(selector: bool, index_root: Option<&Hash>) -> Entry {
+    entry_in(selector, index_root, Inverse::Compute)
+}
+
+/// [`entry`] for proofs in mode `inverse`: the transcript's name is that mode's.
+fn entry_in(selector: bool, index_root: Option<&Hash>, inverse: Inverse) -> Entry {
     let some_root = [0xa5; 32];
     let zero = Statement {
         y: [0; 32],
         root: [0; 32],
     };
-    let label = label(&some_root, &zero);
+    let label = label_in(&some_root, &zero, inverse);
     assert!(
         label.len() == 112 && label[16..48] == some_root,
         "the label is a name, the root and the statement"
@@ -149,22 +178,31 @@ fn entry(selector: bool, index_root: Option<&Hash>) -> Entry {
 }
 
 fn build(log_rows: usize, entry: &Entry, pcs_open: bool) -> Contract {
+    build_in(log_rows, entry, pcs_open, Inverse::Compute)
+}
+
+/// `entry`'s name must be `inverse`'s ([`entry_in`]).
+fn build_in(log_rows: usize, entry: &Entry, pcs_open: bool, inverse: Inverse) -> Contract {
     let Recorded {
         graph,
         outputs,
         ending,
         inputs,
-    } = recorded(log_rows, entry, pcs_open);
+    } = recorded(log_rows, entry, pcs_open, inverse);
     compile(&graph, &outputs, &ending, entry, inputs)
 }
 
 fn build_linked(log_rows: usize, entry: &Entry, pcs_open: bool, limit: usize) -> Contract {
+    build_linked_in(log_rows, entry, pcs_open, limit, Inverse::Compute)
+}
+
+fn build_linked_in(log_rows: usize, entry: &Entry, pcs_open: bool, limit: usize, inverse: Inverse) -> Contract {
     let Recorded {
         graph,
         outputs,
         ending,
         inputs,
-    } = recorded(log_rows, entry, pcs_open);
+    } = recorded(log_rows, entry, pcs_open, inverse);
     compile_linked(&graph, &outputs, &ending, entry, inputs, limit)
 }
 
@@ -181,13 +219,15 @@ pub(crate) struct Recorded {
 /// it as Lean (`lean.rs`).
 #[cfg(test)]
 pub(crate) fn deployed(log_rows: usize) -> Recorded {
-    recorded(log_rows, &entry(true, None), true)
+    recorded(log_rows, &entry(true, None), true, Inverse::Compute)
 }
 
-fn recorded(log_rows: usize, entry: &Entry, pcs_open: bool) -> Recorded {
+fn recorded(log_rows: usize, entry: &Entry, pcs_open: bool, inverse: Inverse) -> Recorded {
+    assert_eq!(&entry.name, inverse.name(), "the entry's name is the mode's");
     let ((reduced, read), graph) = record(|| {
         let mut recorder = Recorder::new();
-        let reduced = reduce(&mut recorder, log_rows).unwrap_or_else(|_| unreachable!("a recorder rejects nothing"));
+        let reduced = reduce_in(&mut recorder, log_rows, inverse)
+            .unwrap_or_else(|_| unreachable!("a recorder rejects nothing"));
         (reduced, recorder.read)
     });
     let Reduced {
@@ -346,7 +386,7 @@ mod tests {
     use primitives::test_rng::Rng;
     use quotient::circuit::{LOG_ROWS, membership, membership_inputs};
     use quotient::opening::commit;
-    use quotient::protocol::{Index, prove_with_seed, verify};
+    use quotient::protocol::{Index, prove_with_seed_in, verify, verify_in};
     use quotient::statement::{DEPTH, Secret};
     use revm::primitives::TxKind;
 
@@ -354,6 +394,11 @@ mod tests {
     const OWNER: Address = Address::with_last_byte(0x0e);
 
     fn proof(rng: &mut Rng) -> (Hash, Statement, Proof) {
+        proof_in(rng, Inverse::Compute)
+    }
+
+    /// A full-size membership proof in mode `inverse`.
+    fn proof_in(rng: &mut Rng, inverse: Inverse) -> (Hash, Statement, Proof) {
         let mut bytes = || std::array::from_fn(|_| rng.next_u64() as u8);
         let secret = Secret {
             x: bytes(),
@@ -367,7 +412,7 @@ mod tests {
         let index_root = commit(&index.table).root;
         // The proof's seed from the test generator, so that the tests repeat: `prove` draws a fresh one.
         let seed = std::array::from_fn(|_| rng.next_u64() as u8);
-        let proved = prove_with_seed(&circuit, &index, &index_root, &statement, &cells, &seed);
+        let proved = prove_with_seed_in(&circuit, &index, &index_root, &statement, &cells, &seed, inverse);
         (index_root, statement, proved.proof)
     }
 
@@ -698,6 +743,234 @@ mod tests {
                 "47d5a8e6135abfd897cc68224821b8fe0801149565e8c5806a03c158be15489f",
             ]
         );
+    }
+
+    /// The protocol tests' toy circuit at `2^17` rows, `root` a Keccak-256 of `y`, for proofs in hint mode, which
+    /// the full-size circuit would make take some 10 GB each.
+    const TOY_ROWS: usize = 17;
+
+    fn toy() -> quotient::circuit::Circuit {
+        use quotient::circuit::{Builder, Src, public_words};
+        let mut b = Builder::new();
+        let x: Vec<Src> = (0..256).map(|_| b.input()).collect();
+        let digest = b.keccak256_64(&[&x[..], &x[..]].concat());
+        b.finish(TOY_ROWS, &public_words(&x, &digest))
+    }
+
+    /// A toy proof in mode `inverse`, of a random `y`.
+    fn toy_proof(rng: &mut Rng, inverse: Inverse) -> (Hash, Statement, Proof) {
+        let circuit = toy();
+        let x: [u8; 32] = std::array::from_fn(|_| rng.next_u8());
+        let statement = Statement {
+            y: x,
+            root: quotient::statement::pair(&x, &x),
+        };
+        let inputs: Vec<bool> = (0..256).map(|i| (x[i / 8] >> (i % 8)) & 1 == 1).collect();
+        let cells = circuit.cells(&inputs);
+        let index = Index::new(&circuit);
+        let index_root = commit(&index.table).root;
+        let seed = std::array::from_fn(|_| rng.next_u8());
+        let proved = prove_with_seed_in(&circuit, &index, &index_root, &statement, &cells, &seed, inverse);
+        (index_root, statement, proved.proof)
+    }
+
+    /// A toy proof in each mode, of the same circuit (one index root) and different statements.
+    static TOY: LazyLock<[(Hash, Statement, Proof); 2]> = LazyLock::new(|| {
+        let mut rng = Rng::new(0x41D);
+        [Inverse::Compute, Inverse::Hint].map(|inverse| toy_proof(&mut rng, inverse))
+    });
+
+    /// [`block_for`] in mode `inverse`, at `log_rows`.
+    fn block_in(index_root: &Hash, statement: &Statement, proof: &Proof, log_rows: usize, inverse: Inverse) -> PcsOpen {
+        let mut block = PcsOpen::default();
+        if let Ok((roots, claims)) = verify_in(index_root, statement, proof, log_rows, inverse) {
+            for (root, id, claims) in openings(index_root, &roots, &claims, log_rows) {
+                block.register(&root, id, &claims);
+            }
+        }
+        block
+    }
+
+    /// A chain holding `contract`: as [`deployed`] if it reads the circuit's commitment from storage, else by its
+    /// creation code alone (a driver's parts first).
+    fn deployed_any(contract: &Contract, index_root: &Hash) -> (Chain, Address) {
+        if contract.owner_at.is_some() {
+            return deployed(contract, index_root);
+        }
+        let mut chain = Chain::default();
+        let addresses: Vec<[u8; 20]> = contract
+            .parts
+            .iter()
+            .map(|part| chain.deploy(&evm_link::creation_code(part, &[])).0.expect("a part").into_array())
+            .collect();
+        let address = chain.deploy(&creation_code(&contract.calling(&addresses))).0;
+        (chain, address.expect("a deployment"))
+    }
+
+    /// The hint-mode builds the tests run on: the circuit's commitment in storage or in the code, each as one
+    /// contract and linked into parts of at most 2,048 bytes; the claims contract or the contract.
+    fn hint_builds(index_root: &Hash, pcs_open: bool) -> Vec<(String, Chain, Address)> {
+        let mut builds = Vec::new();
+        for in_code in [false, true] {
+            let entry = entry_in(true, in_code.then_some(index_root), Inverse::Hint);
+            for limit in LIMITS {
+                let contract = build_linked_in(TOY_ROWS, &entry, pcs_open, limit, Inverse::Hint);
+                let (chain, address) = deployed_any(&contract, index_root);
+                builds.push((format!("in code {in_code}, limit {limit}"), chain, address));
+            }
+        }
+        builds
+    }
+
+    /// The hint contract's ABI: calldata is the membership one's with the hint, the sixth scalar, after the five.
+    #[test]
+    fn hint_calldata_is_276_bytes() {
+        let [(_, statement, compute), (_, _, hinted)] = &*TOY;
+        let data = calldata(statement, hinted).unwrap();
+        assert_eq!(data.len(), 276);
+        assert_eq!(calldata(statement, compute).unwrap().len(), 252);
+        let hint = hinted.stream[9];
+        let be: Vec<u8> = [hint.c2, hint.c1, hint.c0].iter().flat_map(|l| l.to_be_bytes()).collect();
+        assert_eq!(data[252..], be[..]);
+        assert_eq!(&entry_in(true, None, Inverse::Hint).name, b"pcs-quotient-kh1");
+        assert_eq!(entry_in(true, None, Inverse::Compute).name, entry(true, None).name);
+    }
+
+    /// In hint mode, the contract without its calls and the Rust verifier (`verify_in`) leave the same commitments
+    /// and claims on an honest proof, and agree on tampered ones (a tampered hint, or any other scalar, which the
+    /// hint then does not fit: both reject), on another statement and another index root; calldata of the compute
+    /// mode's length, or one byte off, reverts. In storage or in the code, one contract or linked.
+    #[test]
+    fn hint_contract_is_the_verifier() {
+        let (index_root, statement, proof) = TOY[1].clone();
+        let verify = |index_root: &Hash, statement: &Statement, proof: &Proof| {
+            verify_in(index_root, statement, proof, TOY_ROWS, Inverse::Hint).ok()
+        };
+        let expected = verify(&index_root, &statement, &proof).expect("a reduction");
+        for (name, chain, address) in hint_builds(&index_root, false) {
+            let returned = |statement: &Statement, proof: &Proof| {
+                let output = chain
+                    .call(address, &calldata(statement, proof).unwrap(), &PcsOpen::default())
+                    .output;
+                output.as_deref().and_then(|output| decode(output, TOY_ROWS))
+            };
+            assert_eq!(returned(&statement, &proof), Some(expected.clone()), "{name}");
+            let mut tampered = proof.clone();
+            for at in 0..proof.stream.len() {
+                tamper(&mut tampered, at);
+                assert_eq!(verify(&index_root, &statement, &tampered), None, "{name}: {at}");
+                assert_eq!(returned(&statement, &tampered), None, "{name}: {at}");
+                tamper(&mut tampered, at);
+            }
+            for hint in [F192::ZERO, F192::ONE, proof.stream[9] + F192::new(0, 0, 1 << 63)] {
+                tampered.stream[9] = hint;
+                assert_eq!(returned(&statement, &tampered), None, "{name}: {hint:?}");
+            }
+            let mut other = statement;
+            other.y[5] ^= 4;
+            assert_eq!(returned(&other, &proof), verify(&index_root, &other, &proof), "{name}");
+
+            let data = calldata(&statement, &proof).unwrap();
+            let none = PcsOpen::default();
+            assert!(chain.call(address, &[&data[..], &[0]].concat(), &none).output.is_none(), "{name}");
+            assert!(chain.call(address, &data[..data.len() - 1], &none).output.is_none(), "{name}");
+            assert!(chain.call(address, &data[..252], &none).output.is_none(), "{name}");
+        }
+        // Against another circuit's root in storage, the proof leads to other challenges, which its hint does not fit.
+        let mut other_root = index_root;
+        other_root[9] ^= 1;
+        let (chain, address) = deployed(
+            &build_in(TOY_ROWS, &entry_in(true, None, Inverse::Hint), false, Inverse::Hint),
+            &other_root,
+        );
+        let output = chain.call(address, &calldata(&statement, &proof).unwrap(), &PcsOpen::default()).output;
+        assert_eq!(output.as_deref().and_then(|output| decode(output, TOY_ROWS)), None);
+        assert_eq!(verify(&other_root, &statement, &proof), None);
+    }
+
+    /// In hint mode the contract succeeds, returning the word 1, against the openings of the claims `verify_in`
+    /// leaves, and reverts without them, on a tampered hint (whatever the block holds) and on a tampered proof.
+    /// Proofs do not cross modes: the hint contract reverts on the compute proof, with its openings or with the hint
+    /// appended, and the compute contract on the hint proof, as it is or without its hint.
+    #[test]
+    fn hint_contract_has_pcs_open_check_the_claims() {
+        let [(index_root, compute_statement, compute_proof), (_, statement, proof)] = TOY.clone();
+        let honest = block_in(&index_root, &statement, &proof, TOY_ROWS, Inverse::Hint);
+        let compute_honest = block_in(&index_root, &compute_statement, &compute_proof, TOY_ROWS, Inverse::Compute);
+        let data = calldata(&statement, &proof).unwrap();
+        let mut appended = compute_proof.clone();
+        appended.stream.push(
+            quotient::protocol::hint(&index_root, &compute_statement, &compute_proof, TOY_ROWS).expect("a hint"),
+        );
+        let mut dropped = proof.clone();
+        dropped.stream.pop();
+        for (name, chain, address) in hint_builds(&index_root, true) {
+            let succeeds = |data: &[u8], block: &PcsOpen| {
+                let output = chain.call(address, data, block).output;
+                assert!(output.as_ref().is_none_or(|output| *output == VERIFIED));
+                output.is_some()
+            };
+            assert!(succeeds(&data, &honest), "{name}");
+            assert!(!succeeds(&data, &PcsOpen::default()), "{name}");
+            assert!(!succeeds(&data, &compute_honest), "{name}");
+            let mut tampered = proof.clone();
+            for at in 0..proof.stream.len() {
+                tamper(&mut tampered, at);
+                let data = calldata(&statement, &tampered).unwrap();
+                assert!(!succeeds(&data, &honest), "{name}: {at}");
+                assert!(!succeeds(&data, &block_in(&index_root, &statement, &tampered, TOY_ROWS, Inverse::Hint)));
+                tamper(&mut tampered, at);
+            }
+            // The compute proof with the hint the hint verifier wants: it reduces, but to other claims.
+            let crossed = calldata(&compute_statement, &appended).unwrap();
+            let own = block_in(&index_root, &compute_statement, &appended, TOY_ROWS, Inverse::Hint);
+            assert!(succeeds(&crossed, &own), "{name}: the mock attests whatever it holds");
+            assert!(!succeeds(&crossed, &compute_honest), "{name}");
+            assert!(!succeeds(&calldata(&compute_statement, &compute_proof).unwrap(), &compute_honest), "{name}");
+        }
+        let compute = deployed_any(&contract_in(TOY_ROWS, Inverse::Compute, Some(&index_root)), &index_root);
+        let call = |data: &[u8], block: &PcsOpen| compute.0.call(compute.1, data, block).output.is_some();
+        assert!(call(&calldata(&compute_statement, &compute_proof).unwrap(), &compute_honest));
+        assert!(!call(&data, &honest));
+        assert!(!call(&calldata(&statement, &dropped).unwrap(), &honest));
+        let dropped_own = block_in(&index_root, &statement, &dropped, TOY_ROWS, Inverse::Compute);
+        assert!(call(&calldata(&statement, &dropped).unwrap(), &dropped_own), "the mock attests whatever it holds");
+    }
+
+    /// The hint mode against the compute mode at the deployed size, on honest proofs of each, `PCS_OPEN` at 0 gas:
+    /// `cargo test --release -p evm -- --ignored --nocapture gas_report_hint`. Makes two full-size proofs, one at a
+    /// time (some 10 GB each).
+    #[test]
+    #[ignore]
+    fn gas_report_hint() {
+        let mut rows = Vec::new();
+        for inverse in [Inverse::Compute, Inverse::Hint] {
+            let (index_root, statement, proof) = proof_in(&mut Rng::new(0x6A6), inverse);
+            let data = calldata(&statement, &proof).unwrap();
+            let block = block_in(&index_root, &statement, &proof, LOG_ROWS, inverse);
+            for in_code in [false, true] {
+                let contract = contract_in(LOG_ROWS, inverse, in_code.then_some(&index_root));
+                let (chain, address) = deployed_any(&contract, &index_root);
+                let outcome = chain.call(address, &data, &block);
+                assert_eq!(outcome.output, Some(VERIFIED.to_vec()), "{inverse:?} {in_code}");
+                let tx = transaction_gas(&data, outcome.execution, 40) - 21_000;
+                rows.push((inverse, in_code, data.len(), contract.field_muls, contract.code.len(), outcome.execution, tx));
+            }
+        }
+        println!("At 2^{LOG_ROWS} rows, PCS_OPEN at 0 gas; transaction gas without its 21,000 base, under EIP-7623:");
+        println!(
+            "{:<8} {:<8} {:>9} {:>9} {:>6} {:>9} {:>9}",
+            "mode", "root", "calldata", "FIELD_MUL", "code", "execution", "EIP-7623"
+        );
+        for (inverse, in_code, bytes, muls, code, execution, tx) in rows {
+            println!(
+                "{:<8} {:<8} {bytes:>9} {muls:>9} {code:>6} {:>9} {:>9}",
+                format!("{inverse:?}"),
+                if in_code { "code" } else { "storage" },
+                grouped(execution),
+                grouped(tx)
+            );
+        }
     }
 
     /// `n` with a comma every three digits.

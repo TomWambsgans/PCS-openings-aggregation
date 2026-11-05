@@ -46,6 +46,42 @@ pub enum VerifyError {
     Shape,
 }
 
+/// How the verifier comes by the one inverse it needs ([`reduce_in`]): that of the product of its denominators.
+///
+/// - [`Inverse::Compute`], the membership protocol (the deployed contract, `formal/`): it computes it, by the norm
+///   to `GF(2^64)` (75 products), and requires the product nonzero.
+/// - [`Inverse::Hint`]: the prover sends it, as a sixth scalar after the five, absorbed with them before the last
+///   challenge, and the verifier requires `product · hint = 1`. The check is deterministic, and the hint a function
+///   of the transcript before it, so soundness and zero knowledge are those of [`Inverse::Compute`]. The proof is
+///   one scalar longer (24 bytes of calldata), and the contract some 1,175 gas of execution cheaper.
+///
+/// The two are different protocols: the transcript's label names the mode ([`Inverse::name`]), so a proof of one
+/// is not a proof of the other.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Inverse {
+    #[default]
+    Compute,
+    Hint,
+}
+
+impl Inverse {
+    /// The protocol's 16-byte name, the transcript label's first bytes ([`label_in`]).
+    pub const fn name(self) -> &'static [u8; 16] {
+        match self {
+            Self::Compute => b"pcs-quotient-kc1",
+            Self::Hint => b"pcs-quotient-kh1",
+        }
+    }
+
+    /// The scalars of a proof: the two commitments' four, the five values, and the hint if there is one.
+    pub const fn proof_len(self) -> usize {
+        match self {
+            Self::Compute => 9,
+            Self::Hint => 10,
+        }
+    }
+}
+
 /// What the verifier computes with: the field, or a recorder of its operations, which is how the EVM contract is
 /// written (`crates/evm`).
 pub trait Scalar: Copy + Add<Output = Self> + Mul<Output = Self> {
@@ -54,6 +90,8 @@ pub trait Scalar: Copy + Add<Output = Self> + Mul<Output = Self> {
     fn frobenius(self) -> Self;
     /// A recorder answers yes, and records that the verifier requires it.
     fn is_nonzero(self) -> bool;
+    /// Whether `self` is zero: a recorder answers yes, and records that the verifier requires it ([`Inverse::Hint`]).
+    fn is_zero(self) -> bool;
 }
 
 impl Scalar for F192 {
@@ -67,6 +105,10 @@ impl Scalar for F192 {
 
     fn is_nonzero(self) -> bool {
         self != F192::ZERO
+    }
+
+    fn is_zero(self) -> bool {
+        self == F192::ZERO
     }
 }
 
@@ -179,8 +221,14 @@ impl Randomness {
     /// unrelated randomness; reused for the same ones, it gives the same proof again. The seed must still be fresh
     /// per proof and secret: [`prove`] draws it from the operating system.
     pub fn derive(seed: &[u8; 32], index_root: &Hash, statement: &Statement, cells: &[F64]) -> Self {
-        let key =
-            primitives::hash::hash(&[KDF_KEY, seed, &label(index_root, statement), &cells_digest(cells)].concat());
+        Self::derive_in(seed, index_root, statement, cells, Inverse::Compute)
+    }
+
+    /// [`Randomness::derive`] for a proof in mode `inverse`: the key binds that mode's label ([`label_in`]), so a
+    /// seed reused across the modes gives unrelated randomness too.
+    pub fn derive_in(seed: &[u8; 32], index_root: &Hash, statement: &Statement, cells: &[F64], inverse: Inverse) -> Self {
+        let label = label_in(index_root, statement, inverse);
+        let key = primitives::hash::hash(&[KDF_KEY, seed, &label, &cells_digest(cells)].concat());
         let words: Vec<u64> = (0..3u8)
             .flat_map(|k| {
                 let block = primitives::hash::hash(&[KDF_MASKS, &key, &[k]].concat());
@@ -328,8 +376,13 @@ pub fn sum_point(log_rows: usize) -> Vec<F192> {
 
 /// The transcript's seed: the protocol's name, the circuit's commitment and the statement (112 bytes).
 pub fn label(index_root: &Hash, statement: &Statement) -> Vec<u8> {
+    label_in(index_root, statement, Inverse::Compute)
+}
+
+/// [`label`] in mode `inverse`: its name is [`Inverse::name`].
+pub fn label_in(index_root: &Hash, statement: &Statement, inverse: Inverse) -> Vec<u8> {
     [
-        b"pcs-quotient-kc1".as_slice(),
+        inverse.name().as_slice(),
         index_root,
         &statement.y,
         &statement.root,
@@ -377,6 +430,50 @@ fn inverse<S: Scalar>(x: S) -> S {
     m * (ones * ones)
 }
 
+/// The product of the denominators [`reduce_in`] inverts, from the challenges `alpha`, `beta`, `t` and the five
+/// values: every `1 + w_k` for `k ≤ m + 1`, the copy identity's `d · d' + w_m`, and the rows' polynomial at `t`.
+/// The reduction's value, by other operations: the hint is its inverse.
+fn denominators_product(log_rows: usize, [alpha, beta_]: [F192; 2], t: F192, a: [F192; 4], next: F192) -> F192 {
+    let m = cell_vars(log_rows);
+    let mut w = vec![t];
+    for k in 0..m + 1 {
+        w.push(w[k] * w[k] + w[k]);
+    }
+    let x = a[0] + t * a[1] + w[1] * (a[2] + t * a[3]);
+    let product = (alpha + x + beta_ * t) * (alpha + x + beta_ * next);
+    let tau = row_vanishing(m);
+    let rows = (0..m - 1).fold(F192::ZERO, |acc, k| acc + w[k].mul_base(tau[k]));
+    w.iter().fold((product + w[m]) * rows, |acc, &w| acc * (F192::ONE + w))
+}
+
+/// The hint [`verify_in`] requires of a proof in mode [`Inverse::Hint`], from its first nine scalars (the
+/// commitments and the five values; any after them are not read): the inverse of the product of the denominators
+/// at the challenges they lead to, or `Degenerate` where that product is zero, which no hint passes.
+pub fn hint(index_root: &Hash, statement: &Statement, proof: &Proof, log_rows: usize) -> Result<F192, VerifyError> {
+    if !supported(log_rows) {
+        return Err(VerifyError::Shape);
+    }
+    let transcript = VerifyError::Transcript;
+    let first = Proof {
+        stream: proof.stream.iter().take(Inverse::Compute.proof_len()).copied().collect(),
+    };
+    let mut chain = VerifierChain::new(&label_in(index_root, statement, Inverse::Hint), &first);
+    chain.next_root().map_err(transcript)?;
+    let [alpha, beta_, _gamma] = [(); 3].map(|_| chain.sample());
+    chain.next_root().map_err(transcript)?;
+    let t = chain.sample();
+    let mut a = [F192::ZERO; 4];
+    for value in &mut a {
+        *value = chain.next().map_err(transcript)?;
+    }
+    let next = chain.next().map_err(transcript)?;
+    let product = denominators_product(log_rows, [alpha, beta_], t, a, next);
+    if product.is_zero() {
+        return Err(VerifyError::Degenerate);
+    }
+    Ok(product.inv())
+}
+
 /// A proof and what the prover keeps to open its claims.
 pub struct Proved {
     pub proof: Proof,
@@ -399,7 +496,19 @@ pub struct Tables {
 /// of its own, fresh per proof and never reused: a 32-byte seed from the operating system ([`fresh_seed`]), from
 /// which [`Randomness::derive`] makes the masks and the tables' padding. Panics on a challenge the verifier rejects.
 pub fn prove(circuit: &Circuit, index: &Index, index_root: &Hash, statement: &Statement, cells: &[F64]) -> Proved {
-    prove_with_seed(circuit, index, index_root, statement, cells, &fresh_seed())
+    prove_in(circuit, index, index_root, statement, cells, Inverse::Compute)
+}
+
+/// [`prove`] in mode `inverse` ([`Inverse`]): the proof is one [`verify_in`] accepts in that mode.
+pub fn prove_in(
+    circuit: &Circuit,
+    index: &Index,
+    index_root: &Hash,
+    statement: &Statement,
+    cells: &[F64],
+    inverse: Inverse,
+) -> Proved {
+    prove_with_seed_in(circuit, index, index_root, statement, cells, &fresh_seed(), inverse)
 }
 
 /// [`prove`] with its 32-byte seed given, deterministic: for tests and reproducible benchmarks. The randomness is
@@ -414,13 +523,27 @@ pub fn prove_with_seed(
     cells: &[F64],
     seed: &[u8; 32],
 ) -> Proved {
-    let randomness = Randomness::derive(seed, index_root, statement, cells);
-    prove_with_randomness(circuit, index, index_root, statement, cells, &randomness)
+    prove_with_seed_in(circuit, index, index_root, statement, cells, seed, Inverse::Compute)
+}
+
+/// [`prove_with_seed`] in mode `inverse`: its randomness is [`Randomness::derive_in`]'s for that mode.
+pub fn prove_with_seed_in(
+    circuit: &Circuit,
+    index: &Index,
+    index_root: &Hash,
+    statement: &Statement,
+    cells: &[F64],
+    seed: &[u8; 32],
+    inverse: Inverse,
+) -> Proved {
+    let randomness = Randomness::derive_in(seed, index_root, statement, cells, inverse);
+    prove_with_randomness_in(circuit, index, index_root, statement, cells, &randomness, inverse)
 }
 
 /// [`prove`] with its randomness given. Crate-private: outside the crate, randomness reaches the prover only through
 /// [`Randomness::derive`] ([`prove`], [`prove_with_seed`]), so it cannot be reused across witnesses; the crate's
 /// tests use this to show what reuse would reveal (`review_hiding.rs`). Panics on a challenge the verifier rejects.
+#[cfg(test)]
 pub(crate) fn prove_with_randomness(
     circuit: &Circuit,
     index: &Index,
@@ -428,6 +551,19 @@ pub(crate) fn prove_with_randomness(
     statement: &Statement,
     cells: &[F64],
     randomness: &Randomness,
+) -> Proved {
+    prove_with_randomness_in(circuit, index, index_root, statement, cells, randomness, Inverse::Compute)
+}
+
+/// [`prove_with_randomness`] in mode `inverse` (for the crate's tests, and what [`prove_with_seed_in`] calls).
+pub(crate) fn prove_with_randomness_in(
+    circuit: &Circuit,
+    index: &Index,
+    index_root: &Hash,
+    statement: &Statement,
+    cells: &[F64],
+    randomness: &Randomness,
+    inverse: Inverse,
 ) -> Proved {
     let Randomness { masks, padding } = randomness;
     assert!(
@@ -439,7 +575,7 @@ pub(crate) fn prove_with_randomness(
     let n = 1usize << m;
     assert_eq!(cells.len(), n);
     assert!(m > REGION + 2 && m + 3 <= domain::BASIS);
-    let mut ps = ProverChain::new(&label(index_root, statement));
+    let mut ps = ProverChain::new(&label_in(index_root, statement, inverse));
 
     // The witness: four polynomials in the row, each with a multiple of the rows' vanishing polynomial.
     let span = tracing::info_span!("Witness").entered();
@@ -606,10 +742,17 @@ pub(crate) fn prove_with_randomness(
     });
     drop(w_hat);
     a.iter().for_each(|&x| ps.send(x));
-    ps.send(domain::evaluate(index.sigma(), 0, 1, &digits[..m]));
+    let next = domain::evaluate(index.sigma(), 0, 1, &digits[..m]);
+    ps.send(next);
+    if inverse == Inverse::Hint {
+        // Zero where the verifier rejects whatever the hint, which then panics below.
+        let product = denominators_product(circuit.log_rows, [alpha, beta_], t, a, next);
+        ps.send(if product.is_zero() { F192::ZERO } else { product.inv() });
+    }
 
     let proof = ps.into_proof();
-    let (roots, claims) = verify(index_root, statement, &proof, circuit.log_rows).expect("a challenge to reject");
+    let (roots, claims) =
+        verify_in(index_root, statement, &proof, circuit.log_rows, inverse).expect("a challenge to reject");
     Proved {
         proof,
         fits,
@@ -637,6 +780,17 @@ pub struct Reduced<S> {
 /// The verifier, on any [`Scalar`]: the proof read from `channel`, down to the commitments it names and the four
 /// claims. It rejects only a challenge at which a denominator vanishes.
 pub fn reduce<S: Scalar>(channel: &mut impl Channel<S>, log_rows: usize) -> Result<Reduced<S>, VerifyError> {
+    reduce_in(channel, log_rows, Inverse::Compute)
+}
+
+/// [`reduce`] in mode `mode`. With [`Inverse::Hint`] it reads a sixth scalar after the five, the hint, before it
+/// draws `rho`, and rejects unless the product of the denominators times the hint is one, where [`reduce`] rejects
+/// a zero product and computes its inverse. With [`Inverse::Compute`] it is [`reduce`], operation for operation.
+pub fn reduce_in<S: Scalar>(
+    channel: &mut impl Channel<S>,
+    log_rows: usize,
+    mode: Inverse,
+) -> Result<Reduced<S>, VerifyError> {
     let transcript = VerifyError::Transcript;
     let m = cell_vars(log_rows);
     let base = |x: F64| S::constant(F192::from(x));
@@ -652,6 +806,10 @@ pub fn reduce<S: Scalar>(channel: &mut impl Channel<S>, log_rows: usize) -> Resu
         *value = channel.next().map_err(transcript)?;
     }
     let next = channel.next().map_err(transcript)?;
+    let hint = match mode {
+        Inverse::Compute => None,
+        Inverse::Hint => Some(channel.next().map_err(transcript)?),
+    };
     let rho = channel.sample();
     channel.finish().map_err(transcript)?;
 
@@ -704,10 +862,22 @@ pub fn reduce<S: Scalar>(channel: &mut impl Channel<S>, log_rows: usize) -> Resu
     for &value in &denominators {
         prefix.push(*prefix.last().unwrap() * value);
     }
-    if !prefix[denominators.len()].is_nonzero() {
-        return Err(VerifyError::Degenerate);
-    }
-    let mut running = inverse(prefix[denominators.len()]);
+    // (`product` is the copy identity's, used below.)
+    let all = prefix[denominators.len()];
+    let mut running = match hint {
+        None => {
+            if !all.is_nonzero() {
+                return Err(VerifyError::Degenerate);
+            }
+            inverse(all)
+        }
+        Some(hint) => {
+            if !(all * hint + one).is_zero() {
+                return Err(VerifyError::Degenerate);
+            }
+            hint
+        }
+    };
     let mut inverses = denominators.clone();
     for i in (0..denominators.len()).rev() {
         inverses[i] = running * prefix[i];
@@ -773,14 +943,25 @@ pub fn verify(
     proof: &Proof,
     log_rows: usize,
 ) -> Result<([Hash; 2], Claims), VerifyError> {
+    verify_in(index_root, statement, proof, log_rows, Inverse::Compute)
+}
+
+/// [`verify`] in mode `inverse`: the transcript's label is that mode's ([`label_in`]), the reduction [`reduce_in`]'s.
+pub fn verify_in(
+    index_root: &Hash,
+    statement: &Statement,
+    proof: &Proof,
+    log_rows: usize,
+    inverse: Inverse,
+) -> Result<([Hash; 2], Claims), VerifyError> {
     if !supported(log_rows) {
         return Err(VerifyError::Shape);
     }
     let mut stream = Stream {
-        chain: VerifierChain::new(&label(index_root, statement), proof),
+        chain: VerifierChain::new(&label_in(index_root, statement, inverse), proof),
         statement: *statement,
     };
-    let reduced = reduce(&mut stream, log_rows)?;
+    let reduced = reduce_in(&mut stream, log_rows, inverse)?;
     let [witness_root, quotient_root] = reduced.roots.map(|root| scalars_root(&root));
     let roots = [
         witness_root.map_err(VerifyError::Transcript)?,
@@ -1068,6 +1249,165 @@ mod tests {
             assert!(truth.contains(&false), "{name}: {truth:?}");
             assert!(truth[0] && truth[1], "{name}: {truth:?}");
         }
+    }
+
+    /// A toy proof in mode `inverse`, its commitments' tables and its openings.
+    struct Toy {
+        circuit: Circuit,
+        index: Index,
+        index_committed: Committed,
+        statement: Statement,
+        cells: Vec<F64>,
+    }
+
+    fn toy_witness(rng: &mut Rng) -> Toy {
+        let circuit = toy();
+        let index = Index::new(&circuit);
+        let index_committed = opening::commit(&index.table);
+        let x: [u8; 32] = std::array::from_fn(|_| rng.next_u64() as u8);
+        let inputs: Vec<bool> = (0..256).map(|i| (x[i / 8] >> (i % 8)) & 1 == 1).collect();
+        let cells = circuit.cells(&inputs);
+        Toy {
+            circuit,
+            index,
+            index_committed,
+            statement: toy_statement(&x),
+            cells,
+        }
+    }
+
+    impl Toy {
+        fn prove(&self, seed: &[u8; 32], inverse: Inverse) -> Proved {
+            let root = &self.index_committed.root;
+            prove_with_seed_in(&self.circuit, &self.index, root, &self.statement, &self.cells, seed, inverse)
+        }
+
+        fn verify(&self, proof: &Proof, inverse: Inverse) -> Result<([Hash; 2], Claims), VerifyError> {
+            verify_in(&self.index_committed.root, &self.statement, proof, self.circuit.log_rows, inverse)
+        }
+
+        fn opens(&self, roots: &[Hash; 2], claims: &Claims, openings: &Openings) -> bool {
+            let root = &self.index_committed.root;
+            verify_openings(self.circuit.log_rows, root, roots, claims, openings).is_ok()
+        }
+    }
+
+    /// In hint mode: an honest proof is ten scalars, its last the inverse [`hint`] computes, and leaves the four
+    /// true claims [`verify_in`] leaves, which open; any other hint (one bit off, another element, zero, the
+    /// inverse's inverse) is `Degenerate`. The compute mode's verifier is untouched by the mode's existence: the
+    /// pinned proof (`proofs_are_pinned`) is the same.
+    #[test]
+    fn hint_proofs_verify_and_open() {
+        let mut rng = Rng::new(0x41);
+        let toy = toy_witness(&mut rng);
+        let proved = toy.prove(&seed(&mut rng), Inverse::Hint);
+        assert!(proved.fits);
+        assert_eq!(truth(&toy.index, &proved), [true; 4]);
+        let proof = proved.proof.clone();
+        assert_eq!(proof.stream.len(), Inverse::Hint.proof_len());
+        let log_rows = toy.circuit.log_rows;
+        let expected = hint(&toy.index_committed.root, &toy.statement, &proof, log_rows).expect("a hint");
+        assert_eq!(proof.stream[9], expected);
+        assert_ne!(expected, F192::ZERO);
+        let (roots, claims) = toy.verify(&proof, Inverse::Hint).expect("an honest proof");
+        assert_eq!((roots, &claims), (proved.roots, &proved.claims));
+        let openings = open(proved.tables, &proved.claims, &toy.index, &toy.index_committed);
+        assert!(toy.opens(&roots, &claims, &openings));
+
+        for other in [
+            expected + F192::ONE,
+            expected + F192::new(0, 0, 1 << 63),
+            expected * F192::Y,
+            F192::ZERO,
+            F192::ONE,
+            expected.inv(),
+        ] {
+            let mut tampered = proof.clone();
+            tampered.stream[9] = other;
+            assert_eq!(toy.verify(&tampered, Inverse::Hint), Err(VerifyError::Degenerate), "{other:?}");
+        }
+        // Any other scalar changed: the hint no longer fits, since the challenges move with it, but for a root's
+        // third limb, which is no root.
+        for at in 0..9 {
+            let mut tampered = proof.clone();
+            tampered.stream[at] += F192::new(1, 2, 0);
+            assert_eq!(toy.verify(&tampered, Inverse::Hint), Err(VerifyError::Degenerate), "{at}");
+        }
+        let mut tampered = proof.clone();
+        tampered.stream[1].c2 = 1;
+        assert_eq!(
+            toy.verify(&tampered, Inverse::Hint),
+            Err(VerifyError::Transcript(TranscriptError::NotARoot))
+        );
+        // Short or long.
+        let mut short = proof.clone();
+        short.stream.pop();
+        assert_eq!(
+            toy.verify(&short, Inverse::Hint),
+            Err(VerifyError::Transcript(TranscriptError::Exhausted))
+        );
+        let mut long = proof.clone();
+        long.stream.push(F192::ZERO);
+        assert_eq!(
+            toy.verify(&long, Inverse::Hint),
+            Err(VerifyError::Transcript(TranscriptError::Trailing))
+        );
+    }
+
+    /// The modes are separated: their labels differ and so does their randomness from one seed. A proof of one
+    /// is not a proof of the other: as it is, its length is wrong; with the hint dropped, or with the hint the
+    /// other mode would want appended, it is read under the other label and leaves claims that do not hold, which
+    /// its openings do not open.
+    #[test]
+    fn modes_are_separated() {
+        let mut rng = Rng::new(0x42);
+        let toy = toy_witness(&mut rng);
+        let root = toy.index_committed.root;
+        let labels = [Inverse::Compute, Inverse::Hint].map(|inverse| label_in(&root, &toy.statement, inverse));
+        assert_eq!(labels[0], label(&root, &toy.statement));
+        assert_eq!(&labels[0][..16], b"pcs-quotient-kc1");
+        assert_eq!(&labels[1][..16], b"pcs-quotient-kh1");
+        assert_eq!(labels[0][16..], labels[1][16..]);
+        let s = seed(&mut rng);
+        let derived = [Inverse::Compute, Inverse::Hint]
+            .map(|inverse| Randomness::derive_in(&s, &root, &toy.statement, &toy.cells, inverse));
+        assert!(derived[0].masks == Randomness::derive(&s, &root, &toy.statement, &toy.cells).masks);
+        assert!(derived[0].masks.as_flattened().iter().all(|w| !derived[1].masks.as_flattened().contains(w)));
+        assert_ne!(derived[0].padding, derived[1].padding);
+
+        let compute = toy.prove(&s, Inverse::Compute);
+        let hinted = toy.prove(&s, Inverse::Hint);
+        assert_ne!(compute.roots, hinted.roots, "the padding is the mode's");
+        let (compute_proof, hinted_proof) = (compute.proof.clone(), hinted.proof.clone());
+        let compute_openings = open(compute.tables, &compute.claims, &toy.index, &toy.index_committed);
+        let hinted_openings = open(hinted.tables, &hinted.claims, &toy.index, &toy.index_committed);
+        assert!(toy.opens(&compute.roots, &compute.claims, &compute_openings));
+        assert!(toy.opens(&hinted.roots, &hinted.claims, &hinted_openings));
+
+        // As they are.
+        assert_eq!(
+            toy.verify(&hinted_proof, Inverse::Compute),
+            Err(VerifyError::Transcript(TranscriptError::Trailing))
+        );
+        assert_eq!(
+            toy.verify(&compute_proof, Inverse::Hint),
+            Err(VerifyError::Transcript(TranscriptError::Exhausted))
+        );
+        // The hint proof without its hint, read by the compute verifier.
+        let mut dropped = hinted_proof.clone();
+        dropped.stream.pop();
+        let (roots, claims) = toy.verify(&dropped, Inverse::Compute).expect("a reduction");
+        assert_eq!(roots, hinted.roots);
+        assert_ne!(claims, hinted.claims);
+        assert!(!toy.opens(&roots, &claims, &hinted_openings));
+        // The compute proof with the hint the hint verifier wants, read by it.
+        let mut appended = compute_proof.clone();
+        let log_rows = toy.circuit.log_rows;
+        appended.stream.push(hint(&root, &toy.statement, &compute_proof, log_rows).expect("a hint"));
+        let (roots, claims) = toy.verify(&appended, Inverse::Hint).expect("a reduction");
+        assert_eq!(roots, compute.roots);
+        assert_ne!(claims, compute.claims);
+        assert!(!toy.opens(&roots, &claims, &compute_openings));
     }
 
     /// [`Randomness::derive`] is a function of the seed, the circuit's commitment, the statement and the cells: the

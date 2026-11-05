@@ -59,6 +59,7 @@ pub fn render() -> String {
         ending,
         inputs,
     } = deployed(LOG_ROWS);
+    assert!(graph.zero.is_empty(), "the deployed contract requires nothing zero");
     let Ending::PcsOpen(runs) = ending else {
         unreachable!("the deployed contract calls PCS_OPEN")
     };
