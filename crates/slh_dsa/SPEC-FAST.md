@@ -466,3 +466,82 @@ membership (quotient, 2^22 rows): reduction 5.269 s, openings 1.494 s, prover to
 
 The probes' "~Keccak-f" column spreads the stream evenly over the calls, so it undercounts. The Keccak-f figures in
 the text count the large absorptions (the 64 slices and the skip's values) block by block.
+
+## Appendix B: M2 notes, the glue as built
+
+**Built** [M]: `quotient::circuit`'s lane extensions and `slh_dsa::glue` (`src/glue.rs`, `tests/glue.rs`).
+
+**`quotient::circuit` additions.** Existing circuits are unchanged: the membership tests, the pinned proofs and
+digests, and the bytecode all pass.
+- `Builder::free_k`: the row `(own V, 1, 0)`.
+- `Builder::mul(a, b)`: the row `(b, a, b)`, so `V = a·b`.
+- `Builder::with_ports(rows, start, len)` and `Builder::port(index, out, input)`: the row `(out or own V, 1, input)`
+  at `start + index`.
+- `Circuit::{port_region, ports}`: the placed ports, and the point of the build where each was placed.
+- `Circuit::outputs_k(free)`: evaluates over `K` in build order. Every free row (`X` reads itself) takes
+  `free(row, outputs so far)`.
+- `Circuit::cells_k`, `Circuit::check_k`: every gate and every cycle of σ, over `K`.
+- `read_k`, `gate_k`, `CheckError`.
+- `Src` now derives `Hash`.
+
+**The port layout as implemented.**
+- The region is rows `[2^17, 2^18)`, that is cells `[2^19, 2^20)`.
+- Quad `q` of block `b` is at row `2^17 + 32 b + q` (`glue::port_index`).
+- Block `b` is the `b`-th Keccak-f call in build order. There are 3,959 calls, then 137 Keccak-f(0) blocks.
+- `q < 25`: `(X, Y, C, V) = (O_q, 1, I_q, O_q)`.
+  - `C` is wired to the input lane's source, or to the constant 0.
+  - `X` is free, except for an **unpacked** output (the digest's lanes 0–3, each layer message's and the final
+    root's lanes 0–1). There `X` reads the row `Σ b_i x^i` of 64 free bits, so `V = X` = that packing.
+  - The four values are the same either way.
+- `q = 25`: `(x, 1, 0, x)`, `x` free (prover value `F64::G`). Block 0's is the glue's `x`; `x^2..x^63` are
+  `mul` rows.
+- `26 ≤ q < 32`: `(0, 1, 0, 0)`: `X` reads the constant 0 (not free).
+- `glue::Glue::check_ports` states what Flock and the link must establish: every quad has its form, and each
+  block's 25 `V`s are Keccak-f of its 25 `C`s.
+
+**Rows** (SLH-DSA-SHAKE-128s, `tests/glue.rs`) [M]: 51,027 below the region, plus 131,072 port rows = 182,099 of 2^18
+(69%). Built in 0.02 s; one honest witness is evaluated and checked in about 0.02 s.
+
+| gadget | rows [M] | §4.3 [E] |
+|---|---:|---:|
+| public rows | 512 | |
+| inputs: 512 public bits, 982 signature lanes | 1,494 | |
+| `x` powers and constant lanes (cached by value, split by bytes) | 944 | 2,200 |
+| public bits → seed, `PK.root`, `M` lanes | 512 | |
+| ADRS packing (shared packings, 1 row a variable bit) | 1,668 | 17,200 |
+| unpacking: 1,280 bits, 2 rows a bit | 2,560 | 3,840 |
+| WOTS+ `at_most(digit, j)` | 12,005 | 14,700 |
+| WOTS+ step mux (`select` on 2 lanes) | 18,375 | 18,375 |
+| WOTS+ checksum (`lib.rs`'s 12-bit adder) | 10,766 | 14,336 |
+| auth-path swap (`ordered` on 2 lanes) | 1,617 | 1,617 |
+| sponge continuation XORs | 446 | 510 |
+| root comparison (word 6) | 128 | |
+| **below the region** | **51,027** | ≈ 76K |
+
+**Deviations from §4.3–4.5.**
+- **Unpacking.** The port's `X` reads the packing of the free bits, so no equality gadget is needed. It costs 2 rows a
+  bit (the free bit, then `(acc, b_i, x^i)`, which gives `acc + x^i + b_i x^i`), not 3.
+- **Packing.** It starts from the cached constant `Σ_{b_i = 1 or variable} x^i`, so each variable bit is one row.
+  There is no NOT.
+- **Constants.** `x^0` is the 1 anchor and `x^i` a `mul` chain. A constant lane is the XOR of a smaller cached
+  constant and a power or a byte.
+- **Reuse of `lib.rs`.** The glue reuses `Adrs::bits`, `base_2b`, `to_int`, `at_most`, `add`, `select` and
+  `ordered`. Over `K` these are correct whenever their control is a bit, so the statement code is shared.
+- **Bits stay bits.** The muxes, swaps and comparisons read only free bits, or bits computed from them.
+
+**Tests** [M]:
+- `tests/glue.rs::glue_verifies_real_signatures`, 3.7 s:
+  - three RustCrypto signatures: the gates, σ and the ports hold, the public words are the statement and word 6 is
+    0;
+  - the digest is `sha3`'s SHAKE256, and the last root is `PK.root`;
+  - the 21 tamperings of `tests/real.rs` give word 6 ≠ 0.
+- `glue_agrees_with_the_bit_circuit` (ignored; 4 s, 6.3 GB):
+  - on a toy set (`h 6, d 2, h′ 3, a 3, k 14, m 8`: 1,126 Keccak-f, a 127M-row bit circuit), with random inputs;
+  - the glue's digest, FORS key, both layer roots and word 6 equal those of `lib.rs`'s bit circuit.
+- Unit tests in `glue::tests`:
+  - constants and packing;
+  - mux and swap;
+  - ADRS lanes against their bytes, for each address type;
+  - the sponge against `sha3` at 0–76 lanes (1–5 blocks), with unpacking;
+  - the ports bind: a wrong output or unpacked bit fails `check_ports`, and a non-bit fails its gate.
+- `quotient::circuit::tests::lane_cells_and_ports`.
